@@ -35,17 +35,17 @@ import java.util.List;
 
 public final class ObstacleAvoidanceSub implements SubmarineController {
 
-    // ── State machine ────────────────────────────────────────────────
+    // State machine
     enum State { PATROL, TRACKING, CHASE, RAM, EVADE }
 
-    // ── Throttle constants ───────────────────────────────────────────
+    // Throttle constants
     static final double PATROL_THROTTLE = 0.4;
     static final double TRACKING_THROTTLE = 0.25;
     static final double CHASE_THROTTLE = 0.8;
     static final double RAM_THROTTLE = 1.0;
     static final double EVADE_THROTTLE = 0.15;
 
-    // ── Terrain / depth constants (unchanged from Phase 2) ───────────
+    // Terrain / depth constants
     private static final double MIN_DEPTH = -20;
     private static final double FLOOR_CLEARANCE = 50;
     private static final double CRUSH_SAFETY_MARGIN = 50;
@@ -55,35 +55,41 @@ public final class ObstacleAvoidanceSub implements SubmarineController {
     private static final double SCAN_SIDE_ANGLE = 0.6;
     private static final double HULL_HALF_LENGTH = 15.0; // must match SubmarinePhysics
 
-    // ── Contact tracking constants ───────────────────────────────────
+    // Contact tracking constants
     static final int CONTACT_CONFIRM_TICKS = 3;
-    static final int CONTACT_LOST_PATROL = 500;     // 10s
-    static final int CONTACT_LOST_RAM = 250;         // 5s
-    static final int CONTACT_LOST_EVADE = 1500;      // 30s
     static final double CHASE_RANGE = 3000.0;
     static final double RAM_RANGE = 500.0;
     static final double RAM_OVERSHOT_RANGE = 800.0;
     static final double TRACKING_DISPLACEMENT = 200.0;
 
-    // ── Baffle clearing constants ────────────────────────────────────
+    // Confidence-based tracking constants
+    static final double CONFIDENCE_DECAY = 0.999;
+    static final double CONFIDENCE_HUNT_MIN = 0.1;
+    static final double CONFIDENCE_LOST = 0.02;
+    static final double CONFIDENCE_RAM_MIN = 0.05;
+
+    // Contact tracking physics constants
+    static final double PASSIVE_IGNORE_RANGE = 5000.0; // ignore passive range beyond this
+    static final double PASSIVE_WEAK_RANGE = 2000.0;   // reduced trust for passive range beyond this
+
+    // Baffle clearing constants
     static final int BAFFLE_CLEAR_INTERVAL = 1500;   // 30s at 50Hz
     static final double BAFFLE_CLEAR_ANGLE = Math.toRadians(40);
 
-    // ── Sprint-and-drift constants ───────────────────────────────────
+    // Sprint-and-drift constants
     static final int SPRINT_DURATION = 750;           // 15s
     static final int DRIFT_DURATION = 1000;           // 20s
 
-    // ── Pursuit / patrol ping constants ───────────────────────────────
-    static final int CONTACT_LOST_CHASE = 1500;       // 30s — more persistent than TRACKING
+    // Patrol ping constants
     static final int PATROL_SILENCE_PING_TICKS = 3000; // 1 min at 50Hz
     private static final double BEHIND_OFFSET = 500.0;
 
-    // ── Stern tailing constants ───────────────────────────────────────
-    private static final double BEHIND_ARC = Math.toRadians(45);  // within 45° of target stern
+    // Stern tailing constants
+    private static final double BEHIND_ARC = Math.toRadians(45);  // within 45 deg of target stern
     private static final double TAILING_THROTTLE = 0.30;          // quiet following speed
     private static final double TAILING_FLOOR_CLEARANCE = 100.0;  // extra room when tailing
 
-    // ── Passive range estimation constants ──────────────────────────
+    // Passive range estimation constants
     // SE-based: assume target SL ~90 dB (patrol speed), cylindrical spreading
     private static final double ASSUMED_TARGET_SL_DB = 90.0;
     private static final double ASSUMED_AMBIENT_NL_DB = 60.0;
@@ -92,31 +98,30 @@ public final class ObstacleAvoidanceSub implements SubmarineController {
     private static final double MIN_BEARING_RATE = Math.toRadians(0.05); // per second
     private static final int TMA_HISTORY_TICKS = 100; // 2 seconds of bearing history
 
-    // ── Cavitation constants (mirrored from SubmarinePhysics) ────────
+    // Cavitation constants (mirrored from SubmarinePhysics)
     private static final double BASE_CAVITATION_SPEED = 5.0;
     private static final double CAVITATION_DEPTH_FACTOR = 0.02;
 
-    // ── Approach constants ─────────────────────────────────────────────
-    static final long APPROACH_TIMEOUT = 15000;   // 5 min — max time to close on a ping fix
-
-    // ── Evade constants ──────────────────────────────────────────────
+    // Evade constants
     static final double EVADE_SE_THRESHOLD = 15.0;
     static final double EVADE_BEARING_RATE_THRESHOLD = Math.toRadians(2);
 
-    // ── State ────────────────────────────────────────────────────────
+    // Ping range threshold for tracked contact
+    private static final double TRACKED_PING_RANGE = 1500.0;
+
+    // State
     private State state = State.PATROL;
     private MatchConfig config;
     private TerrainMap terrain;
     private double depthLimit;
+    private double maxSubSpeed = 15.0;       // from MatchConfig, used for uncertainty growth and clamping
+    private double refUncertainty = 50.0;    // reference uncertainty for confidence calculation, updated on ping fix
     private List<ThermalLayer> thermalLayers = List.of();
 
-    // Contact tracking
+    // Contact tracking (sonar analysis, per-tick)
     record BearingFix(long tick, double bearing, double se, double x, double y,
                       double ownSpeed, double ownHeading) {}
-    enum ContactType { ACTIVE_PING, PASSIVE_SONAR }
-    record ContactRecord(long tick, double estX, double estY, double confidence, ContactType type) {}
     private final List<BearingFix> contactTrack = new ArrayList<>();
-    private final List<ContactRecord> contactLog = new ArrayList<>();
     private double lastContactBearing;
     private double lastContactSE;
     private long lastContactTick = -1000;
@@ -124,6 +129,22 @@ public final class ObstacleAvoidanceSub implements SubmarineController {
     private double estimatedRange = Double.MAX_VALUE;
     private boolean rangeConfirmedByActive;
     private int previousHp;
+
+    // Tracked contact (persistent, dead-reckoned between updates)
+    private boolean hasTrackedContact;
+    private double trackedX, trackedY;
+    private double trackedHeading = Double.NaN;
+    private double trackedSpeed = 2.0;  // assume patrol speed
+    private double contactAlive = 0.0;       // belief contact exists (0-1), decays at 0.999/tick
+    private double uncertaintyRadius = 0.0;  // meters, grows by maxSubSpeed * dt each tick
+    private long trackedLastFixTick = -1;
+    // Previous position fix for heading estimation
+    private double prevFixX = Double.NaN, prevFixY = Double.NaN;
+    private long prevFixTick = -1;
+
+    // Ping fix history for viewer trace lines
+    private record PingFix(double x, double y, long tick) {}
+    private final List<PingFix> pingFixHistory = new ArrayList<>();
 
     // Baffle clearing
     private long baffleClearTimer;
@@ -134,24 +155,15 @@ public final class ObstacleAvoidanceSub implements SubmarineController {
     // Chase timing
     private long chaseStartTick;
 
-    // Pursuit memory
-    private double pursuitBearing = Double.NaN;
-    private boolean hasPursuit;
+    // Patrol silence tracking
     private long patrolSilenceTicks;
-
-    // Target heading estimation
-    private double estimatedTargetHeading = Double.NaN;
-    private double prevEstTargetX = Double.NaN, prevEstTargetY = Double.NaN;
-    private long prevEstTargetTick = -1;
-
-    // Approach target (from precise ping fix)
-    private double approachTargetX = Double.NaN, approachTargetY = Double.NaN;
 
     @Override
     public void onMatchStart(MatchContext context) {
         this.config = context.config();
         this.terrain = context.terrain();
         this.depthLimit = config.crushDepth() + CRUSH_SAFETY_MARGIN;
+        this.maxSubSpeed = config.maxSubSpeed();
         this.thermalLayers = context.thermalLayers();
         this.previousHp = config.startingHp();
     }
@@ -159,10 +171,12 @@ public final class ObstacleAvoidanceSub implements SubmarineController {
     State state() { return state; }
     double estimatedRange() { return estimatedRange; }
     List<BearingFix> contactTrack() { return contactTrack; }
-    double estimatedTargetHeading() { return estimatedTargetHeading; }
-    boolean hasPursuit() { return hasPursuit; }
-    double pursuitBearing() { return pursuitBearing; }
-    List<ContactRecord> contactLog() { return contactLog; }
+    boolean hasTrackedContact() { return hasTrackedContact; }
+    double trackedX() { return trackedX; }
+    double trackedY() { return trackedY; }
+    double contactAlive() { return contactAlive; }
+    double uncertaintyRadius() { return uncertaintyRadius; }
+    double trackedHeading() { return trackedHeading; }
 
     @Override
     public void onTick(SubmarineInput input, SubmarineOutput output) {
@@ -172,9 +186,9 @@ public final class ObstacleAvoidanceSub implements SubmarineController {
         double depth = pos.z();
         long tick = input.tick();
 
-        // ═══════════════════════════════════════════════════════════════
+        // =================================================================
         // Step 1: Process sonar contacts and update contact track
-        // ═══════════════════════════════════════════════════════════════
+        // =================================================================
         SonarContact bestContact = pickBestContact(input.sonarContacts(), input.activeSonarReturns());
 
         if (bestContact != null) {
@@ -188,7 +202,6 @@ public final class ObstacleAvoidanceSub implements SubmarineController {
             if (bestContact.isActive() && bestContact.range() > 0) {
                 estimatedRange = bestContact.range();
                 rangeConfirmedByActive = true;
-                updateTargetHeadingEstimate(pos.x(), pos.y(), tick);
             }
 
             // Record bearing fix (for triangulation and TMA)
@@ -197,7 +210,7 @@ public final class ObstacleAvoidanceSub implements SubmarineController {
             // Cap track length
             while (contactTrack.size() > 200) contactTrack.removeFirst();
 
-            // --- Passive range estimation (3 methods, best wins) ---
+            // Passive range estimation (3 methods, best wins)
 
             // Method 1: Triangulation (requires displacement between fixes)
             if (contactTrack.size() >= 2) {
@@ -209,67 +222,222 @@ public final class ObstacleAvoidanceSub implements SubmarineController {
                         double rangeEst = triangulate(latest, older);
                         if (rangeEst > 0 && rangeEst < 50000) {
                             estimatedRange = rangeEst;
-                            updateTargetHeadingEstimate(pos.x(), pos.y(), tick);
                         }
                         break;
                     }
                 }
             }
 
-            // Method 2: SE-based range estimate (rough — order of magnitude only)
-            // Use blade-rate speed estimate for better SL assumption when available
+            // Method 2: SE-based range estimate (rough, order of magnitude only)
             double seRange = estimateRangeFromSE(bestContact.signalExcess(),
                     bestContact.estimatedSpeed());
             if (seRange > 0 && seRange < 50000) {
-                // SE range is imprecise — only use it when we have no other estimate,
-                // and never let it alone drive us below CHASE_RANGE (could be wildly off)
                 if (estimatedRange == Double.MAX_VALUE) {
                     estimatedRange = Math.max(seRange, CHASE_RANGE);
-                    // Don't call updateTargetHeadingEstimate — SE range is too imprecise
-                    // for heading estimation (would pollute reference position)
                 }
             }
 
             // Method 3: Bearing rate TMA (needs bearing history and own-ship speed)
             double tmaRange = estimateRangeFromBearingRate(tick, speed, heading);
             if (tmaRange > 0 && tmaRange < 50000) {
-                // TMA is more reliable than SE when we have good bearing rate data
                 estimatedRange = tmaRange;
-                updateTargetHeadingEstimate(pos.x(), pos.y(), tick);
             }
-
-            // ── Record to contact log ──
-            if (bestContact.isActive() && bestContact.range() > 0) {
-                double tx = pos.x() + bestContact.range() * Math.sin(bestContact.bearing());
-                double ty = pos.y() + bestContact.range() * Math.cos(bestContact.bearing());
-                contactLog.add(new ContactRecord(tick, tx, ty, 0.95, ContactType.ACTIVE_PING));
-                approachTargetX = tx;
-                approachTargetY = ty;
-            } else if (estimatedRange > 0 && estimatedRange < 50000) {
-                double tx = pos.x() + estimatedRange * Math.sin(lastContactBearing);
-                double ty = pos.y() + estimatedRange * Math.cos(lastContactBearing);
-                double conf = Math.clamp((bestContact.signalExcess() - 5.0) / 30.0, 0.05, 0.5);
-                contactLog.add(new ContactRecord(tick, tx, ty, conf, ContactType.PASSIVE_SONAR));
-                approachTargetX = tx;
-                approachTargetY = ty;
-            }
-            while (contactLog.size() > 500) contactLog.removeFirst();
         } else {
             consecutiveContactTicks = 0;
+        }
+
+        // =================================================================
+        // Step 1b: Update tracked contact
+        // =================================================================
+
+        // Dead-reckon existing tracked contact and grow uncertainty
+        double dt = 1.0 / 50.0; // one tick at 50Hz
+        if (hasTrackedContact) {
+            if (!Double.isNaN(trackedHeading)) {
+                trackedX += trackedSpeed * Math.sin(trackedHeading) * dt;
+                trackedY += trackedSpeed * Math.cos(trackedHeading) * dt;
+            }
+            uncertaintyRadius += maxSubSpeed * dt;
+            contactAlive *= CONFIDENCE_DECAY;
+        }
+
+        // Any sonar contact resets contactAlive
+        if (bestContact != null) {
+            contactAlive = 1.0;
+        }
+
+        // Update from sonar fixes
+        if (bestContact != null && bestContact.isActive() && bestContact.range() > 0) {
+            // Active ping fix: snap to precise position
+            double tx = pos.x() + bestContact.range() * Math.sin(bestContact.bearing());
+            double ty = pos.y() + bestContact.range() * Math.cos(bestContact.bearing());
+
+            // Plausibility check: if too far from last ping fix, treat as new contact
+            if (hasTrackedContact && !pingFixHistory.isEmpty()) {
+                var lastPingFix = pingFixHistory.getLast();
+                long timeSinceLastPing = tick - lastPingFix.tick();
+                double maxDist = maxSubSpeed * (timeSinceLastPing / 50.0);
+                double ddx = tx - lastPingFix.x();
+                double ddy = ty - lastPingFix.y();
+                double dist = Math.sqrt(ddx * ddx + ddy * ddy);
+                if (dist > maxDist) {
+                    // Too far from last ping fix, treat as new contact
+                    trackedHeading = Double.NaN;
+                    prevFixX = Double.NaN;
+                    prevFixY = Double.NaN;
+                    prevFixTick = -1;
+                    pingFixHistory.clear();
+                }
+            }
+
+            // Compute heading from previous ping fix (in pingFixHistory)
+            if (!pingFixHistory.isEmpty()) {
+                var lastPing = pingFixHistory.getLast();
+                double ddx = tx - lastPing.x();
+                double ddy = ty - lastPing.y();
+                if (ddx * ddx + ddy * ddy > 25) { // moved at least 5m
+                    trackedHeading = Math.atan2(ddx, ddy);
+                    if (trackedHeading < 0) trackedHeading += 2 * Math.PI;
+                }
+            }
+
+            prevFixX = tx;
+            prevFixY = ty;
+            prevFixTick = tick;
+
+            trackedX = tx;
+            trackedY = ty;
+            // Compute uncertainty from sonar contact data
+            // 2-sigma for ~95% confidence
+            double pingUncertainty = bestContact.rangeUncertainty() * 2;
+            // Also account for bearing uncertainty at this range
+            double lateralUncertainty = bestContact.range() * bestContact.bearingUncertainty();
+            uncertaintyRadius = Math.sqrt(pingUncertainty * pingUncertainty + lateralUncertainty * lateralUncertainty);
+            refUncertainty = uncertaintyRadius;
+            trackedLastFixTick = tick;
+            hasTrackedContact = true;
+
+            // Record in ping fix history (cap at 20)
+            pingFixHistory.add(new PingFix(tx, ty, tick));
+            while (pingFixHistory.size() > 20) pingFixHistory.removeFirst();
+
+        } else if (bestContact != null && estimatedRange > 0 && estimatedRange < 50000) {
+            // Passive contact with range estimate, with speed clamping
+
+            if (estimatedRange > PASSIVE_IGNORE_RANGE) {
+                // Too far: only use bearing as heading hint, don't update position
+                if (hasTrackedContact && Double.isNaN(trackedHeading)) {
+                    trackedHeading = lastContactBearing;
+                }
+            } else {
+                // Determine blend weight based on range
+                double blendWeight;
+                if (estimatedRange > PASSIVE_WEAK_RANGE) {
+                    blendWeight = 0.1;
+                } else {
+                    blendWeight = 0.3;
+                }
+
+                double tx = pos.x() + estimatedRange * Math.sin(lastContactBearing);
+                double ty = pos.y() + estimatedRange * Math.cos(lastContactBearing);
+
+                if (hasTrackedContact) {
+                    // Compute proposed position via blend
+                    double proposedX = trackedX * (1 - blendWeight) + tx * blendWeight;
+                    double proposedY = trackedY * (1 - blendWeight) + ty * blendWeight;
+
+                    // Clamp movement to maxSubSpeed * dt_since_last_update
+                    long dtSinceLast = (trackedLastFixTick >= 0) ? tick - trackedLastFixTick : 1;
+                    double maxMove = maxSubSpeed * (dtSinceLast / 50.0);
+                    double moveDx = proposedX - trackedX;
+                    double moveDy = proposedY - trackedY;
+                    double moveDist = Math.sqrt(moveDx * moveDx + moveDy * moveDy);
+                    if (moveDist > maxMove && moveDist > 0) {
+                        double scale = maxMove / moveDist;
+                        proposedX = trackedX + moveDx * scale;
+                        proposedY = trackedY + moveDy * scale;
+                    }
+
+                    trackedX = proposedX;
+                    trackedY = proposedY;
+                } else {
+                    trackedX = tx;
+                    trackedY = ty;
+                    double lateralUncertainty = estimatedRange * bestContact.bearingUncertainty();
+                    uncertaintyRadius = Math.max(lateralUncertainty * 2, Math.min(estimatedRange * 0.15, 500));
+                    hasTrackedContact = true;
+                }
+
+                // Heading estimation from successive passive fixes
+                if (!Double.isNaN(prevFixX) && prevFixTick >= 0 && tick - prevFixTick > 100) {
+                    double ddx = tx - prevFixX;
+                    double ddy = ty - prevFixY;
+                    if (ddx * ddx + ddy * ddy > 25) {
+                        trackedHeading = Math.atan2(ddx, ddy);
+                        if (trackedHeading < 0) trackedHeading += 2 * Math.PI;
+                    }
+                    prevFixX = tx;
+                    prevFixY = ty;
+                    prevFixTick = tick;
+                } else if (Double.isNaN(prevFixX)) {
+                    prevFixX = tx;
+                    prevFixY = ty;
+                    prevFixTick = tick;
+                }
+
+                trackedLastFixTick = tick;
+            }
+
+            // Passive contact slows uncertainty growth (compensate the growth added above)
+            // Multiply effective growth by 0.5 by subtracting half of what was added
+            if (hasTrackedContact) {
+                uncertaintyRadius -= maxSubSpeed * dt * 0.5;
+                if (uncertaintyRadius < 0) uncertaintyRadius = 0;
+            }
+        }
+
+        // Fallback heading estimation from bearing stability in CHASE
+        // Only use this when we have no ping fix history (pure passive tracking)
+        if (hasTrackedContact && Double.isNaN(trackedHeading) && state == State.CHASE
+                && pingFixHistory.isEmpty() && contactTrack.size() >= 3) {
+            var latest = contactTrack.getLast();
+            var older = contactTrack.get(contactTrack.size() - 3);
+            double bearingDrift = Math.abs(angleDiff(latest.bearing(), older.bearing()));
+            if (bearingDrift < Math.toRadians(10)) {
+                trackedHeading = lastContactBearing;
+            }
+        }
+
+        // Clear tracked contact if contactAlive too low
+        if (hasTrackedContact && contactAlive < CONFIDENCE_LOST) {
+            hasTrackedContact = false;
+            trackedHeading = Double.NaN;
+            prevFixX = Double.NaN;
+            prevFixY = Double.NaN;
+            prevFixTick = -1;
+            pingFixHistory.clear();
         }
 
         // Detect damage taken
         boolean tookDamage = self.hp() < previousHp;
         previousHp = self.hp();
 
-        // ═══════════════════════════════════════════════════════════════
-        // Step 2: State transitions
-        // ═══════════════════════════════════════════════════════════════
+        // =================================================================
+        // Step 2: State transitions (confidence-based)
+        // =================================================================
         long ticksSinceContact = tick - lastContactTick;
+
+        // Compute distance to tracked contact for transition decisions
+        double trackedDist = Double.MAX_VALUE;
+        if (hasTrackedContact) {
+            double dx = trackedX - pos.x();
+            double dy = trackedY - pos.y();
+            trackedDist = Math.sqrt(dx * dx + dy * dy);
+        }
 
         switch (state) {
             case PATROL -> {
-                // Active ping return → immediate CHASE (bypass TRACKING confirmation)
+                // Active ping return: immediate CHASE (bypass TRACKING confirmation)
                 if (bestContact != null && bestContact.isActive() && bestContact.range() > 0) {
                     enterState(State.CHASE, tick);
                 } else if (consecutiveContactTicks >= CONTACT_CONFIRM_TICKS) {
@@ -281,43 +449,45 @@ public final class ObstacleAvoidanceSub implements SubmarineController {
                     enterState(State.EVADE, tick);
                 } else if (bestContact != null && bestContact.isActive() && bestContact.range() > 0) {
                     enterState(State.CHASE, tick);
-                } else if (estimatedRange < CHASE_RANGE) {
+                } else if (estimatedRange < CHASE_RANGE && contactAlive >= CONFIDENCE_HUNT_MIN) {
                     enterState(State.CHASE, tick);
-                } else if (ticksSinceContact > CONTACT_LOST_PATROL) {
+                } else if (hasTrackedContact && trackedDist < CHASE_RANGE && contactAlive >= CONFIDENCE_HUNT_MIN) {
+                    enterState(State.CHASE, tick);
+                } else if (!hasTrackedContact && ticksSinceContact > 500) {
                     enterState(State.PATROL, tick);
                 }
             }
             case CHASE -> {
-                boolean isApproaching = !Double.isNaN(approachTargetX);
-                long lostTimeout = isApproaching ? APPROACH_TIMEOUT : CONTACT_LOST_CHASE;
                 if (tookDamage) {
                     enterState(State.EVADE, tick);
                 } else if (estimatedRange < RAM_RANGE && rangeConfirmedByActive) {
                     enterState(State.RAM, tick);
-                } else if (ticksSinceContact > lostTimeout) {
+                } else if (!hasTrackedContact) {
                     enterState(State.PATROL, tick);
+                } else if (contactAlive < CONFIDENCE_HUNT_MIN) {
+                    enterState(State.TRACKING, tick);
                 }
             }
             case RAM -> {
                 if (estimatedRange > RAM_OVERSHOT_RANGE && ticksSinceContact > 50) {
-                    enterState(State.PATROL, tick);
-                } else if (ticksSinceContact > CONTACT_LOST_RAM) {
+                    enterState(State.CHASE, tick);
+                } else if (!hasTrackedContact || contactAlive < CONFIDENCE_RAM_MIN) {
                     enterState(State.PATROL, tick);
                 }
             }
             case EVADE -> {
-                if (ticksSinceContact > CONTACT_LOST_EVADE) {
+                if (!hasTrackedContact) {
                     enterState(State.PATROL, tick);
                 } else if (bestContact != null && lastContactSE < 8.0 && ticksSinceContact == 0) {
-                    // Contact weakening — hunter passing by, flip the script
+                    // Contact weakening: hunter passing by, flip the script
                     enterState(State.TRACKING, tick);
                 }
             }
         }
 
-        // ═══════════════════════════════════════════════════════════════
+        // =================================================================
         // Step 3: Tactical layer (throttle, rudder, depth preference)
-        // ═══════════════════════════════════════════════════════════════
+        // =================================================================
         double tacticalThrottle;
         double tacticalRudder = 0;
         double tacticalDepthPreference = Double.NaN; // NaN = no preference
@@ -333,35 +503,19 @@ public final class ObstacleAvoidanceSub implements SubmarineController {
                     patrolSilenceTicks++;
                 }
 
-                if (hasPursuit) {
-                    // Head toward last known contact area — use contact log for precise position
-                    ContactRecord bestFix = getBestRecentContact(tick);
-                    double targetBearing;
-                    if (bestFix != null) {
-                        targetBearing = Math.atan2(bestFix.estX() - pos.x(), bestFix.estY() - pos.y());
-                        if (targetBearing < 0) targetBearing += 2 * Math.PI;
-                    } else {
-                        targetBearing = pursuitBearing;
-                    }
-                    double diff = angleDiff(targetBearing, heading);
-                    if (Math.abs(diff) > Math.toRadians(5)) {
-                        tacticalRudder = Math.clamp(diff * 2.0, -1, 1);
-                    }
-                } else {
-                    // Normal baffle clearing
-                    baffleClearTimer++;
-                    if (baffleClearTimer > BAFFLE_CLEAR_INTERVAL && !clearingBaffles) {
-                        clearingBaffles = true;
-                        preBaffleClearHeading = heading;
-                        baffleClearDirection *= -1;
-                    }
-                    if (clearingBaffles) {
-                        tacticalRudder = baffleClearDirection * 0.4;
-                        double turned = angleDiff(heading, preBaffleClearHeading);
-                        if (Math.abs(turned) > BAFFLE_CLEAR_ANGLE) {
-                            clearingBaffles = false;
-                            baffleClearTimer = 0;
-                        }
+                // Normal baffle clearing (PATROL means fully lost, no tracked contact)
+                baffleClearTimer++;
+                if (baffleClearTimer > BAFFLE_CLEAR_INTERVAL && !clearingBaffles) {
+                    clearingBaffles = true;
+                    preBaffleClearHeading = heading;
+                    baffleClearDirection *= -1;
+                }
+                if (clearingBaffles) {
+                    tacticalRudder = baffleClearDirection * 0.4;
+                    double turned = angleDiff(heading, preBaffleClearHeading);
+                    if (Math.abs(turned) > BAFFLE_CLEAR_ANGLE) {
+                        clearingBaffles = false;
+                        baffleClearTimer = 0;
                     }
                 }
 
@@ -370,7 +524,6 @@ public final class ObstacleAvoidanceSub implements SubmarineController {
                         && input.activeSonarCooldownTicks() == 0) {
                     output.activeSonarPing();
                     patrolSilenceTicks = 0;
-                    hasPursuit = false;
                 }
 
                 // Prefer depth below thermocline
@@ -379,30 +532,40 @@ public final class ObstacleAvoidanceSub implements SubmarineController {
             case TRACKING -> {
                 tacticalThrottle = TRACKING_THROTTLE;
 
-                // Turn perpendicular to contact bearing for cross-bearing fix
-                if (lastContactTick >= 0) {
+                if (bestContact != null) {
+                    // Fresh contact: turn perpendicular for cross-bearing fix
                     double perpBearing = normalizeBearing(lastContactBearing + Math.PI / 2);
                     double diff = angleDiff(perpBearing, heading);
-                    // Also consider the other perpendicular direction
                     double perpBearing2 = normalizeBearing(lastContactBearing - Math.PI / 2);
                     double diff2 = angleDiff(perpBearing2, heading);
                     double targetDiff = Math.abs(diff) < Math.abs(diff2) ? diff : diff2;
                     tacticalRudder = Math.clamp(targetDiff * 2.0, -1, 1);
+                } else if (hasTrackedContact) {
+                    // No fresh contact but have tracked position: head toward it
+                    double targetBearing = Math.atan2(trackedX - pos.x(), trackedY - pos.y());
+                    if (targetBearing < 0) targetBearing += 2 * Math.PI;
+                    double diff = angleDiff(targetBearing, heading);
+                    if (Math.abs(diff) > Math.toRadians(5)) {
+                        tacticalRudder = Math.clamp(diff * 2.0, -1, 1);
+                    }
+
+                    // Ping when within range of tracked position and cooldown ready
+                    if (trackedDist < TRACKED_PING_RANGE && input.activeSonarCooldownTicks() == 0) {
+                        output.activeSonarPing();
+                    }
                 }
             }
             case CHASE -> {
                 boolean behindTarget = isBehindTarget();
-                boolean isApproaching = !Double.isNaN(approachTargetX);
 
                 if (behindTarget && estimatedRange < 1000) {
-                    // Behind and close — quiet tailing
+                    // Behind and close: quiet tailing
                     tacticalThrottle = TAILING_THROTTLE;
-                } else if (isApproaching && estimatedRange > CHASE_RANGE) {
-                    // Long-range approach from ping — quiet patrol speed
-                    // At this distance our noise won't reach the target
+                } else if (hasTrackedContact && trackedDist > CHASE_RANGE) {
+                    // Long-range approach: quiet patrol speed
                     tacticalThrottle = PATROL_THROTTLE;
                 } else if (behindTarget) {
-                    // Behind but far — close the gap, moderate speed
+                    // Behind but far: close the gap, moderate speed
                     tacticalThrottle = CHASE_THROTTLE * 0.7;
                 } else {
                     // Sprint-and-drift to close / get behind
@@ -414,41 +577,32 @@ public final class ObstacleAvoidanceSub implements SubmarineController {
                     }
                 }
 
-                // Steer toward target position (approach-aware)
-                if (lastContactTick >= 0 || isApproaching) {
-                    double targetX, targetY;
-                    boolean havePosition = false;
+                // Steer toward tracked position
+                if (hasTrackedContact) {
+                    double targetX = trackedX;
+                    double targetY = trackedY;
 
-                    if (estimatedRange < 50000 && ticksSinceContact < 100) {
-                        // Fresh contact with range — compute position from current data
-                        targetX = pos.x() + estimatedRange * Math.sin(lastContactBearing);
-                        targetY = pos.y() + estimatedRange * Math.cos(lastContactBearing);
-                        havePosition = true;
-                    } else if (isApproaching) {
-                        // No fresh contact — head toward stored approach target
-                        targetX = approachTargetX;
-                        targetY = approachTargetY;
-                        havePosition = true;
-                    } else {
-                        targetX = targetY = 0;
+                    // If we know target heading and have range, aim for stern
+                    if (!Double.isNaN(trackedHeading)
+                            && trackedDist < 10000 && trackedDist > RAM_RANGE * 2) {
+                        double offset = Math.min(trackedDist * 0.5, BEHIND_OFFSET);
+                        targetX -= offset * Math.sin(trackedHeading);
+                        targetY -= offset * Math.cos(trackedHeading);
                     }
 
-                    double chaseBearing;
-                    if (havePosition) {
-                        // If we know target heading and have range, aim for stern
-                        if (!Double.isNaN(estimatedTargetHeading)
-                                && estimatedRange < 10000 && estimatedRange > RAM_RANGE * 2) {
-                            double offset = Math.min(estimatedRange * 0.5, BEHIND_OFFSET);
-                            targetX -= offset * Math.sin(estimatedTargetHeading);
-                            targetY -= offset * Math.cos(estimatedTargetHeading);
-                        }
-                        chaseBearing = Math.atan2(targetX - pos.x(), targetY - pos.y());
-                        if (chaseBearing < 0) chaseBearing += 2 * Math.PI;
-                    } else {
-                        chaseBearing = lastContactBearing;
-                    }
-
+                    double chaseBearing = Math.atan2(targetX - pos.x(), targetY - pos.y());
+                    if (chaseBearing < 0) chaseBearing += 2 * Math.PI;
                     double diff = angleDiff(chaseBearing, heading);
+                    tacticalRudder = Math.clamp(diff * 2.0, -1, 1);
+
+                    // Ping when within range and no recent fix
+                    if (trackedDist < TRACKED_PING_RANGE && input.activeSonarCooldownTicks() == 0
+                            && ticksSinceContact > 100) {
+                        output.activeSonarPing();
+                    }
+                } else if (lastContactTick >= 0) {
+                    // Fallback: steer by last known bearing
+                    double diff = angleDiff(lastContactBearing, heading);
                     tacticalRudder = Math.clamp(diff * 2.0, -1, 1);
                 }
 
@@ -461,7 +615,7 @@ public final class ObstacleAvoidanceSub implements SubmarineController {
                 // Depth: stay deep and below thermocline for stealth
                 tacticalDepthPreference = preferredDepthBelowThermocline(depth);
                 // When sprinting (not quiet approach or tailing), go extra deep for cavitation
-                if (!behindTarget && !(isApproaching && estimatedRange > CHASE_RANGE)) {
+                if (!behindTarget && !(hasTrackedContact && trackedDist > CHASE_RANGE)) {
                     double targetSpeed = 11.0;
                     double minDepthForQuiet = -(targetSpeed - BASE_CAVITATION_SPEED) / CAVITATION_DEPTH_FACTOR;
                     double deepTarget = Math.min(minDepthForQuiet - 20, -320);
@@ -475,8 +629,13 @@ public final class ObstacleAvoidanceSub implements SubmarineController {
             case RAM -> {
                 tacticalThrottle = RAM_THROTTLE;
 
-                // Steer directly at contact
-                if (lastContactTick >= 0) {
+                // Steer toward tracked position, or fall back to bearing
+                if (hasTrackedContact && trackedDist > 50) {
+                    double ramBearing = Math.atan2(trackedX - pos.x(), trackedY - pos.y());
+                    if (ramBearing < 0) ramBearing += 2 * Math.PI;
+                    double diff = angleDiff(ramBearing, heading);
+                    tacticalRudder = Math.clamp(diff * 3.0, -1, 1);
+                } else if (lastContactTick >= 0) {
                     double diff = angleDiff(lastContactBearing, heading);
                     tacticalRudder = Math.clamp(diff * 3.0, -1, 1);
                 }
@@ -505,23 +664,20 @@ public final class ObstacleAvoidanceSub implements SubmarineController {
             default -> tacticalThrottle = PATROL_THROTTLE;
         }
 
-        // ═══════════════════════════════════════════════════════════════
+        // =================================================================
         // Steps 4-12: Safety pipeline
-        // ═══════════════════════════════════════════════════════════════
+        // =================================================================
         double rudder = tacticalRudder;
         double sternPlanes = 0;
         double throttle = tacticalThrottle;
         double ballast = 0.5;
         String status = state.name();
 
-        // Use larger floor clearance when tailing — more room to maneuver
+        // Use larger floor clearance when tailing
         boolean tailing = (state == State.CHASE && isBehindTarget());
         double floorClearance = tailing ? TAILING_FLOOR_CLEARANCE : FLOOR_CLEARANCE;
 
-        // ── Step 4: Compute target depth (bottom tracking + tactical) ──
-        // Check terrain at hull extent (bow, stern, beam) — same points the
-        // physics checks for collision. Without this, a ridge just ahead can
-        // kill the sub while the controller only sees the deep floor below center.
+        // Step 4: Compute target depth (bottom tracking + tactical)
         double sinH = Math.sin(heading);
         double cosH = Math.cos(heading);
         double floorCenter = terrain.elevationAt(pos.x(), pos.y());
@@ -532,12 +688,6 @@ public final class ObstacleAvoidanceSub implements SubmarineController {
         double floorBelow = Math.max(floorCenter, Math.max(floorBow, floorStern));
         double rawTarget = clampTarget(floorBelow + floorClearance);
 
-        // Blend with tactical depth preference: use the SHALLOWER of the two
-        // so tactical depth never violates floor safety margin.
-        // In deep water (floor -500m, target -450m), tactical -150m wins → sub
-        // cruises at -150m instead of hugging the floor.
-        // In shallow water (floor -120m, target -70m), floor target -70m wins →
-        // sub stays safe even if tactical wants -150m.
         if (!Double.isNaN(tacticalDepthPreference)) {
             double tacticalTarget = clampTarget(tacticalDepthPreference);
             if (tacticalTarget > rawTarget) {
@@ -545,7 +695,7 @@ public final class ObstacleAvoidanceSub implements SubmarineController {
             }
         }
 
-        // ── Step 5: Multi-point terrain scan ahead ──
+        // Step 5: Multi-point terrain scan ahead
         double worstFloor = floorBelow;
         double worstDist = 0;
         boolean dropOffAhead = false;
@@ -562,7 +712,7 @@ public final class ObstacleAvoidanceSub implements SubmarineController {
             }
         }
 
-        // ── Step 6: Terrain avoidance ──
+        // Step 6: Terrain avoidance
         double worstTarget = clampTarget(worstFloor + floorClearance);
         double margin = depth - (worstFloor + floorClearance);
 
@@ -574,9 +724,6 @@ public final class ObstacleAvoidanceSub implements SubmarineController {
                 rawTarget = worstTarget;
             }
 
-            // Only reduce throttle when the floor is close BELOW us (vertical threat).
-            // When the threat is ahead (worstDist > 0), we need speed for turning —
-            // reducing throttle kills rudder authority and increases turn radius.
             boolean threatBelow = ((depth - floorBelow) < floorClearance);
             if (threatBelow) {
                 throttle = Math.max(0.2, throttle * (1.0 - urgency * 0.6));
@@ -601,13 +748,13 @@ public final class ObstacleAvoidanceSub implements SubmarineController {
 
         double targetDepth = rawTarget;
 
-        // ── Step 7: Drop-off slowdown ──
+        // Step 7: Drop-off slowdown
         if (dropOffAhead) {
             throttle = Math.min(throttle, 0.3);
             if (state == State.PATROL) status = "DROP-OFF AHEAD";
         }
 
-        // ── Step 8: PD depth controller ──
+        // Step 8: PD depth controller
         double immediateGap = depth - floorBelow;
         double depthError = depth - targetDepth;
         double verticalSpeed = self.velocity().linear().z();
@@ -631,7 +778,7 @@ public final class ObstacleAvoidanceSub implements SubmarineController {
             sternPlanes = Math.clamp(-depthError * 0.04, 0, 0.6);
         }
 
-        // ── Step 9: Pull-up (gap closing while sinking) ──
+        // Step 9: Pull-up (gap closing while sinking)
         if (immediateGap < floorClearance * 1.5 && verticalSpeed < -0.5) {
             double pullUpUrgency = Math.clamp(
                     (floorClearance * 1.5 - immediateGap) / floorClearance, 0.2, 0.8);
@@ -641,7 +788,7 @@ public final class ObstacleAvoidanceSub implements SubmarineController {
             status = "PULL UP";
         }
 
-        // ── Step 10: Emergency pull-up ──
+        // Step 10: Emergency pull-up
         if (immediateGap < EMERGENCY_GAP && depth < targetDepth - 5) {
             sternPlanes = 0.8;
             ballast = 0.9;
@@ -649,14 +796,14 @@ public final class ObstacleAvoidanceSub implements SubmarineController {
             status = "EMERGENCY PULL UP";
         }
 
-        // ── Step 11: Surface avoidance ──
+        // Step 11: Surface avoidance
         if (depth > MIN_DEPTH) {
             sternPlanes = -0.5;
             ballast = 0.2;
             status = "SURFACE AVOIDANCE";
         }
 
-        // ── Step 12: Border avoidance ──
+        // Step 12: Border avoidance
         double distToBoundary = config.battleArea().distanceToBoundary(pos.x(), pos.y());
         if (distToBoundary < BOUNDARY_TURN_DIST) {
             status = "BORDER AVOIDANCE";
@@ -671,9 +818,9 @@ public final class ObstacleAvoidanceSub implements SubmarineController {
             rudder = Math.clamp(angleDiff * 2.0, -1, 1) * Math.max(urgency, 0.5);
         }
 
-        // ═══════════════════════════════════════════════════════════════
+        // =================================================================
         // Step 13: Output actuators
-        // ═══════════════════════════════════════════════════════════════
+        // =================================================================
         output.setRudder(rudder);
         output.setSternPlanes(sternPlanes);
         output.setThrottle(throttle);
@@ -683,45 +830,46 @@ public final class ObstacleAvoidanceSub implements SubmarineController {
         else if (!status.equals(state.name())) stateTag += "/" + status.charAt(0);
         output.setStatus(String.format("%s f:%.0f g:%.0f",
                 stateTag, -floorBelow, immediateGap));
+
+        // Publish tracked contact estimate every tick if available
+        if (hasTrackedContact) {
+            double posConf = refUncertainty / (refUncertainty + uncertaintyRadius);
+            double conf = contactAlive * posConf;
+            String label = uncertaintyRadius < 100 ? "ping" : "passive";
+            output.publishContactEstimate(new ContactEstimate(trackedX, trackedY, conf, contactAlive, uncertaintyRadius, label));
+        }
     }
 
-    // ── State machine helpers ────────────────────────────────────────
+    // State machine helpers
 
     private void enterState(State newState, long tick) {
         state = newState;
         if (newState == State.PATROL) {
-            // Preserve pursuit heading from last contact or approach target
-            if (lastContactTick >= 0 && tick - lastContactTick < 10000) {
-                pursuitBearing = lastContactBearing;
-                hasPursuit = true;
-            } else if (!Double.isNaN(approachTargetX)) {
-                // Was approaching from a ping fix — head toward that area
-                pursuitBearing = lastContactBearing;
-                hasPursuit = true;
-            } else {
-                hasPursuit = false;
-            }
+            // PATROL means fully lost: clear all tracking state
             contactTrack.clear();
             estimatedRange = Double.MAX_VALUE;
             rangeConfirmedByActive = false;
-            estimatedTargetHeading = Double.NaN;
-            prevEstTargetX = Double.NaN;
-            prevEstTargetY = Double.NaN;
-            prevEstTargetTick = -1;
-            approachTargetX = Double.NaN;
-            approachTargetY = Double.NaN;
             clearingBaffles = false;
             baffleClearTimer = 0;
             patrolSilenceTicks = 0;
+            // Clear tracked contact
+            hasTrackedContact = false;
+            trackedHeading = Double.NaN;
+            contactAlive = 0;
+            uncertaintyRadius = 0;
+            prevFixX = Double.NaN;
+            prevFixY = Double.NaN;
+            prevFixTick = -1;
+            pingFixHistory.clear();
         } else if (newState == State.CHASE) {
             chaseStartTick = tick;
         }
     }
 
     private boolean isBehindTarget() {
-        if (Double.isNaN(estimatedTargetHeading)) return false;
-        // If target heading ≈ contact bearing, the target is heading away from us → we're behind
-        double diff = Math.abs(angleDiff(estimatedTargetHeading, lastContactBearing));
+        if (Double.isNaN(trackedHeading)) return false;
+        // If target heading is close to contact bearing, the target is heading away from us
+        double diff = Math.abs(angleDiff(trackedHeading, lastContactBearing));
         return diff < BEHIND_ARC;
     }
 
@@ -768,56 +916,10 @@ public final class ObstacleAvoidanceSub implements SubmarineController {
         return shallowest - 30;
     }
 
-    // ── Contact log queries ─────────────────────────────────────────
-
-    private ContactRecord getBestRecentContact(long tick) {
-        for (int i = contactLog.size() - 1; i >= 0; i--) {
-            var r = contactLog.get(i);
-            if (tick - r.tick() < APPROACH_TIMEOUT) {
-                return r;
-            }
-        }
-        return null;
-    }
-
-    // ── Target heading estimation ────────────────────────────────────
-
-    private void updateTargetHeadingEstimate(double ourX, double ourY, long tick) {
-        if (estimatedRange >= 50000) return;
-        double tx = ourX + estimatedRange * Math.sin(lastContactBearing);
-        double ty = ourY + estimatedRange * Math.cos(lastContactBearing);
-        if (tick - prevEstTargetTick > 100 || Double.isNaN(prevEstTargetX)) {
-            if (!Double.isNaN(prevEstTargetX)) {
-                double dx = tx - prevEstTargetX;
-                double dy = ty - prevEstTargetY;
-                if (dx * dx + dy * dy > 25) { // moved at least 5m
-                    estimatedTargetHeading = Math.atan2(dx, dy);
-                    if (estimatedTargetHeading < 0) estimatedTargetHeading += 2 * Math.PI;
-                }
-            }
-            prevEstTargetX = tx;
-            prevEstTargetY = ty;
-            prevEstTargetTick = tick;
-        }
-
-        // Fallback: if we're chasing and heading roughly toward the contact,
-        // and bearing is stable, assume target is heading in the contact bearing direction
-        if (Double.isNaN(estimatedTargetHeading) && state == State.CHASE
-                && contactTrack.size() >= 3) {
-            var latest = contactTrack.getLast();
-            var older = contactTrack.get(contactTrack.size() - 3);
-            double bearingDrift = Math.abs(angleDiff(latest.bearing(), older.bearing()));
-            if (bearingDrift < Math.toRadians(10)) {
-                // Bearing is stable — target is likely heading away from us
-                estimatedTargetHeading = lastContactBearing;
-            }
-        }
-    }
-
-    // ── Triangulation ────────────────────────────────────────────────
+    // Triangulation
 
     static double triangulate(BearingFix a, BearingFix b) {
-        // Two bearing lines from different positions — find intersection distance
+        // Two bearing lines from different positions: find intersection distance
         double dx = a.x() - b.x();
         double dy = a.y() - b.y();
         double displacement = Math.sqrt(dx * dx + dy * dy);
@@ -826,11 +928,11 @@ public final class ObstacleAvoidanceSub implements SubmarineController {
         double dBearing = angleDiff(a.bearing(), b.bearing());
         if (Math.abs(dBearing) < Math.toRadians(0.5)) return Double.MAX_VALUE;
 
-        // Simplified: range ≈ displacement / sin(Δbearing)
+        // Simplified: range = displacement / sin(delta_bearing)
         return displacement / Math.abs(Math.sin(dBearing));
     }
 
-    // ── Passive range estimation ────────────────────────────────────
+    // Passive range estimation
 
     // Noise model constants (mirrored from SubmarinePhysics for SL estimation)
     private static final double BASE_SL_DB = 80.0;
@@ -841,7 +943,7 @@ public final class ObstacleAvoidanceSub implements SubmarineController {
      * If blade-rate speed estimate is available, computes a better SL.
      * Otherwise falls back to assuming patrol-speed SL.
      * SE = SL - TL - NL, where TL = spreading * log10(r)
-     * → r = 10^((SL - SE - NL) / spreading)
+     * so r = 10^((SL - SE - NL) / spreading)
      */
     static double estimateRangeFromSE(double signalExcess, double estimatedTargetSpeed) {
         double sl;
@@ -859,7 +961,7 @@ public final class ObstacleAvoidanceSub implements SubmarineController {
     /**
      * Estimate range from bearing rate (Target Motion Analysis).
      * When own-ship has cross-track speed relative to the contact bearing,
-     * range ≈ cross_speed / bearing_rate.
+     * range is approximately cross_speed / bearing_rate.
      * Needs at least TMA_HISTORY_TICKS of bearing history.
      */
     private double estimateRangeFromBearingRate(long tick, double ownSpeed, double ownHeading) {
@@ -889,7 +991,7 @@ public final class ObstacleAvoidanceSub implements SubmarineController {
         return crossSpeed / bearingRate;
     }
 
-    // ── Geometry helpers ─────────────────────────────────────────────
+    // Geometry helpers
 
     private double clampTarget(double target) {
         if (target < depthLimit) target = depthLimit;

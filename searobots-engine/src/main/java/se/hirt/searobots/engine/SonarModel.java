@@ -50,6 +50,7 @@ public final class SonarModel {
     static final double ACTIVE_PING_SL_DB = 220.0;
     static final int ACTIVE_PING_COOLDOWN_TICKS = 250;
     static final double TARGET_STRENGTH_DB = 20.0;
+    static final double RANGE_NOISE_FRACTION = 0.02; // 2% RMS range noise on active returns
 
     // Terrain occlusion — per-cell penalties (samples step at half-cell, so halved per sample)
     // Underwater ridge: up to 15 dB per cell of terrain above the sound path
@@ -128,10 +129,12 @@ public final class SonarModel {
 
                 double se = sl - tl - nl;
                 if (se > DETECTION_THRESHOLD_DB) {
-                    double bearingError = rng.nextGaussian() * bearingStdDev(se);
+                    double brgStdDev = bearingStdDev(se);
+                    double bearingError = rng.nextGaussian() * brgStdDev;
                     double reportedBearing = normalizeBearing(trueBearing + bearingError);
                     double estSpeed = estimateTargetSpeed(source.speed(), se, rng);
-                    passive.add(new SonarContact(reportedBearing, se, 0, false, estSpeed));
+                    passive.add(new SonarContact(reportedBearing, se, 0, false, estSpeed,
+                            brgStdDev, 0));
                 }
 
                 // --- Active sonar returns (for the listener's own ping) ---
@@ -139,14 +142,17 @@ public final class SonarModel {
                     // Round-trip: 2 * TL
                     double activeSe = ACTIVE_PING_SL_DB - 2 * tl + TARGET_STRENGTH_DB - nl;
                     if (activeSe > DETECTION_THRESHOLD_DB) {
-                        double bearingError = rng.nextGaussian() * bearingStdDev(activeSe);
+                        double activeBrgStdDev = bearingStdDev(activeSe);
+                        double bearingError = rng.nextGaussian() * activeBrgStdDev;
                         double reportedBearing = normalizeBearing(trueBearing + bearingError);
                         // Range with ~2% noise
-                        double rangeNoise = distance * 0.02 * rng.nextGaussian();
+                        double rangeRmsNoise = distance * RANGE_NOISE_FRACTION;
+                        double rangeNoise = rangeRmsNoise * rng.nextGaussian();
                         double reportedRange = Math.max(1.0, distance + rangeNoise);
                         // Active returns also get speed estimate from the passive component
                         double estSpeed = estimateTargetSpeed(source.speed(), se, rng);
-                        active.add(new SonarContact(reportedBearing, activeSe, reportedRange, true, estSpeed));
+                        active.add(new SonarContact(reportedBearing, activeSe, reportedRange, true,
+                                estSpeed, activeBrgStdDev, rangeRmsNoise));
                     }
                 }
             }

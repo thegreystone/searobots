@@ -29,14 +29,16 @@
 package se.hirt.searobots.api;
 
 /**
- * A sonar contact — what a submarine knows about a detected entity.
+ * A sonar contact: what a submarine knows about a detected entity.
  *
- * @param bearing        absolute bearing in radians [0, 2pi)
- * @param signalExcess   dB above detection threshold (higher = stronger/closer)
- * @param range          meters — only provided for active sonar returns (0 for passive)
- * @param isActive       true if this contact came from an active sonar return
- * @param estimatedSpeed target speed estimate from blade-rate tonals (m/s, -1 if unavailable).
- *                       Accuracy improves with signal excess (closer = better).
+ * @param bearing              absolute bearing in radians [0, 2pi)
+ * @param signalExcess         dB above detection threshold (higher = stronger/closer)
+ * @param range                meters (active sonar returns only, 0 for passive)
+ * @param isActive             true if this contact came from an active sonar return
+ * @param estimatedSpeed       target speed estimate from blade-rate tonals (m/s, -1 if unavailable)
+ * @param bearingUncertainty   1-sigma bearing error in radians, computed by the sonar model
+ * @param rangeUncertainty     1-sigma range error in meters (active returns only, 0 for passive)
  */
 public record SonarContact(double bearing, double signalExcess, double range, boolean isActive,
-                           double estimatedSpeed) {}
+                           double estimatedSpeed, double bearingUncertainty,
+                           double rangeUncertainty) {}

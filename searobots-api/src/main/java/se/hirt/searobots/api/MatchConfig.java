@@ -49,6 +49,8 @@ package se.hirt.searobots.api;
  * @param gridCellMeters      heightmap resolution (metres per cell)
  * @param minSeaFloorZ        shallowest sea floor elevation (e.g. -30)
  * @param maxSeaFloorZ        deepest sea floor elevation (e.g. -900)
+ * @param maxSubSpeed         maximum submarine speed in m/s (derived from
+ *                            thrust and drag parameters in the physics model)
  */
 public record MatchConfig(
         long worldSeed,
@@ -66,7 +68,8 @@ public record MatchConfig(
         double terrainMarginMeters,
         double gridCellMeters,
         double minSeaFloorZ,
-        double maxSeaFloorZ) {
+        double maxSeaFloorZ,
+        double maxSubSpeed) {
 
     public static MatchConfig withDefaults(long worldSeed) {
         return new MatchConfig(
@@ -79,12 +82,13 @@ public record MatchConfig(
                 50.0,
                 5.0,
                 30.0,
-                -400.0,   // rated depth — hull stress begins below this
-                -700.0,   // crush depth — guaranteed destruction
+                -400.0,   // rated depth: hull stress begins below this
+                -700.0,   // crush depth: guaranteed destruction
                 new BattleArea.Circular(5000.0),
                 1000.0,
                 10.0,
                 -30.0,
-                -1000.0); // terrain can go well below crush depth
+                -1000.0,  // terrain can go well below crush depth
+                15.0);    // max sub speed: sqrt(MAX_THRUST / DRAG_COEFF)
     }
 }

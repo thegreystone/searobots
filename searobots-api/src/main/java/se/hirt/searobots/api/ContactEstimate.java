@@ -26,16 +26,32 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
-package se.hirt.searobots.engine;
+package se.hirt.searobots.api;
 
-import se.hirt.searobots.api.ContactEstimate;
-import se.hirt.searobots.api.Pose;
-import se.hirt.searobots.api.Velocity;
-
-import java.awt.Color;
-import java.util.List;
-
-public record SubmarineSnapshot(int id, Pose pose, Velocity velocity, double speed,
-                                 Color color, boolean forfeited, int hp, double noiseLevel,
-                                 double throttle, String status, boolean pingRequested,
-                                 List<ContactEstimate> contactEstimates) {}
+/**
+ * A submarine's best guess for a contact's position. Published via
+ * {@link SubmarineOutput#publishContactEstimate} for viewer visualization
+ * and replay recording. Has no effect on the simulation.
+ *
+ * @param x                 estimated world X coordinate (meters)
+ * @param y                 estimated world Y coordinate (meters)
+ * @param confidence        overall confidence 0.0 (wild guess) to 1.0 (high),
+ *                          combines position accuracy and contact-alive belief
+ * @param contactAlive      belief that the contact still exists (0.0 to 1.0),
+ *                          decays without sonar evidence, independent of
+ *                          position accuracy
+ * @param uncertaintyRadius radius in meters of the area where the contact
+ *                          could realistically be (grows over time without
+ *                          a fresh fix)
+ * @param label             optional short label (e.g. "passive", "ping"), may be empty
+ */
+public record ContactEstimate(double x, double y, double confidence,
+                               double contactAlive, double uncertaintyRadius,
+                               String label) {
+    public ContactEstimate {
+        confidence = Math.clamp(confidence, 0.0, 1.0);
+        contactAlive = Math.clamp(contactAlive, 0.0, 1.0);
+        uncertaintyRadius = Math.max(0, uncertaintyRadius);
+        if (label == null) label = "";
+    }
+}

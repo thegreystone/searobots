@@ -31,6 +31,8 @@ package se.hirt.searobots.engine;
 import se.hirt.searobots.api.*;
 
 import java.awt.Color;
+import java.util.ArrayList;
+import java.util.List;
 
 public final class SubmarineEntity implements SubmarineOutput {
 
@@ -62,6 +64,9 @@ public final class SubmarineEntity implements SubmarineOutput {
     private double throttle;
     private double ballast = 0.5;
     private String status = "";
+
+    // contact estimates (published by controller, cleared each tick)
+    private final List<ContactEstimate> contactEstimates = new ArrayList<>();
 
     public SubmarineEntity(int id, SubmarineController controller, Vec3 spawn,
                            double heading, Color color, int maxHp) {
@@ -110,6 +115,13 @@ public final class SubmarineEntity implements SubmarineOutput {
         this.status = status != null && status.length() > 40 ? status.substring(0, 40) : (status != null ? status : "");
     }
 
+    @Override
+    public void publishContactEstimate(ContactEstimate estimate) {
+        if (estimate != null) {
+            contactEstimates.add(estimate);
+        }
+    }
+
     // ── accessors ──
 
     public int id() { return id; }
@@ -138,6 +150,8 @@ public final class SubmarineEntity implements SubmarineOutput {
     public double throttle() { return throttle; }
     public double ballast() { return ballast; }
     public String status() { return status; }
+    public List<ContactEstimate> contactEstimates() { return List.copyOf(contactEstimates); }
+    public void clearContactEstimates() { contactEstimates.clear(); }
 
     public void setX(double x) { this.x = x; }
     public void setY(double y) { this.y = y; }
@@ -167,7 +181,8 @@ public final class SubmarineEntity implements SubmarineOutput {
     }
 
     public SubmarineSnapshot snapshot() {
-        return new SubmarineSnapshot(id, pose(), velocity(), speed, color, forfeited, hp, noiseLevel, throttle, status, pingRequested);
+        return new SubmarineSnapshot(id, pose(), velocity(), speed, color, forfeited, hp, noiseLevel,
+                throttle, status, pingRequested, contactEstimates());
     }
 
     public SubmarineState state() {

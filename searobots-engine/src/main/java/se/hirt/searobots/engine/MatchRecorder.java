@@ -168,6 +168,24 @@ public final class MatchRecorder implements SimulationListener {
         if (status != null && !status.isEmpty()) {
             sb.append(",\"status\":\"").append(escapeJson(status)).append("\"");
         }
+        var estimates = sub.contactEstimates();
+        if (estimates != null && !estimates.isEmpty()) {
+            sb.append(",\"contacts\":[");
+            for (int i = 0; i < estimates.size(); i++) {
+                if (i > 0) sb.append(",");
+                var ce = estimates.get(i);
+                sb.append("{\"x\":").append(fmt(ce.x()));
+                sb.append(",\"y\":").append(fmt(ce.y()));
+                sb.append(",\"conf\":").append(fmt(ce.confidence()));
+                sb.append(",\"alive\":").append(fmt(ce.contactAlive()));
+                sb.append(",\"ur\":").append(fmt(ce.uncertaintyRadius()));
+                if (!ce.label().isEmpty()) {
+                    sb.append(",\"lbl\":\"").append(escapeJson(ce.label())).append("\"");
+                }
+                sb.append("}");
+            }
+            sb.append("]");
+        }
         sb.append("}");
     }
 

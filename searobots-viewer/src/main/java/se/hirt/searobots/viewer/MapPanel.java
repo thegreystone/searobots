@@ -61,6 +61,7 @@ public class MapPanel extends JPanel {
     private boolean showCurrents = false;
     private boolean showTrails = true;
     private boolean showRoute = false;
+    private boolean showContactEstimates = true;
 
     // mouse interaction
     private Point dragStart;
@@ -91,11 +92,16 @@ public class MapPanel extends JPanel {
     private static final double PING_FLASH_DURATION = 1.2;  // seconds — bright origin burst
     private static final double PING_FLASH_RADIUS = 150.0;  // meters
 
-    // Detection highlights — when a ping ring sweeps over another sub
+    // Detection highlights: when a ping ring sweeps over another sub
     private record DetectionHighlight(double x, double y, long startTick, Color color) {}
     private final java.util.ArrayList<DetectionHighlight> detectionHighlights = new java.util.ArrayList<>();
     private static final double DETECTION_HIGHLIGHT_DURATION = 1.5; // seconds
     private static final double DETECTION_HIGHLIGHT_RADIUS = 80.0;  // meters
+
+    // Ping fix trace records for contact tracking visualization
+    private record PingFixRecord(double x, double y, long tick, Color color, int subId) {}
+    private final java.util.ArrayList<PingFixRecord> pingFixRecords = new java.util.ArrayList<>();
+    private static final long PING_FIX_EXPIRE_TICKS = 3000; // ~60 seconds at 50Hz
 
     public MapPanel(GeneratedWorld world) {
         setBackground(new Color(5, 10, 30));
@@ -185,10 +191,39 @@ public class MapPanel extends JPanel {
             }
         }
 
-        // Expire finished animations
+        // Detect ping fixes from contact estimates for trace lines
+        for (var sub : subs) {
+            var estimates = sub.contactEstimates();
+            if (estimates == null || estimates.isEmpty()) continue;
+            for (var est : estimates) {
+                if (est.confidence() > 0.7 && "ping".equals(est.label())
+                        && est.uncertaintyRadius() < 100) {
+                    // Avoid duplicates: check distance from last fix for this sub
+                    boolean isDuplicate = false;
+                    for (int j = pingFixRecords.size() - 1; j >= 0; j--) {
+                        var prev = pingFixRecords.get(j);
+                        if (prev.subId == sub.id()) {
+                            double ddx = est.x() - prev.x;
+                            double ddy = est.y() - prev.y;
+                            if (ddx * ddx + ddy * ddy < 100) { // within 10m
+                                isDuplicate = true;
+                            }
+                            break;
+                        }
+                    }
+                    if (!isDuplicate) {
+                        pingFixRecords.add(new PingFixRecord(
+                                est.x(), est.y(), tick, sub.color(), sub.id()));
+                    }
+                }
+            }
+        }
+
+        // Expire finished animations and old ping fix records
         double maxTime = PING_MAX_RADIUS / PING_VISUAL_SPEED + 1.0;
         pingAnimations.removeIf(p -> (tick - p.startTick) / 50.0 > maxTime);
         detectionHighlights.removeIf(h -> (tick - h.startTick) / 50.0 > DETECTION_HIGHLIGHT_DURATION);
+        pingFixRecords.removeIf(r -> tick - r.tick > PING_FIX_EXPIRE_TICKS);
 
         repaint();
     }
@@ -234,6 +269,11 @@ public class MapPanel extends JPanel {
         repaint();
     }
 
+    public void toggleContactEstimates() {
+        showContactEstimates = !showContactEstimates;
+        repaint();
+    }
+
     // ── rendering ──────────────────────────────────────────────────────
 
     @Override
@@ -270,6 +310,7 @@ public class MapPanel extends JPanel {
         if (showRoute) drawSubmarineRoutes(g2);
         if (showTrails) drawSubmarineTrails(g2);
         drawSubmarines(g2);
+        if (showContactEstimates) drawContactEstimates(g2);
         drawPingAnimations(g2);
         drawDetectionHighlights(g2);
 
@@ -521,6 +562,82 @@ public class MapPanel extends JPanel {
             g2.draw(triangle);
 
             g2.setTransform(saved);
+        }
+    }
+
+    private void drawContactEstimates(Graphics2D g2) {
+        // g2 is in world-coordinate transform
+        var subs = submarines;
+        double markerSize = 20 / pixelsPerMeter;
+        long tick = simTick;
+
+        for (var sub : subs) {
+            var estimates = sub.contactEstimates();
+            if (estimates == null || estimates.isEmpty()) continue;
+
+            Color base = sub.color();
+            for (var est : estimates) {
+                double ur = est.uncertaintyRadius();
+                double alive = est.contactAlive();
+                int alpha = (int) (60 + 180 * alive);
+
+                // Uncertainty circle (translucent fill)
+                double minDrawRadius = 10; // minimum world-coord radius to draw
+                if (ur > minDrawRadius) {
+                    int circleAlpha = (int) (alive * 30);
+                    if (circleAlpha > 0) {
+                        g2.setColor(new Color(base.getRed(), base.getGreen(), base.getBlue(),
+                                Math.min(circleAlpha, 255)));
+                        g2.fill(new Ellipse2D.Double(
+                                est.x() - ur, est.y() - ur,
+                                ur * 2, ur * 2));
+                    }
+                    // Circle outline
+                    int outlineAlpha = (int) (alive * 120);
+                    if (outlineAlpha > 0) {
+                        g2.setColor(new Color(base.getRed(), base.getGreen(), base.getBlue(),
+                                Math.min(outlineAlpha, 255)));
+                        g2.setStroke(new BasicStroke((float) (1.5 / pixelsPerMeter)));
+                        g2.draw(new Ellipse2D.Double(
+                                est.x() - ur, est.y() - ur,
+                                ur * 2, ur * 2));
+                    }
+                }
+
+                // Center diamond marker
+                g2.setColor(new Color(base.getRed(), base.getGreen(), base.getBlue(), alpha));
+                double s = markerSize * (0.5 + 0.5 * alive);
+                var diamond = new Path2D.Double();
+                diamond.moveTo(est.x(), est.y() + s);
+                diamond.lineTo(est.x() + s * 0.6, est.y());
+                diamond.lineTo(est.x(), est.y() - s);
+                diamond.lineTo(est.x() - s * 0.6, est.y());
+                diamond.closePath();
+                g2.fill(diamond);
+
+                // Diamond outline
+                g2.setColor(new Color(255, 255, 255, alpha / 2));
+                g2.setStroke(new BasicStroke((float) (1.0 / pixelsPerMeter)));
+                g2.draw(diamond);
+            }
+
+            // Ping trace lines for this sub
+            g2.setStroke(new BasicStroke((float) (1.5 / pixelsPerMeter)));
+            PingFixRecord prev = null;
+            for (var rec : pingFixRecords) {
+                if (rec.subId != sub.id()) continue;
+                if (prev != null) {
+                    long age = tick - rec.tick;
+                    float ageFraction = Math.min((float) age / PING_FIX_EXPIRE_TICKS, 1.0f);
+                    int lineAlpha = (int) ((1.0f - ageFraction * 0.8f) * 180);
+                    if (lineAlpha > 0) {
+                        g2.setColor(new Color(rec.color.getRed(), rec.color.getGreen(),
+                                rec.color.getBlue(), lineAlpha));
+                        g2.draw(new Line2D.Double(prev.x, prev.y, rec.x, rec.y));
+                    }
+                }
+                prev = rec;
+            }
         }
     }
 
@@ -778,6 +895,7 @@ public class MapPanel extends JPanel {
                 "F      currents " + (showCurrents ? "ON" : "OFF"),
                 "T      trails " + (showTrails ? "ON" : "OFF"),
                 "R      route " + (showRoute ? "ON" : "OFF"),
+                "E      contacts " + (showContactEstimates ? "ON" : "OFF"),
                 "P      pause/resume",
                 "N      single step",
                 "1/2/3/4  speed 1x/2x/5x/10x",

@@ -46,4 +46,11 @@ public interface SubmarineOutput {
      * Subject to cooldown (250 ticks / 5 seconds).
      */
     default void activeSonarPing() {}
+
+    /**
+     * Publishes an estimated contact position for viewer visualization and
+     * replay recording. May be called multiple times per tick for multiple
+     * contacts. Has no effect on the simulation.
+     */
+    default void publishContactEstimate(ContactEstimate estimate) {}
 }

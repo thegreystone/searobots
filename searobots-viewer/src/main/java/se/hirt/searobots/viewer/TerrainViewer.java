@@ -93,6 +93,10 @@ public final class TerrainViewer {
             im.put(KeyStroke.getKeyStroke('R'), "route");
             am.put("route", action(panel::toggleRoute));
 
+            im.put(KeyStroke.getKeyStroke('e'), "contacts");
+            im.put(KeyStroke.getKeyStroke('E'), "contacts");
+            am.put("contacts", action(panel::toggleContactEstimates));
+
             im.put(KeyStroke.getKeyStroke('p'), "pause");
             im.put(KeyStroke.getKeyStroke('P'), "pause");
             am.put("pause", action(() -> {
