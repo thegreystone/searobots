@@ -36,7 +36,7 @@ import se.hirt.searobots.api.Waypoint;
 import java.awt.Color;
 import java.util.List;
 
-public record SubmarineSnapshot(int id, Pose pose, Velocity velocity, double speed,
+public record SubmarineSnapshot(int id, String name, Pose pose, Velocity velocity, double speed,
                                  Color color, boolean forfeited, int hp, double noiseLevel,
                                  double throttle, String status, boolean pingRequested,
                                  List<ContactEstimate> contactEstimates,

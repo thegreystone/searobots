@@ -164,13 +164,16 @@ public final class TerrainViewer {
             var sim = new SimulationLoop();
             this.loop = sim;
 
+            // Normal battle scenario: use procedural spawn points (face toward center)
+            var simWorld = world;
+
             List<SubmarineController> controllers = List.of(
                     new DefaultAttackSub(), new TargetDrone());
 
             MatchRecorder recorder = null;
             try {
                 var logDir = java.nio.file.Path.of("logs");
-                recorder = new MatchRecorder(world.config(), world.spawnPoints(), logDir);
+                recorder = new MatchRecorder(simWorld.config(), simWorld.spawnPoints(), logDir);
                 System.out.println("Recording match to " + recorder.logFile());
             } catch (java.io.IOException e) {
                 System.err.println("Failed to create match recorder: " + e.getMessage());
@@ -192,7 +195,7 @@ public final class TerrainViewer {
 
             List<VehicleConfig> configs = List.of(VehicleConfig.submarine(), VehicleConfig.surfaceShip());
             var t = Thread.ofPlatform().daemon().name("sim-loop").start(() ->
-                    sim.run(world, controllers, configs, listener));
+                    sim.run(simWorld, controllers, configs, listener));
             this.thread = t;
         }
 

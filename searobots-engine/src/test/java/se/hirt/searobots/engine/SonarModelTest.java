@@ -82,9 +82,9 @@ class SonarModelTest {
         var farSource = makeSub(1, new Vec3(0, 2000, -200), Math.PI, 100);
         var nearSource = makeSub(2, new Vec3(0, 1000, -200), Math.PI, 100);
 
-        var resultsFar = sonar.computeContacts(
+        var resultsFar = sonar.computeContacts(0L,
                 List.of(listener, farSource), TERRAIN, NO_LAYERS);
-        var resultsNear = sonar.computeContacts(
+        var resultsNear = sonar.computeContacts(0L,
                 List.of(listener, nearSource), TERRAIN, NO_LAYERS);
 
         var farContacts = resultsFar.get(0).passiveContacts();
@@ -103,8 +103,8 @@ class SonarModelTest {
         var quietSource = makeSub(1, new Vec3(0, 2000, -200), Math.PI, 88);
         var loudSource = makeSub(2, new Vec3(0, 2000, -200), Math.PI, 100);
 
-        var qr = sonar.computeContacts(List.of(listener, quietSource), TERRAIN, NO_LAYERS);
-        var lr = sonar.computeContacts(List.of(listener, loudSource), TERRAIN, NO_LAYERS);
+        var qr = sonar.computeContacts(0L, List.of(listener, quietSource), TERRAIN, NO_LAYERS);
+        var lr = sonar.computeContacts(0L, List.of(listener, loudSource), TERRAIN, NO_LAYERS);
 
         assertTrue(qr.get(0).passiveContacts().isEmpty(),
                 "Quiet sub (SL 88) at 2km should NOT be detected");
@@ -215,9 +215,9 @@ class SonarModelTest {
         var quietListener = makeSub(0, new Vec3(0, 0, -200), 0, 80);
         var sprintListener = makeSub(2, new Vec3(0, 0, -200), 0, 120);
 
-        var qr = sonar.computeContacts(
+        var qr = sonar.computeContacts(0L,
                 List.of(quietListener, source), TERRAIN, NO_LAYERS);
-        var sr = sonar.computeContacts(
+        var sr = sonar.computeContacts(0L,
                 List.of(sprintListener, source), TERRAIN, NO_LAYERS);
 
         assertFalse(qr.get(0).passiveContacts().isEmpty(),
@@ -234,7 +234,7 @@ class SonarModelTest {
         var listener = makeSub(0, new Vec3(0, 0, -200), 0, 80);
         var sourceBehind = makeSub(1, new Vec3(0, -500, -200), 0, 100);
 
-        var results = sonar.computeContacts(
+        var results = sonar.computeContacts(0L,
                 List.of(listener, sourceBehind), TERRAIN, NO_LAYERS);
 
         assertTrue(results.get(0).passiveContacts().isEmpty(),
@@ -247,7 +247,7 @@ class SonarModelTest {
         var listener = makeSub(0, new Vec3(0, 0, -200), 0, 80);
         var sourceAhead = makeSub(1, new Vec3(0, 500, -200), Math.PI, 100);
 
-        var results = sonar.computeContacts(
+        var results = sonar.computeContacts(0L,
                 List.of(listener, sourceAhead), TERRAIN, NO_LAYERS);
 
         assertFalse(results.get(0).passiveContacts().isEmpty(),
@@ -280,7 +280,7 @@ class SonarModelTest {
         pinger.activeSonarPing();
         var target = makeSub(1, new Vec3(0, 1000, -200), Math.PI, 80);
 
-        var results = sonar.computeContacts(
+        var results = sonar.computeContacts(0L,
                 List.of(pinger, target), TERRAIN, NO_LAYERS);
 
         var activeReturns = results.get(0).activeReturns();
@@ -299,7 +299,7 @@ class SonarModelTest {
         pinger.activeSonarPing();
         var farListener = makeSub(1, new Vec3(0, 5000, -200), Math.PI, 80);
 
-        var results = sonar.computeContacts(
+        var results = sonar.computeContacts(0L,
                 List.of(pinger, farListener), TERRAIN, NO_LAYERS);
 
         var passiveOnListener = results.get(1).passiveContacts();
@@ -317,7 +317,7 @@ class SonarModelTest {
         var target = makeSub(1, new Vec3(0, 500, -200), Math.PI, 80);
 
         pinger.activeSonarPing();
-        var results1 = sonar.computeContacts(
+        var results1 = sonar.computeContacts(0L,
                 List.of(pinger, target), TERRAIN, NO_LAYERS);
         sonar.postTick(List.of(pinger, target));
 
@@ -327,7 +327,7 @@ class SonarModelTest {
                 "Cooldown should be set by computeContacts and decremented once by postTick");
 
         pinger.activeSonarPing();
-        var results2 = sonar.computeContacts(
+        var results2 = sonar.computeContacts(0L,
                 List.of(pinger, target), TERRAIN, NO_LAYERS);
 
         assertTrue(results2.get(0).activeReturns().isEmpty(),
@@ -345,9 +345,9 @@ class SonarModelTest {
         pinger2.activeSonarPing();
         var farTarget = makeSub(3, new Vec3(0, 5000, -200), Math.PI, 80);
 
-        var nearResults = sonar.computeContacts(
+        var nearResults = sonar.computeContacts(0L,
                 List.of(pinger1, nearTarget), TERRAIN, NO_LAYERS);
-        var farResults = sonar.computeContacts(
+        var farResults = sonar.computeContacts(0L,
                 List.of(pinger2, farTarget), TERRAIN, NO_LAYERS);
 
         var nearActive = nearResults.get(0).activeReturns();
@@ -498,7 +498,7 @@ class SonarModelTest {
         var listener = makeSub(0, new Vec3(0, -800, -200), 0, 80); // facing north
         var source = makeSub(1, new Vec3(0, 800, -200), Math.PI, 120);
 
-        var results = sonar.computeContacts(List.of(listener, source), terrain, NO_LAYERS);
+        var results = sonar.computeContacts(0L, List.of(listener, source), terrain, NO_LAYERS);
         assertTrue(results.get(0).passiveContacts().isEmpty(),
                 "Island should block passive detection even for a loud source");
     }
@@ -512,7 +512,7 @@ class SonarModelTest {
                 headingToward(0, -800, 600, 800), 80);
         var source = makeSub(1, new Vec3(600, 800, -200), Math.PI, 120);
 
-        var results = sonar.computeContacts(List.of(listener, source), terrain, NO_LAYERS);
+        var results = sonar.computeContacts(0L, List.of(listener, source), terrain, NO_LAYERS);
         assertFalse(results.get(0).passiveContacts().isEmpty(),
                 "Clear path around island should allow passive detection");
     }
@@ -525,7 +525,7 @@ class SonarModelTest {
         var listener = makeSub(0, new Vec3(0, 400, -200), 0, 80); // north, facing north
         var source = makeSub(1, new Vec3(0, 800, -200), Math.PI, 100);
 
-        var results = sonar.computeContacts(List.of(listener, source), terrain, NO_LAYERS);
+        var results = sonar.computeContacts(0L, List.of(listener, source), terrain, NO_LAYERS);
         assertFalse(results.get(0).passiveContacts().isEmpty(),
                 "Both subs on same side of island should detect normally");
     }
@@ -541,7 +541,7 @@ class SonarModelTest {
         pinger.activeSonarPing();
         var target = makeSub(1, new Vec3(0, 600, -200), Math.PI, 80);
 
-        var results = sonar.computeContacts(List.of(pinger, target), terrain, NO_LAYERS);
+        var results = sonar.computeContacts(0L, List.of(pinger, target), terrain, NO_LAYERS);
         assertTrue(results.get(0).activeReturns().isEmpty(),
                 "Active ping should not return through an island");
         assertTrue(results.get(1).passiveContacts().isEmpty(),
@@ -558,7 +558,7 @@ class SonarModelTest {
         pinger.activeSonarPing();
         var target = makeSub(1, new Vec3(500, -400, -200), Math.PI, 80);
 
-        var results = sonar.computeContacts(List.of(pinger, target), terrain, NO_LAYERS);
+        var results = sonar.computeContacts(0L, List.of(pinger, target), terrain, NO_LAYERS);
         assertFalse(results.get(0).activeReturns().isEmpty(),
                 "Active ping should work when path doesn't cross island");
     }
@@ -582,7 +582,7 @@ class SonarModelTest {
         var source = makeSub(1, new Vec3(-800, 0, -200), 0, 120);
 
         assertTrue(terrain.elevationAt(0, 0) < -300, "Mid-channel should be deep ocean");
-        var results = sonar.computeContacts(List.of(listener, source), terrain, NO_LAYERS);
+        var results = sonar.computeContacts(0L, List.of(listener, source), terrain, NO_LAYERS);
         assertFalse(results.get(0).passiveContacts().isEmpty(),
                 "Sound should travel through wide channel between islands");
     }
@@ -597,7 +597,7 @@ class SonarModelTest {
 
         // Path from (0,-800) to (0,800) goes through island at (0,-500)
         assertTrue(terrain.elevationAt(0, -500) > 0, "Island center should be above sea level");
-        var results = sonar.computeContacts(List.of(listener, source), terrain, NO_LAYERS);
+        var results = sonar.computeContacts(0L, List.of(listener, source), terrain, NO_LAYERS);
         assertTrue(results.get(0).passiveContacts().isEmpty(),
                 "Path through island should block detection");
     }
@@ -627,7 +627,7 @@ class SonarModelTest {
                 headingToward(0, -300, 0, 300), 80); // facing toward source
         var shallowSub = makeSub(1, new Vec3(0, 300, -80), Math.PI, 120);
 
-        var results = sonar.computeContacts(List.of(deepSub, shallowSub), terrain, NO_LAYERS);
+        var results = sonar.computeContacts(0L, List.of(deepSub, shallowSub), terrain, NO_LAYERS);
         assertTrue(results.get(0).passiveContacts().isEmpty(),
                 "Cliff should hide deep sub from shallow sub");
     }
@@ -640,7 +640,7 @@ class SonarModelTest {
         var sub1 = makeSub(0, new Vec3(0, -400, -300), Math.PI, 80); // facing south
         var sub2 = makeSub(1, new Vec3(0, -800, -300), 0, 100);
 
-        var results = sonar.computeContacts(List.of(sub1, sub2), terrain, NO_LAYERS);
+        var results = sonar.computeContacts(0L, List.of(sub1, sub2), terrain, NO_LAYERS);
         assertFalse(results.get(0).passiveContacts().isEmpty(),
                 "Both on deep side -- cliff doesn't block");
     }
@@ -777,7 +777,7 @@ class SonarModelTest {
                 headingToward(0, -250, 0, 400), 80);
         var hunter = makeSub(1, new Vec3(0, 400, -80), Math.PI, 100);
 
-        var results = sonar.computeContacts(List.of(hider, hunter), terrain, NO_LAYERS);
+        var results = sonar.computeContacts(0L, List.of(hider, hunter), terrain, NO_LAYERS);
         assertTrue(results.get(0).passiveContacts().isEmpty(),
                 "Sub hugging cliff base should be hidden from sub on the shelf");
     }
@@ -791,7 +791,7 @@ class SonarModelTest {
                 headingToward(0, -250, 0, -800), 80); // facing toward hunter
         var hunter = makeSub(1, new Vec3(0, -800, -300), 0, 100);
 
-        var results = sonar.computeContacts(List.of(hider, hunter), terrain, NO_LAYERS);
+        var results = sonar.computeContacts(0L, List.of(hider, hunter), terrain, NO_LAYERS);
         assertFalse(results.get(0).passiveContacts().isEmpty(),
                 "Cliff base hider exposed to hunter from the deep side");
     }

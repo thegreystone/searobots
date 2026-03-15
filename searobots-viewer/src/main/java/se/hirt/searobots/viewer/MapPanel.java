@@ -969,8 +969,8 @@ public class MapPanel extends JPanel {
 
             String label = sub.forfeited() ? "FORFEIT"
                     : sub.hp() <= 0 ? "DEAD" : "";
-            g2.drawString(String.format("Sub %d  HP %d  %s",
-                    sub.id(), sub.hp(), label), x, y);
+            g2.drawString(String.format("%s (#%d)  HP %d  %s",
+                    sub.name(), sub.id(), sub.hp(), label), x, y);
             y += lineH;
 
             g2.setColor(new Color(c.getRed(), c.getGreen(), c.getBlue(), 200));
@@ -982,10 +982,12 @@ public class MapPanel extends JPanel {
             // Noise + throttle
             double noise = sub.noiseLevel();
             double throttle = sub.throttle();
-            int noiseR = noise > 0.01 ? (int) (255 * Math.min(noise, 1.0)) : 0;
+            // Convert linear noise back to dB for display (80 dB = 1.0 linear)
+            double noiseDb = 80 + 20 * Math.log10(Math.max(noise, 0.001));
+            int noiseR = (int) Math.clamp((noiseDb - 70) * 25.5, 0, 255);
             g2.setColor(new Color(Math.max(noiseR, 80), 200 - noiseR / 2, 50, 200));
-            g2.drawString(String.format("  noise:%4.0f%%  throttle:%+4.0f%%",
-                    noise * 100, throttle * 100), x, y);
+            g2.drawString(String.format("  noise:%3.0f dB  throttle:%+4.0f%%",
+                    noiseDb, throttle * 100), x, y);
             y += lineH;
 
             if (sub.status() != null && !sub.status().isEmpty()) {

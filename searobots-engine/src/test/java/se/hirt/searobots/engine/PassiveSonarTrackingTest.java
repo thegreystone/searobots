@@ -102,7 +102,7 @@ class PassiveSonarTrackingTest {
         double listenerSL = estimateSL(2.0);
         var listener = makeSub(0, new Vec3(0, 0, -200), 0, listenerSL);
 
-        var results = sonar.computeContacts(List.of(listener, target), TERRAIN, NO_LAYERS);
+        var results = sonar.computeContacts(0L, List.of(listener, target), TERRAIN, NO_LAYERS);
 
         var passiveContacts = results.get(0).passiveContacts();
         assertFalse(passiveContacts.isEmpty(),
@@ -149,7 +149,7 @@ class PassiveSonarTrackingTest {
         double listenerSL = estimateSL(2.0);
         var listener = makeSub(0, new Vec3(0, 0, -200), 0, listenerSL);
 
-        var results = sonar.computeContacts(List.of(listener, target), TERRAIN, NO_LAYERS);
+        var results = sonar.computeContacts(0L, List.of(listener, target), TERRAIN, NO_LAYERS);
 
         var passiveContacts = results.get(0).passiveContacts();
 
@@ -189,7 +189,7 @@ class PassiveSonarTrackingTest {
             var listener = makeSub(0, new Vec3(0, 0, -200), 0, listenerSL);
             var target = makeSub(1, new Vec3(0, ranges[i], -200), Math.PI, targetSL);
 
-            var results = sonar.computeContacts(List.of(listener, target), TERRAIN, NO_LAYERS);
+            var results = sonar.computeContacts(0L, List.of(listener, target), TERRAIN, NO_LAYERS);
             var contacts = results.get(0).passiveContacts();
             detected[i] = !contacts.isEmpty();
             seValues[i] = detected[i] ? contacts.getFirst().signalExcess() : Double.NaN;
@@ -459,9 +459,13 @@ class PassiveSonarTrackingTest {
             double reportedBearing = trueBearing + bearingNoise;
             double brgStdDev = SonarModel.bearingStdDev(se);
 
-            // Create passive contact
-            var contact = new SonarContact(reportedBearing, se, 0, false,
-                    8.0, brgStdDev, 0, 90.0);
+            // Create passive contact with engine TMA range estimate.
+            // The engine tracker computes SE-based range: 10^((SL - SE - NL) / 10)
+            double tmaRange = Math.pow(10, (90.0 - se - 60.0) / 10.0);
+            double rangeUncertainty = tmaRange * 0.3; // rough passive estimate
+            double solQuality = Math.clamp(tick * 0.003, 0.15, 0.6);
+            var contact = new SonarContact(reportedBearing, se, tmaRange, false,
+                    8.0, brgStdDev, rangeUncertainty, 90.0, solQuality, Double.NaN);
 
             var pose = new Pose(new Vec3(subX, subY, -200), heading, 0, 0);
             var velocity = new Velocity(new Vec3(subSpeed, 0, 0), Vec3.ZERO);
@@ -479,7 +483,7 @@ class PassiveSonarTrackingTest {
         System.out.println("  True range: ~2000m");
         System.out.println("  Estimated range: " + String.format("%.0f", lastEstimatedRange) + "m");
         System.out.println("  Has tracked contact: " + ctrl.hasTrackedContact());
-        System.out.println("  Contact track size: " + ctrl.contactTrack().size());
+        System.out.println("  Has tracked contact: " + ctrl.hasTrackedContact());
 
         // The sub has moved ~800m east while receiving contacts from bearing ~0.
         // Triangulation should produce a range estimate. We accept anything

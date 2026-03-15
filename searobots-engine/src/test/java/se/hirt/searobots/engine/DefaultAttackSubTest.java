@@ -655,9 +655,9 @@ class DefaultAttackSubTest {
 
     private static final TerrainMap DEEP_FLAT = flatTerrain(-500);
     private static final SonarContact CONTACT_NORTH =
-            new SonarContact(0, 10.0, 0, false, -1, 0, 0, 90.0);
+            new SonarContact(0, 10.0, 0, false, -1, 0, 0, 90.0, 0.0, Double.NaN);
     private static final SonarContact CONTACT_NORTH_LOUD =
-            new SonarContact(0, 20.0, 0, false, -1, 0, 0, 90.0);
+            new SonarContact(0, 20.0, 0, false, -1, 0, 0, 90.0, 0.0, Double.NaN);
 
     // Feed N ticks with the same passive contact to trigger state transitions
     private void feedContactTicks(int n, long startTick, double x, double y, double z,
@@ -728,7 +728,7 @@ class DefaultAttackSubTest {
             // From (300, 0): bearing = atan2(0-300, 2000-0) ~ -0.149 rad
             double bearing2 = Math.atan2(0 - 300, 2000 - 0);
             if (bearing2 < 0) bearing2 += 2 * Math.PI;
-            var contact2 = new SonarContact(bearing2, 10.0, 0, false, -1, 0, 0, 90.0);
+            var contact2 = new SonarContact(bearing2, 10.0, 0, false, -1, 0, 0, 90.0, 0.0, Double.NaN);
 
             // First fix at (0, 0)
             tickFull(DEEP_FLAT, List.of(), 100, 0, 0, -200, 0,
@@ -749,12 +749,12 @@ class DefaultAttackSubTest {
                     0, 0, -200, 0, CONTACT_NORTH);
 
             // Give an active return with range 2000m, triggers CHASE
-            var activeContact = new SonarContact(0, 15.0, 2000, true, -1, 0, 0, 90.0);
+            var activeContact = new SonarContact(0, 15.0, 2000, true, -1, 0, 0, 90.0, 0.95, Double.NaN);
             tickFull(DEEP_FLAT, List.of(), 100, 0, 0, -200, 0,
                     Vec3.ZERO, 1000, List.of(), List.of(activeContact), 0);
 
             // Give an active return with range 400m, triggers RAM
-            var closeContact = new SonarContact(0, 25.0, 400, true, -1, 0, 0, 90.0);
+            var closeContact = new SonarContact(0, 25.0, 400, true, -1, 0, 0, 90.0, 0.95, Double.NaN);
             tickFull(DEEP_FLAT, List.of(), 200, 0, 0, -200, 0,
                     Vec3.ZERO, 1000, List.of(), List.of(closeContact), 0);
 
@@ -873,28 +873,30 @@ class DefaultAttackSubTest {
             feedContactTicks(DefaultAttackSub.CONTACT_CONFIRM_TICKS, 0,
                     0, 0, -200, 0, CONTACT_NORTH);
 
-            // Feed contacts from different positions with appropriate bearings.
+            // Feed contacts from different positions with engine TMA range estimates.
             // Target at (0, 2000). From (0,0) bearing is 0 (north).
+            // Engine TMA provides range ~2000m via SE-based estimation.
+            var contactWithRange = new SonarContact(0, 10.0, 2000, false, -1, 0, 500, 90.0, 0.3, Double.NaN);
             tickFull(DEEP_FLAT, List.of(), 100, 0, 0, -200, 0,
-                    Vec3.ZERO, 1000, List.of(CONTACT_NORTH), List.of(), 0);
+                    Vec3.ZERO, 1000, List.of(contactWithRange), List.of(), 0);
             // From (300, 0), bearing to (0, 2000) = atan2(0-300, 2000-0) ~ -0.149 rad, +2pi ~ 6.13
             double bearing2 = Math.atan2(0 - 300.0, 2000.0);
             if (bearing2 < 0) bearing2 += 2 * Math.PI;
-            var contact2 = new SonarContact(bearing2, 10.0, 0, false, -1, 0, 0, 90.0);
+            var contact2 = new SonarContact(bearing2, 10.0, 2020, false, -1, 0, 500, 90.0, 0.35, Double.NaN);
             tickFull(DEEP_FLAT, List.of(), 200, 300, 0, -200, 0,
                     Vec3.ZERO, 1000, List.of(contact2), List.of(), 0);
 
-            assertTrue(controller.contactTrack().size() >= 2,
-                    "Should accumulate bearing fixes from different positions");
+            assertTrue(controller.hasTrackedContact(),
+                    "Should have tracked contact from engine TMA data");
             assertTrue(controller.estimatedRange() < Double.MAX_VALUE,
-                    "Should have a range estimate after two fixes");
+                    "Should have a range estimate from engine TMA data");
         }
 
         @Test
         void trackingHeadsTowardTrackedContactWhenNoFreshContact() {
             startMatch(DEEP_FLAT);
             // Get an active fix to establish tracked contact
-            var active = new SonarContact(Math.PI / 2, 15.0, 5000, true, -1, 0, 0, 90.0);
+            var active = new SonarContact(Math.PI / 2, 15.0, 5000, true, -1, 0, 0, 90.0, 0.95, Double.NaN);
             tickFull(DEEP_FLAT, List.of(), 1, 0, 0, -200, 0,
                     Vec3.ZERO, 1000, List.of(), List.of(active), 0);
             // Now in CHASE. Force back to TRACKING by decaying confidence
@@ -909,7 +911,7 @@ class DefaultAttackSubTest {
             assertEquals(DefaultAttackSub.State.TRACKING, controller.state());
 
             // Give an active ping to establish tracked contact to the east
-            var activeEast = new SonarContact(Math.PI / 2, 15.0, 5000, true, -1, 0, 0, 90.0);
+            var activeEast = new SonarContact(Math.PI / 2, 15.0, 5000, true, -1, 0, 0, 90.0, 0.95, Double.NaN);
             tickFull(DEEP_FLAT, List.of(), 100, 0, 0, -200, 0,
                     Vec3.ZERO, 1000, List.of(), List.of(activeEast), 0);
             // Now in CHASE with tracked contact to the east
@@ -948,7 +950,7 @@ class DefaultAttackSubTest {
             feedContactTicks(DefaultAttackSub.CONTACT_CONFIRM_TICKS, 0,
                     0, 0, -200, 0, CONTACT_NORTH);
             // Active return with range 2000m triggers CHASE
-            var activeContact = new SonarContact(0, 15.0, 2000, true, -1, 0, 0, 90.0);
+            var activeContact = new SonarContact(0, 15.0, 2000, true, -1, 0, 0, 90.0, 0.95, Double.NaN);
             tickFull(DEEP_FLAT, List.of(), 100, 0, 0, -200, 0,
                     Vec3.ZERO, 1000, List.of(), List.of(activeContact), 0);
         }
@@ -1031,23 +1033,19 @@ class DefaultAttackSubTest {
             double tx2 = 100, ty2 = 2000;
             double bearing2 = Math.atan2(tx2, ty2);
             double range2 = Math.sqrt(tx2 * tx2 + ty2 * ty2);
-            var active2 = new SonarContact(bearing2, 15.0, range2, true, -1, 0, 0, 90.0);
+            // Engine tracker provides heading estimate (east, pi/2) on second ping.
+            var active2 = new SonarContact(bearing2, 15.0, range2, true, -1, 0, 0, 90.0, 0.95, Math.PI / 2);
             tickFull(DEEP_FLAT, List.of(), 800, 0, 0, -200, 0,
                     Vec3.ZERO, 1000, List.of(), List.of(active2), 0);
 
             assertTrue(!Double.isNaN(controller.trackedHeading()),
                     "Should have tracked heading");
 
-            // Third ping: target now at (400, 2000), still heading east, range ~2040m.
-            // Displacement from (100,2000) to (400,2000) = 300m in 20s = 1000 ticks. Plausible.
-            // But range is ~2040 which is above the 1500m stern-aim threshold,
-            // so we need the target closer.
-            // Instead: target at (400, 1000), range ~1077m, heading east.
-            // Displacement from (100,2000) to (400,1000) = ~1044m in 40s = 2000 ticks. Plausible at 15 m/s.
+            // Third ping: target at (400, 1000), range ~1077m, heading east.
             double tx3 = 400, ty3 = 1000;
             double bearing3 = Math.atan2(tx3, ty3);
             double range3 = Math.sqrt(tx3 * tx3 + ty3 * ty3);
-            var active3 = new SonarContact(bearing3, 15.0, range3, true, -1, 0, 0, 90.0);
+            var active3 = new SonarContact(bearing3, 15.0, range3, true, -1, 0, 0, 90.0, 0.95, Math.PI / 2);
             tickFull(DEEP_FLAT, List.of(), 2800, 0, 0, -200, 0,
                     Vec3.ZERO, 1000, List.of(), List.of(active3), 0);
 
@@ -1065,7 +1063,7 @@ class DefaultAttackSubTest {
             // Let's just verify the sub steers toward the target area (positive rudder
             // since target is east of us).
             var out = tickFull(DEEP_FLAT, List.of(), 2801, 0, 0, -200, 0,
-                    Vec3.ZERO, 1000, List.of(new SonarContact(bearing3, 10.0, 0, false, -1, 0, 0, 90.0)),
+                    Vec3.ZERO, 1000, List.of(new SonarContact(bearing3, 10.0, 0, false, -1, 0, 0, 90.0, 0.0, Double.NaN)),
                     List.of(), 0);
             // The sub should have waypoints leading toward the target area.
             // With the path planner, steering goes through waypoints rather than
@@ -1177,11 +1175,11 @@ class DefaultAttackSubTest {
             feedContactTicks(DefaultAttackSub.CONTACT_CONFIRM_TICKS, 0,
                     0, 0, -200, 0, CONTACT_NORTH);
             // Active return at 2000m, CHASE
-            var activeChase = new SonarContact(0, 15.0, 2000, true, -1, 0, 0, 90.0);
+            var activeChase = new SonarContact(0, 15.0, 2000, true, -1, 0, 0, 90.0, 0.95, Double.NaN);
             tickFull(DEEP_FLAT, List.of(), 100, 0, 0, -200, 0,
                     Vec3.ZERO, 1000, List.of(), List.of(activeChase), 0);
             // Active return at 400m, RAM
-            var activeRam = new SonarContact(0, 25.0, 400, true, -1, 0, 0, 90.0);
+            var activeRam = new SonarContact(0, 25.0, 400, true, -1, 0, 0, 90.0, 0.95, Double.NaN);
             tickFull(DEEP_FLAT, List.of(), 200, 0, 0, -200, 0,
                     Vec3.ZERO, 1000, List.of(), List.of(activeRam), 0);
             assertEquals(DefaultAttackSub.State.RAM, controller.state());
@@ -1199,10 +1197,10 @@ class DefaultAttackSubTest {
             startMatch(DEEP_FLAT);
             feedContactTicks(DefaultAttackSub.CONTACT_CONFIRM_TICKS, 0,
                     0, 0, -200, 0, CONTACT_NORTH);
-            var activeChase = new SonarContact(0, 15.0, 2000, true, -1, 0, 0, 90.0);
+            var activeChase = new SonarContact(0, 15.0, 2000, true, -1, 0, 0, 90.0, 0.95, Double.NaN);
             tickFull(DEEP_FLAT, List.of(), 100, 0, 0, -200, 0,
                     Vec3.ZERO, 1000, List.of(), List.of(activeChase), 0);
-            var activeRam = new SonarContact(0, 25.0, 400, true, -1, 0, 0, 90.0);
+            var activeRam = new SonarContact(0, 25.0, 400, true, -1, 0, 0, 90.0, 0.95, Double.NaN);
             tickFull(DEEP_FLAT, List.of(), 200, 0, 0, -200, 0,
                     Vec3.ZERO, 1000, List.of(), List.of(activeRam), 0);
             assertEquals(DefaultAttackSub.State.RAM, controller.state());
@@ -1220,17 +1218,17 @@ class DefaultAttackSubTest {
             feedContactTicks(DefaultAttackSub.CONTACT_CONFIRM_TICKS, 0,
                     0, 0, -200, 0, CONTACT_NORTH);
             // Active return at 2000m, CHASE
-            var activeChase = new SonarContact(0, 15.0, 2000, true, -1, 0, 0, 90.0);
+            var activeChase = new SonarContact(0, 15.0, 2000, true, -1, 0, 0, 90.0, 0.95, Double.NaN);
             tickFull(DEEP_FLAT, List.of(), 100, 0, 0, -200, 0,
                     Vec3.ZERO, 1000, List.of(), List.of(activeChase), 0);
             // Active return at 400m, RAM
-            var activeRam = new SonarContact(0, 25.0, 400, true, -1, 0, 0, 90.0);
+            var activeRam = new SonarContact(0, 25.0, 400, true, -1, 0, 0, 90.0, 0.95, Double.NaN);
             tickFull(DEEP_FLAT, List.of(), 200, 0, 0, -200, 0,
                     Vec3.ZERO, 1000, List.of(), List.of(activeRam), 0);
             assertEquals(DefaultAttackSub.State.RAM, controller.state());
 
             // Give an active return at 900m (> RAM_OVERSHOT_RANGE) to update estimatedRange
-            var activeOvershot = new SonarContact(0, 15.0, 900, true, -1, 0, 0, 90.0);
+            var activeOvershot = new SonarContact(0, 15.0, 900, true, -1, 0, 0, 90.0, 0.95, Double.NaN);
             tickFull(DEEP_FLAT, List.of(), 201, 0, 0, -200, 0,
                     Vec3.ZERO, 1000, List.of(), List.of(activeOvershot), 0);
             // Now wait 51+ ticks with no contact so ticksSinceContact > 50
@@ -1238,38 +1236,6 @@ class DefaultAttackSubTest {
                     Vec3.ZERO, 1000, List.of(), List.of(), 0);
             assertEquals(DefaultAttackSub.State.CHASE, controller.state(),
                     "RAM overshot should transition to CHASE (not PATROL)");
-        }
-    }
-
-    // Triangulation
-
-    @Nested
-    class Triangulation {
-
-        @Test
-        void triangulatesRangeFromTwoBearings() {
-            // Fix 1: at (0, 0), bearing 0 (north)
-            // Fix 2: at (300, 0), bearing ~-0.149 rad (slightly west of north)
-            // Target at (0, 2000)
-            var fix1 = new DefaultAttackSub.BearingFix(0, 0, 0, 0, 0, 5, 0);
-            double bearing2 = Math.atan2(0 - 300.0, 2000.0 - 0);
-            if (bearing2 < 0) bearing2 += 2 * Math.PI;
-            var fix2 = new DefaultAttackSub.BearingFix(100, bearing2, 0, 300, 0, 5, 0);
-
-            double range = DefaultAttackSub.triangulate(fix2, fix1);
-            assertTrue(range > 1000 && range < 5000,
-                    "Triangulated range should be ~2000m, got " + range);
-        }
-
-        @Test
-        void parallelBearingsGiveNoRange() {
-            // Both bearings identical, no intersection
-            var fix1 = new DefaultAttackSub.BearingFix(0, 0, 0, 0, 0, 5, 0);
-            var fix2 = new DefaultAttackSub.BearingFix(100, 0, 0, 300, 0, 5, 0);
-
-            double range = DefaultAttackSub.triangulate(fix2, fix1);
-            assertEquals(Double.MAX_VALUE, range,
-                    "Parallel bearings should give no range estimate");
         }
     }
 
@@ -1281,7 +1247,7 @@ class DefaultAttackSubTest {
         @Test
         void activePingCreatesTrackedContact() {
             startMatch(DEEP_FLAT);
-            var active = new SonarContact(0, 15.0, 5000, true, -1, 0, 0, 90.0);
+            var active = new SonarContact(0, 15.0, 5000, true, -1, 0, 0, 90.0, 0.95, Double.NaN);
             tickFull(DEEP_FLAT, List.of(), 1, 0, 0, -200, 0,
                     Vec3.ZERO, 1000, List.of(), List.of(active), 0);
 
@@ -1298,7 +1264,7 @@ class DefaultAttackSubTest {
         void activePingTransitionsDirectlyToChase() {
             startMatch(DEEP_FLAT);
             // No prior contacts, go straight from PATROL to CHASE on active return
-            var active = new SonarContact(0, 15.0, 8000, true, -1, 0, 0, 90.0);
+            var active = new SonarContact(0, 15.0, 8000, true, -1, 0, 0, 90.0, 0.95, Double.NaN);
             tickFull(DEEP_FLAT, List.of(), 1, 0, 0, -200, 0,
                     Vec3.ZERO, 1000, List.of(), List.of(active), 0);
 
@@ -1314,7 +1280,7 @@ class DefaultAttackSubTest {
             assertEquals(DefaultAttackSub.State.TRACKING, controller.state());
 
             // Active return at long range should bypass CHASE_RANGE check
-            var active = new SonarContact(0, 15.0, 10000, true, -1, 0, 0, 90.0);
+            var active = new SonarContact(0, 15.0, 10000, true, -1, 0, 0, 90.0, 0.95, Double.NaN);
             tickFull(DEEP_FLAT, List.of(), 100, 0, 0, -200, 0,
                     Vec3.ZERO, 1000, List.of(), List.of(active), 0);
 
@@ -1326,7 +1292,7 @@ class DefaultAttackSubTest {
         void trackedContactConfidenceDecays() {
             startMatch(DEEP_FLAT);
             // Active ping to establish high-confidence tracked contact
-            var active = new SonarContact(0, 15.0, 5000, true, -1, 0, 0, 90.0);
+            var active = new SonarContact(0, 15.0, 5000, true, -1, 0, 0, 90.0, 0.95, Double.NaN);
             tickFull(DEEP_FLAT, List.of(), 1, 0, 0, -200, 0,
                     Vec3.ZERO, 1000, List.of(), List.of(active), 0);
             assertEquals(1.0, controller.contactAlive(), 0.01);
@@ -1346,13 +1312,14 @@ class DefaultAttackSubTest {
         @Test
         void trackedContactDeadReckonsPosition() {
             startMatch(DEEP_FLAT);
-            // Two active pings to establish heading
-            var active1 = new SonarContact(0, 15.0, 5000, true, -1, 0, 0, 90.0);
+            // Two active pings to establish heading. Second ping includes
+            // engine-estimated heading (north, 0 rad) from two successive fixes.
+            var active1 = new SonarContact(0, 15.0, 5000, true, -1, 0, 0, 90.0, 0.95, Double.NaN);
             tickFull(DEEP_FLAT, List.of(), 1, 0, 0, -200, 0,
                     Vec3.ZERO, 1000, List.of(), List.of(active1), 0);
             // Target moved north by 100m. Use tick 500 so displacement is plausible
             // at maxSubSpeed (15 m/s * 499/50 = 149m max)
-            var active2 = new SonarContact(0, 15.0, 5100, true, -1, 0, 0, 90.0);
+            var active2 = new SonarContact(0, 15.0, 5100, true, -1, 0, 0, 90.0, 0.95, 0.0);
             tickFull(DEEP_FLAT, List.of(), 500, 0, 0, -200, 0,
                     Vec3.ZERO, 1000, List.of(), List.of(active2), 0);
 
@@ -1376,7 +1343,7 @@ class DefaultAttackSubTest {
         void trackedContactClearsOnFullDecay() {
             startMatch(DEEP_FLAT);
             // Active ping to establish tracked contact
-            var active = new SonarContact(0, 15.0, 5000, true, -1, 0, 0, 90.0);
+            var active = new SonarContact(0, 15.0, 5000, true, -1, 0, 0, 90.0, 0.95, Double.NaN);
             tickFull(DEEP_FLAT, List.of(), 1, 0, 0, -200, 0,
                     Vec3.ZERO, 1000, List.of(), List.of(active), 0);
             assertTrue(controller.hasTrackedContact());
@@ -1396,7 +1363,7 @@ class DefaultAttackSubTest {
             startMatch(DEEP_FLAT);
             // Target is to the east: bearing pi/2, range 8000
             double bearing = Math.PI / 2;
-            var active = new SonarContact(bearing, 15.0, 8000, true, -1, 0, 0, 90.0);
+            var active = new SonarContact(bearing, 15.0, 8000, true, -1, 0, 0, 90.0, 0.95, Double.NaN);
             tickFull(DEEP_FLAT, List.of(), 1, 0, 0, -200, 0,
                     Vec3.ZERO, 1000, List.of(), List.of(active), 0);
 
@@ -1411,7 +1378,7 @@ class DefaultAttackSubTest {
         void trackedContactEstimatePublishedEveryTick() {
             startMatch(DEEP_FLAT);
             // Establish tracked contact
-            var active = new SonarContact(0, 15.0, 5000, true, -1, 0, 0, 90.0);
+            var active = new SonarContact(0, 15.0, 5000, true, -1, 0, 0, 90.0, 0.95, Double.NaN);
             tickFull(DEEP_FLAT, List.of(), 1, 0, 0, -200, 0,
                     Vec3.ZERO, 1000, List.of(), List.of(active), 0);
 
@@ -1428,7 +1395,7 @@ class DefaultAttackSubTest {
         void longRangeApproachUsesPatrolThrottle() {
             startMatch(DEEP_FLAT);
             // Active return at long range, CHASE with quiet approach
-            var active = new SonarContact(0, 15.0, 8000, true, -1, 0, 0, 90.0);
+            var active = new SonarContact(0, 15.0, 8000, true, -1, 0, 0, 90.0, 0.95, Double.NaN);
             tickFull(DEEP_FLAT, List.of(), 1, 0, 0, -200, 0,
                     Vec3.ZERO, 1000, List.of(), List.of(active), 0);
             assertEquals(DefaultAttackSub.State.CHASE, controller.state());
@@ -1445,16 +1412,17 @@ class DefaultAttackSubTest {
         void trackedContactHeadingEstimatedFromTwoPings() {
             startMatch(DEEP_FLAT);
             // First ping: target at (0, 5000)
-            var active1 = new SonarContact(0, 15.0, 5000, true, -1, 0, 0, 90.0);
+            var active1 = new SonarContact(0, 15.0, 5000, true, -1, 0, 0, 90.0, 0.95, Double.NaN);
             tickFull(DEEP_FLAT, List.of(), 1, 0, 0, -200, 0,
                     Vec3.ZERO, 1000, List.of(), List.of(active1), 0);
 
             // Second ping: target moved east to (300, 5000)
             // Use tick 1200 so displacement (300m) is plausible at maxSubSpeed
             // (15 m/s * 1199/50 = 359m max)
+            // Engine tracker provides heading estimate (~pi/2, east) on the second ping.
             double bearing2 = Math.atan2(300.0, 5000.0);
             double range2 = Math.sqrt(300.0 * 300 + 5000.0 * 5000);
-            var active2 = new SonarContact(bearing2, 15.0, range2, true, -1, 0, 0, 90.0);
+            var active2 = new SonarContact(bearing2, 15.0, range2, true, -1, 0, 0, 90.0, 0.95, Math.PI / 2);
             tickFull(DEEP_FLAT, List.of(), 1200, 0, 0, -200, 0,
                     Vec3.ZERO, 1000, List.of(), List.of(active2), 0);
 

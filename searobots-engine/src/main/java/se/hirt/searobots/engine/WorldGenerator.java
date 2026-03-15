@@ -169,7 +169,7 @@ public final class WorldGenerator {
         var points = new ArrayList<Vec3>();
         for (int attempts = 0; attempts < 1000 && points.size() < count; attempts++) {
             double angle = rng.nextDouble() * Math.PI * 2;
-            double radius = areaExtent * 0.15 + rng.nextDouble() * areaExtent * 0.35;
+            double radius = areaExtent * 0.45 + rng.nextDouble() * areaExtent * 0.35;
             double x = Math.cos(angle) * radius;
             double y = Math.sin(angle) * radius;
 

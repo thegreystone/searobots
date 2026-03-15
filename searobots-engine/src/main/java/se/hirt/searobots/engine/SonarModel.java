@@ -60,9 +60,16 @@ public final class SonarModel {
     static final double ISLAND_OCCLUSION_PER_CELL_DB = 30.0;
 
     private final Random rng;
+    private final double maxSubSpeed;
+    private final Map<Long, ContactTracker> trackers = new HashMap<>();
 
     public SonarModel(long seed) {
+        this(seed, 15.0);
+    }
+
+    public SonarModel(long seed, double maxSubSpeed) {
         this.rng = new Random(seed);
+        this.maxSubSpeed = maxSubSpeed;
     }
 
     record SonarResult(List<SonarContact> passiveContacts,
@@ -74,6 +81,7 @@ public final class SonarModel {
      * Returns a map from entity ID to its sonar result.
      */
     public Map<Integer, SonarResult> computeContacts(
+            long tick,
             List<SubmarineEntity> entities,
             TerrainMap terrain,
             List<ThermalLayer> thermalLayers) {
@@ -93,6 +101,9 @@ public final class SonarModel {
             // Self-noise: radiated SL minus isolation offset (hydrophones don't hear all own noise)
             double selfNoiseDb = listener.sourceLevelDb() - SELF_NOISE_OFFSET_DB;
             double nlBase = Math.max(AMBIENT_NOISE_DB, selfNoiseDb);
+
+            // Track which source IDs were observed this tick (for decay)
+            var observedSourceIds = new HashSet<Integer>();
 
             for (var source : entities) {
                 if (source.id() == listener.id()) continue;
@@ -122,8 +133,9 @@ public final class SonarModel {
                 }
 
                 // Noise level: base + baffle penalty
+                boolean inBaffles = isInBaffles(listener.heading(), trueBearing);
                 double nl = nlBase;
-                if (isInBaffles(listener.heading(), trueBearing)) {
+                if (inBaffles) {
                     nl += BAFFLE_PENALTY_DB;
                 }
 
@@ -137,8 +149,17 @@ public final class SonarModel {
                     // Accuracy improves with SE (closer = better signal analysis).
                     double slError = Math.clamp(10.0 / Math.max(se, 1.0), 1.0, 8.0);
                     double estSL = sl + rng.nextGaussian() * slError;
-                    passive.add(new SonarContact(reportedBearing, se, 0, false, estSpeed,
-                            brgStdDev, 0, estSL));
+
+                    // Update contact tracker
+                    var tracker = getOrCreateTracker(listener.id(), source.id());
+                    tracker.update(tick, reportedBearing, se, estSpeed, estSL,
+                            listener.x(), listener.y(), listener.heading(), inBaffles,
+                            distance, source.x(), source.y(), rng);
+                    observedSourceIds.add(source.id());
+
+                    passive.add(new SonarContact(reportedBearing, se, tracker.estimatedRange(), false, estSpeed,
+                            brgStdDev, tracker.rangeUncertainty(), estSL,
+                            tracker.solutionQuality(), tracker.estimatedHeading()));
                 }
 
                 // --- Active sonar returns (for the listener's own ping) ---
@@ -155,11 +176,21 @@ public final class SonarModel {
                         double estSpeed = estimateTargetSpeed(source.speed(), se, rng);
                         double slError = Math.clamp(10.0 / Math.max(activeSe, 1.0), 1.0, 5.0);
                         double estSL = sl + rng.nextGaussian() * slError;
+
+                        // Update contact tracker from ping
+                        var tracker = getOrCreateTracker(listener.id(), source.id());
+                        tracker.updateFromPing(tick, reportedRange, activeSe);
+                        observedSourceIds.add(source.id());
+
                         active.add(new SonarContact(reportedBearing, activeSe, reportedRange, true,
-                                estSpeed, activeBrgStdDev, rangeRmsNoise, estSL));
+                                estSpeed, activeBrgStdDev, rangeRmsNoise, estSL,
+                                tracker.solutionQuality(), tracker.estimatedHeading()));
                     }
                 }
             }
+
+            // Decay and expire trackers for this listener
+            decayAndExpireTrackers(tick, listener.id(), observedSourceIds);
 
             results.put(listener.id(), new SonarResult(
                     List.copyOf(passive), List.copyOf(active), listener.activeSonarCooldown()));
@@ -299,5 +330,35 @@ public final class SonarModel {
         bearing = bearing % (2 * Math.PI);
         if (bearing < 0) bearing += 2 * Math.PI;
         return bearing;
+    }
+
+    // -- Contact tracker management --
+
+    private static long trackerKey(int listenerId, int sourceId) {
+        return ((long) listenerId << 32) | (sourceId & 0xFFFFFFFFL);
+    }
+
+    private ContactTracker getOrCreateTracker(int listenerId, int sourceId) {
+        return trackers.computeIfAbsent(trackerKey(listenerId, sourceId), k -> new ContactTracker());
+    }
+
+    private void decayAndExpireTrackers(long tick, int listenerId, Set<Integer> observedSourceIds) {
+        var iter = trackers.entrySet().iterator();
+        while (iter.hasNext()) {
+            var entry = iter.next();
+            long key = entry.getKey();
+            int keyListenerId = (int) (key >> 32);
+            if (keyListenerId != listenerId) continue;
+
+            int keySourceId = (int) key;
+            var tracker = entry.getValue();
+
+            if (!observedSourceIds.contains(keySourceId)) {
+                tracker.decay(tick, maxSubSpeed);
+            }
+            if (tracker.isExpired(tick)) {
+                iter.remove();
+            }
+        }
     }
 }

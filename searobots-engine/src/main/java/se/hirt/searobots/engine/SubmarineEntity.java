@@ -205,8 +205,9 @@ public final class SubmarineEntity implements SubmarineOutput {
     }
 
     public SubmarineSnapshot snapshot() {
-        return new SubmarineSnapshot(id, pose(), velocity(), speed, color, forfeited, hp, noiseLevel,
-                throttle, status, pingRequested, contactEstimates(), waypoints());
+        return new SubmarineSnapshot(id, controller.name(), pose(), velocity(), speed, color,
+                forfeited, hp, noiseLevel, throttle, status, pingRequested,
+                contactEstimates(), waypoints());
     }
 
     public SubmarineState state() {

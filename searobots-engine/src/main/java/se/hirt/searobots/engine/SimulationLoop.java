@@ -52,10 +52,22 @@ public final class SimulationLoop {
 
     public void run(GeneratedWorld world, List<SubmarineController> controllers,
                     List<VehicleConfig> vehicleConfigs, SimulationListener listener) {
+        run(world, controllers, vehicleConfigs, null, listener);
+    }
+
+    /**
+     * Run the simulation with optional per-entity headings.
+     * @param headings optional list of initial headings in radians, or null
+     *                 to use the default (face toward center). Individual
+     *                 entries may be Double.NaN to use the default for that entity.
+     */
+    public void run(GeneratedWorld world, List<SubmarineController> controllers,
+                    List<VehicleConfig> vehicleConfigs, List<Double> headings,
+                    SimulationListener listener) {
         Objects.requireNonNull(vehicleConfigs, "vehicleConfigs must not be null");
         var config = world.config();
         var physics = new SubmarinePhysics();
-        var sonar = new SonarModel(config.worldSeed());
+        var sonar = new SonarModel(config.worldSeed(), config.maxSubSpeed());
         double dt = 1.0 / config.tickRateHz();
 
         var envSnapshot = new EnvironmentSnapshot(
@@ -68,8 +80,13 @@ public final class SimulationLoop {
         var spawns = world.spawnPoints();
         for (int i = 0; i < controllers.size(); i++) {
             var spawn = i < spawns.size() ? spawns.get(i) : spawns.getFirst();
-            double heading = Math.atan2(-spawn.x(), -spawn.y()); // face toward center
-            if (heading < 0) heading += 2 * Math.PI;
+            double heading;
+            if (headings != null && i < headings.size() && !Double.isNaN(headings.get(i))) {
+                heading = headings.get(i);
+            } else {
+                heading = Math.atan2(-spawn.x(), -spawn.y()); // face toward center
+                if (heading < 0) heading += 2 * Math.PI;
+            }
             var vCfg = i < vehicleConfigs.size() ? vehicleConfigs.get(i) : VehicleConfig.submarine();
             var entity = new SubmarineEntity(vCfg, i, controllers.get(i), spawn, heading,
                     SUB_COLORS[i % SUB_COLORS.length], config.startingHp());
@@ -93,7 +110,7 @@ public final class SimulationLoop {
 
             // Compute sonar contacts (based on current positions, before controller runs)
             var sonarResults = sonar.computeContacts(
-                    entities, world.terrain(), world.thermalLayers());
+                    currentTick, entities, world.terrain(), world.thermalLayers());
 
             // Build input, call controller, advance physics
             for (var entity : entities) {

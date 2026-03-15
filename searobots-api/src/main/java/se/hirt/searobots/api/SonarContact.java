@@ -41,7 +41,10 @@ package se.hirt.searobots.api;
  * @param estimatedSourceLevel estimated source level in dB, derived from the acoustic
  *                             signature. Enables classification (surface ships are much
  *                             louder than submarines) and more accurate SE-based ranging.
+ * @param solutionQuality      TMA solution quality (0.0 to 1.0), equivalent to Cold Waters SOL%
+ * @param estimatedHeading     estimated target heading in radians [0, 2pi), or NaN if quality too low
  */
 public record SonarContact(double bearing, double signalExcess, double range, boolean isActive,
                            double estimatedSpeed, double bearingUncertainty,
-                           double rangeUncertainty, double estimatedSourceLevel) {}
+                           double rangeUncertainty, double estimatedSourceLevel,
+                           double solutionQuality, double estimatedHeading) {}

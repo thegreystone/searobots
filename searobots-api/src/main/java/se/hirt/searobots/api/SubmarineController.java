@@ -29,6 +29,12 @@
 package se.hirt.searobots.api;
 
 public interface SubmarineController {
+    /**
+     * Short display name for this controller, shown in the viewer HUD
+     * and match logs. Keep it brief (under 20 characters).
+     */
+    default String name() { return getClass().getSimpleName(); }
+
     default void onMatchStart(MatchContext context) {}
     void onTick(SubmarineInput input, SubmarineOutput output);
     default void onMatchEnd(MatchResult result) {}

@@ -35,6 +35,9 @@ import java.util.List;
 
 public final class DefaultAttackSub implements SubmarineController {
 
+    @Override
+    public String name() { return "Default Sub"; }
+
     // State machine
     enum State { PATROL, TRACKING, CHASE, RAM, EVADE }
 
@@ -89,14 +92,7 @@ public final class DefaultAttackSub implements SubmarineController {
     private static final double TAILING_THROTTLE = 0.30;          // quiet following speed
     private static final double TAILING_FLOOR_CLEARANCE = 150.0;  // extra room when tailing
 
-    // Passive range estimation constants
-    // SE-based: assume target SL ~90 dB (patrol speed), cylindrical spreading
-    private static final double ASSUMED_TARGET_SL_DB = 90.0;
-    private static final double ASSUMED_AMBIENT_NL_DB = 60.0;
-    private static final double SPREADING_COEFFICIENT = 10.0; // cylindrical (must match SonarModel)
-    // Bearing rate TMA: minimum bearing rate to produce useful estimate
-    private static final double MIN_BEARING_RATE = Math.toRadians(0.05); // per second
-    private static final int TMA_HISTORY_TICKS = 100; // 2 seconds of bearing history
+    // (Passive range estimation constants removed: TMA now handled by engine-side ContactTracker)
 
     // Cavitation constants (mirrored from SubmarinePhysics)
     private static final double BASE_CAVITATION_SPEED = 5.0;
@@ -126,9 +122,6 @@ public final class DefaultAttackSub implements SubmarineController {
     private List<ThermalLayer> thermalLayers = List.of();
 
     // Contact tracking (sonar analysis, per-tick)
-    record BearingFix(long tick, double bearing, double se, double x, double y,
-                      double ownSpeed, double ownHeading) {}
-    private final List<BearingFix> contactTrack = new ArrayList<>();
     private double lastHeading;  // cached for use in planPatrol
     private double lastContactBearing;
     private double lastContactSE;
@@ -136,7 +129,6 @@ public final class DefaultAttackSub implements SubmarineController {
     private int consecutiveContactTicks;
     private double estimatedRange = Double.MAX_VALUE;
     private boolean rangeConfirmedByActive;
-    private double calibratedSL = Double.NaN; // SL computed from ping range + passive SE
     private int previousHp;
 
     // Tracked contact (persistent, dead-reckoned between updates)
@@ -147,9 +139,6 @@ public final class DefaultAttackSub implements SubmarineController {
     private double contactAlive = 0.0;       // belief contact exists (0-1), decays at 0.999/tick
     private double uncertaintyRadius = 0.0;  // meters, grows by maxSubSpeed * dt each tick
     private long trackedLastFixTick = -1;
-    // Previous position fix for heading estimation
-    private double prevFixX = Double.NaN, prevFixY = Double.NaN;
-    private long prevFixTick = -1;
 
     // Ping fix history for viewer trace lines
     private record PingFix(double x, double y, long tick) {}
@@ -191,7 +180,6 @@ public final class DefaultAttackSub implements SubmarineController {
 
     State state() { return state; }
     double estimatedRange() { return estimatedRange; }
-    List<BearingFix> contactTrack() { return contactTrack; }
     boolean hasTrackedContact() { return hasTrackedContact; }
     double trackedX() { return trackedX; }
     double trackedY() { return trackedY; }
@@ -209,7 +197,7 @@ public final class DefaultAttackSub implements SubmarineController {
         long tick = input.tick();
 
         // =================================================================
-        // Step 1: Process sonar contacts and update contact track
+        // Step 1: Process sonar contacts (engine provides TMA data)
         // =================================================================
         SonarContact bestContact = pickBestContact(input.sonarContacts(), input.activeSonarReturns());
 
@@ -218,92 +206,23 @@ public final class DefaultAttackSub implements SubmarineController {
             lastContactSE = bestContact.signalExcess();
             lastContactTick = tick;
             consecutiveContactTicks++;
-            double speed = self.velocity().linear().length();
 
-            // Active returns give us range directly (best quality)
-            if (bestContact.isActive() && bestContact.range() > 0) {
+            // Range from engine TMA
+            if (bestContact.range() > 0 && bestContact.range() < 50000) {
                 estimatedRange = bestContact.range();
-                rangeConfirmedByActive = true;
-
-                // Calibrate source level: we know the exact range from the
-                // ping. Combined with the passive SE (which we also have),
-                // we can compute the target's true SL:
-                //   SE = SL - TL - NL, TL = spreading * log10(range)
-                //   SL = SE + TL + NL
-                // This calibrated SL gives much better passive range
-                // estimates on subsequent contacts.
-                if (lastContactSE > 5.0) { // above detection threshold
-                    double tl = SPREADING_COEFFICIENT * Math.log10(
-                            Math.max(bestContact.range(), 1.0));
-                    calibratedSL = lastContactSE + tl + ASSUMED_AMBIENT_NL_DB;
-                }
             }
-
-            // Record bearing fix (for triangulation and TMA)
-            contactTrack.add(new BearingFix(tick, bestContact.bearing(), bestContact.signalExcess(),
-                    pos.x(), pos.y(), speed, heading));
-            // Cap track length
-            while (contactTrack.size() > 200) contactTrack.removeFirst();
-
-            // Passive range estimation. After a ping fix, protect the estimate
-            // briefly (500 ticks = 10 seconds), then allow passive updates
-            // to correct dead-reckoning drift.
-            long lastPingTick = pingFixHistory.isEmpty() ? -1 : pingFixHistory.getLast().tick();
-            boolean pingRecent = rangeConfirmedByActive && lastPingTick >= 0
-                    && (tick - lastPingTick) < 500;
-            if (!pingRecent) {
-                // Method 1: Triangulation (requires displacement between fixes)
-                if (contactTrack.size() >= 2) {
-                    var latest = contactTrack.getLast();
-                    for (int i = contactTrack.size() - 2; i >= 0; i--) {
-                        var older = contactTrack.get(i);
-                        if (displacement(pos, older) > TRACKING_DISPLACEMENT) {
-                            double rangeEst = triangulate(latest, older);
-                            if (rangeEst > 0 && rangeEst < 50000) {
-                                estimatedRange = rangeEst;
-                            }
-                            break;
-                        }
-                    }
-                }
-
-                // Method 2: SE-based range estimate. Use calibrated SL from
-                // a previous ping if available (most accurate). Otherwise
-                // fall back to the sonar's estimated source level.
-                double slForRanging = !Double.isNaN(calibratedSL) ? calibratedSL
-                        : bestContact.estimatedSourceLevel();
-                double seRange = estimateRangeFromSEAndSL(
-                        bestContact.signalExcess(), slForRanging);
-                if (seRange > 0 && seRange < 50000) {
-                    if (estimatedRange == Double.MAX_VALUE) {
-                        estimatedRange = seRange;
-                    } else {
-                        // Blend SE range with current estimate. SE is noisy but
-                        // provides a continuous range signal even when heading
-                        // straight at the target (where TMA fails).
-                        double blend = 0.1;
-                        estimatedRange = estimatedRange * (1 - blend) + seRange * blend;
-                    }
-                }
-
-                // Method 3: Bearing rate TMA (needs bearing history and own-ship speed)
-                double tmaRange = estimateRangeFromBearingRate(tick, speed, heading);
-                if (tmaRange > 0 && tmaRange < 50000) {
-                    estimatedRange = tmaRange;
-                }
-            }
+            rangeConfirmedByActive = bestContact.isActive();
         } else {
             consecutiveContactTicks = 0;
         }
 
         // =================================================================
-        // Step 1b: Update tracked contact
+        // Step 1b: Update tracked contact from engine TMA data
         // =================================================================
-
-        // Dead-reckon existing tracked contact and grow uncertainty
         double dt = 1.0 / 50.0; // one tick at 50Hz
         if (hasTrackedContact) {
-            if (!Double.isNaN(trackedHeading)) {
+            // Dead-reckon only when we have a good heading and no fresh contact
+            if (!Double.isNaN(trackedHeading) && bestContact == null) {
                 trackedX += trackedSpeed * Math.sin(trackedHeading) * dt;
                 trackedY += trackedSpeed * Math.cos(trackedHeading) * dt;
             }
@@ -311,245 +230,60 @@ public final class DefaultAttackSub implements SubmarineController {
             contactAlive *= CONFIDENCE_DECAY;
         }
 
-        // Any sonar contact resets contactAlive
         if (bestContact != null) {
             contactAlive = 1.0;
 
-            // Update target speed from blade-rate tonals (when available).
-            // Blend with current estimate for smoothing.
+            // Speed from blade-rate
             if (bestContact.estimatedSpeed() >= 0) {
-                double bladeSpeed = bestContact.estimatedSpeed();
-                if (hasTrackedContact) {
-                    // Blend: weight by SE quality (high SE = trust blade-rate more)
-                    double quality = Math.clamp(bestContact.signalExcess() / 30.0, 0.1, 0.8);
-                    trackedSpeed = trackedSpeed * (1 - quality) + bladeSpeed * quality;
-                } else {
-                    trackedSpeed = bladeSpeed;
-                }
+                double quality = Math.clamp(bestContact.signalExcess() / 30.0, 0.1, 0.8);
+                trackedSpeed = hasTrackedContact ?
+                        trackedSpeed * (1 - quality) + bestContact.estimatedSpeed() * quality :
+                        bestContact.estimatedSpeed();
             }
 
-            // Bearing correction: snap the tracked position onto the bearing
-            // line at the current estimated range. Also use the bearing
-            // history to estimate target heading via TMA.
-            if (hasTrackedContact && !bestContact.isActive()) {
-                // Correction range: the distance from us to the tracked position.
-                // This is smoother than estimatedRange (which jumps wildly from
-                // noisy triangulation/TMA), because the tracked position is
-                // stabilized by the bearing correction and dead-reckoning.
-                // Only use estimatedRange when it comes from a recent ping
-                // (which gives precise range data).
-                double geometricRange = Math.sqrt(
-                        Math.pow(trackedX - pos.x(), 2) + Math.pow(trackedY - pos.y(), 2));
-                // Correction range: how far along the bearing to project.
-                // Use geometric distance (from sub to tracked position).
-                // Key constraint: the correction must never pull the tracked
-                // position toward us faster than a real target could close.
-                // Bearing correction using independent range measurement.
-                // Only correct when we have a ping-calibrated SL (from a
-                // previous "first contact ping"). Without calibration, the
-                // sonar's estimated SL is too inaccurate for ranging and
-                // the correction would cause the tracked position to collapse.
-                double correctionRange = -1;
-                long lastPingAge = pingFixHistory.isEmpty() ? Long.MAX_VALUE
-                        : tick - pingFixHistory.getLast().tick();
-                if (lastPingAge < 250 && estimatedRange > 0 && estimatedRange < 50000) {
-                    correctionRange = estimatedRange;
-                } else if (!Double.isNaN(calibratedSL)) {
-                    double seRange = estimateRangeFromSEAndSL(
-                            bestContact.signalExcess(), calibratedSL);
-                    if (seRange > 50 && seRange < 50000) {
-                        correctionRange = seRange;
-                    }
-                }
-                if (correctionRange > 50) {
-                    double correctedX = pos.x() + correctionRange * Math.sin(bestContact.bearing());
-                    double correctedY = pos.y() + correctionRange * Math.cos(bestContact.bearing());
-                    double bearingBlend = 0.15;
-                    trackedX = trackedX * (1 - bearingBlend) + correctedX * bearingBlend;
-                    trackedY = trackedY * (1 - bearingBlend) + correctedY * bearingBlend;
-                }
-
-                // Heading estimation from tracked position history.
-                // The tracked position is smoothed by bearing corrections,
-                // so successive positions trace the target's path. Compare
-                // current tracked position to where it was 5 seconds ago.
-                if (tick - prevFixTick >= 250 && correctionRange > 100) {
-                    if (!Double.isNaN(prevFixX)) {
-                        double dx = trackedX - prevFixX;
-                        double dy = trackedY - prevFixY;
-                        double moved = Math.sqrt(dx * dx + dy * dy);
-
-                        if (moved > 30) {
-                            double tgtHeading = Math.atan2(dx, dy);
-                            if (tgtHeading < 0) tgtHeading += 2 * Math.PI;
-
-                            if (Double.isNaN(trackedHeading)) {
-                                trackedHeading = tgtHeading;
-                            } else {
-                                double hDiff = angleDiff(tgtHeading, trackedHeading);
-                                if (Math.abs(hDiff) < Math.toRadians(60)) {
-                                    trackedHeading = normalizeBearing(
-                                            trackedHeading + hDiff * 0.2);
-                                }
-                            }
-                        }
-                    }
-                    prevFixX = trackedX;
-                    prevFixY = trackedY;
-                    prevFixTick = tick;
-                }
-            }
-        }
-
-        // Update from sonar fixes
-        if (bestContact != null && bestContact.isActive() && bestContact.range() > 0) {
-            // Active ping fix: snap to precise position
-            double tx = pos.x() + bestContact.range() * Math.sin(bestContact.bearing());
-            double ty = pos.y() + bestContact.range() * Math.cos(bestContact.bearing());
-
-            // Plausibility check: if too far from last ping fix, treat as new contact
-            if (hasTrackedContact && !pingFixHistory.isEmpty()) {
-                var lastPingFix = pingFixHistory.getLast();
-                long timeSinceLastPing = tick - lastPingFix.tick();
-                double maxDist = maxSubSpeed * (timeSinceLastPing / 50.0);
-                double ddx = tx - lastPingFix.x();
-                double ddy = ty - lastPingFix.y();
-                double dist = Math.sqrt(ddx * ddx + ddy * ddy);
-                if (dist > maxDist) {
-                    // Too far from last ping fix, treat as new contact
-                    trackedHeading = Double.NaN;
-                    prevFixX = Double.NaN;
-                    prevFixY = Double.NaN;
-                    prevFixTick = -1;
-                    pingFixHistory.clear();
-                }
+            // Heading from engine TMA
+            if (!Double.isNaN(bestContact.estimatedHeading())) {
+                trackedHeading = bestContact.estimatedHeading();
             }
 
-            // Compute heading from previous ping fix (in pingFixHistory)
-            if (!pingFixHistory.isEmpty()) {
-                var lastPing = pingFixHistory.getLast();
-                double ddx = tx - lastPing.x();
-                double ddy = ty - lastPing.y();
-                if (ddx * ddx + ddy * ddy > 25) { // moved at least 5m
-                    trackedHeading = Math.atan2(ddx, ddy);
-                    if (trackedHeading < 0) trackedHeading += 2 * Math.PI;
-                }
-            }
+            // Position from bearing + range
+            double range = bestContact.range() > 50 ? bestContact.range() : 1000;
+            double tx = pos.x() + range * Math.sin(bestContact.bearing());
+            double ty = pos.y() + range * Math.cos(bestContact.bearing());
 
-            prevFixX = tx;
-            prevFixY = ty;
-            prevFixTick = tick;
-
-            trackedX = tx;
-            trackedY = ty;
-            // Compute uncertainty from sonar contact data
-            // 2-sigma for ~95% confidence
-            double pingUncertainty = bestContact.rangeUncertainty() * 2;
-            // Also account for bearing uncertainty at this range
-            double lateralUncertainty = bestContact.range() * bestContact.bearingUncertainty();
-            uncertaintyRadius = Math.sqrt(pingUncertainty * pingUncertainty + lateralUncertainty * lateralUncertainty);
-            refUncertainty = uncertaintyRadius;
-            trackedLastFixTick = tick;
-            hasTrackedContact = true;
-
-            // Record in ping fix history (cap at 20)
-            pingFixHistory.add(new PingFix(tx, ty, tick));
-            while (pingFixHistory.size() > 20) pingFixHistory.removeFirst();
-
-        } else if (bestContact != null && estimatedRange > 0 && estimatedRange < 50000) {
-            // Passive contact with range estimate, with speed clamping
-
-            if (estimatedRange > PASSIVE_IGNORE_RANGE) {
-                // Too far: only use bearing as heading hint, don't update position
-                if (hasTrackedContact && Double.isNaN(trackedHeading)) {
-                    trackedHeading = lastContactBearing;
-                }
-            } else {
-                // Determine blend weight based on range
-                double blendWeight;
-                if (estimatedRange > PASSIVE_WEAK_RANGE) {
-                    blendWeight = 0.1;
-                } else {
-                    blendWeight = 0.3;
-                }
-
-                double tx = pos.x() + estimatedRange * Math.sin(lastContactBearing);
-                double ty = pos.y() + estimatedRange * Math.cos(lastContactBearing);
-
-                if (hasTrackedContact) {
-                    // Compute proposed position via blend
-                    double proposedX = trackedX * (1 - blendWeight) + tx * blendWeight;
-                    double proposedY = trackedY * (1 - blendWeight) + ty * blendWeight;
-
-                    // Clamp movement to maxSubSpeed * dt_since_last_update
-                    long dtSinceLast = (trackedLastFixTick >= 0) ? tick - trackedLastFixTick : 1;
-                    double maxMove = maxSubSpeed * (dtSinceLast / 50.0);
-                    double moveDx = proposedX - trackedX;
-                    double moveDy = proposedY - trackedY;
-                    double moveDist = Math.sqrt(moveDx * moveDx + moveDy * moveDy);
-                    if (moveDist > maxMove && moveDist > 0) {
-                        double scale = maxMove / moveDist;
-                        proposedX = trackedX + moveDx * scale;
-                        proposedY = trackedY + moveDy * scale;
-                    }
-
-                    trackedX = proposedX;
-                    trackedY = proposedY;
-                } else {
-                    trackedX = tx;
-                    trackedY = ty;
-                    double lateralUncertainty = estimatedRange * bestContact.bearingUncertainty();
-                    uncertaintyRadius = Math.max(lateralUncertainty * 2, Math.min(estimatedRange * 0.15, 500));
-                    hasTrackedContact = true;
-                }
-
-                // Heading estimation from successive passive fixes
-                if (!Double.isNaN(prevFixX) && prevFixTick >= 0 && tick - prevFixTick > 100) {
-                    double ddx = tx - prevFixX;
-                    double ddy = ty - prevFixY;
-                    if (ddx * ddx + ddy * ddy > 25) {
-                        trackedHeading = Math.atan2(ddx, ddy);
-                        if (trackedHeading < 0) trackedHeading += 2 * Math.PI;
-                    }
-                    prevFixX = tx;
-                    prevFixY = ty;
-                    prevFixTick = tick;
-                } else if (Double.isNaN(prevFixX)) {
-                    prevFixX = tx;
-                    prevFixY = ty;
-                    prevFixTick = tick;
-                }
-
-                trackedLastFixTick = tick;
-            }
-
-            // Passive contact slows uncertainty growth (compensate the growth added above)
-            // Multiply effective growth by 0.5 by subtracting half of what was added
             if (hasTrackedContact) {
-                uncertaintyRadius -= maxSubSpeed * dt * 0.5;
-                if (uncertaintyRadius < 0) uncertaintyRadius = 0;
+                double blend = bestContact.isActive() ? 0.8 : 0.2;
+                trackedX = trackedX * (1 - blend) + tx * blend;
+                trackedY = trackedY * (1 - blend) + ty * blend;
+            } else {
+                trackedX = tx;
+                trackedY = ty;
+                hasTrackedContact = true;
+            }
+
+            // Uncertainty from engine TMA
+            if (bestContact.rangeUncertainty() > 0) {
+                uncertaintyRadius = bestContact.rangeUncertainty() * 2;
+            }
+
+            // Update ref uncertainty for confidence calculation
+            if (bestContact.isActive() && bestContact.rangeUncertainty() > 0) {
+                refUncertainty = bestContact.rangeUncertainty() * 2;
+            }
+
+            trackedLastFixTick = tick;
+
+            // Record ping fix for viewer trace lines
+            if (bestContact.isActive() && bestContact.range() > 0) {
+                pingFixHistory.add(new PingFix(tx, ty, tick));
+                while (pingFixHistory.size() > 20) pingFixHistory.removeFirst();
             }
         }
 
-        // Fallback heading estimation from bearing stability in CHASE
-        // Only use this when we have no ping fix history (pure passive tracking)
-        if (hasTrackedContact && Double.isNaN(trackedHeading) && state == State.CHASE
-                && pingFixHistory.isEmpty() && contactTrack.size() >= 3) {
-            var latest = contactTrack.getLast();
-            var older = contactTrack.get(contactTrack.size() - 3);
-            double bearingDrift = Math.abs(angleDiff(latest.bearing(), older.bearing()));
-            if (bearingDrift < Math.toRadians(10)) {
-                trackedHeading = lastContactBearing;
-            }
-        }
-
-        // Clear tracked contact if contactAlive too low
+        // Clear tracked contact if alive too low
         if (hasTrackedContact && contactAlive < CONFIDENCE_LOST) {
             hasTrackedContact = false;
             trackedHeading = Double.NaN;
-            prevFixX = Double.NaN;
-            prevFixY = Double.NaN;
-            prevFixTick = -1;
             pingFixHistory.clear();
         }
 
@@ -690,13 +424,8 @@ public final class DefaultAttackSub implements SubmarineController {
             case TRACKING -> {
                 tacticalThrottle = TRACKING_THROTTLE;
 
-                // First-contact ping: if we don't have a calibrated SL yet,
-                // ping once to establish range and calibrate. This is the
-                // classic "snap shot" to establish the tactical picture,
-                // then go passive for the approach.
-                if (Double.isNaN(calibratedSL) && input.activeSonarCooldownTicks() == 0) {
-                    output.activeSonarPing();
-                }
+                // No first-contact ping: engine TMA provides range from
+                // passive sonar. Stay quiet to avoid revealing our position.
 
                 if (bestContact != null) {
                     // Fresh contact: turn perpendicular for cross-bearing fix
@@ -737,10 +466,7 @@ public final class DefaultAttackSub implements SubmarineController {
                         }
                     }
 
-                    // Ping when within range of tracked position and cooldown ready
-                    if (trackedDist < TRACKED_PING_RANGE && input.activeSonarCooldownTicks() == 0) {
-                        output.activeSonarPing();
-                    }
+                    // No ping in TRACKING: stay quiet, engine TMA provides range.
                 }
             }
             case CHASE -> {
@@ -839,9 +565,9 @@ public final class DefaultAttackSub implements SubmarineController {
                         tacticalRudder = Math.clamp(diff * 2.0, -1, 1);
                     }
 
-                    // Ping only as a last resort when passive tracking fails
+                    // Ping only as a last resort when passive contact lost for 30+ seconds
                     if (trackedDist < TRACKED_PING_RANGE && input.activeSonarCooldownTicks() == 0
-                            && ticksSinceContact > 500) {
+                            && ticksSinceContact > 1500) {
                         output.activeSonarPing();
                     }
                 } else if (lastContactTick >= 0) {
@@ -849,11 +575,7 @@ public final class DefaultAttackSub implements SubmarineController {
                     tacticalRudder = Math.clamp(diff * 2.0, -1, 1);
                 }
 
-                // Ping to confirm range when passive estimates suggest close
-                if (!rangeConfirmedByActive && estimatedRange < CHASE_RANGE
-                        && input.activeSonarCooldownTicks() == 0) {
-                    output.activeSonarPing();
-                }
+                // No ping to confirm range: engine TMA provides passive range.
 
                 // Depth: stay deep and below thermocline for stealth
                 tacticalDepthPreference = preferredDepthBelowThermocline(depth);
@@ -1186,10 +908,8 @@ public final class DefaultAttackSub implements SubmarineController {
         state = newState;
         if (newState == State.PATROL) {
             // PATROL means fully lost: clear all tracking state
-            contactTrack.clear();
             estimatedRange = Double.MAX_VALUE;
             rangeConfirmedByActive = false;
-            calibratedSL = Double.NaN;
             clearingBaffles = false;
             baffleClearTimer = 0;
             patrolSilenceTicks = 0;
@@ -1203,9 +923,6 @@ public final class DefaultAttackSub implements SubmarineController {
             trackedHeading = Double.NaN;
             contactAlive = 0;
             uncertaintyRadius = 0;
-            prevFixX = Double.NaN;
-            prevFixY = Double.NaN;
-            prevFixTick = -1;
             pingFixHistory.clear();
             // Clear navigation waypoints (will replan on next tick)
             navWaypoints.clear();
@@ -1231,15 +948,14 @@ public final class DefaultAttackSub implements SubmarineController {
     }
 
     private boolean shouldEvade() {
-        // Evade if contact is loud and bearing rate is low (closing head-on)
-        if (lastContactSE > EVADE_SE_THRESHOLD && contactTrack.size() >= 2) {
-            var recent = contactTrack.getLast();
-            var prev = contactTrack.get(contactTrack.size() - 2);
-            long dt = recent.tick() - prev.tick();
-            if (dt > 0) {
-                double bearingRate = Math.abs(angleDiff(recent.bearing(), prev.bearing())) / dt;
-                return bearingRate < EVADE_BEARING_RATE_THRESHOLD / 50.0; // per tick
-            }
+        // Evade if contact is very loud and the target appears to be heading
+        // straight at us (bearing roughly matches target heading, meaning
+        // they're on a collision course).
+        if (lastContactSE > EVADE_SE_THRESHOLD && hasTrackedContact && !Double.isNaN(trackedHeading)) {
+            // Check if target heading points roughly at us
+            double bearingToUs = normalizeBearing(lastContactBearing + Math.PI);
+            double diff = Math.abs(angleDiff(trackedHeading, bearingToUs));
+            return diff < Math.toRadians(30);
         }
         return false;
     }
@@ -1271,91 +987,6 @@ public final class DefaultAttackSub implements SubmarineController {
         }
         // Target 30m below the thermocline
         return shallowest - 30;
-    }
-
-    // Triangulation
-
-    static double triangulate(BearingFix a, BearingFix b) {
-        // Two bearing lines from different positions: find intersection distance
-        double dx = a.x() - b.x();
-        double dy = a.y() - b.y();
-        double displacement = Math.sqrt(dx * dx + dy * dy);
-        if (displacement < 1.0) return Double.MAX_VALUE;
-
-        double dBearing = angleDiff(a.bearing(), b.bearing());
-        if (Math.abs(dBearing) < Math.toRadians(0.5)) return Double.MAX_VALUE;
-
-        // Simplified: range = displacement / sin(delta_bearing)
-        return displacement / Math.abs(Math.sin(dBearing));
-    }
-
-    // Passive range estimation
-
-    // Noise model constants (mirrored from SubmarinePhysics for SL estimation)
-    private static final double BASE_SL_DB = 80.0;
-    private static final double SPEED_NOISE_DB_PER_MS = 2.0;
-
-    /**
-     * Estimate range from signal excess using the propagation model in reverse.
-     * If blade-rate speed estimate is available, computes a better SL.
-     * Otherwise falls back to assuming patrol-speed SL.
-     * SE = SL - TL - NL, where TL = spreading * log10(r)
-     * so r = 10^((SL - SE - NL) / spreading)
-     */
-    static double estimateRangeFromSE(double signalExcess, double estimatedTargetSpeed) {
-        double sl;
-        if (estimatedTargetSpeed >= 0) {
-            sl = BASE_SL_DB + SPEED_NOISE_DB_PER_MS * estimatedTargetSpeed;
-        } else {
-            sl = ASSUMED_TARGET_SL_DB;
-        }
-        double tl = sl - signalExcess - ASSUMED_AMBIENT_NL_DB;
-        if (tl <= 0) return 1.0;
-        return Math.pow(10, tl / SPREADING_COEFFICIENT);
-    }
-
-    /**
-     * Estimate range using the sonar-estimated source level directly.
-     * Much more accurate than assuming a standard SL, especially for
-     * surface ships and other non-submarine contacts.
-     */
-    static double estimateRangeFromSEAndSL(double signalExcess, double estimatedSourceLevel) {
-        double tl = estimatedSourceLevel - signalExcess - ASSUMED_AMBIENT_NL_DB;
-        if (tl <= 0) return 1.0;
-        return Math.pow(10, tl / SPREADING_COEFFICIENT);
-    }
-
-    /**
-     * Estimate range from bearing rate (Target Motion Analysis).
-     * When own-ship has cross-track speed relative to the contact bearing,
-     * range is approximately cross_speed / bearing_rate.
-     * Needs at least TMA_HISTORY_TICKS of bearing history.
-     */
-    private double estimateRangeFromBearingRate(long tick, double ownSpeed, double ownHeading) {
-        if (contactTrack.size() < 2 || ownSpeed < 0.5) return -1;
-
-        // Find a fix at least TMA_HISTORY_TICKS old
-        var latest = contactTrack.getLast();
-        BearingFix older = null;
-        for (int i = contactTrack.size() - 2; i >= 0; i--) {
-            if (latest.tick() - contactTrack.get(i).tick() >= TMA_HISTORY_TICKS) {
-                older = contactTrack.get(i);
-                break;
-            }
-        }
-        if (older == null) return -1;
-
-        long dtTicks = latest.tick() - older.tick();
-        double dtSeconds = dtTicks / 50.0;
-        double bearingRate = Math.abs(angleDiff(latest.bearing(), older.bearing())) / dtSeconds;
-
-        if (bearingRate < MIN_BEARING_RATE) return -1; // too slow to estimate
-
-        // Cross-track speed: component of own velocity perpendicular to contact bearing
-        double crossSpeed = ownSpeed * Math.abs(Math.sin(ownHeading - latest.bearing()));
-        if (crossSpeed < 0.3) return -1; // heading straight at/away from contact
-
-        return crossSpeed / bearingRate;
     }
 
     // ── Path planner ────────────────────────────────────────────────
@@ -1661,12 +1292,6 @@ public final class DefaultAttackSub implements SubmarineController {
         if (target < depthLimit) target = depthLimit;
         if (target > MIN_DEPTH) target = MIN_DEPTH;
         return target;
-    }
-
-    private static double displacement(Vec3 pos, BearingFix fix) {
-        double dx = pos.x() - fix.x();
-        double dy = pos.y() - fix.y();
-        return Math.sqrt(dx * dx + dy * dy);
     }
 
     static double angleDiff(double a, double b) {
