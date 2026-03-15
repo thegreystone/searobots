@@ -33,6 +33,7 @@ import se.hirt.searobots.api.*;
 import java.awt.Color;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 
 public final class SimulationLoop {
 
@@ -50,7 +51,8 @@ public final class SimulationLoop {
     private final List<SubmarineEntity> entities = new ArrayList<>();
 
     public void run(GeneratedWorld world, List<SubmarineController> controllers,
-                    SimulationListener listener) {
+                    List<VehicleConfig> vehicleConfigs, SimulationListener listener) {
+        Objects.requireNonNull(vehicleConfigs, "vehicleConfigs must not be null");
         var config = world.config();
         var physics = new SubmarinePhysics();
         var sonar = new SonarModel(config.worldSeed());
@@ -68,7 +70,8 @@ public final class SimulationLoop {
             var spawn = i < spawns.size() ? spawns.get(i) : spawns.getFirst();
             double heading = Math.atan2(-spawn.x(), -spawn.y()); // face toward center
             if (heading < 0) heading += 2 * Math.PI;
-            var entity = new SubmarineEntity(i, controllers.get(i), spawn, heading,
+            var vCfg = i < vehicleConfigs.size() ? vehicleConfigs.get(i) : VehicleConfig.submarine();
+            var entity = new SubmarineEntity(vCfg, i, controllers.get(i), spawn, heading,
                     SUB_COLORS[i % SUB_COLORS.length], config.startingHp());
             entities.add(entity);
         }
@@ -119,8 +122,9 @@ public final class SimulationLoop {
             // Snapshot before postTick clears pingRequested
             var snapshots = entities.stream().map(SubmarineEntity::snapshot).toList();
 
-            // Clear contact estimates after snapshot
+            // Clear contact estimates and waypoints after snapshot
             entities.forEach(SubmarineEntity::clearContactEstimates);
+            entities.forEach(SubmarineEntity::clearWaypoints);
 
             // Post-tick: consume pings, tick cooldowns
             sonar.postTick(entities);
@@ -142,10 +146,7 @@ public final class SimulationLoop {
         listener.onMatchEnd();
     }
 
-    // Collision radius: simplified as sphere with hull length as diameter
-    private static final double COLLISION_RADIUS = 15.0;  // HULL_HALF_LENGTH
     private static final double COLLISION_DAMAGE_FACTOR = 5.0;
-    private static final double COLLISION_BOUNCE_SPEED = 2.0;
 
     static void checkSubCollisions(List<SubmarineEntity> entities) {
         for (int i = 0; i < entities.size(); i++) {
@@ -155,11 +156,15 @@ public final class SimulationLoop {
                 var b = entities.get(j);
                 if (b.forfeited() || b.hp() <= 0) continue;
 
+                double radiusA = a.vehicleConfig().hullHalfLength();
+                double radiusB = b.vehicleConfig().hullHalfLength();
+                double collisionDist = radiusA + radiusB;
+
                 var posA = new Vec3(a.x(), a.y(), a.z());
                 var posB = new Vec3(b.x(), b.y(), b.z());
                 double dist = posA.distanceTo(posB);
 
-                if (dist < COLLISION_RADIUS * 2) {
+                if (dist < collisionDist) {
                     // Collision line: from A to B
                     Vec3 line = (dist > 0.01)
                             ? posB.subtract(posA).normalize()
@@ -178,7 +183,7 @@ public final class SimulationLoop {
                         b.setHp(Math.max(0, b.hp() - damage));
 
                         // Bounce apart: push each sub along collision line
-                        double separation = COLLISION_RADIUS * 2 - dist;
+                        double separation = collisionDist - dist;
                         double halfSep = separation / 2.0 + 0.5;
                         a.setX(a.x() - line.x() * halfSep);
                         a.setY(a.y() - line.y() * halfSep);

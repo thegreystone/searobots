@@ -36,7 +36,7 @@ import java.util.Random;
 
 /**
  * Procedurally generates an underwater world from a {@link MatchConfig}.
- * Deterministic — the same config always produces the same world.
+ * Deterministic: the same config always produces the same world.
  */
 public final class WorldGenerator {
 
@@ -65,12 +65,12 @@ public final class WorldGenerator {
 
         double cell = config.gridCellMeters();
         double[] elevations = new double[gridSize * gridSize];
-        double baseFreq = 1.0 / 800.0;
+        double baseFreq = 1.0 / 1600.0;
 
         double minZ = config.maxSeaFloorZ();
         double maxZ = 150.0;
         double range = maxZ - minZ;
-        // Bias midpoint upward — most terrain is moderate depth, deep
+        // Bias midpoint upward: most terrain is moderate depth, deep
         // trenches are the exception rather than the average.
         double mid = minZ + range * 0.6;
 
@@ -80,15 +80,15 @@ public final class WorldGenerator {
                 double wy = origin + row * cell;
 
                 // domain warping for organic shapes
-                double ws = 1.0 / 1200.0;
-                double warpX = warpNoise.noise(wx * ws, wy * ws) * 150;
-                double warpY = warpNoise.noise(wx * ws + 97, wy * ws + 131) * 150;
+                double ws = 1.0 / 2400.0;
+                double warpX = warpNoise.noise(wx * ws, wy * ws) * 300;
+                double warpY = warpNoise.noise(wx * ws + 97, wy * ws + 131) * 300;
 
                 double nx = (wx + warpX) * baseFreq;
                 double ny = (wy + warpY) * baseFreq;
 
                 // blend between smooth fBm and ridged noise
-                double blend = blendNoise.fbm(wx * 0.0005, wy * 0.0005, 3, 2.0, 0.5) * 0.5 + 0.5;
+                double blend = blendNoise.fbm(wx * 0.00025, wy * 0.00025, 3, 2.0, 0.5) * 0.5 + 0.5;
                 double smooth = terrainNoise.fbm(nx, ny, 6, 2.0, 0.5);
                 double ridged = terrainNoise.ridged(nx, ny, 6, 2.0, 0.5);
                 double n = smooth * (1 - blend) + ridged * blend;
@@ -97,15 +97,15 @@ public final class WorldGenerator {
 
                 // Continental shelf: low-frequency noise creates broad
                 // elevated regions where islands are larger and more common.
-                double shelf = shelfNoise.fbm(wx * 0.00025, wy * 0.00025, 2, 2.0, 0.5);
+                double shelf = shelfNoise.fbm(wx * 0.000125, wy * 0.000125, 2, 2.0, 0.5);
                 if (shelf > 0.0) {
-                    elevation += shelf * shelf * 600;
+                    elevation += shelf * shelf * 1200;
                 }
 
-                // Deep trenches: mirror of shelf — occasional deep gashes
-                double trench = trenchNoise.fbm(wx * 0.0003, wy * 0.0003, 2, 2.0, 0.5);
+                // Deep trenches: mirror of shelf, occasional deep gashes
+                double trench = trenchNoise.fbm(wx * 0.00015, wy * 0.00015, 2, 2.0, 0.5);
                 if (trench > 0.0) {
-                    elevation -= trench * trench * 600;
+                    elevation -= trench * trench * 1200;
                 }
 
                 elevation = Math.max(minZ, Math.min(maxZ, elevation));
@@ -153,24 +153,40 @@ public final class WorldGenerator {
         return new CurrentField(List.copyOf(bands));
     }
 
+    // Minimum water depth at spawn point (floor must be this far below spawn depth)
+    private static final double SPAWN_MIN_CLEARANCE = 150.0; // 150m below the sub
+    // Minimum water depth (the floor must be at least this deep)
+    private static final double SPAWN_MIN_FLOOR_DEPTH = -200.0;
+
     private List<Vec3> generateSpawnPoints(MatchConfig config, TerrainMap terrain,
                                            Random rng) {
         int count = config.submarineCount();
         double areaExtent = config.battleArea().extent();
-        double minSeparation = areaExtent * 0.5;
-        double spawnDepth = -50;
+        // Subs spawn 2000-5000m apart: close enough for sonar contact
+        // within a reasonable time, far enough for tactical maneuvering
+        double minSeparation = 2000;
 
         var points = new ArrayList<Vec3>();
         for (int attempts = 0; attempts < 1000 && points.size() < count; attempts++) {
             double angle = rng.nextDouble() * Math.PI * 2;
-            double radius = areaExtent * 0.3 + rng.nextDouble() * areaExtent * 0.5;
+            double radius = areaExtent * 0.15 + rng.nextDouble() * areaExtent * 0.35;
             double x = Math.cos(angle) * radius;
             double y = Math.sin(angle) * radius;
 
             if (!config.battleArea().contains(x, y)) continue;
 
             double floorZ = terrain.elevationAt(x, y);
-            if (spawnDepth < floorZ + 20) continue;
+
+            // Floor must be deep enough for safe operations
+            if (floorZ > SPAWN_MIN_FLOOR_DEPTH) continue;
+
+            // Spawn at a safe depth: midway between surface and floor,
+            // clamped to a reasonable range
+            double spawnDepth = Math.max(floorZ + SPAWN_MIN_CLEARANCE, -200);
+            spawnDepth = Math.min(spawnDepth, -80); // not too shallow
+
+            // Must have enough clearance below
+            if (spawnDepth < floorZ + SPAWN_MIN_CLEARANCE) continue;
 
             boolean tooClose = false;
             for (var p : points) {

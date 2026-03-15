@@ -179,9 +179,29 @@ public final class MatchRecorder implements SimulationListener {
                 sb.append(",\"conf\":").append(fmt(ce.confidence()));
                 sb.append(",\"alive\":").append(fmt(ce.contactAlive()));
                 sb.append(",\"ur\":").append(fmt(ce.uncertaintyRadius()));
+                if (!Double.isNaN(ce.estimatedHeading())) {
+                    sb.append(",\"hdg\":").append(fmt(Math.toDegrees(ce.estimatedHeading())));
+                }
+                if (ce.estimatedSpeed() >= 0) {
+                    sb.append(",\"spd\":").append(fmt(ce.estimatedSpeed()));
+                }
                 if (!ce.label().isEmpty()) {
                     sb.append(",\"lbl\":\"").append(escapeJson(ce.label())).append("\"");
                 }
+                sb.append("}");
+            }
+            sb.append("]");
+        }
+        var waypoints = sub.waypoints();
+        if (waypoints != null && !waypoints.isEmpty()) {
+            sb.append(",\"waypoints\":[");
+            for (int i = 0; i < waypoints.size(); i++) {
+                if (i > 0) sb.append(",");
+                var wp = waypoints.get(i);
+                sb.append("{\"x\":").append(fmt(wp.x()));
+                sb.append(",\"y\":").append(fmt(wp.y()));
+                sb.append(",\"z\":").append(fmt(wp.z()));
+                if (wp.active()) sb.append(",\"active\":true");
                 sb.append("}");
             }
             sb.append("]");

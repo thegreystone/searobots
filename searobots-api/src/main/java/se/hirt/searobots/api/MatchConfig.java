@@ -43,7 +43,7 @@ package se.hirt.searobots.api;
  * @param maxFuseRadius       upper bound on configurable fuse radius (metres)
  * @param ratedDepth          submarine's rated max operating depth (negative Z);
  *                            below this, hull stress damage and implosion risk begin
- * @param crushDepth          absolute crush depth (negative Z) — instant destruction
+ * @param crushDepth          absolute crush depth (negative Z): instant destruction
  * @param battleArea           shape and size of the battle zone
  * @param terrainMarginMeters extra terrain generated beyond the battle area
  * @param gridCellMeters      heightmap resolution (metres per cell)
@@ -84,8 +84,8 @@ public record MatchConfig(
                 30.0,
                 -400.0,   // rated depth: hull stress begins below this
                 -700.0,   // crush depth: guaranteed destruction
-                new BattleArea.Circular(5000.0),
-                1000.0,
+                new BattleArea.Circular(7000.0),
+                1500.0,
                 10.0,
                 -30.0,
                 -1000.0,  // terrain can go well below crush depth

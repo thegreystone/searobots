@@ -30,10 +30,15 @@ package se.hirt.searobots.viewer;
 
 import se.hirt.searobots.api.MatchConfig;
 import se.hirt.searobots.api.SubmarineController;
+import se.hirt.searobots.api.VehicleConfig;
 import se.hirt.searobots.engine.*;
 
+import javax.imageio.ImageIO;
 import javax.swing.*;
+import java.awt.Image;
 import java.awt.event.KeyEvent;
+import java.io.IOException;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ThreadLocalRandom;
 
@@ -48,8 +53,9 @@ public final class TerrainViewer {
         var world = generator.generate(MatchConfig.withDefaults(seed));
 
         SwingUtilities.invokeLater(() -> {
-            var frame = new JFrame("SeaRobots \u2014 Simulation Viewer");
+            var frame = new JFrame("SeaRobots: Simulation Viewer");
             frame.setDefaultCloseOperation(WindowConstants.EXIT_ON_CLOSE);
+            loadIcons(frame);
 
             var panel = new MapPanel(world);
             frame.add(panel);
@@ -96,6 +102,10 @@ public final class TerrainViewer {
             im.put(KeyStroke.getKeyStroke('e'), "contacts");
             im.put(KeyStroke.getKeyStroke('E'), "contacts");
             am.put("contacts", action(panel::toggleContactEstimates));
+
+            im.put(KeyStroke.getKeyStroke('w'), "waypoints");
+            im.put(KeyStroke.getKeyStroke('W'), "waypoints");
+            am.put("waypoints", action(panel::toggleWaypoints));
 
             im.put(KeyStroke.getKeyStroke('p'), "pause");
             im.put(KeyStroke.getKeyStroke('P'), "pause");
@@ -155,7 +165,7 @@ public final class TerrainViewer {
             this.loop = sim;
 
             List<SubmarineController> controllers = List.of(
-                    new ObstacleAvoidanceSub(), new ObstacleAvoidanceSub());
+                    new DefaultAttackSub(), new TargetDrone());
 
             MatchRecorder recorder = null;
             try {
@@ -180,8 +190,9 @@ public final class TerrainViewer {
                 }
             };
 
+            List<VehicleConfig> configs = List.of(VehicleConfig.submarine(), VehicleConfig.surfaceShip());
             var t = Thread.ofPlatform().daemon().name("sim-loop").start(() ->
-                    sim.run(world, controllers, listener));
+                    sim.run(world, controllers, configs, listener));
             this.thread = t;
         }
 
@@ -196,6 +207,24 @@ public final class TerrainViewer {
                 t.interrupt();
                 thread = null;
             }
+        }
+    }
+
+    private static void loadIcons(JFrame frame) {
+        String[] sizes = {"16", "24", "32", "48", "64", "128", "256", "512", "1024"};
+        var icons = new ArrayList<Image>();
+        for (String size : sizes) {
+            var url = TerrainViewer.class.getResource("/icons/searobots-" + size + ".png");
+            if (url != null) {
+                try {
+                    icons.add(ImageIO.read(url));
+                } catch (IOException e) {
+                    // skip missing sizes
+                }
+            }
+        }
+        if (!icons.isEmpty()) {
+            frame.setIconImages(icons);
         }
     }
 

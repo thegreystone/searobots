@@ -36,6 +36,7 @@ import java.util.List;
 
 public final class SubmarineEntity implements SubmarineOutput {
 
+    private final VehicleConfig vehicleConfig;
     private final int id;
     private final SubmarineController controller;
     private final Color color;
@@ -63,13 +64,18 @@ public final class SubmarineEntity implements SubmarineOutput {
     private double sternPlanes;
     private double throttle;
     private double ballast = 0.5;
+    private boolean engineClutch = true;  // true = engaged
     private String status = "";
 
     // contact estimates (published by controller, cleared each tick)
     private final List<ContactEstimate> contactEstimates = new ArrayList<>();
 
-    public SubmarineEntity(int id, SubmarineController controller, Vec3 spawn,
-                           double heading, Color color, int maxHp) {
+    // navigation waypoints (published by controller, cleared each tick)
+    private final List<Waypoint> waypoints = new ArrayList<>();
+
+    public SubmarineEntity(VehicleConfig vehicleConfig, int id, SubmarineController controller,
+                           Vec3 spawn, double heading, Color color, int maxHp) {
+        this.vehicleConfig = vehicleConfig;
         this.id = id;
         this.controller = controller;
         this.color = color;
@@ -77,9 +83,11 @@ public final class SubmarineEntity implements SubmarineOutput {
         this.hp = maxHp;
         this.x = spawn.x();
         this.y = spawn.y();
-        this.z = spawn.z();
+        this.z = vehicleConfig.surfaceLocked() ? 0 : spawn.z();
         this.heading = heading;
     }
+
+    public VehicleConfig vehicleConfig() { return vehicleConfig; }
 
     // ── SubmarineOutput ──
 
@@ -122,6 +130,20 @@ public final class SubmarineEntity implements SubmarineOutput {
         }
     }
 
+    @Override
+    public void publishWaypoint(Waypoint waypoint) {
+        if (waypoint != null) {
+            waypoints.add(waypoint);
+        }
+    }
+
+    @Override
+    public void setEngineClutch(boolean engaged) {
+        this.engineClutch = engaged;
+    }
+
+    public boolean engineClutch() { return engineClutch; }
+
     // ── accessors ──
 
     public int id() { return id; }
@@ -152,6 +174,8 @@ public final class SubmarineEntity implements SubmarineOutput {
     public String status() { return status; }
     public List<ContactEstimate> contactEstimates() { return List.copyOf(contactEstimates); }
     public void clearContactEstimates() { contactEstimates.clear(); }
+    public List<Waypoint> waypoints() { return List.copyOf(waypoints); }
+    public void clearWaypoints() { waypoints.clear(); }
 
     public void setX(double x) { this.x = x; }
     public void setY(double y) { this.y = y; }
@@ -182,7 +206,7 @@ public final class SubmarineEntity implements SubmarineOutput {
 
     public SubmarineSnapshot snapshot() {
         return new SubmarineSnapshot(id, pose(), velocity(), speed, color, forfeited, hp, noiseLevel,
-                throttle, status, pingRequested, contactEstimates());
+                throttle, status, pingRequested, contactEstimates(), waypoints());
     }
 
     public SubmarineState state() {

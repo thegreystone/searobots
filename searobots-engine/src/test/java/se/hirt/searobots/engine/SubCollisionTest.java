@@ -30,6 +30,7 @@ package se.hirt.searobots.engine;
 
 import org.junit.jupiter.api.Test;
 import se.hirt.searobots.api.Vec3;
+import static se.hirt.searobots.api.VehicleConfig.submarine;
 
 import java.awt.Color;
 import java.util.List;
@@ -39,8 +40,8 @@ import static org.junit.jupiter.api.Assertions.*;
 class SubCollisionTest {
 
     private SubmarineEntity makeSub(int id, Vec3 pos, double speed, double heading) {
-        var controller = new ObstacleAvoidanceSub();
-        var sub = new SubmarineEntity(id, controller, pos, heading, Color.RED, 1000);
+        var controller = new DefaultAttackSub();
+        var sub = new SubmarineEntity(submarine(), id, controller, pos, heading, Color.RED, 1000);
         sub.setSpeed(speed);
         return sub;
     }
@@ -75,7 +76,7 @@ class SubCollisionTest {
 
     @Test
     void stationarySubTakesLessDamage() {
-        // Rammed while stopped — closing speed is only one sub's speed
+        // Rammed while stopped: closing speed is only one sub's speed
         // At 5 m/s: damage = 5 * 25 = 125 → survivable
         var ramming = makeSub(0, new Vec3(0, -10, -200), 5, 0);
         var stationary = makeSub(1, new Vec3(0, 10, -200), 0, 0);
@@ -108,7 +109,7 @@ class SubCollisionTest {
 
     @Test
     void noCollisionWhenFarApart() {
-        // Subs 100m apart — well beyond collision radius (30m)
+        // Subs 100m apart, well beyond collision radius (32.5m)
         var sub1 = makeSub(0, new Vec3(0, -50, -200), 10, 0);
         var sub2 = makeSub(1, new Vec3(0, 50, -200), 10, Math.PI);
 

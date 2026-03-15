@@ -53,4 +53,19 @@ public interface SubmarineOutput {
      * contacts. Has no effect on the simulation.
      */
     default void publishContactEstimate(ContactEstimate estimate) {}
+
+    /**
+     * Publishes a navigation waypoint for viewer visualization.
+     * Call once per waypoint per tick. The viewer renders them as
+     * depth-colored circles with connecting lines. Has no effect on
+     * the simulation.
+     */
+    default void publishWaypoint(Waypoint waypoint) {}
+
+    /**
+     * Engages or disengages the engine clutch. When disengaged, the prop
+     * freewheels: no thrust, no engine braking, minimal machinery noise.
+     * This gives the longest coast and quietest operation while moving.
+     */
+    default void setEngineClutch(boolean engaged) {}
 }

@@ -37,7 +37,7 @@ public final class SonarModel {
     // Detection
     static final double DETECTION_THRESHOLD_DB = 5.0;
     static final double AMBIENT_NOISE_DB = 60.0;
-    // Self-noise is lower than radiated SL — hydrophones are isolated from machinery
+    // Self-noise is lower than radiated SL (hydrophones are isolated from machinery)
     static final double SELF_NOISE_OFFSET_DB = 30.0;
     // Cylindrical spreading for shallow water at our scale (surface + floor waveguide)
     static final double SPREADING_COEFFICIENT = 10.0;
@@ -52,7 +52,7 @@ public final class SonarModel {
     static final double TARGET_STRENGTH_DB = 20.0;
     static final double RANGE_NOISE_FRACTION = 0.02; // 2% RMS range noise on active returns
 
-    // Terrain occlusion — per-cell penalties (samples step at half-cell, so halved per sample)
+    // Terrain occlusion: per-cell penalties (samples step at half-cell, so halved per sample)
     // Underwater ridge: up to 15 dB per cell of terrain above the sound path
     static final double RIDGE_OCCLUSION_PER_CELL_DB = 15.0;
     static final double RIDGE_FULL_EXCESS = 50.0;  // meters above path for max per-cell penalty
@@ -133,8 +133,12 @@ public final class SonarModel {
                     double bearingError = rng.nextGaussian() * brgStdDev;
                     double reportedBearing = normalizeBearing(trueBearing + bearingError);
                     double estSpeed = estimateTargetSpeed(source.speed(), se, rng);
+                    // Estimate source level from signal characteristics.
+                    // Accuracy improves with SE (closer = better signal analysis).
+                    double slError = Math.clamp(10.0 / Math.max(se, 1.0), 1.0, 8.0);
+                    double estSL = sl + rng.nextGaussian() * slError;
                     passive.add(new SonarContact(reportedBearing, se, 0, false, estSpeed,
-                            brgStdDev, 0));
+                            brgStdDev, 0, estSL));
                 }
 
                 // --- Active sonar returns (for the listener's own ping) ---
@@ -145,14 +149,14 @@ public final class SonarModel {
                         double activeBrgStdDev = bearingStdDev(activeSe);
                         double bearingError = rng.nextGaussian() * activeBrgStdDev;
                         double reportedBearing = normalizeBearing(trueBearing + bearingError);
-                        // Range with ~2% noise
                         double rangeRmsNoise = distance * RANGE_NOISE_FRACTION;
                         double rangeNoise = rangeRmsNoise * rng.nextGaussian();
                         double reportedRange = Math.max(1.0, distance + rangeNoise);
-                        // Active returns also get speed estimate from the passive component
                         double estSpeed = estimateTargetSpeed(source.speed(), se, rng);
+                        double slError = Math.clamp(10.0 / Math.max(activeSe, 1.0), 1.0, 5.0);
+                        double estSL = sl + rng.nextGaussian() * slError;
                         active.add(new SonarContact(reportedBearing, activeSe, reportedRange, true,
-                                estSpeed, activeBrgStdDev, rangeRmsNoise));
+                                estSpeed, activeBrgStdDev, rangeRmsNoise, estSL));
                     }
                 }
             }
@@ -161,21 +165,31 @@ public final class SonarModel {
                     List.copyOf(passive), List.copyOf(active), listener.activeSonarCooldown()));
         }
 
+        // Consume ping requests AFTER processing all entities, so that a
+        // pinger's SL boost is visible to all listeners during this tick.
+        for (var entity : entities) {
+            if (entity.pingRequested()) {
+                if (entity.activeSonarCooldown() <= 0) {
+                    entity.setActiveSonarCooldown(ACTIVE_PING_COOLDOWN_TICKS);
+                }
+                entity.setPingRequested(false);
+            }
+        }
+
         return results;
     }
 
     /**
-     * Post-tick: consume ping requests, tick cooldowns.
+     * Post-tick: tick cooldowns only. Ping requests are NOT cleared here.
+     * They persist until sonar's computeContacts processes them on the next
+     * tick (sonar runs before the controller, so a ping requested on tick N
+     * must be visible to sonar on tick N+1).
      */
     public void postTick(List<SubmarineEntity> entities) {
         for (var entity : entities) {
-            if (entity.pingRequested() && entity.activeSonarCooldown() <= 0) {
-                // Set cooldown — don't decrement on the same tick
-                entity.setActiveSonarCooldown(ACTIVE_PING_COOLDOWN_TICKS);
-            } else if (entity.activeSonarCooldown() > 0) {
+            if (entity.activeSonarCooldown() > 0) {
                 entity.setActiveSonarCooldown(entity.activeSonarCooldown() - 1);
             }
-            entity.setPingRequested(false);
         }
     }
 

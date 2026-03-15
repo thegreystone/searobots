@@ -33,7 +33,7 @@ import se.hirt.searobots.api.*;
 import java.util.ArrayList;
 import java.util.List;
 
-public final class ObstacleAvoidanceSub implements SubmarineController {
+public final class DefaultAttackSub implements SubmarineController {
 
     // State machine
     enum State { PATROL, TRACKING, CHASE, RAM, EVADE }
@@ -47,13 +47,13 @@ public final class ObstacleAvoidanceSub implements SubmarineController {
 
     // Terrain / depth constants
     private static final double MIN_DEPTH = -20;
-    private static final double FLOOR_CLEARANCE = 50;
+    private static final double FLOOR_CLEARANCE = 80;
     private static final double CRUSH_SAFETY_MARGIN = 50;
-    private static final double BOUNDARY_TURN_DIST = 500;
-    private static final double EMERGENCY_GAP = 40;
-    private static final double[] SCAN_DISTANCES = {25, 50, 100, 200, 400, 600, 800};
+    private static final double BOUNDARY_TURN_DIST = 700;
+    private static final double EMERGENCY_GAP = 60;
+    private static final double[] SCAN_DISTANCES = {50, 100, 200, 400, 600, 1000, 1500};
     private static final double SCAN_SIDE_ANGLE = 0.6;
-    private static final double HULL_HALF_LENGTH = 15.0; // must match SubmarinePhysics
+    private static final double HULL_HALF_LENGTH = 32.5; // must match SubmarinePhysics
 
     // Contact tracking constants
     static final int CONTACT_CONFIRM_TICKS = 3;
@@ -87,7 +87,7 @@ public final class ObstacleAvoidanceSub implements SubmarineController {
     // Stern tailing constants
     private static final double BEHIND_ARC = Math.toRadians(45);  // within 45 deg of target stern
     private static final double TAILING_THROTTLE = 0.30;          // quiet following speed
-    private static final double TAILING_FLOOR_CLEARANCE = 100.0;  // extra room when tailing
+    private static final double TAILING_FLOOR_CLEARANCE = 150.0;  // extra room when tailing
 
     // Passive range estimation constants
     // SE-based: assume target SL ~90 dB (patrol speed), cylindrical spreading
@@ -109,6 +109,13 @@ public final class ObstacleAvoidanceSub implements SubmarineController {
     // Ping range threshold for tracked contact
     private static final double TRACKED_PING_RANGE = 1500.0;
 
+    // Path planner constants
+    private static final double WAYPOINT_ARRIVAL_DIST = 200.0;
+    private static final long REPLAN_INTERVAL = 2500; // replan every 50 seconds at 50Hz
+    private static final double SHALLOW_WATER_LIMIT = -50.0; // minimum water depth for passage
+    private static final int MAX_RECURSION_DEPTH = 3;
+    private static final double ROUTE_SAMPLE_STEP = 100.0; // sample terrain every 100m along route
+
     // State
     private State state = State.PATROL;
     private MatchConfig config;
@@ -122,12 +129,14 @@ public final class ObstacleAvoidanceSub implements SubmarineController {
     record BearingFix(long tick, double bearing, double se, double x, double y,
                       double ownSpeed, double ownHeading) {}
     private final List<BearingFix> contactTrack = new ArrayList<>();
+    private double lastHeading;  // cached for use in planPatrol
     private double lastContactBearing;
     private double lastContactSE;
     private long lastContactTick = -1000;
     private int consecutiveContactTicks;
     private double estimatedRange = Double.MAX_VALUE;
     private boolean rangeConfirmedByActive;
+    private double calibratedSL = Double.NaN; // SL computed from ping range + passive SE
     private int previousHp;
 
     // Tracked contact (persistent, dead-reckoned between updates)
@@ -155,8 +164,19 @@ public final class ObstacleAvoidanceSub implements SubmarineController {
     // Chase timing
     private long chaseStartTick;
 
+    // Last known contact area (preserved across state transitions for patrol biasing)
+    private double lastKnownContactX = Double.NaN;
+    private double lastKnownContactY = Double.NaN;
+
     // Patrol silence tracking
     private long patrolSilenceTicks;
+
+    // Path planner state
+    private final List<Vec3> navWaypoints = new ArrayList<>();
+    private int currentWaypointIndex = 0;
+    private long lastPlanTick = -1;
+    private double lastPlanTargetX = Double.NaN, lastPlanTargetY = Double.NaN;
+    private BattleArea battleArea;
 
     @Override
     public void onMatchStart(MatchContext context) {
@@ -166,6 +186,7 @@ public final class ObstacleAvoidanceSub implements SubmarineController {
         this.maxSubSpeed = config.maxSubSpeed();
         this.thermalLayers = context.thermalLayers();
         this.previousHp = config.startingHp();
+        this.battleArea = config.battleArea();
     }
 
     State state() { return state; }
@@ -183,6 +204,7 @@ public final class ObstacleAvoidanceSub implements SubmarineController {
         var self = input.self();
         var pos = self.pose().position();
         double heading = self.pose().heading();
+        this.lastHeading = heading;
         double depth = pos.z();
         long tick = input.tick();
 
@@ -202,6 +224,19 @@ public final class ObstacleAvoidanceSub implements SubmarineController {
             if (bestContact.isActive() && bestContact.range() > 0) {
                 estimatedRange = bestContact.range();
                 rangeConfirmedByActive = true;
+
+                // Calibrate source level: we know the exact range from the
+                // ping. Combined with the passive SE (which we also have),
+                // we can compute the target's true SL:
+                //   SE = SL - TL - NL, TL = spreading * log10(range)
+                //   SL = SE + TL + NL
+                // This calibrated SL gives much better passive range
+                // estimates on subsequent contacts.
+                if (lastContactSE > 5.0) { // above detection threshold
+                    double tl = SPREADING_COEFFICIENT * Math.log10(
+                            Math.max(bestContact.range(), 1.0));
+                    calibratedSL = lastContactSE + tl + ASSUMED_AMBIENT_NL_DB;
+                }
             }
 
             // Record bearing fix (for triangulation and TMA)
@@ -210,37 +245,52 @@ public final class ObstacleAvoidanceSub implements SubmarineController {
             // Cap track length
             while (contactTrack.size() > 200) contactTrack.removeFirst();
 
-            // Passive range estimation (3 methods, best wins)
-
-            // Method 1: Triangulation (requires displacement between fixes)
-            if (contactTrack.size() >= 2) {
-                var latest = contactTrack.getLast();
-                // Find an older fix with enough displacement
-                for (int i = contactTrack.size() - 2; i >= 0; i--) {
-                    var older = contactTrack.get(i);
-                    if (displacement(pos, older) > TRACKING_DISPLACEMENT) {
-                        double rangeEst = triangulate(latest, older);
-                        if (rangeEst > 0 && rangeEst < 50000) {
-                            estimatedRange = rangeEst;
+            // Passive range estimation. After a ping fix, protect the estimate
+            // briefly (500 ticks = 10 seconds), then allow passive updates
+            // to correct dead-reckoning drift.
+            long lastPingTick = pingFixHistory.isEmpty() ? -1 : pingFixHistory.getLast().tick();
+            boolean pingRecent = rangeConfirmedByActive && lastPingTick >= 0
+                    && (tick - lastPingTick) < 500;
+            if (!pingRecent) {
+                // Method 1: Triangulation (requires displacement between fixes)
+                if (contactTrack.size() >= 2) {
+                    var latest = contactTrack.getLast();
+                    for (int i = contactTrack.size() - 2; i >= 0; i--) {
+                        var older = contactTrack.get(i);
+                        if (displacement(pos, older) > TRACKING_DISPLACEMENT) {
+                            double rangeEst = triangulate(latest, older);
+                            if (rangeEst > 0 && rangeEst < 50000) {
+                                estimatedRange = rangeEst;
+                            }
+                            break;
                         }
-                        break;
                     }
                 }
-            }
 
-            // Method 2: SE-based range estimate (rough, order of magnitude only)
-            double seRange = estimateRangeFromSE(bestContact.signalExcess(),
-                    bestContact.estimatedSpeed());
-            if (seRange > 0 && seRange < 50000) {
-                if (estimatedRange == Double.MAX_VALUE) {
-                    estimatedRange = Math.max(seRange, CHASE_RANGE);
+                // Method 2: SE-based range estimate. Use calibrated SL from
+                // a previous ping if available (most accurate). Otherwise
+                // fall back to the sonar's estimated source level.
+                double slForRanging = !Double.isNaN(calibratedSL) ? calibratedSL
+                        : bestContact.estimatedSourceLevel();
+                double seRange = estimateRangeFromSEAndSL(
+                        bestContact.signalExcess(), slForRanging);
+                if (seRange > 0 && seRange < 50000) {
+                    if (estimatedRange == Double.MAX_VALUE) {
+                        estimatedRange = seRange;
+                    } else {
+                        // Blend SE range with current estimate. SE is noisy but
+                        // provides a continuous range signal even when heading
+                        // straight at the target (where TMA fails).
+                        double blend = 0.1;
+                        estimatedRange = estimatedRange * (1 - blend) + seRange * blend;
+                    }
                 }
-            }
 
-            // Method 3: Bearing rate TMA (needs bearing history and own-ship speed)
-            double tmaRange = estimateRangeFromBearingRate(tick, speed, heading);
-            if (tmaRange > 0 && tmaRange < 50000) {
-                estimatedRange = tmaRange;
+                // Method 3: Bearing rate TMA (needs bearing history and own-ship speed)
+                double tmaRange = estimateRangeFromBearingRate(tick, speed, heading);
+                if (tmaRange > 0 && tmaRange < 50000) {
+                    estimatedRange = tmaRange;
+                }
             }
         } else {
             consecutiveContactTicks = 0;
@@ -264,6 +314,91 @@ public final class ObstacleAvoidanceSub implements SubmarineController {
         // Any sonar contact resets contactAlive
         if (bestContact != null) {
             contactAlive = 1.0;
+
+            // Update target speed from blade-rate tonals (when available).
+            // Blend with current estimate for smoothing.
+            if (bestContact.estimatedSpeed() >= 0) {
+                double bladeSpeed = bestContact.estimatedSpeed();
+                if (hasTrackedContact) {
+                    // Blend: weight by SE quality (high SE = trust blade-rate more)
+                    double quality = Math.clamp(bestContact.signalExcess() / 30.0, 0.1, 0.8);
+                    trackedSpeed = trackedSpeed * (1 - quality) + bladeSpeed * quality;
+                } else {
+                    trackedSpeed = bladeSpeed;
+                }
+            }
+
+            // Bearing correction: snap the tracked position onto the bearing
+            // line at the current estimated range. Also use the bearing
+            // history to estimate target heading via TMA.
+            if (hasTrackedContact && !bestContact.isActive()) {
+                // Correction range: the distance from us to the tracked position.
+                // This is smoother than estimatedRange (which jumps wildly from
+                // noisy triangulation/TMA), because the tracked position is
+                // stabilized by the bearing correction and dead-reckoning.
+                // Only use estimatedRange when it comes from a recent ping
+                // (which gives precise range data).
+                double geometricRange = Math.sqrt(
+                        Math.pow(trackedX - pos.x(), 2) + Math.pow(trackedY - pos.y(), 2));
+                // Correction range: how far along the bearing to project.
+                // Use geometric distance (from sub to tracked position).
+                // Key constraint: the correction must never pull the tracked
+                // position toward us faster than a real target could close.
+                // Bearing correction using independent range measurement.
+                // Only correct when we have a ping-calibrated SL (from a
+                // previous "first contact ping"). Without calibration, the
+                // sonar's estimated SL is too inaccurate for ranging and
+                // the correction would cause the tracked position to collapse.
+                double correctionRange = -1;
+                long lastPingAge = pingFixHistory.isEmpty() ? Long.MAX_VALUE
+                        : tick - pingFixHistory.getLast().tick();
+                if (lastPingAge < 250 && estimatedRange > 0 && estimatedRange < 50000) {
+                    correctionRange = estimatedRange;
+                } else if (!Double.isNaN(calibratedSL)) {
+                    double seRange = estimateRangeFromSEAndSL(
+                            bestContact.signalExcess(), calibratedSL);
+                    if (seRange > 50 && seRange < 50000) {
+                        correctionRange = seRange;
+                    }
+                }
+                if (correctionRange > 50) {
+                    double correctedX = pos.x() + correctionRange * Math.sin(bestContact.bearing());
+                    double correctedY = pos.y() + correctionRange * Math.cos(bestContact.bearing());
+                    double bearingBlend = 0.15;
+                    trackedX = trackedX * (1 - bearingBlend) + correctedX * bearingBlend;
+                    trackedY = trackedY * (1 - bearingBlend) + correctedY * bearingBlend;
+                }
+
+                // Heading estimation from tracked position history.
+                // The tracked position is smoothed by bearing corrections,
+                // so successive positions trace the target's path. Compare
+                // current tracked position to where it was 5 seconds ago.
+                if (tick - prevFixTick >= 250 && correctionRange > 100) {
+                    if (!Double.isNaN(prevFixX)) {
+                        double dx = trackedX - prevFixX;
+                        double dy = trackedY - prevFixY;
+                        double moved = Math.sqrt(dx * dx + dy * dy);
+
+                        if (moved > 30) {
+                            double tgtHeading = Math.atan2(dx, dy);
+                            if (tgtHeading < 0) tgtHeading += 2 * Math.PI;
+
+                            if (Double.isNaN(trackedHeading)) {
+                                trackedHeading = tgtHeading;
+                            } else {
+                                double hDiff = angleDiff(tgtHeading, trackedHeading);
+                                if (Math.abs(hDiff) < Math.toRadians(60)) {
+                                    trackedHeading = normalizeBearing(
+                                            trackedHeading + hDiff * 0.2);
+                                }
+                            }
+                        }
+                    }
+                    prevFixX = trackedX;
+                    prevFixY = trackedY;
+                    prevFixTick = tick;
+                }
+            }
         }
 
         // Update from sonar fixes
@@ -503,20 +638,46 @@ public final class ObstacleAvoidanceSub implements SubmarineController {
                     patrolSilenceTicks++;
                 }
 
-                // Normal baffle clearing (PATROL means fully lost, no tracked contact)
-                baffleClearTimer++;
-                if (baffleClearTimer > BAFFLE_CLEAR_INTERVAL && !clearingBaffles) {
-                    clearingBaffles = true;
-                    preBaffleClearHeading = heading;
-                    baffleClearDirection *= -1;
+                // Plan patrol route (only when we have no waypoints or have
+                // completed the route). Don't replan mid-route: let the sub
+                // follow the plan to completion so it actually covers ground.
+                if (navWaypoints.isEmpty()
+                        || currentWaypointIndex >= navWaypoints.size() - 1) {
+                    planPatrol(pos.x(), pos.y(), terrain, battleArea);
+                    lastPlanTick = tick;
                 }
-                if (clearingBaffles) {
-                    tacticalRudder = baffleClearDirection * 0.4;
-                    double turned = angleDiff(heading, preBaffleClearHeading);
-                    if (Math.abs(turned) > BAFFLE_CLEAR_ANGLE) {
-                        clearingBaffles = false;
-                        baffleClearTimer = 0;
+
+                // Follow waypoints
+                if (!navWaypoints.isEmpty()) {
+                    var wp = navWaypoints.get(currentWaypointIndex);
+                    double wpDx = wp.x() - pos.x();
+                    double wpDy = wp.y() - pos.y();
+                    double wpDist = Math.sqrt(wpDx * wpDx + wpDy * wpDy);
+
+                    if (wpDist < WAYPOINT_ARRIVAL_DIST) {
+                        currentWaypointIndex = (currentWaypointIndex + 1) % navWaypoints.size();
+                        wp = navWaypoints.get(currentWaypointIndex);
                     }
+
+                    tacticalRudder = steerTowardWaypoint(pos.x(), pos.y(), heading);
+                    tacticalDepthPreference = wp.z();
+                } else {
+                    // Fallback: baffle clearing when no waypoints
+                    baffleClearTimer++;
+                    if (baffleClearTimer > BAFFLE_CLEAR_INTERVAL && !clearingBaffles) {
+                        clearingBaffles = true;
+                        preBaffleClearHeading = heading;
+                        baffleClearDirection *= -1;
+                    }
+                    if (clearingBaffles) {
+                        tacticalRudder = baffleClearDirection * 0.4;
+                        double turned = angleDiff(heading, preBaffleClearHeading);
+                        if (Math.abs(turned) > BAFFLE_CLEAR_ANGLE) {
+                            clearingBaffles = false;
+                            baffleClearTimer = 0;
+                        }
+                    }
+                    tacticalDepthPreference = preferredDepthBelowThermocline(depth);
                 }
 
                 // Active ping gambit after long silence
@@ -525,12 +686,17 @@ public final class ObstacleAvoidanceSub implements SubmarineController {
                     output.activeSonarPing();
                     patrolSilenceTicks = 0;
                 }
-
-                // Prefer depth below thermocline
-                tacticalDepthPreference = preferredDepthBelowThermocline(depth);
             }
             case TRACKING -> {
                 tacticalThrottle = TRACKING_THROTTLE;
+
+                // First-contact ping: if we don't have a calibrated SL yet,
+                // ping once to establish range and calibrate. This is the
+                // classic "snap shot" to establish the tactical picture,
+                // then go passive for the approach.
+                if (Double.isNaN(calibratedSL) && input.activeSonarCooldownTicks() == 0) {
+                    output.activeSonarPing();
+                }
 
                 if (bestContact != null) {
                     // Fresh contact: turn perpendicular for cross-bearing fix
@@ -541,12 +707,34 @@ public final class ObstacleAvoidanceSub implements SubmarineController {
                     double targetDiff = Math.abs(diff) < Math.abs(diff2) ? diff : diff2;
                     tacticalRudder = Math.clamp(targetDiff * 2.0, -1, 1);
                 } else if (hasTrackedContact) {
-                    // No fresh contact but have tracked position: head toward it
-                    double targetBearing = Math.atan2(trackedX - pos.x(), trackedY - pos.y());
-                    if (targetBearing < 0) targetBearing += 2 * Math.PI;
-                    double diff = angleDiff(targetBearing, heading);
-                    if (Math.abs(diff) > Math.toRadians(5)) {
-                        tacticalRudder = Math.clamp(diff * 2.0, -1, 1);
+                    // Route toward tracked position using path planner
+                    boolean needReplan = navWaypoints.isEmpty()
+                            || Double.isNaN(lastPlanTargetX)
+                            || (Math.sqrt(Math.pow(trackedX - lastPlanTargetX, 2)
+                                + Math.pow(trackedY - lastPlanTargetY, 2)) > 500);
+
+                    if (needReplan) {
+                        replanToTarget(pos.x(), pos.y(), trackedX, trackedY, terrain, tick);
+                    }
+
+                    if (!navWaypoints.isEmpty()) {
+                        var wp = navWaypoints.get(currentWaypointIndex);
+                        double wpDx = wp.x() - pos.x();
+                        double wpDy = wp.y() - pos.y();
+                        double wpDist = Math.sqrt(wpDx * wpDx + wpDy * wpDy);
+
+                        if (wpDist < WAYPOINT_ARRIVAL_DIST && currentWaypointIndex < navWaypoints.size() - 1) {
+                            currentWaypointIndex++;
+                        }
+
+                        tacticalRudder = steerTowardWaypoint(pos.x(), pos.y(), heading);
+                    } else {
+                        double targetBearing = Math.atan2(trackedX - pos.x(), trackedY - pos.y());
+                        if (targetBearing < 0) targetBearing += 2 * Math.PI;
+                        double diff = angleDiff(targetBearing, heading);
+                        if (Math.abs(diff) > Math.toRadians(5)) {
+                            tacticalRudder = Math.clamp(diff * 2.0, -1, 1);
+                        }
                     }
 
                     // Ping when within range of tracked position and cooldown ready
@@ -558,50 +746,105 @@ public final class ObstacleAvoidanceSub implements SubmarineController {
             case CHASE -> {
                 boolean behindTarget = isBehindTarget();
 
-                if (behindTarget && estimatedRange < 1000) {
-                    // Behind and close: quiet tailing
+                // Zig-zag approach: alternate between angled legs to maintain
+                // cross-track speed for passive TMA while still closing distance.
+                // Each leg heads ~30 degrees off the direct bearing, alternating
+                // left and right. The net movement converges on the target.
+                double zigzagAngle = Math.toRadians(30);
+                long legDuration = SPRINT_DURATION + DRIFT_DURATION; // one full sprint-drift cycle per leg
+                long legPhase = (tick - chaseStartTick) % (legDuration * 2);
+                boolean zigLeft = legPhase < legDuration;
+                long phaseInLeg = legPhase % legDuration;
+                boolean sprinting = phaseInLeg < SPRINT_DURATION;
+
+                if (behindTarget && trackedDist < 1000) {
+                    // Behind and close: quiet tailing, no zig-zag needed
                     tacticalThrottle = TAILING_THROTTLE;
                 } else if (hasTrackedContact && trackedDist > CHASE_RANGE) {
                     // Long-range approach: quiet patrol speed
                     tacticalThrottle = PATROL_THROTTLE;
-                } else if (behindTarget) {
-                    // Behind but far: close the gap, moderate speed
+                } else if (behindTarget && trackedDist < 2000) {
+                    // Behind and moderately close: quiet approach
                     tacticalThrottle = CHASE_THROTTLE * 0.7;
+                } else if (sprinting) {
+                    tacticalThrottle = CHASE_THROTTLE;
                 } else {
-                    // Sprint-and-drift to close / get behind
-                    long phaseTime = (tick - chaseStartTick) % (SPRINT_DURATION + DRIFT_DURATION);
-                    if (phaseTime < SPRINT_DURATION) {
-                        tacticalThrottle = CHASE_THROTTLE;
-                    } else {
-                        tacticalThrottle = TRACKING_THROTTLE;
-                    }
+                    // Drift phase: go quiet, listen
+                    tacticalThrottle = TRACKING_THROTTLE;
                 }
 
-                // Steer toward tracked position
+                // Steering with zig-zag for TMA
                 if (hasTrackedContact) {
                     double targetX = trackedX;
                     double targetY = trackedY;
 
-                    // If we know target heading and have range, aim for stern
+                    // Aim for stern only at close range
                     if (!Double.isNaN(trackedHeading)
-                            && trackedDist < 10000 && trackedDist > RAM_RANGE * 2) {
-                        double offset = Math.min(trackedDist * 0.5, BEHIND_OFFSET);
+                            && trackedDist < 1500 && trackedDist > RAM_RANGE * 2) {
+                        double offsetFraction = 1.0 - (trackedDist - RAM_RANGE * 2) / (1500 - RAM_RANGE * 2);
+                        double offset = BEHIND_OFFSET * offsetFraction;
                         targetX -= offset * Math.sin(trackedHeading);
                         targetY -= offset * Math.cos(trackedHeading);
                     }
 
-                    double chaseBearing = Math.atan2(targetX - pos.x(), targetY - pos.y());
-                    if (chaseBearing < 0) chaseBearing += 2 * Math.PI;
-                    double diff = angleDiff(chaseBearing, heading);
-                    tacticalRudder = Math.clamp(diff * 2.0, -1, 1);
+                    double directBearing = Math.atan2(targetX - pos.x(), targetY - pos.y());
+                    if (directBearing < 0) directBearing += 2 * Math.PI;
 
-                    // Ping when within range and no recent fix
+                    // Apply zig-zag offset (reduces as we get closer, no offset when tailing)
+                    double approachBearing;
+                    if (behindTarget && trackedDist < 2000) {
+                        // Close and behind: head straight in, no zig-zag
+                        approachBearing = directBearing;
+                    } else {
+                        // Offset the approach bearing for TMA.
+                        // Reduce the angle as distance shrinks (less offset at close range)
+                        double angleFactor = Math.clamp(trackedDist / CHASE_RANGE, 0.3, 1.0);
+                        double offset = zigzagAngle * angleFactor * (zigLeft ? -1 : 1);
+                        approachBearing = normalizeBearing(directBearing + offset);
+                    }
+
+                    // Route toward the approach bearing target point
+                    double approachDist = Math.min(trackedDist * 0.7, 2000);
+                    double approachX = pos.x() + approachDist * Math.sin(approachBearing);
+                    double approachY = pos.y() + approachDist * Math.cos(approachBearing);
+
+                    // Replan if target moved significantly
+                    boolean needReplan = navWaypoints.isEmpty()
+                            || Double.isNaN(lastPlanTargetX)
+                            || (Math.sqrt(Math.pow(approachX - lastPlanTargetX, 2)
+                                + Math.pow(approachY - lastPlanTargetY, 2)) > 500);
+
+                    if (needReplan) {
+                        replanToTarget(pos.x(), pos.y(), approachX, approachY, terrain, tick);
+                    }
+
+                    // Follow waypoints if available
+                    if (!navWaypoints.isEmpty()) {
+                        var wp = navWaypoints.get(currentWaypointIndex);
+                        double wpDx = wp.x() - pos.x();
+                        double wpDy = wp.y() - pos.y();
+                        double wpDist = Math.sqrt(wpDx * wpDx + wpDy * wpDy);
+
+                        if (wpDist < WAYPOINT_ARRIVAL_DIST && currentWaypointIndex < navWaypoints.size() - 1) {
+                            currentWaypointIndex++;
+                            wp = navWaypoints.get(currentWaypointIndex);
+                        }
+
+                        tacticalRudder = steerTowardWaypoint(pos.x(), pos.y(), heading);
+                        if (!Double.isNaN(wp.z())) {
+                            tacticalDepthPreference = wp.z();
+                        }
+                    } else {
+                        double diff = angleDiff(approachBearing, heading);
+                        tacticalRudder = Math.clamp(diff * 2.0, -1, 1);
+                    }
+
+                    // Ping only as a last resort when passive tracking fails
                     if (trackedDist < TRACKED_PING_RANGE && input.activeSonarCooldownTicks() == 0
-                            && ticksSinceContact > 100) {
+                            && ticksSinceContact > 500) {
                         output.activeSonarPing();
                     }
                 } else if (lastContactTick >= 0) {
-                    // Fallback: steer by last known bearing
                     double diff = angleDiff(lastContactBearing, heading);
                     tacticalRudder = Math.clamp(diff * 2.0, -1, 1);
                 }
@@ -677,7 +920,9 @@ public final class ObstacleAvoidanceSub implements SubmarineController {
         boolean tailing = (state == State.CHASE && isBehindTarget());
         double floorClearance = tailing ? TAILING_FLOOR_CLEARANCE : FLOOR_CLEARANCE;
 
-        // Step 4: Compute target depth (bottom tracking + tactical)
+        // Step 4: Compute target depth
+        // Primary: waypoint depth or tactical preference (navigation-driven).
+        // Safety floor: never go below floor + minimum clearance.
         double sinH = Math.sin(heading);
         double cosH = Math.cos(heading);
         double floorCenter = terrain.elevationAt(pos.x(), pos.y());
@@ -686,22 +931,41 @@ public final class ObstacleAvoidanceSub implements SubmarineController {
         double floorStern = terrain.elevationAt(
                 pos.x() - sinH * HULL_HALF_LENGTH, pos.y() - cosH * HULL_HALF_LENGTH);
         double floorBelow = Math.max(floorCenter, Math.max(floorBow, floorStern));
-        double rawTarget = clampTarget(floorBelow + floorClearance);
+        double safetyFloor = clampTarget(floorBelow + floorClearance);
 
+        // Use waypoint depth as the primary target (the path planner already
+        // chose safe depths). Fall back to tactical preference or safety floor.
+        double rawTarget;
         if (!Double.isNaN(tacticalDepthPreference)) {
-            double tacticalTarget = clampTarget(tacticalDepthPreference);
-            if (tacticalTarget > rawTarget) {
-                rawTarget = tacticalTarget;
-            }
+            rawTarget = clampTarget(tacticalDepthPreference);
+        } else {
+            rawTarget = safetyFloor;
+        }
+        // Never go below the safety floor (absolute minimum clearance)
+        if (rawTarget < safetyFloor) {
+            rawTarget = safetyFloor;
         }
 
-        // Step 5: Multi-point terrain scan ahead
+        // Step 5: Multi-point terrain scan
+        // Scan along TWO directions: current heading (for immediate safety)
+        // and toward the active waypoint (for navigation-aware planning).
+        // Use the worse of the two for depth targeting, but only the
+        // heading scan for rudder avoidance (since that's the direction
+        // we're actually moving).
+        double scanHeading = heading;
+        double waypointHeading = heading;
+        if (!navWaypoints.isEmpty() && currentWaypointIndex < navWaypoints.size()) {
+            var wp = navWaypoints.get(currentWaypointIndex);
+            waypointHeading = Math.atan2(wp.x() - pos.x(), wp.y() - pos.y());
+        }
+
         double worstFloor = floorBelow;
         double worstDist = 0;
         boolean dropOffAhead = false;
+        // Scan along current heading (immediate safety)
         for (double dist : SCAN_DISTANCES) {
-            double sx = pos.x() + Math.sin(heading) * dist;
-            double sy = pos.y() + Math.cos(heading) * dist;
+            double sx = pos.x() + Math.sin(scanHeading) * dist;
+            double sy = pos.y() + Math.cos(scanHeading) * dist;
             double floor = terrain.elevationAt(sx, sy);
             if (floor > worstFloor) {
                 worstFloor = floor;
@@ -711,20 +975,39 @@ public final class ObstacleAvoidanceSub implements SubmarineController {
                 dropOffAhead = true;
             }
         }
+        // Also scan along waypoint bearing to ensure we can reach it
+        // (but only affects depth targeting, not rudder avoidance)
+        double waypointWorstFloor = floorBelow;
+        if (Math.abs(angleDiff(waypointHeading, scanHeading)) > Math.toRadians(15)) {
+            for (double dist : SCAN_DISTANCES) {
+                double sx = pos.x() + Math.sin(waypointHeading) * dist;
+                double sy = pos.y() + Math.cos(waypointHeading) * dist;
+                double floor = terrain.elevationAt(sx, sy);
+                if (floor > waypointWorstFloor) {
+                    waypointWorstFloor = floor;
+                }
+            }
+        }
 
         // Step 6: Terrain avoidance
-        double worstTarget = clampTarget(worstFloor + floorClearance);
+        // Uses the worse of heading scan and waypoint scan for depth targeting.
+        // Only overrides rudder when terrain along the current heading is
+        // genuinely dangerous. If the waypoint direction is clear, the sub
+        // should be free to turn toward it.
+        double effectiveWorstFloor = Math.max(worstFloor, waypointWorstFloor);
+        double worstTarget = clampTarget(effectiveWorstFloor + floorClearance);
+        double avoidanceThreshold = 30;
         double margin = depth - (worstFloor + floorClearance);
 
-        if (margin < floorClearance) {
-            double urgency = Math.clamp(1.0 - margin / floorClearance, 0.2, 1.0);
+        if (margin < avoidanceThreshold) {
+            double urgency = Math.clamp(1.0 - margin / avoidanceThreshold, 0.0, 1.0);
             status = "AVOIDING TERRAIN";
 
             if (worstTarget > rawTarget) {
                 rawTarget = worstTarget;
             }
 
-            boolean threatBelow = ((depth - floorBelow) < floorClearance);
+            boolean threatBelow = ((depth - floorBelow) < avoidanceThreshold);
             if (threatBelow) {
                 throttle = Math.max(0.2, throttle * (1.0 - urgency * 0.6));
             }
@@ -739,11 +1022,31 @@ public final class ObstacleAvoidanceSub implements SubmarineController {
                     pos.x() + Math.sin(rightH) * scanDist,
                     pos.y() + Math.cos(rightH) * scanDist);
 
-            if (floorLeft < floorRight) {
-                rudder = -urgency;
-            } else {
-                rudder = urgency;
+            // Only override rudder if the terrain threat is along our current
+            // heading AND the waypoint direction isn't clearly safer.
+            // If the waypoint direction has deep water, let the sub turn toward
+            // it instead of fighting the navigation plan.
+            // Only consider waypoint path clear when we actually have waypoints
+            // in a different direction than our current heading.
+            boolean hasDistinctWaypointPath = !navWaypoints.isEmpty()
+                    && Math.abs(angleDiff(waypointHeading, scanHeading)) > Math.toRadians(15);
+            boolean waypointPathClear = hasDistinctWaypointPath
+                    && waypointWorstFloor < worstFloor - 10;
+
+            if (!waypointPathClear) {
+                double floorDiff = Math.abs(floorLeft - floorRight);
+                if (floorDiff > 1.0 || worstFloor > floorBelow + 5) {
+                    double avoidRudder;
+                    if (floorDiff > 1.0) {
+                        avoidRudder = floorLeft < floorRight ? -urgency : urgency;
+                    } else {
+                        avoidRudder = rudder >= 0 ? urgency : -urgency;
+                    }
+                    rudder = rudder * (1 - urgency) + avoidRudder * urgency;
+                }
             }
+            // When waypoint path is clear, don't override rudder.
+            // The depth controller (Step 8) still handles vertical safety.
         }
 
         double targetDepth = rawTarget;
@@ -754,7 +1057,7 @@ public final class ObstacleAvoidanceSub implements SubmarineController {
             if (state == State.PATROL) status = "DROP-OFF AHEAD";
         }
 
-        // Step 8: PD depth controller
+        // Step 8: Cascade depth controller
         double immediateGap = depth - floorBelow;
         double depthError = depth - targetDepth;
         double verticalSpeed = self.velocity().linear().z();
@@ -762,20 +1065,34 @@ public final class ObstacleAvoidanceSub implements SubmarineController {
         double gapFactor = Math.clamp(
                 (immediateGap - EMERGENCY_GAP) / (200 - EMERGENCY_GAP), 0, 1);
 
-        double pGain = 0.08;
-        double dGain = 0.3;
-        double rawBallast = 0.5 - pGain * depthError - dGain * verticalSpeed;
+        // Outer loop: depth error -> desired pitch angle
+        // Positive depthError = above target = need to dive (negative pitch)
+        double depthPGain = 0.015;
+        double depthDGain = 0.4;
+        double desiredPitch = Math.clamp(
+                -depthPGain * depthError - depthDGain * verticalSpeed,
+                -Math.toRadians(20), Math.toRadians(20));
+
+        // Limit dive authority near floor
+        if (desiredPitch < 0) {
+            desiredPitch *= gapFactor;
+        }
+
+        // Inner loop: pitch error -> stern planes
+        double currentPitch = self.pose().pitch();
+        double pitchError = desiredPitch - currentPitch;
+        sternPlanes = Math.clamp(3.0 * pitchError, -1.0, 1.0);
+
+        // Ballast trim: slowly adjust to maintain neutral buoyancy.
+        // If we constantly need pitch to maintain depth, adjust ballast to offload.
+        // Include a small damping term so ballast responds to vertical speed too.
+        double trimRate = 0.002;
+        double trimDamp = 0.05;
+        double rawBallast = Math.clamp(0.5 - trimRate * depthError - trimDamp * verticalSpeed, 0.0, 1.0);
         if (rawBallast < 0.5) {
             ballast = Math.clamp(0.5 - (0.5 - rawBallast) * gapFactor, 0.0, 1.0);
         } else {
             ballast = Math.clamp(rawBallast, 0.0, 1.0);
-        }
-
-        if (depthError > 5) {
-            double maxDive = -0.5 * gapFactor;
-            sternPlanes = Math.clamp(-depthError * 0.03 * gapFactor, maxDive, 0);
-        } else if (depthError < -5) {
-            sternPlanes = Math.clamp(-depthError * 0.04, 0, 0.6);
         }
 
         // Step 9: Pull-up (gap closing while sinking)
@@ -831,12 +1148,35 @@ public final class ObstacleAvoidanceSub implements SubmarineController {
         output.setStatus(String.format("%s f:%.0f g:%.0f",
                 stateTag, -floorBelow, immediateGap));
 
+        // Torpedo firing check: behind the target, within range, good solution
+        if (hasTrackedContact && state == State.CHASE && isBehindTarget()
+                && trackedDist < 1500 && trackedDist > 200
+                && !Double.isNaN(trackedHeading) && trackedSpeed > 0
+                && contactAlive > 0.5 && uncertaintyRadius < 300) {
+            // We have a firing solution: behind the target, within range,
+            // known heading and speed, confident position.
+            double solutionAge = (tick - trackedLastFixTick) / 50.0;
+            if (solutionAge < 30) { // solution less than 30 seconds old
+                System.out.printf("TORPEDO SOLUTION t=%d: pos=[%.0f,%.0f] target=[%.0f,%.0f] " +
+                        "range=%.0f hdg=%.0f spd=%.1f ur=%.0f behind=%s%n",
+                        tick, pos.x(), pos.y(), trackedX, trackedY,
+                        trackedDist, Math.toDegrees(trackedHeading), trackedSpeed,
+                        uncertaintyRadius, isBehindTarget());
+            }
+        }
+
         // Publish tracked contact estimate every tick if available
         if (hasTrackedContact) {
             double posConf = refUncertainty / (refUncertainty + uncertaintyRadius);
             double conf = contactAlive * posConf;
             String label = uncertaintyRadius < 100 ? "ping" : "passive";
-            output.publishContactEstimate(new ContactEstimate(trackedX, trackedY, conf, contactAlive, uncertaintyRadius, label));
+            output.publishContactEstimate(new ContactEstimate(trackedX, trackedY, conf, contactAlive, uncertaintyRadius, trackedHeading, trackedSpeed, label));
+        }
+
+        // Publish navigation waypoints for viewer visualization
+        for (int i = 0; i < navWaypoints.size(); i++) {
+            var wp = navWaypoints.get(i);
+            output.publishWaypoint(new Waypoint(wp.x(), wp.y(), wp.z(), i == currentWaypointIndex));
         }
     }
 
@@ -849,9 +1189,15 @@ public final class ObstacleAvoidanceSub implements SubmarineController {
             contactTrack.clear();
             estimatedRange = Double.MAX_VALUE;
             rangeConfirmedByActive = false;
+            calibratedSL = Double.NaN;
             clearingBaffles = false;
             baffleClearTimer = 0;
             patrolSilenceTicks = 0;
+            // Remember last known contact area before clearing
+            if (hasTrackedContact) {
+                lastKnownContactX = trackedX;
+                lastKnownContactY = trackedY;
+            }
             // Clear tracked contact
             hasTrackedContact = false;
             trackedHeading = Double.NaN;
@@ -861,8 +1207,19 @@ public final class ObstacleAvoidanceSub implements SubmarineController {
             prevFixY = Double.NaN;
             prevFixTick = -1;
             pingFixHistory.clear();
+            // Clear navigation waypoints (will replan on next tick)
+            navWaypoints.clear();
+            currentWaypointIndex = 0;
+            lastPlanTick = -1;
+            lastPlanTargetX = Double.NaN;
+            lastPlanTargetY = Double.NaN;
         } else if (newState == State.CHASE) {
             chaseStartTick = tick;
+            // Clear patrol waypoints so chase can plan its own route
+            navWaypoints.clear();
+            currentWaypointIndex = 0;
+            lastPlanTargetX = Double.NaN;
+            lastPlanTargetY = Double.NaN;
         }
     }
 
@@ -948,13 +1305,23 @@ public final class ObstacleAvoidanceSub implements SubmarineController {
     static double estimateRangeFromSE(double signalExcess, double estimatedTargetSpeed) {
         double sl;
         if (estimatedTargetSpeed >= 0) {
-            // Compute SL from blade-rate speed estimate (more accurate when close)
             sl = BASE_SL_DB + SPEED_NOISE_DB_PER_MS * estimatedTargetSpeed;
         } else {
-            sl = ASSUMED_TARGET_SL_DB; // fallback: assume patrol speed
+            sl = ASSUMED_TARGET_SL_DB;
         }
         double tl = sl - signalExcess - ASSUMED_AMBIENT_NL_DB;
-        if (tl <= 0) return 1.0; // very close
+        if (tl <= 0) return 1.0;
+        return Math.pow(10, tl / SPREADING_COEFFICIENT);
+    }
+
+    /**
+     * Estimate range using the sonar-estimated source level directly.
+     * Much more accurate than assuming a standard SL, especially for
+     * surface ships and other non-submarine contacts.
+     */
+    static double estimateRangeFromSEAndSL(double signalExcess, double estimatedSourceLevel) {
+        double tl = estimatedSourceLevel - signalExcess - ASSUMED_AMBIENT_NL_DB;
+        if (tl <= 0) return 1.0;
         return Math.pow(10, tl / SPREADING_COEFFICIENT);
     }
 
@@ -989,6 +1356,303 @@ public final class ObstacleAvoidanceSub implements SubmarineController {
         if (crossSpeed < 0.3) return -1; // heading straight at/away from contact
 
         return crossSpeed / bearingRate;
+    }
+
+    // ── Path planner ────────────────────────────────────────────────
+
+    /**
+     * Returns a rudder value to steer toward the current waypoint.
+     */
+    /**
+     * Replans the patrol route, preserving the current waypoint and replacing
+     * everything after it. Plans a new patrol from the current waypoint's position.
+     */
+    private void replanFromCurrentWaypoint(double posX, double posY,
+                                            TerrainMap terrain, BattleArea area) {
+        if (navWaypoints.isEmpty()) {
+            planPatrol(posX, posY, terrain, area);
+            return;
+        }
+        var currentWp = navWaypoints.get(currentWaypointIndex);
+        // Remove everything after the current waypoint
+        while (navWaypoints.size() > currentWaypointIndex + 1) {
+            navWaypoints.removeLast();
+        }
+        // Plan new waypoints from the current waypoint's position
+        var oldPlan = new ArrayList<>(navWaypoints);
+        planPatrol(currentWp.x(), currentWp.y(), terrain, area);
+        // Prepend the preserved current waypoint
+        navWaypoints.addFirst(oldPlan.get(currentWaypointIndex));
+        // currentWaypointIndex stays the same (still heading toward the preserved waypoint)
+    }
+
+    /**
+     * Replans a route to a target, preserving the current waypoint and replacing
+     * everything after it with a new route from the current waypoint to the target.
+     */
+    private void replanToTarget(double posX, double posY, double targetX, double targetY,
+                                 TerrainMap terrain, long tick) {
+        if (navWaypoints.isEmpty()) {
+            // No existing plan: plan from current position
+            var route = planRoute(posX, posY, targetX, targetY, terrain);
+            if (!route.isEmpty()) {
+                navWaypoints.addAll(route);
+                currentWaypointIndex = 0;
+            }
+        } else {
+            var currentWp = navWaypoints.get(currentWaypointIndex);
+            // Plan new route from current waypoint to target
+            var route = planRoute(currentWp.x(), currentWp.y(), targetX, targetY, terrain);
+            if (!route.isEmpty()) {
+                // Keep current waypoint, replace everything after
+                while (navWaypoints.size() > currentWaypointIndex + 1) {
+                    navWaypoints.removeLast();
+                }
+                navWaypoints.addAll(route);
+            }
+        }
+        lastPlanTargetX = targetX;
+        lastPlanTargetY = targetY;
+        lastPlanTick = tick;
+    }
+
+    private double steerTowardWaypoint(double posX, double posY, double heading) {
+        if (navWaypoints.isEmpty()) return 0;
+        var wp = navWaypoints.get(currentWaypointIndex);
+        double targetBearing = Math.atan2(wp.x() - posX, wp.y() - posY);
+        if (targetBearing < 0) targetBearing += 2 * Math.PI;
+        double diff = angleDiff(targetBearing, heading);
+        return Math.clamp(diff * 2.0, -1, 1);
+    }
+
+    /**
+     * Plans a route from (fromX, fromY) to (toX, toY), inserting detour
+     * waypoints where the sea floor is too shallow for safe passage.
+     * Returns a list of Vec3 waypoints with safe depths.
+     */
+    List<Vec3> planRoute(double fromX, double fromY, double toX, double toY,
+                         TerrainMap terrain) {
+        var result = new ArrayList<Vec3>();
+        planRouteRecursive(fromX, fromY, toX, toY, terrain, result, 0);
+        // Add the final destination
+        double endDepth = safeDepthAt(toX, toY, terrain);
+        result.add(new Vec3(toX, toY, endDepth));
+        return result;
+    }
+
+    /**
+     * Recursive route planner. Checks if the segment from (ax,ay) to (bx,by)
+     * is blocked by shallow terrain. If blocked, finds a detour midpoint
+     * and recursively checks each sub-segment.
+     */
+    private void planRouteRecursive(double ax, double ay, double bx, double by,
+                                     TerrainMap terrain, List<Vec3> result, int depth) {
+        if (depth > MAX_RECURSION_DEPTH) {
+            // Max depth reached: just add the start point with safe depth
+            double safeZ = safeDepthAt(ax, ay, terrain);
+            result.add(new Vec3(ax, ay, safeZ));
+            return;
+        }
+
+        // Check if the segment is blocked
+        double dx = bx - ax;
+        double dy = by - ay;
+        double segLen = Math.sqrt(dx * dx + dy * dy);
+        if (segLen < 10) {
+            result.add(new Vec3(ax, ay, safeDepthAt(ax, ay, terrain)));
+            return;
+        }
+
+        int samples = Math.max(2, (int) Math.ceil(segLen / ROUTE_SAMPLE_STEP));
+        boolean blocked = false;
+        double blockedT = 0;
+
+        for (int i = 1; i < samples; i++) {
+            double t = (double) i / samples;
+            double sx = ax + dx * t;
+            double sy = ay + dy * t;
+            double floor = terrain.elevationAt(sx, sy);
+            // Blocked if the floor is above SHALLOW_WATER_LIMIT
+            // (meaning less than 50m of water above the floor)
+            if (floor > SHALLOW_WATER_LIMIT) {
+                blocked = true;
+                blockedT = t;
+                break;
+            }
+        }
+
+        if (!blocked) {
+            // Segment is clear: add start point with safe depth
+            result.add(new Vec3(ax, ay, safeDepthAt(ax, ay, terrain)));
+            return;
+        }
+
+        // Segment is blocked: find a detour by offsetting the midpoint perpendicular
+        double midX = ax + dx * 0.5;
+        double midY = ay + dy * 0.5;
+
+        // Perpendicular direction (normalized)
+        double perpX = -dy / segLen;
+        double perpY = dx / segLen;
+
+        double[] offsets = {200, 400, 800, 1600};
+        double bestOffsetX = midX;
+        double bestOffsetY = midY;
+        double bestFloor = Double.MAX_VALUE;
+        boolean foundDetour = false;
+
+        for (double offset : offsets) {
+            // Try left
+            double lx = midX + perpX * offset;
+            double ly = midY + perpY * offset;
+            double lFloor = terrain.elevationAt(lx, ly);
+
+            // Try right
+            double rx = midX - perpX * offset;
+            double ry = midY - perpY * offset;
+            double rFloor = terrain.elevationAt(rx, ry);
+
+            // Pick the deeper side
+            if (lFloor < SHALLOW_WATER_LIMIT && lFloor < bestFloor) {
+                bestFloor = lFloor;
+                bestOffsetX = lx;
+                bestOffsetY = ly;
+                foundDetour = true;
+            }
+            if (rFloor < SHALLOW_WATER_LIMIT && rFloor < bestFloor) {
+                bestFloor = rFloor;
+                bestOffsetX = rx;
+                bestOffsetY = ry;
+                foundDetour = true;
+            }
+
+            if (foundDetour) break; // use smallest offset that works
+        }
+
+        if (!foundDetour) {
+            // Could not find a detour: just go straight with safe depth
+            result.add(new Vec3(ax, ay, safeDepthAt(ax, ay, terrain)));
+            return;
+        }
+
+        // Recursively check each sub-segment
+        planRouteRecursive(ax, ay, bestOffsetX, bestOffsetY, terrain, result, depth + 1);
+        planRouteRecursive(bestOffsetX, bestOffsetY, bx, by, terrain, result, depth + 1);
+    }
+
+    /**
+     * Plans a patrol route that explores the arena.
+     * The first waypoint heads toward the arena center (where contacts
+     * are most likely), then subsequent waypoints fan out to cover ground.
+     * If we have a last known contact area, the route biases toward it.
+     */
+    void planPatrol(double x, double y, TerrainMap terrain, BattleArea area) {
+        navWaypoints.clear();
+        currentWaypointIndex = 0;
+
+        int numPoints = 5;
+        double arenaExtent = area.extent();
+
+        // Determine the primary search direction.
+        // Priority: last known contact > arena center > current heading.
+        double targetX, targetY;
+        if (!Double.isNaN(lastKnownContactX)) {
+            targetX = lastKnownContactX;
+            targetY = lastKnownContactY;
+            lastKnownContactX = Double.NaN;
+            lastKnownContactY = Double.NaN;
+        } else {
+            // Head toward the arena center from our current position.
+            // If already near center, head in current direction.
+            double distFromCenter = Math.sqrt(x * x + y * y);
+            if (distFromCenter > arenaExtent * 0.3) {
+                targetX = 0;
+                targetY = 0;
+            } else {
+                targetX = x + 3000 * Math.sin(lastHeading);
+                targetY = y + 3000 * Math.cos(lastHeading);
+            }
+        }
+
+        // Build waypoints: first toward the target, then fanning out
+        double toTargetAngle = Math.atan2(targetX - x, targetY - y);
+        if (toTargetAngle < 0) toTargetAngle += 2 * Math.PI;
+        double distToTarget = Math.sqrt(Math.pow(targetX - x, 2) + Math.pow(targetY - y, 2));
+
+        var rawPoints = new ArrayList<Vec3>();
+        for (int i = 0; i < numPoints; i++) {
+            double angle;
+            double radius;
+            if (i == 0) {
+                // First waypoint: head toward target, at a reasonable distance
+                angle = toTargetAngle;
+                radius = Math.min(distToTarget * 0.6, 3000);
+                radius = Math.max(radius, 1500);
+            } else {
+                // Subsequent waypoints: fan out in an expanding search pattern
+                // centered on the target direction
+                double spread = Math.PI * 0.4; // +/- 72 degrees from target direction
+                angle = toTargetAngle + spread * (i % 2 == 0 ? 1 : -1) * ((i + 1) / 2.0) / (numPoints / 2.0);
+                radius = 2000 + i * 500;
+            }
+
+            double px = x + radius * Math.sin(angle);
+            double py = y + radius * Math.cos(angle);
+
+            // Clamp to stay within battle area (with margin for border avoidance)
+            double margin = BOUNDARY_TURN_DIST + 200;
+            double distToBound = area.distanceToBoundary(px, py);
+            if (distToBound < margin) {
+                // Pull point inward toward center
+                double scale = 0.7;
+                px = px * scale;
+                py = py * scale;
+            }
+
+            double safeZ = stealthDepthAt(px, py, terrain);
+            rawPoints.add(new Vec3(px, py, safeZ));
+        }
+
+        // Build the final waypoint list, checking each leg for terrain obstacles
+        for (int i = 0; i < rawPoints.size(); i++) {
+            var from = (i == 0) ? new Vec3(x, y, safeDepthAt(x, y, terrain)) : rawPoints.get(i - 1);
+            var to = rawPoints.get(i);
+
+            var leg = planRoute(from.x(), from.y(), to.x(), to.y(), terrain);
+            // planRoute includes the destination, add all points
+            navWaypoints.addAll(leg);
+        }
+
+        // Remove duplicate waypoints that are very close together
+        for (int i = navWaypoints.size() - 1; i > 0; i--) {
+            var a = navWaypoints.get(i);
+            var b = navWaypoints.get(i - 1);
+            double dist = Math.sqrt(Math.pow(a.x() - b.x(), 2) + Math.pow(a.y() - b.y(), 2));
+            if (dist < 50) {
+                navWaypoints.remove(i);
+            }
+        }
+    }
+
+    /**
+     * Returns the safe operating depth at a world position:
+     * terrain elevation + floor clearance, clamped to operating limits.
+     */
+    private double safeDepthAt(double x, double y, TerrainMap terrain) {
+        double floor = terrain.elevationAt(x, y);
+        double target = floor + FLOOR_CLEARANCE;
+        return clampTarget(target);
+    }
+
+    /**
+     * Returns a stealthy operating depth: close to the floor for reduced
+     * detection, with just enough clearance for safe navigation.
+     * Uses half the normal floor clearance.
+     */
+    private double stealthDepthAt(double x, double y, TerrainMap terrain) {
+        double floor = terrain.elevationAt(x, y);
+        double target = floor + FLOOR_CLEARANCE * 0.6; // tighter to the floor
+        return clampTarget(target);
     }
 
     // Geometry helpers

@@ -38,7 +38,10 @@ package se.hirt.searobots.api;
  * @param estimatedSpeed       target speed estimate from blade-rate tonals (m/s, -1 if unavailable)
  * @param bearingUncertainty   1-sigma bearing error in radians, computed by the sonar model
  * @param rangeUncertainty     1-sigma range error in meters (active returns only, 0 for passive)
+ * @param estimatedSourceLevel estimated source level in dB, derived from the acoustic
+ *                             signature. Enables classification (surface ships are much
+ *                             louder than submarines) and more accurate SE-based ranging.
  */
 public record SonarContact(double bearing, double signalExcess, double range, boolean isActive,
                            double estimatedSpeed, double bearingUncertainty,
-                           double rangeUncertainty) {}
+                           double rangeUncertainty, double estimatedSourceLevel) {}

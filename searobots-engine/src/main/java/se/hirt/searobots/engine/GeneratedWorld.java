@@ -33,7 +33,7 @@ import se.hirt.searobots.api.*;
 import java.util.List;
 
 /**
- * The result of procedural world generation — everything needed to run
+ * The result of procedural world generation: everything needed to run
  * or display a match.
  */
 public record GeneratedWorld(

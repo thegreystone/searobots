@@ -26,18 +26,15 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
-package se.hirt.searobots.engine;
+package se.hirt.searobots.api;
 
-import se.hirt.searobots.api.ContactEstimate;
-import se.hirt.searobots.api.Pose;
-import se.hirt.searobots.api.Velocity;
-import se.hirt.searobots.api.Waypoint;
-
-import java.awt.Color;
-import java.util.List;
-
-public record SubmarineSnapshot(int id, Pose pose, Velocity velocity, double speed,
-                                 Color color, boolean forfeited, int hp, double noiseLevel,
-                                 double throttle, String status, boolean pingRequested,
-                                 List<ContactEstimate> contactEstimates,
-                                 List<Waypoint> waypoints) {}
+/**
+ * A 3D navigation waypoint published by a submarine controller for
+ * viewer visualization. Has no effect on the simulation.
+ *
+ * @param x world X coordinate (meters)
+ * @param y world Y coordinate (meters)
+ * @param z target depth (negative, meters below sea level)
+ * @param active true if this is the waypoint the sub is currently heading toward
+ */
+public record Waypoint(double x, double y, double z, boolean active) {}

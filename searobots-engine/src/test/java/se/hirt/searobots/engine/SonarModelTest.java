@@ -30,6 +30,7 @@ package se.hirt.searobots.engine;
 
 import org.junit.jupiter.api.Test;
 import se.hirt.searobots.api.*;
+import static se.hirt.searobots.api.VehicleConfig.submarine;
 
 import java.awt.Color;
 import java.util.List;
@@ -52,8 +53,8 @@ class SonarModelTest {
     private static final TerrainMap TERRAIN = deepFlat();
 
     private SubmarineEntity makeSub(int id, Vec3 pos, double heading, double sourceLevelDb) {
-        var controller = new ObstacleAvoidanceSub();
-        var sub = new SubmarineEntity(id, controller, pos, heading, Color.GREEN, 1000);
+        var controller = new DefaultAttackSub();
+        var sub = new SubmarineEntity(submarine(), id, controller, pos, heading, Color.GREEN, 1000);
         sub.setSourceLevelDb(sourceLevelDb);
         return sub;
     }
@@ -322,8 +323,8 @@ class SonarModelTest {
 
         assertFalse(results1.get(0).activeReturns().isEmpty(),
                 "First ping should produce returns");
-        assertEquals(SonarModel.ACTIVE_PING_COOLDOWN_TICKS, pinger.activeSonarCooldown(),
-                "Cooldown should be set after ping");
+        assertEquals(SonarModel.ACTIVE_PING_COOLDOWN_TICKS - 1, pinger.activeSonarCooldown(),
+                "Cooldown should be set by computeContacts and decremented once by postTick");
 
         pinger.activeSonarPing();
         var results2 = sonar.computeContacts(
@@ -504,7 +505,7 @@ class SonarModelTest {
 
     @Test
     void islandDoesNotBlockWhenPathIsClear() {
-        // Island at origin, but source offset east — path goes around island.
+        // Island at origin, but source offset east. Path goes around island.
         var terrain = islandTerrain(0, 0, 200);
         var sonar = new SonarModel(42);
         var listener = makeSub(0, new Vec3(0, -800, -200),
@@ -518,7 +519,7 @@ class SonarModelTest {
 
     @Test
     void sameSideOfIslandNoCover() {
-        // Both subs north of the island — no terrain between them.
+        // Both subs north of the island, no terrain between them.
         var terrain = islandTerrain(0, 0, 200);
         var sonar = new SonarModel(42);
         var listener = makeSub(0, new Vec3(0, 400, -200), 0, 80); // north, facing north
@@ -549,7 +550,7 @@ class SonarModelTest {
 
     @Test
     void activePingWorksAroundIsland() {
-        // Pinger and target south of island — clear east-west path.
+        // Pinger and target south of island, clear east-west path.
         var terrain = islandTerrain(0, 0, 200);
         var sonar = new SonarModel(42);
         var pinger = makeSub(0, new Vec3(-500, -400, -200),
@@ -633,7 +634,7 @@ class SonarModelTest {
 
     @Test
     void noCliffOcclusionWhenBothOnDeepSide() {
-        // Both subs south of cliff in deep water — floor at -400m, no terrain above path.
+        // Both subs south of cliff in deep water, floor at -400m, no terrain above path.
         var terrain = shelfCliffTerrain();
         var sonar = new SonarModel(42);
         var sub1 = makeSub(0, new Vec3(0, -400, -300), Math.PI, 80); // facing south
@@ -700,7 +701,7 @@ class SonarModelTest {
     @Test
     void shallowRidgeMinimalEffect() {
         // Ridge peaks at -350m (only 50m above -400 floor). Path at -380m.
-        // Ridge barely pokes 30m above path near peak — small occlusion.
+        // Ridge barely pokes 30m above path near peak, small occlusion.
         var terrain = underwaterRidgeTerrain(-350);
         double occlusion = SonarModel.terrainOcclusionDb(
                 new Vec3(0, -500, -380), new Vec3(0, 500, -380), terrain);
@@ -783,7 +784,7 @@ class SonarModelTest {
 
     @Test
     void cliffBaseHiderExposedFromDeepSide() {
-        // Same hider, but hunter approaches from the deep side — no cliff between them.
+        // Same hider, but hunter approaches from the deep side. No cliff between them.
         var terrain = shelfCliffTerrain();
         var sonar = new SonarModel(42);
         var hider = makeSub(0, new Vec3(0, -250, -350),

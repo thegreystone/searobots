@@ -43,10 +43,14 @@ package se.hirt.searobots.api;
  * @param uncertaintyRadius radius in meters of the area where the contact
  *                          could realistically be (grows over time without
  *                          a fresh fix)
+ * @param estimatedHeading  estimated target heading in radians [0, 2pi),
+ *                          or NaN if unknown
+ * @param estimatedSpeed    estimated target speed in m/s, or -1 if unknown
  * @param label             optional short label (e.g. "passive", "ping"), may be empty
  */
 public record ContactEstimate(double x, double y, double confidence,
                                double contactAlive, double uncertaintyRadius,
+                               double estimatedHeading, double estimatedSpeed,
                                String label) {
     public ContactEstimate {
         confidence = Math.clamp(confidence, 0.0, 1.0);

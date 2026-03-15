@@ -62,6 +62,7 @@ public class MapPanel extends JPanel {
     private boolean showTrails = true;
     private boolean showRoute = false;
     private boolean showContactEstimates = true;
+    private boolean showWaypoints = true;
 
     // mouse interaction
     private Point dragStart;
@@ -274,6 +275,11 @@ public class MapPanel extends JPanel {
         repaint();
     }
 
+    public void toggleWaypoints() {
+        showWaypoints = !showWaypoints;
+        repaint();
+    }
+
     // ── rendering ──────────────────────────────────────────────────────
 
     @Override
@@ -311,6 +317,7 @@ public class MapPanel extends JPanel {
         if (showTrails) drawSubmarineTrails(g2);
         drawSubmarines(g2);
         if (showContactEstimates) drawContactEstimates(g2);
+        if (showWaypoints) drawWaypoints(g2);
         drawPingAnimations(g2);
         drawDetectionHighlights(g2);
 
@@ -619,6 +626,27 @@ public class MapPanel extends JPanel {
                 g2.setColor(new Color(255, 255, 255, alpha / 2));
                 g2.setStroke(new BasicStroke((float) (1.0 / pixelsPerMeter)));
                 g2.draw(diamond);
+
+                // Draw heading/speed arrow if known
+                if (!Double.isNaN(est.estimatedHeading()) && est.estimatedSpeed() > 0) {
+                    double arrowLen = est.estimatedSpeed() * 20 / pixelsPerMeter; // scale: 20px per m/s
+                    double arrowX = est.x() + arrowLen * Math.sin(est.estimatedHeading());
+                    double arrowY = est.y() + arrowLen * Math.cos(est.estimatedHeading());
+                    // Use sub color with heading arrow
+                    g2.setColor(new Color(base.getRed(), base.getGreen(), base.getBlue(), alpha));
+                    g2.setStroke(new BasicStroke((float) (2.0 / pixelsPerMeter),
+                            BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+                    g2.draw(new Line2D.Double(est.x(), est.y(), arrowX, arrowY));
+                    // Arrowhead
+                    double headLen = arrowLen * 0.2;
+                    double headAngle = Math.toRadians(25);
+                    double hx1 = arrowX - headLen * Math.sin(est.estimatedHeading() + headAngle);
+                    double hy1 = arrowY - headLen * Math.cos(est.estimatedHeading() + headAngle);
+                    double hx2 = arrowX - headLen * Math.sin(est.estimatedHeading() - headAngle);
+                    double hy2 = arrowY - headLen * Math.cos(est.estimatedHeading() - headAngle);
+                    g2.draw(new Line2D.Double(arrowX, arrowY, hx1, hy1));
+                    g2.draw(new Line2D.Double(arrowX, arrowY, hx2, hy2));
+                }
             }
 
             // Ping trace lines for this sub
@@ -639,6 +667,118 @@ public class MapPanel extends JPanel {
                 prev = rec;
             }
         }
+    }
+
+    private void drawWaypoints(Graphics2D g2) {
+        // g2 is in world-coordinate transform
+        var subs = submarines;
+        double markerRadius = 8 / pixelsPerMeter; // ~8 screen pixels
+
+        for (var sub : subs) {
+            var waypoints = sub.waypoints();
+            if (waypoints == null || waypoints.isEmpty()) continue;
+
+            Color subColor = sub.color();
+
+            // 1. Draw Catmull-Rom spline through waypoints (darker shade to avoid trail conflict)
+            if (waypoints.size() >= 2) {
+                g2.setColor(new Color(subColor.getRed() / 2, subColor.getGreen() / 2,
+                        subColor.getBlue() / 2, 160));
+                g2.setStroke(new BasicStroke((float) (2.0 / pixelsPerMeter),
+                        BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+
+                for (int i = 0; i < waypoints.size() - 1; i++) {
+                    // Control points for Catmull-Rom: p0, p1, p2, p3
+                    var p0 = waypoints.get(Math.max(0, i - 1));
+                    var p1 = waypoints.get(i);
+                    var p2 = waypoints.get(i + 1);
+                    var p3 = waypoints.get(Math.min(waypoints.size() - 1, i + 2));
+
+                    int segments = 20;
+                    double prevX = p1.x();
+                    double prevY = p1.y();
+
+                    for (int s = 1; s <= segments; s++) {
+                        double t = (double) s / segments;
+                        double t2 = t * t;
+                        double t3 = t2 * t;
+
+                        // Catmull-Rom formula
+                        double cx = 0.5 * ((2 * p1.x())
+                                + (-p0.x() + p2.x()) * t
+                                + (2 * p0.x() - 5 * p1.x() + 4 * p2.x() - p3.x()) * t2
+                                + (-p0.x() + 3 * p1.x() - 3 * p2.x() + p3.x()) * t3);
+                        double cy = 0.5 * ((2 * p1.y())
+                                + (-p0.y() + p2.y()) * t
+                                + (2 * p0.y() - 5 * p1.y() + 4 * p2.y() - p3.y()) * t2
+                                + (-p0.y() + 3 * p1.y() - 3 * p2.y() + p3.y()) * t3);
+
+                        g2.draw(new Line2D.Double(prevX, prevY, cx, cy));
+                        prevX = cx;
+                        prevY = cy;
+                    }
+                }
+            }
+
+            // 2. Draw waypoint markers
+            for (int i = 0; i < waypoints.size(); i++) {
+                var wp = waypoints.get(i);
+                boolean isActive = wp.active();
+
+                double r = isActive ? markerRadius * 1.4 : markerRadius;
+
+                // Depth-based coloring
+                Color depthColor = waypointDepthColor(wp.z());
+
+                // Inner fill
+                g2.setColor(depthColor);
+                g2.fill(new Ellipse2D.Double(wp.x() - r, wp.y() - r, 2 * r, 2 * r));
+
+                // White outline (thicker for active)
+                float strokeWidth = isActive ? (float) (2.5 / pixelsPerMeter) : (float) (1.0 / pixelsPerMeter);
+                g2.setStroke(new BasicStroke(strokeWidth));
+                g2.setColor(isActive ? Color.WHITE : new Color(255, 255, 255, 160));
+                g2.draw(new Ellipse2D.Double(wp.x() - r, wp.y() - r, 2 * r, 2 * r));
+
+                // Active waypoint gets an extra bright ring
+                if (isActive) {
+                    double outerR = r * 1.5;
+                    g2.setColor(new Color(255, 255, 255, 80));
+                    g2.setStroke(new BasicStroke((float) (1.0 / pixelsPerMeter)));
+                    g2.draw(new Ellipse2D.Double(wp.x() - outerR, wp.y() - outerR,
+                            2 * outerR, 2 * outerR));
+                }
+            }
+        }
+    }
+
+    /**
+     * Returns a depth-based color for waypoint visualization.
+     * Shallow (-20m): light cyan (150, 220, 255)
+     * Moderate (-200m): medium blue (50, 100, 220)
+     * Deep (-500m): dark blue/purple (80, 40, 180)
+     */
+    private static Color waypointDepthColor(double z) {
+        // z is negative (depth below sea level)
+        double depth = -z; // positive depth value
+
+        int r, g, b;
+        if (depth <= 20) {
+            r = 150; g = 220; b = 255;
+        } else if (depth <= 200) {
+            double t = (depth - 20) / 180.0;
+            r = (int) (150 + t * (50 - 150));
+            g = (int) (220 + t * (100 - 220));
+            b = (int) (255 + t * (220 - 255));
+        } else if (depth <= 500) {
+            double t = (depth - 200) / 300.0;
+            r = (int) (50 + t * (80 - 50));
+            g = (int) (100 + t * (40 - 100));
+            b = (int) (220 + t * (180 - 220));
+        } else {
+            r = 80; g = 40; b = 180;
+        }
+        return new Color(r, g, b, 200);
     }
 
     private void drawPingAnimations(Graphics2D g2) {
@@ -896,6 +1036,7 @@ public class MapPanel extends JPanel {
                 "T      trails " + (showTrails ? "ON" : "OFF"),
                 "R      route " + (showRoute ? "ON" : "OFF"),
                 "E      contacts " + (showContactEstimates ? "ON" : "OFF"),
+                "W      waypoints " + (showWaypoints ? "ON" : "OFF"),
                 "P      pause/resume",
                 "N      single step",
                 "1/2/3/4  speed 1x/2x/5x/10x",

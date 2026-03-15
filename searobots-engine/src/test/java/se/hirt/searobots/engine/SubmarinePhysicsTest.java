@@ -30,6 +30,7 @@ package se.hirt.searobots.engine;
 
 import org.junit.jupiter.api.Test;
 import se.hirt.searobots.api.*;
+import static se.hirt.searobots.api.VehicleConfig.submarine;
 
 import java.awt.Color;
 import java.util.List;
@@ -58,8 +59,8 @@ class SubmarinePhysicsTest {
     }
 
     private SubmarineEntity makeSub(double speed, double heading, double depth) {
-        var controller = new ObstacleAvoidanceSub();
-        var sub = new SubmarineEntity(0, controller, new Vec3(0, 0, depth),
+        var controller = new DefaultAttackSub();
+        var sub = new SubmarineEntity(submarine(), 0, controller, new Vec3(0, 0, depth),
                 heading, Color.GREEN, 1000);
         sub.setSpeed(speed);
         return sub;
@@ -235,7 +236,7 @@ class SubmarinePhysicsTest {
         var sub = makeSub(10, 0, -400);
         physics.step(sub, DT, TERRAIN, NO_CURRENT, CONFIG.battleArea());
 
-        // Expected: 80 + 2*9.87 ≈ 99.7 dB — no cavitation component
+        // Expected: 80 + 2*9.87 ≈ 99.7 dB, no cavitation component
         assertTrue(sub.sourceLevelDb() >= 99.0 && sub.sourceLevelDb() <= 101.0,
                 "At 10 m/s / -400m, SL should have no cavitation, got " + sub.sourceLevelDb());
     }
