@@ -50,7 +50,7 @@ public final class DefaultAttackSub implements SubmarineController {
 
     // Terrain / depth constants
     private static final double MIN_DEPTH = -20;
-    private static final double FLOOR_CLEARANCE = 80;
+    private static final double FLOOR_CLEARANCE = 50;
     private static final double CRUSH_SAFETY_MARGIN = 50;
     private static final double BOUNDARY_TURN_DIST = 700;
     private static final double EMERGENCY_GAP = 60;
@@ -280,8 +280,10 @@ public final class DefaultAttackSub implements SubmarineController {
             }
         }
 
-        // Clear tracked contact if alive too low
-        if (hasTrackedContact && contactAlive < CONFIDENCE_LOST) {
+        // Clear tracked contact only when the search area is too large
+        // to be useful. Until then, keep dead-reckoning the position so
+        // the sub can navigate to the predicted location.
+        if (hasTrackedContact && uncertaintyRadius > 5000) {
             hasTrackedContact = false;
             trackedHeading = Double.NaN;
             pingFixHistory.clear();
@@ -322,6 +324,11 @@ public final class DefaultAttackSub implements SubmarineController {
                     enterState(State.CHASE, tick);
                 } else if (hasTrackedContact && trackedDist < CHASE_RANGE && contactAlive >= CONFIDENCE_HUNT_MIN) {
                     enterState(State.CHASE, tick);
+                } else if (consecutiveContactTicks > 500 && contactAlive >= CONFIDENCE_HUNT_MIN) {
+                    // Sustained contact for 10+ seconds: we know enough to chase
+                    // even if range is still large. TRACKING throttle is too slow
+                    // to close on a fast target.
+                    enterState(State.CHASE, tick);
                 } else if (!hasTrackedContact && ticksSinceContact > 500) {
                     enterState(State.PATROL, tick);
                 }
@@ -331,10 +338,11 @@ public final class DefaultAttackSub implements SubmarineController {
                     enterState(State.EVADE, tick);
                 } else if (estimatedRange < RAM_RANGE && rangeConfirmedByActive) {
                     enterState(State.RAM, tick);
-                } else if (!hasTrackedContact) {
+                } else if (!hasTrackedContact && uncertaintyRadius > 3000) {
+                    // Only give up when the search area is too large to be useful.
+                    // If the tracked contact was recently lost, the dead-reckoned
+                    // position is still worth pursuing.
                     enterState(State.PATROL, tick);
-                } else if (contactAlive < CONFIDENCE_HUNT_MIN) {
-                    enterState(State.TRACKING, tick);
                 }
             }
             case RAM -> {
@@ -422,7 +430,10 @@ public final class DefaultAttackSub implements SubmarineController {
                 }
             }
             case TRACKING -> {
-                tacticalThrottle = TRACKING_THROTTLE;
+                // Adaptive throttle: must be fast enough to close on target
+                tacticalThrottle = hasTrackedContact
+                        ? adaptiveThrottle(trackedSpeed, trackedDist, isBehindTarget())
+                        : TRACKING_THROTTLE;
 
                 // No first-contact ping: engine TMA provides range from
                 // passive sonar. Stay quiet to avoid revealing our position.
@@ -483,20 +494,19 @@ public final class DefaultAttackSub implements SubmarineController {
                 long phaseInLeg = legPhase % legDuration;
                 boolean sprinting = phaseInLeg < SPRINT_DURATION;
 
+                // Adaptive throttle based on target speed and distance.
+                // Sprint-and-drift modulates: sprint phase uses adaptive
+                // throttle, drift phase goes quiet for sonar.
+                double baseThrottle = adaptiveThrottle(trackedSpeed, trackedDist, behindTarget);
                 if (behindTarget && trackedDist < 1000) {
-                    // Behind and close: quiet tailing, no zig-zag needed
-                    tacticalThrottle = TAILING_THROTTLE;
-                } else if (hasTrackedContact && trackedDist > CHASE_RANGE) {
-                    // Long-range approach: quiet patrol speed
-                    tacticalThrottle = PATROL_THROTTLE;
-                } else if (behindTarget && trackedDist < 2000) {
-                    // Behind and moderately close: quiet approach
-                    tacticalThrottle = CHASE_THROTTLE * 0.7;
+                    tacticalThrottle = baseThrottle; // adaptive handles tailing
                 } else if (sprinting) {
-                    tacticalThrottle = CHASE_THROTTLE;
+                    tacticalThrottle = baseThrottle;
                 } else {
-                    // Drift phase: go quiet, listen
-                    tacticalThrottle = TRACKING_THROTTLE;
+                    // Drift phase: go quiet, listen. But never slower than
+                    // target speed (don't fall behind during drift).
+                    double minDrift = Math.clamp(trackedSpeed / maxSubSpeed, 0.15, 0.5);
+                    tacticalThrottle = Math.max(TRACKING_THROTTLE, minDrift);
                 }
 
                 // Steering with zig-zag for TMA
@@ -565,9 +575,15 @@ public final class DefaultAttackSub implements SubmarineController {
                         tacticalRudder = Math.clamp(diff * 2.0, -1, 1);
                     }
 
-                    // Ping only as a last resort when passive contact lost for 30+ seconds
-                    if (trackedDist < TRACKED_PING_RANGE && input.activeSonarCooldownTicks() == 0
-                            && ticksSinceContact > 1500) {
+                    // Ping to relocate when: close to the dead-reckoned position
+                    // and haven't had contact for a while, OR the search area
+                    // is getting large (target might have changed course).
+                    boolean nearPredictedPos = trackedDist < TRACKED_PING_RANGE;
+                    boolean contactStale = ticksSinceContact > 500; // 10 seconds
+                    boolean searchAreaGrowing = uncertaintyRadius > 1000;
+                    if (input.activeSonarCooldownTicks() == 0
+                            && ((nearPredictedPos && contactStale)
+                                || (searchAreaGrowing && contactStale))) {
                         output.activeSonarPing();
                     }
                 } else if (lastContactTick >= 0) {
@@ -684,6 +700,7 @@ public final class DefaultAttackSub implements SubmarineController {
         double worstFloor = floorBelow;
         double worstDist = 0;
         boolean dropOffAhead = false;
+        boolean shallowWaterAhead = false;
         // Scan along current heading (immediate safety)
         for (double dist : SCAN_DISTANCES) {
             double sx = pos.x() + Math.sin(scanHeading) * dist;
@@ -695,6 +712,14 @@ public final class DefaultAttackSub implements SubmarineController {
             }
             if (floor < floorBelow - 100) {
                 dropOffAhead = true;
+            }
+            // Shallow water: treat like terrain obstacle
+            if (floor > SHALLOW_WATER_LIMIT) {
+                shallowWaterAhead = true;
+                if (floor > worstFloor) {
+                    worstFloor = floor;
+                    worstDist = dist;
+                }
             }
         }
         // Also scan along waypoint bearing to ensure we can reach it
@@ -718,21 +743,31 @@ public final class DefaultAttackSub implements SubmarineController {
         // should be free to turn toward it.
         double effectiveWorstFloor = Math.max(worstFloor, waypointWorstFloor);
         double worstTarget = clampTarget(effectiveWorstFloor + floorClearance);
-        double avoidanceThreshold = 30;
+        double avoidanceThreshold = 50;
         double margin = depth - (worstFloor + floorClearance);
 
-        if (margin < avoidanceThreshold) {
+        // Also check if we're currently IN shallow water (floor above SHALLOW_WATER_LIMIT)
+        boolean inShallowWater = floorBelow > SHALLOW_WATER_LIMIT;
+
+        if (margin < avoidanceThreshold || shallowWaterAhead || inShallowWater) {
             double urgency = Math.clamp(1.0 - margin / avoidanceThreshold, 0.0, 1.0);
+            if (shallowWaterAhead) {
+                urgency = Math.max(urgency, 0.6);
+            }
+            if (inShallowWater) {
+                // We are IN dangerously shallow water. Maximum urgency to
+                // get out. Slow down hard and turn toward deeper water.
+                urgency = 1.0;
+            }
             status = "AVOIDING TERRAIN";
 
             if (worstTarget > rawTarget) {
                 rawTarget = worstTarget;
             }
 
-            boolean threatBelow = ((depth - floorBelow) < avoidanceThreshold);
-            if (threatBelow) {
-                throttle = Math.max(0.2, throttle * (1.0 - urgency * 0.6));
-            }
+            // Slow down when terrain is rising, whether below or ahead.
+            // Slower speed = tighter turn radius = better chance of avoiding.
+            throttle = Math.max(0.15, throttle * (1.0 - urgency * 0.7));
 
             double scanDist = Math.max(worstDist, SCAN_DISTANCES[0]);
             double leftH = heading - SCAN_SIDE_ANGLE;
@@ -948,14 +983,19 @@ public final class DefaultAttackSub implements SubmarineController {
     }
 
     private boolean shouldEvade() {
-        // Evade if contact is very loud and the target appears to be heading
-        // straight at us (bearing roughly matches target heading, meaning
-        // they're on a collision course).
-        if (lastContactSE > EVADE_SE_THRESHOLD && hasTrackedContact && !Double.isNaN(trackedHeading)) {
-            // Check if target heading points roughly at us
+        // Evade only when we are fairly certain a contact is closing on us:
+        // 1. Very loud (SE > 25 dB, meaning close)
+        // 2. Close range (< 2000m)
+        // 3. We have a confident heading estimate (solution quality > 0.5)
+        // 4. That heading points straight at us (within 20 degrees)
+        // 5. Took damage (always evade if hit)
+        if (lastContactSE > 25.0 && hasTrackedContact && !Double.isNaN(trackedHeading)
+                && estimatedRange < 2000) {
+            // Only trust the heading if the TMA solution is good
+            // (otherwise a noisy heading estimate could trigger false evasion)
             double bearingToUs = normalizeBearing(lastContactBearing + Math.PI);
             double diff = Math.abs(angleDiff(trackedHeading, bearingToUs));
-            return diff < Math.toRadians(30);
+            return diff < Math.toRadians(20);
         }
         return false;
     }
@@ -976,6 +1016,42 @@ public final class DefaultAttackSub implements SubmarineController {
             }
         }
         return best;
+    }
+
+    /**
+     * Computes adaptive throttle based on target speed, distance, and
+     * tactical situation. Ensures the sub can always close on the target
+     * while balancing speed vs stealth.
+     */
+    private double adaptiveThrottle(double targetSpeed, double dist, boolean behind) {
+        double maxSpd = maxSubSpeed;
+
+        if (behind && dist < 1000) {
+            // Behind and close: match target speed for quiet tailing
+            return Math.clamp(targetSpeed / maxSpd, TRACKING_THROTTLE, 0.5);
+        }
+
+        // Minimum speed to close the gap (target speed + 1 m/s)
+        double minClosingSpeed = targetSpeed + 1.0;
+
+        if (dist > 4000) {
+            // Long range: sprint hard (our noise won't reach the target).
+            // At least fast enough to close, preferably full chase speed.
+            double desiredSpeed = Math.max(minClosingSpeed, maxSpd * CHASE_THROTTLE);
+            return Math.clamp(desiredSpeed / maxSpd, PATROL_THROTTLE, 1.0);
+        } else if (dist > 2000) {
+            // Medium range: moderate chase, somewhat stealthy
+            double desiredSpeed = minClosingSpeed + 2.0;
+            return Math.clamp(desiredSpeed / maxSpd, TRACKING_THROTTLE, CHASE_THROTTLE);
+        } else if (behind && dist > 500) {
+            // Close and behind: quiet approach
+            double desiredSpeed = minClosingSpeed;
+            return Math.clamp(desiredSpeed / maxSpd, TRACKING_THROTTLE, 0.6);
+        } else {
+            // Close but not behind: need to maneuver, moderate speed
+            double desiredSpeed = minClosingSpeed + 1.0;
+            return Math.clamp(desiredSpeed / maxSpd, TRACKING_THROTTLE, CHASE_THROTTLE);
+        }
     }
 
     private double preferredDepthBelowThermocline(double currentDepth) {

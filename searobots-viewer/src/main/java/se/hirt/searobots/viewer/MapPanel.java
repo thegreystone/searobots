@@ -1001,11 +1001,19 @@ public class MapPanel extends JPanel {
     private void drawInfoOverlay(Graphics2D g2) {
         // g2 is in screen coordinates (base transform)
         g2.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 12));
-        g2.setColor(new Color(200, 220, 255));
-
         int lineH = 16;
-        int y = 20;
-        int x = 10;
+        int padding = 6;
+
+        // Top-left info panel: seed, thermoclines, spawns
+        int infoLines = 2 + world.thermalLayers().size(); // seed + spawns + thermoclines
+        int infoW = 320;
+        int infoH = infoLines * lineH + padding * 2;
+        g2.setColor(new Color(0, 0, 0, 128));
+        g2.fillRoundRect(padding, padding, infoW, infoH, 8, 8);
+
+        g2.setColor(new Color(200, 220, 255));
+        int y = padding + padding + 12;
+        int x = padding + padding;
 
         g2.drawString("Seed: " + world.config().worldSeed(), x, y);
         y += lineH;
@@ -1018,18 +1026,18 @@ public class MapPanel extends JPanel {
         }
 
         g2.drawString(String.format("Spawns: %d", world.spawnPoints().size()), x, y);
-        y += lineH;
 
-        // ── depth / altitude colour key ──
+        // depth / altitude colour key
         drawColorKey(g2);
 
         drawScaleBar(g2);
 
         if (!statusText.isEmpty()) {
-            g2.drawString(statusText, x, getHeight() - 10);
+            g2.setColor(new Color(200, 220, 255));
+            g2.drawString(statusText, padding + padding, getHeight() - 10);
         }
 
-        g2.setColor(new Color(150, 170, 200));
+        // Bottom-right help panel
         String[] help = {
                 "SPACE  new map",
                 "+/-    zoom",
@@ -1041,12 +1049,20 @@ public class MapPanel extends JPanel {
                 "W      waypoints " + (showWaypoints ? "ON" : "OFF"),
                 "P      pause/resume",
                 "N      single step",
-                "1/2/3/4  speed 1x/2x/5x/10x",
+                "1-5    speed 1x/2x/5x/10x/25x",
                 "drag   pan"
         };
-        int hy = getHeight() - help.length * lineH - 5;
+        int helpW = 220;
+        int helpH = help.length * lineH + padding * 2;
+        int helpX = getWidth() - helpW - padding;
+        int helpY = getHeight() - helpH - padding;
+        g2.setColor(new Color(0, 0, 0, 128));
+        g2.fillRoundRect(helpX, helpY, helpW, helpH, 8, 8);
+
+        g2.setColor(new Color(150, 170, 200));
+        int hy = helpY + padding + 12;
         for (String h : help) {
-            g2.drawString(h, getWidth() - 210, hy);
+            g2.drawString(h, helpX + padding, hy);
             hy += lineH;
         }
     }

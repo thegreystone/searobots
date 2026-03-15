@@ -61,17 +61,79 @@ public final class TerrainViewer {
             frame.add(panel);
 
             var simHolder = new SimulationHolder();
+            long[] currentSeed = {seed}; // mutable for lambda capture
+
+            // Helper to start/restart with a given seed
+            Runnable restartWithCurrentSeed = () -> {
+                simHolder.stop();
+                var w = generator.generate(MatchConfig.withDefaults(currentSeed[0]));
+                panel.setWorld(w);
+                simHolder.start(w, panel);
+                frame.setTitle("SeaRobots: Simulation Viewer [seed: " + currentSeed[0] + "]");
+            };
+
+            // Menu bar
+            var menuBar = new JMenuBar();
+            var simMenu = new JMenu("Simulation");
+            var rerunItem = new JMenuItem("Re-run (same seed)");
+            rerunItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_R, KeyEvent.CTRL_DOWN_MASK));
+            rerunItem.addActionListener(e -> restartWithCurrentSeed.run());
+            simMenu.add(rerunItem);
+
+            var newMapItem = new JMenuItem("New map (random seed)");
+            newMapItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_SPACE, 0));
+            newMapItem.addActionListener(e -> {
+                currentSeed[0] = ThreadLocalRandom.current().nextLong();
+                restartWithCurrentSeed.run();
+            });
+            simMenu.add(newMapItem);
+
+            simMenu.addSeparator();
+
+            var setSeedItem = new JMenuItem("Set seed...");
+            setSeedItem.addActionListener(e -> {
+                var input = JOptionPane.showInputDialog(frame, "Enter seed:", currentSeed[0]);
+                if (input != null && !input.isBlank()) {
+                    try {
+                        currentSeed[0] = Long.parseLong(input.trim());
+                        restartWithCurrentSeed.run();
+                    } catch (NumberFormatException ex) {
+                        JOptionPane.showMessageDialog(frame, "Invalid seed: " + input,
+                                "Error", JOptionPane.ERROR_MESSAGE);
+                    }
+                }
+            });
+            simMenu.add(setSeedItem);
+
+            var copySeedItem = new JMenuItem("Copy seed to clipboard");
+            copySeedItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_C, KeyEvent.CTRL_DOWN_MASK | KeyEvent.SHIFT_DOWN_MASK));
+            copySeedItem.addActionListener(e -> {
+                var clipboard = java.awt.Toolkit.getDefaultToolkit().getSystemClipboard();
+                clipboard.setContents(new java.awt.datatransfer.StringSelection(
+                        String.valueOf(currentSeed[0])), null);
+            });
+            simMenu.add(copySeedItem);
+
+            simMenu.addSeparator();
+
+            var pauseOnDeathItem = new JCheckBoxMenuItem("Pause on ship death", true);
+            simHolder.pauseOnDeath = true;
+            pauseOnDeathItem.addActionListener(e -> {
+                simHolder.pauseOnDeath = pauseOnDeathItem.isSelected();
+            });
+            simMenu.add(pauseOnDeathItem);
+
+            menuBar.add(simMenu);
+            frame.setJMenuBar(menuBar);
+            frame.setTitle("SeaRobots: Simulation Viewer [seed: " + currentSeed[0] + "]");
 
             var im = panel.getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW);
             var am = panel.getActionMap();
 
             im.put(KeyStroke.getKeyStroke(KeyEvent.VK_SPACE, 0), "newMap");
             am.put("newMap", action(() -> {
-                simHolder.stop();
-                long newSeed = ThreadLocalRandom.current().nextLong();
-                var newWorld = generator.generate(MatchConfig.withDefaults(newSeed));
-                panel.setWorld(newWorld);
-                simHolder.start(newWorld, panel);
+                currentSeed[0] = ThreadLocalRandom.current().nextLong();
+                restartWithCurrentSeed.run();
             }));
 
             im.put(KeyStroke.getKeyStroke('='), "zoomIn");
@@ -145,6 +207,11 @@ public final class TerrainViewer {
                 var sim = simHolder.loop;
                 if (sim != null) { sim.setSpeedMultiplier(10); panel.setSimSpeed(10); }
             }));
+            im.put(KeyStroke.getKeyStroke('5'), "speed25");
+            am.put("speed25", action(() -> {
+                var sim = simHolder.loop;
+                if (sim != null) { sim.setSpeedMultiplier(25); panel.setSimSpeed(25); }
+            }));
 
             frame.setSize(1200, 900);
             frame.setLocationRelativeTo(null);
@@ -158,6 +225,8 @@ public final class TerrainViewer {
     private static class SimulationHolder {
         volatile SimulationLoop loop;
         volatile Thread thread;
+        volatile boolean pauseOnDeath;
+        private final java.util.Set<Integer> deadEntities = java.util.Collections.synchronizedSet(new java.util.HashSet<>());
 
         void start(GeneratedWorld world, MapPanel panel) {
             stop();
@@ -168,7 +237,7 @@ public final class TerrainViewer {
             var simWorld = world;
 
             List<SubmarineController> controllers = List.of(
-                    new DefaultAttackSub(), new TargetDrone());
+                    new DefaultAttackSub(), new SubmarineDrone());
 
             MatchRecorder recorder = null;
             try {
@@ -180,11 +249,24 @@ public final class TerrainViewer {
             }
             final var rec = recorder;
 
+            deadEntities.clear();
+
             var listener = new SimulationListener() {
                 @Override
                 public void onTick(long tick, List<SubmarineSnapshot> submarines) {
                     panel.updateSubmarines(tick, submarines);
                     if (rec != null) rec.onTick(tick, submarines);
+
+                    // Pause on death detection
+                    if (pauseOnDeath) {
+                        for (var sub : submarines) {
+                            if (sub.hp() <= 0 && !deadEntities.contains(sub.id())) {
+                                deadEntities.add(sub.id());
+                                sim.setPaused(true);
+                                panel.setSimPaused(true);
+                            }
+                        }
+                    }
                 }
 
                 @Override
@@ -193,7 +275,7 @@ public final class TerrainViewer {
                 }
             };
 
-            List<VehicleConfig> configs = List.of(VehicleConfig.submarine(), VehicleConfig.surfaceShip());
+            List<VehicleConfig> configs = List.of(VehicleConfig.submarine(), VehicleConfig.submarine());
             var t = Thread.ofPlatform().daemon().name("sim-loop").start(() ->
                     sim.run(simWorld, controllers, configs, listener));
             this.thread = t;

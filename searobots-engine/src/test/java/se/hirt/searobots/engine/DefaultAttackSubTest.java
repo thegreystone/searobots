@@ -701,13 +701,13 @@ class DefaultAttackSubTest {
                     0, 0, -200, 0, CONTACT_NORTH);
             assertEquals(DefaultAttackSub.State.TRACKING, controller.state());
 
-            // Feed no-contact ticks. contactAlive decays at 0.999/tick.
-            // contactAlive starts at 1.0 (reset by any sonar contact).
-            // CONFIDENCE_LOST = 0.02. Also need ticksSinceContact > 500.
-            // 1.0 * 0.999^n < 0.02, n > log(0.02)/log(0.999) ~ 3912 ticks.
-            // Feed 4500 ticks to ensure full decay and ticksSinceContact > 500.
+            // TRACKING transitions to PATROL when !hasTrackedContact && ticksSinceContact > 500.
+            // hasTrackedContact is cleared when uncertaintyRadius > 5000.
+            // At maxSubSpeed=15 m/s and dt=0.02s, uncertainty grows by 0.3m/tick.
+            // 5000/0.3 ~ 16667 ticks. Feed 17000 ticks to ensure the threshold is
+            // crossed and ticksSinceContact > 500.
             long startTick = DefaultAttackSub.CONTACT_CONFIRM_TICKS;
-            for (int i = 0; i < 4500; i++) {
+            for (int i = 0; i < 17000; i++) {
                 tickFull(DEEP_FLAT, List.of(), startTick + i, 0, 0, -200, 0,
                         Vec3.ZERO, 1000, List.of(), List.of(), 0);
             }
@@ -847,8 +847,8 @@ class DefaultAttackSubTest {
 
             assertEquals(DefaultAttackSub.State.CHASE, controller.state(),
                     "SE+SL range estimate should trigger CHASE transition");
-            assertEquals(DefaultAttackSub.CHASE_THROTTLE, out.throttle, 0.01,
-                    "CHASE sprint throttle should be 0.8");
+            assertTrue(out.throttle > DefaultAttackSub.TRACKING_THROTTLE,
+                    "CHASE throttle should be higher than TRACKING, got " + out.throttle);
         }
 
         @Test
@@ -894,15 +894,8 @@ class DefaultAttackSubTest {
 
         @Test
         void trackingHeadsTowardTrackedContactWhenNoFreshContact() {
-            startMatch(DEEP_FLAT);
-            // Get an active fix to establish tracked contact
-            var active = new SonarContact(Math.PI / 2, 15.0, 5000, true, -1, 0, 0, 90.0, 0.95, Double.NaN);
-            tickFull(DEEP_FLAT, List.of(), 1, 0, 0, -200, 0,
-                    Vec3.ZERO, 1000, List.of(), List.of(active), 0);
-            // Now in CHASE. Force back to TRACKING by decaying confidence
-            // Simpler: establish tracked contact, then enter TRACKING
-            // with passive contacts
-            controller = new DefaultAttackSub();
+            // CHASE no longer drops to TRACKING on low confidence. Instead, verify
+            // that CHASE steers toward tracked contact when no fresh contacts arrive.
             startMatch(DEEP_FLAT);
 
             // Enter TRACKING via passive contacts
@@ -915,25 +908,24 @@ class DefaultAttackSubTest {
             tickFull(DEEP_FLAT, List.of(), 100, 0, 0, -200, 0,
                     Vec3.ZERO, 1000, List.of(), List.of(activeEast), 0);
             // Now in CHASE with tracked contact to the east
+            assertEquals(DefaultAttackSub.State.CHASE, controller.state());
 
-            // Let contactAlive decay to drop to TRACKING
-            // contactAlive starts at 1.0, needs to drop below CONFIDENCE_HUNT_MIN = 0.1
-            // 1.0 * 0.999^n < 0.1, n > log(0.1)/log(0.999) ~ 2303 ticks
-            for (int i = 0; i < 2400; i++) {
+            // Let some ticks pass with no fresh contact (CHASE persists)
+            for (int i = 0; i < 500; i++) {
                 tickFull(DEEP_FLAT, List.of(), 101 + i, 0, 0, -200, 0,
                         Vec3.ZERO, 1000, List.of(), List.of(), 0);
             }
 
-            // Should be back in TRACKING
-            assertEquals(DefaultAttackSub.State.TRACKING, controller.state(),
-                    "Should drop to TRACKING when contactAlive falls below hunt threshold");
+            // Should still be in CHASE (no longer drops to TRACKING)
+            assertEquals(DefaultAttackSub.State.CHASE, controller.state(),
+                    "CHASE persists while tracked contact exists");
 
             // Tracked contact should still exist
             assertTrue(controller.hasTrackedContact(),
-                    "Should still have tracked contact in TRACKING");
+                    "Should still have tracked contact in CHASE");
 
             // Sub heading north (0), tracked contact to the east, should steer right
-            var out = tickFull(DEEP_FLAT, List.of(), 2501, 0, 0, -200, 0,
+            var out = tickFull(DEEP_FLAT, List.of(), 601, 0, 0, -200, 0,
                     Vec3.ZERO, 1000, List.of(), List.of(), 0);
             assertTrue(out.rudder > 0,
                     "Should steer toward tracked contact (east), got rudder=" + out.rudder);
@@ -960,12 +952,14 @@ class DefaultAttackSubTest {
             enterChase();
             assertEquals(DefaultAttackSub.State.CHASE, controller.state());
 
-            // During sprint phase, throttle should be high
+            // During sprint phase, throttle should be adaptive (faster than
+            // TRACKING to close on target). With default tracked speed ~2 m/s,
+            // adaptive throttle computes a minimum closing speed.
             var out = tickFull(DEEP_FLAT, List.of(), 101, 0, 0, -200, 0,
                     Vec3.ZERO, 1000, List.of(CONTACT_NORTH), List.of(), 0);
 
-            assertEquals(DefaultAttackSub.CHASE_THROTTLE, out.throttle, 0.01,
-                    "CHASE sprint throttle should be 0.8");
+            assertTrue(out.throttle > DefaultAttackSub.TRACKING_THROTTLE,
+                    "CHASE throttle should be higher than TRACKING, got " + out.throttle);
         }
 
         @Test
@@ -1007,18 +1001,29 @@ class DefaultAttackSubTest {
         }
 
         @Test
-        void chaseDropsToTrackingOnLowConfidence() {
+        void chasePersistsUntilUncertaintyTooLarge() {
             enterChase();
             assertEquals(DefaultAttackSub.State.CHASE, controller.state());
 
-            // Run enough ticks for contactAlive to drop below CONFIDENCE_HUNT_MIN (0.1)
-            // 1.0 * 0.999^n < 0.1, n > log(0.1)/log(0.999) ~ 2303
+            // CHASE no longer drops to TRACKING on low confidence. Instead, it
+            // stays in CHASE as long as hasTrackedContact is true. Verify CHASE
+            // persists through the old confidence decay window (2400 ticks).
             for (int i = 0; i < 2400; i++) {
                 tickFull(DEEP_FLAT, List.of(), 101 + i, 0, 0, -200, 0,
                         Vec3.ZERO, 1000, List.of(), List.of(), 0);
             }
-            assertEquals(DefaultAttackSub.State.TRACKING, controller.state(),
-                    "CHASE should drop to TRACKING when contactAlive falls below hunt threshold");
+            assertEquals(DefaultAttackSub.State.CHASE, controller.state(),
+                    "CHASE should persist while tracked contact exists (uncertaintyRadius still small)");
+
+            // CHASE drops to PATROL when !hasTrackedContact && uncertaintyRadius > 3000.
+            // hasTrackedContact is cleared at uncertaintyRadius > 5000. At 0.3m/tick,
+            // 5000/0.3 ~ 16667 ticks total. We already ran 2400, need ~14300 more.
+            for (int i = 0; i < 14300; i++) {
+                tickFull(DEEP_FLAT, List.of(), 2501 + i, 0, 0, -200, 0,
+                        Vec3.ZERO, 1000, List.of(), List.of(), 0);
+            }
+            assertEquals(DefaultAttackSub.State.PATROL, controller.state(),
+                    "CHASE should drop to PATROL when uncertaintyRadius exceeds 5000");
         }
 
         @Test
@@ -1151,16 +1156,16 @@ class DefaultAttackSubTest {
             assertTrue(controller.hasTrackedContact(),
                     "Should have tracked contact from TRACKING phase");
 
-            // Run enough ticks for contactAlive to drop below CONFIDENCE_LOST (0.02)
-            // 1.0 * 0.999^n < 0.02, n > log(0.02)/log(0.999) ~ 3912
-            // Once tracked contact is lost, EVADE transitions to PATROL
-            for (int i = 0; i < 4000; i++) {
+            // EVADE transitions to PATROL when !hasTrackedContact. Tracked contact
+            // is cleared when uncertaintyRadius > 5000. At 15 m/s max speed and
+            // dt=0.02s, uncertainty grows 0.3m/tick: 5000/0.3 ~ 16667 ticks.
+            for (int i = 0; i < 17000; i++) {
                 tickFull(DEEP_FLAT, List.of(), 101 + i, 0, 0, -200, 0,
                         Vec3.ZERO, 900, List.of(), List.of(), 0);
                 if (controller.state() == DefaultAttackSub.State.PATROL) break;
             }
             assertEquals(DefaultAttackSub.State.PATROL, controller.state(),
-                    "EVADE should transition to PATROL when tracked contact fully decays");
+                    "EVADE should transition to PATROL when uncertaintyRadius exceeds 5000");
         }
     }
 
@@ -1348,14 +1353,15 @@ class DefaultAttackSubTest {
                     Vec3.ZERO, 1000, List.of(), List.of(active), 0);
             assertTrue(controller.hasTrackedContact());
 
-            // Run enough ticks for contactAlive to fully decay below CONFIDENCE_LOST (0.02)
-            // 1.0 * 0.999^n < 0.02, n > log(0.02)/log(0.999) ~ 3912
-            for (int i = 0; i < 4000; i++) {
+            // Tracked contact is now cleared when uncertaintyRadius > 5000 (not
+            // when contactAlive drops below CONFIDENCE_LOST). At maxSubSpeed=15 m/s
+            // and dt=0.02s, uncertainty grows by 0.3m/tick: 5000/0.3 ~ 16667 ticks.
+            for (int i = 0; i < 17000; i++) {
                 tickFull(DEEP_FLAT, List.of(), 2 + i, 0, 0, -200, 0,
                         Vec3.ZERO, 1000, List.of(), List.of(), 0);
             }
             assertFalse(controller.hasTrackedContact(),
-                    "Tracked contact should be cleared when confidence drops below threshold");
+                    "Tracked contact should be cleared when uncertaintyRadius exceeds 5000");
         }
 
         @Test
@@ -1392,20 +1398,20 @@ class DefaultAttackSubTest {
         }
 
         @Test
-        void longRangeApproachUsesPatrolThrottle() {
+        void longRangeApproachUsesAdaptiveThrottle() {
             startMatch(DEEP_FLAT);
-            // Active return at long range, CHASE with quiet approach
+            // Active return at long range, CHASE with adaptive approach
             var active = new SonarContact(0, 15.0, 8000, true, -1, 0, 0, 90.0, 0.95, Double.NaN);
             tickFull(DEEP_FLAT, List.of(), 1, 0, 0, -200, 0,
                     Vec3.ZERO, 1000, List.of(), List.of(active), 0);
             assertEquals(DefaultAttackSub.State.CHASE, controller.state());
 
-            // Next tick with no contacts. Tracked distance is ~8000 > CHASE_RANGE,
-            // so should use patrol throttle (quiet approach)
+            // Next tick with no contacts. Long range approach should use
+            // adaptive throttle (at least fast enough to close on target)
             var out = tickFull(DEEP_FLAT, List.of(), 2, 0, 0, -200, 0,
                     Vec3.ZERO, 1000, List.of(), List.of(), 0);
-            assertEquals(DefaultAttackSub.PATROL_THROTTLE, out.throttle, 0.01,
-                    "Long-range approach should use quiet patrol throttle");
+            assertTrue(out.throttle >= DefaultAttackSub.TRACKING_THROTTLE,
+                    "Long-range approach throttle should be at least TRACKING level, got " + out.throttle);
         }
 
         @Test
