@@ -92,6 +92,9 @@ public final class SubmarineScene3D extends SimpleApplication {
     private static final int ROUTE_SAMPLE_INTERVAL = 100; // ~2 seconds between samples
     private long lastTrailTick = -1;
 
+    // Bubble emitters (cavitation noise visualization)
+    private final Map<Integer, ParticleEmitter> bubbleEmitters = new HashMap<>();
+
     // Firing solution crosshair
     private Geometry crosshairGeom;
     private Node crosshairNode;
@@ -298,30 +301,59 @@ public final class SubmarineScene3D extends SimpleApplication {
         keysText.setLocalTranslation(settings.getWidth() - keysWidth - 10, keysHeight + 10, 0);
         guiNode.attachChild(keysText);
 
-        // Firing solution crosshair (wireframe diamond)
+        // Firing solution crosshair (solid circle + cross, built from triangle strips)
         crosshairNode = new Node("crosshair");
-        crosshairNode.setCullHint(Spatial.CullHint.Always); // hidden until needed
-        float r = 30f; // radius
-        Mesh chMesh = new Mesh();
-        chMesh.setMode(Mesh.Mode.Lines);
-        // Diamond shape + inner cross
-        chMesh.setBuffer(VertexBuffer.Type.Position, 3, new float[]{
-                0, r, 0,   r, 0, 0,   // top to right
-                r, 0, 0,   0, -r, 0,  // right to bottom
-                0, -r, 0,  -r, 0, 0,  // bottom to left
-                -r, 0, 0,  0, r, 0,   // left to top
-                -r * 0.4f, 0, 0,  r * 0.4f, 0, 0,  // horizontal tick
-                0, -r * 0.4f, 0,  0, r * 0.4f, 0,   // vertical tick
-        });
-        chMesh.setBuffer(VertexBuffer.Type.Index, 1, new short[]{
-                0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11});
-        chMesh.updateBound();
-        crosshairGeom = new Geometry("crosshairLines", chMesh);
+        crosshairNode.setCullHint(Spatial.CullHint.Always);
+        float r = 37.5f;     // circle radius
+        float cr = r * 1.5f; // cross extends past circle
+        float w = 1.5f;      // cross arm half-width (thickness)
+
         Material chMat = new Material(assetManager, "Common/MatDefs/Misc/Unshaded.j3md");
         chMat.setColor("Color", ColorRGBA.Red);
-        chMat.getAdditionalRenderState().setLineWidth(2f);
-        crosshairGeom.setMaterial(chMat);
-        crosshairNode.attachChild(crosshairGeom);
+        chMat.getAdditionalRenderState().setFaceCullMode(RenderState.FaceCullMode.Off);
+
+        // Circle: thick solid ring (inner radius r-w, outer radius r+w)
+        int segs = 48;
+        float[] circPos = new float[segs * 2 * 3];
+        for (int i = 0; i < segs; i++) {
+            float a = (float) (2 * Math.PI * i / (segs - 1));
+            float cos = FastMath.cos(a), sin = FastMath.sin(a);
+            circPos[i * 6]     = (r - w) * cos;
+            circPos[i * 6 + 1] = (r - w) * sin;
+            circPos[i * 6 + 2] = 0;
+            circPos[i * 6 + 3] = (r + w) * cos;
+            circPos[i * 6 + 4] = (r + w) * sin;
+            circPos[i * 6 + 5] = 0;
+        }
+        Mesh circMesh = new Mesh();
+        circMesh.setMode(Mesh.Mode.TriangleStrip);
+        circMesh.setBuffer(VertexBuffer.Type.Position, 3, circPos);
+        circMesh.updateBound();
+        Geometry circGeom = new Geometry("chCircle", circMesh);
+        circGeom.setMaterial(chMat);
+        crosshairNode.attachChild(circGeom);
+
+        // Cross arms: 4 filled quads (each as 2 triangles)
+        float[][] arms = {
+            {-w, r*0.7f, w, r*0.7f, w, cr, -w, cr},       // top
+            {-w, -cr, w, -cr, w, -r*0.7f, -w, -r*0.7f},   // bottom
+            {r*0.7f, -w, r*0.7f, w, cr, w, cr, -w},        // right
+            {-cr, -w, -cr, w, -r*0.7f, w, -r*0.7f, -w},   // left
+        };
+        for (float[] arm : arms) {
+            Mesh armMesh = new Mesh();
+            armMesh.setBuffer(VertexBuffer.Type.Position, 3, new float[]{
+                arm[0], arm[1], 0,  arm[2], arm[3], 0,
+                arm[4], arm[5], 0,  arm[6], arm[7], 0
+            });
+            armMesh.setBuffer(VertexBuffer.Type.Index, 1, new short[]{0, 1, 2, 0, 2, 3});
+            armMesh.updateBound();
+            Geometry armGeom = new Geometry("chArm", armMesh);
+            armGeom.setMaterial(chMat);
+            crosshairNode.attachChild(armGeom);
+        }
+
+        crosshairGeom = circGeom; // reference for color changes
         crosshairNode.addControl(new BillboardControl());
         rootNode.attachChild(crosshairNode);
 
@@ -908,6 +940,35 @@ public final class SubmarineScene3D extends SimpleApplication {
             Spatial er = findChild(subNode, "elevatorr");
             if (el != null) { el.getLocalRotation().slerp(targetElev, surfaceLerp); }
             if (er != null) { er.getLocalRotation().slerp(targetElev, surfaceLerp); }
+
+            // Bubble emitter: cavitation noise visualization
+            ParticleEmitter bubbles = bubbleEmitters.get(snap.id());
+            if (bubbles == null) {
+                bubbles = new ParticleEmitter("bubbles-" + snap.id(), ParticleMesh.Type.Triangle, 200);
+                Material bubbleMat = new Material(assetManager, "Common/MatDefs/Misc/Particle.j3md");
+                bubbleMat.setTexture("Texture", createBubbleTexture());
+                bubbleMat.getAdditionalRenderState().setBlendMode(RenderState.BlendMode.Alpha);
+                bubbles.setMaterial(bubbleMat);
+                bubbles.setImagesX(1);
+                bubbles.setImagesY(1);
+                bubbles.setStartColor(new ColorRGBA(0.8f, 0.9f, 1.0f, 0.6f));
+                bubbles.setEndColor(new ColorRGBA(0.8f, 0.9f, 1.0f, 0.0f));
+                bubbles.setStartSize(0.5f);
+                bubbles.setEndSize(2.0f);
+                bubbles.setGravity(0, 2f, 0); // bubbles rise
+                bubbles.setLowLife(1f);
+                bubbles.setHighLife(3f);
+                bubbles.getParticleInfluencer().setInitialVelocity(new Vector3f(0, 1f, 0));
+                bubbles.getParticleInfluencer().setVelocityVariation(0.8f);
+                bubbles.setLocalTranslation(0, 0, 0); // at sub position
+                subNode.attachChild(bubbles);
+                bubbleEmitters.put(snap.id(), bubbles);
+            }
+
+            // Scale emission rate by noise level (noiseLevel is linear, ~1.0 = quiet, ~10+ = loud)
+            float noise = (float) snap.noiseLevel();
+            float emitRate = Math.max(0, (noise - 1.5f) * 30f); // no bubbles below noise 1.5
+            bubbles.setParticlesPerSec(emitRate);
         }
 
         // Update orbit center tracking (used by Orbit mode and as fallback)

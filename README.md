@@ -73,6 +73,11 @@ progress and next steps.
 - **[Design Document](docs/DESIGN.md):** architecture, execution model,
   control interfaces, physics, sonar, damage model, and design principles.
 - **[Default Submarine Design](docs/default-submarine-design.md):**
-  behaviour design for the built-in `ObstacleAvoidanceSub`.
+  behaviour design for the built-in `DefaultAttackSub`.
 - **[Implementation Plan](docs/implementation-plan.md):** phased
   implementation roadmap.
+- **[Physics Research](docs/physics-research.md):** research notes on
+  submarine physics from games, simulations, and academic papers.
+- **[Passive Sonar / TMA Design](docs/passive-sonar-tma-design.md):**
+  engine-side Target Motion Analysis that provides controllers with
+  progressively accurate contact data.
