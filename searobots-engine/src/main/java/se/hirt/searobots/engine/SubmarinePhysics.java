@@ -250,6 +250,12 @@ public final class SubmarinePhysics {
             }
         }
 
+        // Guard against NaN/Inf from numerical issues
+        if (!Double.isFinite(newX) || !Double.isFinite(newY) || !Double.isFinite(newZ)) {
+            System.err.printf("PHYSICS NaN/Inf detected for sub %d: pos=(%.1f,%.1f,%.1f) spd=%.1f hdg=%.3f yawRate=%.3f%n",
+                    sub.id(), newX, newY, newZ, speed, heading, yawRate);
+            return; // skip this tick, keep previous position
+        }
         sub.setX(newX);
         sub.setY(newY);
         sub.setZ(newZ);

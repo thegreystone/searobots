@@ -28,6 +28,8 @@
  */
 package se.hirt.searobots.api;
 
+import java.time.LocalTime;
+
 /**
  * Configuration for a match. All fields are set before match start and
  * communicated to participants via {@code MatchContext}.
@@ -51,6 +53,7 @@ package se.hirt.searobots.api;
  * @param maxSeaFloorZ        deepest sea floor elevation (e.g. -900)
  * @param maxSubSpeed         maximum submarine speed in m/s (derived from
  *                            thrust and drag parameters in the physics model)
+ * @param startTime           time of day at match start
  */
 public record MatchConfig(
         long worldSeed,
@@ -69,7 +72,8 @@ public record MatchConfig(
         double gridCellMeters,
         double minSeaFloorZ,
         double maxSeaFloorZ,
-        double maxSubSpeed) {
+        double maxSubSpeed,
+        LocalTime startTime) {
 
     public static MatchConfig withDefaults(long worldSeed) {
         return new MatchConfig(
@@ -89,6 +93,7 @@ public record MatchConfig(
                 10.0,
                 -30.0,
                 -1000.0,  // terrain can go well below crush depth
-                15.0);    // max sub speed: sqrt(MAX_THRUST / DRAG_COEFF)
+                15.0,     // max sub speed: sqrt(MAX_THRUST / DRAG_COEFF)
+                LocalTime.NOON);
     }
 }

@@ -240,6 +240,28 @@ public final class TerrainViewer {
             });
             viewMenu.add(waterSettingsItem);
 
+            var timeOfDayItem = new JMenuItem("Set Time of Day...");
+            timeOfDayItem.addActionListener(e -> {
+                if (scene3D[0] != null) {
+                    var current = scene3D[0].getStartTime();
+                    var input = JOptionPane.showInputDialog(frame,
+                            "Enter start time of day (HH:mm):",
+                            current.toString().substring(0, 5));
+                    if (input != null && !input.isBlank()) {
+                        try {
+                            scene3D[0].setStartTime(java.time.LocalTime.parse(input.trim()));
+                        } catch (Exception ex) {
+                            JOptionPane.showMessageDialog(frame, "Invalid time: " + input,
+                                    "Error", JOptionPane.ERROR_MESSAGE);
+                        }
+                    }
+                } else {
+                    JOptionPane.showMessageDialog(frame, "Switch to 3D view first.",
+                            "Time of Day", JOptionPane.INFORMATION_MESSAGE);
+                }
+            });
+            viewMenu.add(timeOfDayItem);
+
             menuBar.add(viewMenu);
             frame.setJMenuBar(menuBar);
             frame.setTitle("SeaRobots: Simulation Viewer [seed: " + currentSeed[0] + "]");

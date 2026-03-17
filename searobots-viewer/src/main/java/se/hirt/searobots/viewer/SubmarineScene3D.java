@@ -71,11 +71,16 @@ public final class SubmarineScene3D extends SimpleApplication {
     // Vehicle tracking
     private final Map<Integer, Node> subNodes = new HashMap<>();
     private volatile List<SubmarineSnapshot> latestSnapshots = List.of();
+    private volatile long latestTick;
     private int selectedSubId = 0;
     private static final float LERP_SPEED = 8f; // higher = snappier tracking
     private static final float SURFACE_SPEED = 2f; // control surface actuator lerp rate
     private BitmapText hudText;
     private BitmapText keysText;
+
+    // Firing solution crosshair
+    private Geometry crosshairGeom;
+    private Node crosshairNode;
 
     // Lighting and atmosphere
     private DirectionalLight sun;
@@ -87,21 +92,54 @@ public final class SubmarineScene3D extends SimpleApplication {
     private FilterPostProcessor fpp;
     private volatile boolean atmosphereEnabled = true;
 
-    // Sun simulation: equator, time of day in hours (12.0 = noon)
-    // 1 real minute = 1 sim hour, so full day cycle in 24 real minutes
+    // Sun simulation: time of day = config.startTime + elapsed tick time
+    private java.time.LocalTime startTime = java.time.LocalTime.NOON;
     private float sunHour = 12f;
-    private static final float HOURS_PER_SECOND = 1f / 60f;
+
+    // Camera modes
+    private enum CameraMode {
+        ORBIT, CHASE, TARGET, PERISCOPE, FREE_LOOK, FLY_BY;
+        private static final CameraMode[] VALUES = values();
+        CameraMode next() { return VALUES[(ordinal() + 1) % VALUES.length]; }
+        String label() {
+            return switch (this) {
+                case ORBIT -> "Orbit"; case CHASE -> "Chase"; case TARGET -> "Target";
+                case PERISCOPE -> "Periscope"; case FREE_LOOK -> "Free Look"; case FLY_BY -> "Fly-by";
+            };
+        }
+    }
+    private CameraMode cameraMode = CameraMode.ORBIT;
 
     // Orbit camera state
     private final Vector3f orbitCenter = new Vector3f();
-    private float orbitAzimuth = FastMath.QUARTER_PI;   // radians, 0 = looking along +Z
-    private float orbitElevation = 0.4f;                 // radians above horizon
+    private float orbitAzimuth = FastMath.QUARTER_PI;
+    private float orbitElevation = 0.4f;
     private float orbitDistance = 200f;
     private boolean dragging;
 
+    // Chase camera state
+    private final Vector3f chasePos = new Vector3f();
+    private boolean chaseInitialized = false;
+
+    // Free Look state
+    private float freeLookAzimuth;
+    private float freeLookElevation;
+    private float freeLookDistance;
+    private final Vector3f freeLookCenter = new Vector3f();
+
+    // Fly-by state
+    private final Vector3f flyByStation = new Vector3f();
+    private static final float FLY_BY_REPOSITION_DIST = 500f;
+
     // Tab transition: phase 1 = rotate to face target, phase 2 = move to target
     private float transitionTimer = 0f;
-    private static final float LOOK_PHASE_DURATION = 0.6f; // seconds to rotate before moving
+    private static final float LOOK_PHASE_DURATION = 0.6f;
+
+    // Mode transition (smooth lerp between camera positions)
+    private final Vector3f modeTransFromPos = new Vector3f();
+    private final Vector3f modeTransFromLookAt = new Vector3f();
+    private float modeTransTimer = 0f;
+    private static final float MODE_TRANS_DURATION = 0.5f;
 
     /** Create the app and its canvas. Call from EDT. */
     public static SubmarineScene3D create() {
@@ -128,7 +166,7 @@ public final class SubmarineScene3D extends SimpleApplication {
         System.out.println("simpleInitApp: PHASE 1 - submarine model only");
         flyCam.setEnabled(false);
         viewPort.setBackgroundColor(new ColorRGBA(0.02f, 0.04f, 0.12f, 1f));
-        setupOrbitInput();
+        setupInput();
 
         // Lighting
         sun = new DirectionalLight();
@@ -148,6 +186,22 @@ public final class SubmarineScene3D extends SimpleApplication {
         // Sky (procedural cube map, no projection artifacts) - must be before water for reflections
         sky = SkyFactory.createSky(assetManager, createSkyCubeMap(), SkyFactory.EnvMapType.CubeMap);
         rootNode.attachChild(sky);
+
+        // Sun disc (billboard in Sky bucket, renders at sky depth)
+        Quad sunQuad = new Quad(400, 400);
+        sunBillboard = new Geometry("SunDisc", sunQuad);
+        Material sunMat = new Material(assetManager, "Common/MatDefs/Misc/Unshaded.j3md");
+        sunMat.setTexture("ColorMap", createSunGlowTexture());
+        sunMat.getAdditionalRenderState().setBlendMode(RenderState.BlendMode.Additive);
+        sunMat.getAdditionalRenderState().setDepthWrite(false);
+        sunBillboard.setMaterial(sunMat);
+        sunBillboard.setQueueBucket(RenderQueue.Bucket.Sky);
+        sunBillboard.addControl(new BillboardControl());
+        sunBillboard.setCullHint(Spatial.CullHint.Never);
+        // Position along sun direction (opposite of light direction), offset to center the quad
+        Vector3f sunPos = sun.getDirection().mult(-900f);
+        sunBillboard.setLocalTranslation(sunPos.subtract(200, 200, 0));
+        rootNode.attachChild(sunBillboard);
 
         // Water surface (after sky so reflections pick it up)
         fpp = new FilterPostProcessor(assetManager);
@@ -171,6 +225,13 @@ public final class SubmarineScene3D extends SimpleApplication {
         waterFilter.setUseRipples(true);
         waterFilter.setUseSpecular(true);
         waterFilter.setUseRefraction(true);
+        // Fog (depth-dependent, updated in updateAtmosphere)
+        fogFilter = new FogFilter();
+        fogFilter.setFogDistance(2000f);
+        fogFilter.setFogDensity(1.0f);
+        fogFilter.setFogColor(new ColorRGBA(0.02f, 0.04f, 0.12f, 1f));
+        fpp.addFilter(fogFilter);
+
         fpp.addFilter(waterFilter);
         viewPort.addProcessor(fpp);
 
@@ -216,11 +277,39 @@ public final class SubmarineScene3D extends SimpleApplication {
         keysText.setColor(new ColorRGBA(0.7f, 0.7f, 0.7f, 1f));
         keysText.setText(
                 "[1] 1x  [2] 2x  [3] 5x  [4] 10x  [5] 22x\n" +
-                "[P] Pause  [N] Step  [Tab] Cycle sub  [Space] New map");
+                "[P] Pause  [N] Step  [Tab] Cycle sub  [V] Camera\n" +
+                "[Space] New map");
         float keysWidth = keysText.getLineWidth();
         float keysHeight = keysText.getHeight();
         keysText.setLocalTranslation(settings.getWidth() - keysWidth - 10, keysHeight + 10, 0);
         guiNode.attachChild(keysText);
+
+        // Firing solution crosshair (wireframe diamond)
+        crosshairNode = new Node("crosshair");
+        crosshairNode.setCullHint(Spatial.CullHint.Always); // hidden until needed
+        float r = 30f; // radius
+        Mesh chMesh = new Mesh();
+        chMesh.setMode(Mesh.Mode.Lines);
+        // Diamond shape + inner cross
+        chMesh.setBuffer(VertexBuffer.Type.Position, 3, new float[]{
+                0, r, 0,   r, 0, 0,   // top to right
+                r, 0, 0,   0, -r, 0,  // right to bottom
+                0, -r, 0,  -r, 0, 0,  // bottom to left
+                -r, 0, 0,  0, r, 0,   // left to top
+                -r * 0.4f, 0, 0,  r * 0.4f, 0, 0,  // horizontal tick
+                0, -r * 0.4f, 0,  0, r * 0.4f, 0,   // vertical tick
+        });
+        chMesh.setBuffer(VertexBuffer.Type.Index, 1, new short[]{
+                0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11});
+        chMesh.updateBound();
+        crosshairGeom = new Geometry("crosshairLines", chMesh);
+        Material chMat = new Material(assetManager, "Common/MatDefs/Misc/Unshaded.j3md");
+        chMat.setColor("Color", ColorRGBA.Red);
+        chMat.getAdditionalRenderState().setLineWidth(2f);
+        crosshairGeom.setMaterial(chMat);
+        crosshairNode.attachChild(crosshairGeom);
+        crosshairNode.addControl(new BillboardControl());
+        rootNode.attachChild(crosshairNode);
 
         cam.setLocation(new Vector3f(0, 15, 60));
         cam.lookAt(Vector3f.ZERO, Vector3f.UNIT_Y);
@@ -236,11 +325,21 @@ public final class SubmarineScene3D extends SimpleApplication {
             attachTerrain(w);
         }
         updateVehicles();
-        updateOrbitCamera();
+        updateCamera(tpf);
         updateHud();
-        // TODO: re-enable incrementally
-        // sunHour += tpf * HOURS_PER_SECOND;
-        // updateAtmosphere();
+        updateCrosshair();
+        // Keep sun billboard centered on camera (infinitely far away)
+        if (sunBillboard != null) {
+            Vector3f sunPos = cam.getLocation().add(sun.getDirection().mult(-900f));
+            sunBillboard.setLocalTranslation(sunPos.subtract(200, 200, 0));
+        }
+        // Keep HUD anchored to current window size
+        hudText.setLocalTranslation(10, cam.getHeight() - 10, 0);
+        keysText.setLocalTranslation(
+                cam.getWidth() - keysText.getLineWidth() - 10,
+                keysText.getHeight() + 10, 0);
+        sunHour = (startTime.toSecondOfDay() / 3600f + latestTick / 50f / 3600f) % 24f;
+        updateAtmosphere();
     }
 
     /**
@@ -250,6 +349,14 @@ public final class SubmarineScene3D extends SimpleApplication {
     public void setWorld(GeneratedWorld world) {
         System.out.println("SubmarineScene3D.setWorld() called, world=" + (world != null));
         pendingWorld = world;
+    }
+
+    public void setStartTime(java.time.LocalTime time) {
+        this.startTime = time;
+    }
+
+    public java.time.LocalTime getStartTime() {
+        return startTime;
     }
 
     public void setAtmosphereEnabled(boolean enabled) {
@@ -266,6 +373,7 @@ public final class SubmarineScene3D extends SimpleApplication {
 
     /** Feed simulation snapshots. Safe to call from any thread. */
     public void updateSubmarines(long tick, List<SubmarineSnapshot> snapshots) {
+        latestTick = tick;
         latestSnapshots = List.copyOf(snapshots);
     }
 
@@ -286,6 +394,9 @@ public final class SubmarineScene3D extends SimpleApplication {
         mat.setBoolean("UseVertexColor", true);
         terrainGeometry.setMaterial(mat);
         rootNode.attachChild(terrainGeometry);
+
+        // Read start time from config
+        startTime = world.config().startTime();
 
         // Clear previous vehicle models
         for (Node n : subNodes.values()) n.removeFromParent();
@@ -327,8 +438,8 @@ public final class SubmarineScene3D extends SimpleApplication {
             waterFilter.setLightDirection(sunDir);
             // Place sun billboard and god rays source in sun's direction
             var sunPos = cam.getLocation().add(sunDir.mult(-4000f));
-            godRaysFilter.setLightPosition(sunPos);
-            sunBillboard.setLocalTranslation(sunPos.subtract(400, 400, 0));
+            if (godRaysFilter != null) godRaysFilter.setLightPosition(sunPos);
+            if (sunBillboard != null) sunBillboard.setLocalTranslation(sunPos.subtract(200, 200, 0));
         }
 
         // Sun colour: white at high noon, golden below 30 deg, orange/red below 15 deg
@@ -423,12 +534,68 @@ public final class SubmarineScene3D extends SimpleApplication {
         if (hdgDeg < 0) hdgDeg += 360;
         double pitchDeg = Math.toDegrees(snap.pose().pitch());
         double rollDeg = Math.toDegrees(snap.pose().roll());
+        long tick = latestTick;
+        var elapsed = java.time.Duration.ofMillis((long) (tick * 1000.0 / 50));
+        var tod = startTime.plusSeconds((long) (tick / 50.0));
         hudText.setText(String.format(
-                "%s  |  Speed: %.1f kn  Depth: %.0f m  Throttle: %.0f%%\n" +
-                "Heading: %03.0f\u00b0  Pitch: %+.1f\u00b0  Roll: %+.1f\u00b0  Rudder: %+.0f%%  Planes: %+.0f%%",
-                snap.name(), snap.speed(), -pos.z(), snap.throttle() * 100,
+                "%s  |  Speed: %.1f kn  Depth: %.0f m  Throttle: %.0f%%  HP: %d\n" +
+                "Heading: %03.0f\u00b0  Pitch: %+.1f\u00b0  Roll: %+.1f\u00b0  Rudder: %+.0f%%  Planes: %+.0f%%\n" +
+                "Tick: %d  Elapsed: %02d:%02d:%02d  ToD: %s  Cam: %s",
+                snap.name(), snap.speed(), -pos.z(), snap.throttle() * 100, snap.hp(),
                 hdgDeg, pitchDeg, rollDeg,
-                snap.rudder() * 100, snap.sternPlanes() * 100));
+                snap.rudder() * 100, snap.sternPlanes() * 100,
+                tick, elapsed.toHoursPart(), elapsed.toMinutesPart(), elapsed.toSecondsPart(),
+                tod.toString(), cameraMode.label()));
+    }
+
+    // ---- crosshair ----
+
+    private void updateCrosshair() {
+        var snapshots = latestSnapshots;
+        // Find any sub with a firing solution
+        SubmarineSnapshot attacker = null;
+        for (var snap : snapshots) {
+            if (snap.firingSolution() != null) {
+                attacker = snap;
+                break;
+            }
+        }
+        if (attacker == null) {
+            crosshairNode.setCullHint(Spatial.CullHint.Always);
+            return;
+        }
+
+        var sol = attacker.firingSolution();
+        // Find the target sub closest to the firing solution position
+        Node targetNode = null;
+        double bestDist = Double.MAX_VALUE;
+        for (var snap : snapshots) {
+            if (snap.id() == attacker.id()) continue;
+            var pos = snap.pose().position();
+            double dx = pos.x() - sol.targetX();
+            double dy = pos.y() - sol.targetY();
+            double dist = Math.sqrt(dx * dx + dy * dy);
+            if (dist < bestDist) {
+                bestDist = dist;
+                targetNode = subNodes.get(snap.id());
+            }
+        }
+        if (targetNode == null) {
+            crosshairNode.setCullHint(Spatial.CullHint.Always);
+            return;
+        }
+
+        // Set crosshair color to attacker's game color
+        java.awt.Color awtColor = attacker.color();
+        ColorRGBA chColor = new ColorRGBA(
+                awtColor.getRed() / 255f,
+                awtColor.getGreen() / 255f,
+                awtColor.getBlue() / 255f, 1f);
+        crosshairGeom.getMaterial().setColor("Color", chColor);
+
+        // Position crosshair at target
+        crosshairNode.setLocalTranslation(targetNode.getLocalTranslation());
+        crosshairNode.setCullHint(Spatial.CullHint.Never);
     }
 
     // ---- vehicle tracking ----
@@ -506,24 +673,19 @@ public final class SubmarineScene3D extends SimpleApplication {
             if (er != null) { er.getLocalRotation().slerp(targetElev, surfaceLerp); }
         }
 
-        // Smoothly move orbit camera center to follow selected sub
+        // Update orbit center tracking (used by Orbit mode and as fallback)
         Node selected = subNodes.get(selectedSubId);
         if (selected != null) {
             Vector3f targetPos = selected.getLocalTranslation();
-
             if (transitionTimer > 0) {
-                // Phase 1: rotate orbit to look toward the new target, don't move yet
                 transitionTimer -= tpf;
                 Vector3f toTarget = targetPos.subtract(orbitCenter);
                 float targetAzimuth = FastMath.atan2(toTarget.x, toTarget.z);
-                // Smoothly rotate azimuth toward target direction
                 float angleDiff = targetAzimuth - orbitAzimuth;
-                // Normalize to -PI..PI
                 while (angleDiff > FastMath.PI) angleDiff -= FastMath.TWO_PI;
                 while (angleDiff < -FastMath.PI) angleDiff += FastMath.TWO_PI;
                 orbitAzimuth += angleDiff * Math.min(1f, tpf * 5f);
             } else {
-                // Phase 2 / normal tracking: move orbit center to follow sub
                 float dist = orbitCenter.distance(targetPos);
                 float speed = dist > 100f ? 3f : 5f;
                 float factor = Math.min(1f, tpf * speed);
@@ -533,10 +695,17 @@ public final class SubmarineScene3D extends SimpleApplication {
         }
     }
 
-    // ---- orbit camera ----
+    // ---- camera system ----
 
-    private void setupOrbitInput() {
-        // Tab to cycle between submarines (with look-then-move transition)
+    private SubmarineSnapshot findSnapshot(int id) {
+        for (var snap : latestSnapshots) {
+            if (snap.id() == id) return snap;
+        }
+        return null;
+    }
+
+    private void setupInput() {
+        // Tab to cycle between submarines
         inputManager.addMapping("CycleSub", new KeyTrigger(KeyInput.KEY_TAB));
         inputManager.addListener((ActionListener) (name, isPressed, tpf) -> {
             if (isPressed && !latestSnapshots.isEmpty()) {
@@ -546,13 +715,43 @@ public final class SubmarineScene3D extends SimpleApplication {
                     if (ids[i] == selectedSubId) { currentIdx = i; break; }
                 }
                 selectedSubId = ids[(currentIdx + 1) % ids.length];
-                transitionTimer = LOOK_PHASE_DURATION;
+                chaseInitialized = false;
+                if (cameraMode == CameraMode.ORBIT) {
+                    transitionTimer = LOOK_PHASE_DURATION;
+                } else {
+                    modeTransFromPos.set(cam.getLocation());
+                    modeTransFromLookAt.set(orbitCenter);
+                    modeTransTimer = MODE_TRANS_DURATION;
+                }
                 System.out.println("Tracking: " + latestSnapshots.stream()
                         .filter(s -> s.id() == selectedSubId)
                         .map(SubmarineSnapshot::name).findFirst().orElse("?"));
             }
         }, "CycleSub");
 
+        // V to cycle camera modes
+        inputManager.addMapping("CycleCamera", new KeyTrigger(KeyInput.KEY_V));
+        inputManager.addListener((ActionListener) (name, isPressed, tpf) -> {
+            if (isPressed) {
+                modeTransFromPos.set(cam.getLocation());
+                modeTransFromLookAt.set(orbitCenter);
+                cameraMode = cameraMode.next();
+                modeTransTimer = MODE_TRANS_DURATION;
+                chaseInitialized = false;
+                if (cameraMode == CameraMode.FREE_LOOK) {
+                    freeLookAzimuth = orbitAzimuth;
+                    freeLookElevation = orbitElevation;
+                    freeLookDistance = orbitDistance;
+                    freeLookCenter.set(orbitCenter);
+                }
+                if (cameraMode == CameraMode.FLY_BY) {
+                    pickFlyByStation();
+                }
+                System.out.println("Camera: " + cameraMode.label());
+            }
+        }, "CycleCamera");
+
+        // Mouse orbit/zoom (Orbit and Free Look modes)
         inputManager.addMapping("OrbitLeft", new MouseAxisTrigger(MouseInput.AXIS_X, true));
         inputManager.addMapping("OrbitRight", new MouseAxisTrigger(MouseInput.AXIS_X, false));
         inputManager.addMapping("OrbitUp", new MouseAxisTrigger(MouseInput.AXIS_Y, false));
@@ -565,30 +764,169 @@ public final class SubmarineScene3D extends SimpleApplication {
                 dragging = isPressed, "DragStart");
 
         inputManager.addListener((AnalogListener) (name, value, tpf) -> {
+            if (cameraMode != CameraMode.ORBIT && cameraMode != CameraMode.FREE_LOOK) return;
+            boolean fl = cameraMode == CameraMode.FREE_LOOK;
             if (dragging) {
-                float speed = 2.5f;
+                float spd = 2.5f;
                 switch (name) {
-                    case "OrbitLeft" -> orbitAzimuth -= value * speed;
-                    case "OrbitRight" -> orbitAzimuth += value * speed;
-                    case "OrbitUp" -> orbitElevation = Math.min(FastMath.HALF_PI - 0.01f,
-                            orbitElevation + value * speed);
-                    case "OrbitDown" -> orbitElevation = Math.max(-0.2f,
-                            orbitElevation - value * speed);
+                    case "OrbitLeft" -> { if (fl) freeLookAzimuth -= value * spd; else orbitAzimuth -= value * spd; }
+                    case "OrbitRight" -> { if (fl) freeLookAzimuth += value * spd; else orbitAzimuth += value * spd; }
+                    case "OrbitUp" -> {
+                        float v = (fl ? freeLookElevation : orbitElevation) + value * spd;
+                        v = Math.min(FastMath.HALF_PI - 0.01f, v);
+                        if (fl) freeLookElevation = v; else orbitElevation = v;
+                    }
+                    case "OrbitDown" -> {
+                        float v = (fl ? freeLookElevation : orbitElevation) - value * spd;
+                        v = Math.max(-0.2f, v);
+                        if (fl) freeLookElevation = v; else orbitElevation = v;
+                    }
                 }
             }
             switch (name) {
-                case "ZoomIn" -> orbitDistance = Math.max(20f, orbitDistance * 0.9f);
-                case "ZoomOut" -> orbitDistance *= 1.1f;
+                case "ZoomIn" -> { if (fl) freeLookDistance = Math.max(20f, freeLookDistance * 0.9f); else orbitDistance = Math.max(20f, orbitDistance * 0.9f); }
+                case "ZoomOut" -> { if (fl) freeLookDistance *= 1.1f; else orbitDistance *= 1.1f; }
             }
         }, "OrbitLeft", "OrbitRight", "OrbitUp", "OrbitDown", "ZoomIn", "ZoomOut");
     }
 
-    private void updateOrbitCamera() {
-        float x = orbitCenter.x + orbitDistance * FastMath.cos(orbitElevation) * FastMath.sin(orbitAzimuth);
-        float y = orbitCenter.y + orbitDistance * FastMath.sin(orbitElevation);
-        float z = orbitCenter.z + orbitDistance * FastMath.cos(orbitElevation) * FastMath.cos(orbitAzimuth);
-        cam.setLocation(new Vector3f(x, y, z));
-        cam.lookAt(orbitCenter, Vector3f.UNIT_Y);
+    private void updateCamera(float tpf) {
+        Vector3f desiredPos = new Vector3f();
+        Vector3f desiredLookAt = new Vector3f();
+        computeCameraForMode(desiredPos, desiredLookAt, tpf);
+
+        if (modeTransTimer > 0) {
+            modeTransTimer -= tpf;
+            float t = 1f - Math.max(0f, modeTransTimer / MODE_TRANS_DURATION);
+            t = t * t * (3f - 2f * t); // smoothstep
+            Vector3f pos = new Vector3f(modeTransFromPos).interpolateLocal(desiredPos, t);
+            Vector3f look = new Vector3f(modeTransFromLookAt).interpolateLocal(desiredLookAt, t);
+            cam.setLocation(pos);
+            cam.lookAt(look, Vector3f.UNIT_Y);
+        } else {
+            cam.setLocation(desiredPos);
+            cam.lookAt(desiredLookAt, Vector3f.UNIT_Y);
+        }
+    }
+
+    private void computeCameraForMode(Vector3f outPos, Vector3f outLookAt, float tpf) {
+        switch (cameraMode) {
+            case ORBIT     -> computeOrbitCamera(outPos, outLookAt);
+            case CHASE     -> computeChaseCamera(outPos, outLookAt, tpf);
+            case TARGET    -> computeTargetCamera(outPos, outLookAt, tpf);
+            case PERISCOPE -> computePeriscopeCamera(outPos, outLookAt);
+            case FREE_LOOK -> computeFreeLookCamera(outPos, outLookAt, tpf);
+            case FLY_BY    -> computeFlyByCamera(outPos, outLookAt, tpf);
+        }
+    }
+
+    private void computeOrbitCamera(Vector3f outPos, Vector3f outLookAt) {
+        outPos.set(
+            orbitCenter.x + orbitDistance * FastMath.cos(orbitElevation) * FastMath.sin(orbitAzimuth),
+            orbitCenter.y + orbitDistance * FastMath.sin(orbitElevation),
+            orbitCenter.z + orbitDistance * FastMath.cos(orbitElevation) * FastMath.cos(orbitAzimuth));
+        outLookAt.set(orbitCenter);
+    }
+
+    private void computeChaseCamera(Vector3f outPos, Vector3f outLookAt, float tpf) {
+        Node sel = subNodes.get(selectedSubId);
+        SubmarineSnapshot snap = findSnapshot(selectedSubId);
+        if (sel == null || snap == null) { computeOrbitCamera(outPos, outLookAt); return; }
+        Vector3f subPos = sel.getLocalTranslation();
+
+        // Chase camera: behind and above the sub along its heading.
+        // Slow lerp creates cinematic trailing when the sub turns.
+        float heading = (float) snap.pose().heading();
+        float fwdX = (float) Math.sin(heading);
+        float fwdZ = (float) -Math.cos(heading);
+        float asternDist = 250f;
+        float aboveHeight = 50f;
+
+        Vector3f target = new Vector3f(
+                subPos.x - fwdX * asternDist,
+                subPos.y + aboveHeight,
+                subPos.z - fwdZ * asternDist);
+
+        if (!chaseInitialized) { chasePos.set(target); chaseInitialized = true; }
+
+        // Slow lerp: camera trails behind, swinging wide on turns
+        chasePos.interpolateLocal(target, Math.min(1f, tpf * 1.5f));
+
+        outPos.set(chasePos);
+        outLookAt.set(subPos);
+    }
+
+    private void computeTargetCamera(Vector3f outPos, Vector3f outLookAt, float tpf) {
+        computeChaseCamera(outPos, outLookAt, tpf);
+        SubmarineSnapshot snap = findSnapshot(selectedSubId);
+        if (snap == null) return;
+
+        // Look toward best contact instead of the sub
+        var best = snap.contactEstimates().stream()
+                .filter(c -> c.confidence() > 0.1)
+                .max(java.util.Comparator.comparingDouble(se.hirt.searobots.api.ContactEstimate::confidence))
+                .orElse(null);
+        if (best != null) {
+            outLookAt.set((float) best.x(), (float) snap.pose().position().z(), (float) -best.y());
+        }
+    }
+
+    private void computePeriscopeCamera(Vector3f outPos, Vector3f outLookAt) {
+        Node sel = subNodes.get(selectedSubId);
+        SubmarineSnapshot snap = findSnapshot(selectedSubId);
+        if (sel == null || snap == null) { computeOrbitCamera(outPos, outLookAt); return; }
+
+        Vector3f subPos = sel.getLocalTranslation();
+        float heading = (float) snap.pose().heading();
+        float fwdX = (float) Math.sin(heading);
+        float fwdZ = (float) -Math.cos(heading);
+        float towerHeight = 12f;
+
+        outPos.set(subPos.x, subPos.y + towerHeight, subPos.z);
+        float lookDist = 200f;
+        float downPitch = FastMath.tan(FastMath.DEG_TO_RAD * 5f);
+        outLookAt.set(
+                subPos.x + fwdX * lookDist,
+                subPos.y + towerHeight - lookDist * downPitch,
+                subPos.z + fwdZ * lookDist);
+    }
+
+    private void computeFreeLookCamera(Vector3f outPos, Vector3f outLookAt, float tpf) {
+        Node sel = subNodes.get(selectedSubId);
+        if (sel != null) {
+            freeLookCenter.interpolateLocal(sel.getLocalTranslation(), Math.min(1f, tpf * 0.5f));
+        }
+        outPos.set(
+            freeLookCenter.x + freeLookDistance * FastMath.cos(freeLookElevation) * FastMath.sin(freeLookAzimuth),
+            freeLookCenter.y + freeLookDistance * FastMath.sin(freeLookElevation),
+            freeLookCenter.z + freeLookDistance * FastMath.cos(freeLookElevation) * FastMath.cos(freeLookAzimuth));
+        outLookAt.set(freeLookCenter);
+    }
+
+    private void pickFlyByStation() {
+        Node sel = subNodes.get(selectedSubId);
+        SubmarineSnapshot snap = findSnapshot(selectedSubId);
+        if (sel == null || snap == null) return;
+        Vector3f subPos = sel.getLocalTranslation();
+        float heading = (float) snap.pose().heading();
+        float fwdX = (float) Math.sin(heading);
+        float fwdZ = (float) -Math.cos(heading);
+        float perpX = fwdZ, perpZ = -fwdX;
+        flyByStation.set(
+                subPos.x + fwdX * 300f + perpX * 150f,
+                subPos.y + 30f,
+                subPos.z + fwdZ * 300f + perpZ * 150f);
+    }
+
+    private void computeFlyByCamera(Vector3f outPos, Vector3f outLookAt, float tpf) {
+        Node sel = subNodes.get(selectedSubId);
+        if (sel == null) { computeOrbitCamera(outPos, outLookAt); return; }
+        Vector3f subPos = sel.getLocalTranslation();
+        if (subPos.distance(flyByStation) > FLY_BY_REPOSITION_DIST) {
+            pickFlyByStation();
+        }
+        outPos.set(flyByStation);
+        outLookAt.set(subPos);
     }
 
     // ---- helpers ----
@@ -752,6 +1090,29 @@ public final class SubmarineScene3D extends SimpleApplication {
             case 5 -> new Vector3f(-s, -t, -1);  // -Z
             default -> throw new IllegalArgumentException();
         };
+    }
+
+    private Texture2D createSunGlowTexture() {
+        int size = 128;
+        ByteBuffer buf = BufferUtils.createByteBuffer(size * size * 4);
+        float center = size / 2f;
+        for (int y = 0; y < size; y++) {
+            for (int x = 0; x < size; x++) {
+                float dx = (x - center) / center;
+                float dy = (y - center) / center;
+                float dist = (float) Math.sqrt(dx * dx + dy * dy);
+                // Bright core with soft falloff
+                float intensity = Math.max(0f, 1f - dist);
+                intensity = intensity * intensity * intensity; // cubic falloff for soft glow
+                int r = (int) (255 * intensity);
+                int g = (int) (245 * intensity);
+                int b = (int) (200 * intensity);
+                int a = (int) (255 * intensity);
+                buf.put((byte) r).put((byte) g).put((byte) b).put((byte) a);
+            }
+        }
+        buf.flip();
+        return new Texture2D(new Image(Image.Format.RGBA8, size, size, buf, ColorSpace.sRGB));
     }
 
     private Texture2D createBubbleTexture() {
