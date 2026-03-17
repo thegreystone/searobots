@@ -33,6 +33,11 @@ import se.hirt.searobots.api.TerrainMap;
 import se.hirt.searobots.api.BattleArea;
 import se.hirt.searobots.api.VehicleConfig;
 
+/**
+ * Simplified submarine physics based on Fossen's 6-DOF formulation.
+ * See docs/physics-model.md for full documentation, references, and
+ * characterization results.
+ */
 public final class SubmarinePhysics {
 
     private static final double WATER_DENSITY = 1025.0; // kg/m^3 seawater
@@ -96,21 +101,34 @@ public final class SubmarinePhysics {
         if (speed < -cfg.maxReverseSpeed()) speed = -cfg.maxReverseSpeed();
         sub.setSpeed(speed);
 
-        // 3. Yaw: rudder lift -> yaw rate (direct, no accumulation)
-        // Yaw rate is computed fresh each tick from the rudder moment.
-        // This gives steady-state turning: constant rudder = constant turn rate.
+        // 3. Yaw: first-order filter toward steady-state yaw rate (Option A from Thune thesis)
+        // The steady-state yaw rate is what the rudder moment can sustain against rotary damping.
+        // The actual yaw rate exponentially approaches this with a time constant tau.
+        // This gives realistic transients (gradual buildup, overshoot in zigzag) while
+        // remaining unconditionally stable (no oscillation risk).
         double rudderAngle = sub.rudder() * Math.PI / 4;  // -1..1 maps to -45..+45 deg
         double rudderCl = liftCoefficient(rudderAngle, cfg.stallAngle());
         double rudderMoment = 0.5 * WATER_DENSITY * speed * Math.abs(speed)
                 * cfg.rudderArea() * rudderCl * cfg.rudderArm();
-        // Effective inertia increases with speed squared (centrifugal resistance).
-        // At low speed: mostly base inertia, tighter turns.
-        // At high speed: centrifugal force (∝ v²) resists turning, wider circles.
-        // Rudder force also scales with v², so turn radius increases gently with speed.
+
+        // Effective inertia increases with v² (centrifugal resistance at high speed)
         double baseInertia = cfg.massSurge() * cfg.rotationalInertia();
         double speedDamping = baseInertia * 0.02 * speed * Math.abs(speed);
         double effectiveInertia = baseInertia + speedDamping;
-        double yawRate = rudderMoment / effectiveInertia;
+
+        // Steady-state yaw rate: what the rudder can sustain
+        double yawRateSteady = rudderMoment / effectiveInertia;
+
+        // Time constant: how quickly yaw rate responds (larger = more sluggish)
+        // Scales with inertia and inversely with speed (faster = quicker response)
+        // At patrol speed (~10 m/s): tau ~ 8s. At low speed (~4 m/s): tau ~ 15s.
+        double absSpeed = Math.max(Math.abs(speed), 0.5); // avoid division by near-zero
+        double tau = effectiveInertia / (cfg.swayDragCoeff() * cfg.hullMomentArm() * absSpeed);
+        tau = Math.clamp(tau, 2.0, 30.0); // keep between 2-30 seconds
+
+        // First-order exponential approach to steady state
+        double yawRate = sub.yawRate();
+        yawRate += (yawRateSteady - yawRate) * (1.0 - Math.exp(-dt / tau));
         sub.setYawRate(yawRate);
 
         double heading = sub.heading() + yawRate * dt;
@@ -118,22 +136,29 @@ public final class SubmarinePhysics {
         if (heading < 0) heading += 2 * Math.PI;
         sub.setHeading(heading);
 
-        // 4. Pitch: stern planes lift -> pitch rate (direct, no accumulation)
-        // Pitch restoring: buoyancy naturally levels the sub (metacentric height).
+        // 4. Pitch: first-order filter toward steady-state pitch rate (same approach as yaw)
         if (!cfg.surfaceLocked() && cfg.planesArea() > 0) {
-            // Positive planes = nose up, negative = nose down
             double planesAngle = sub.sternPlanes() * Math.PI / 4;
             double planesCl = liftCoefficient(planesAngle, cfg.stallAngle());
             double pitchMoment = 0.5 * WATER_DENSITY * speed * Math.abs(speed)
                     * cfg.planesArea() * planesCl * cfg.planesArm();
-            // Hydrostatic restoring moment: buoyancy above CG pulls pitch back to level.
+            // Hydrostatic restoring moment (metacentric height ~1.0m)
             double restoringMoment = cfg.dryMass() * 9.81 * 1.0 * Math.sin(sub.pitch());
-            // Speed-dependent pitch resistance (same principle as yaw)
+            // Effective inertia with speed-dependent resistance
             double pitchBaseInertia = cfg.massHeave() * cfg.rotationalInertia();
             double pitchSpeedDamping = pitchBaseInertia * 0.02 * speed * Math.abs(speed);
             double pitchEffectiveInertia = pitchBaseInertia + pitchSpeedDamping;
-            double pitchRate = (pitchMoment - restoringMoment) / pitchEffectiveInertia;
+
+            double pitchRateSteady = (pitchMoment - restoringMoment) / pitchEffectiveInertia;
+
+            // First-order filter with same time constant approach as yaw
+            double pitchTau = pitchEffectiveInertia / (cfg.swayDragCoeff() * cfg.hullMomentArm() * absSpeed);
+            pitchTau = Math.clamp(pitchTau, 2.0, 30.0);
+
+            double pitchRate = sub.pitchRate();
+            pitchRate += (pitchRateSteady - pitchRate) * (1.0 - Math.exp(-dt / pitchTau));
             sub.setPitchRate(pitchRate);
+
             double pitch = sub.pitch() + pitchRate * dt;
             pitch = Math.clamp(pitch, -Math.PI / 4, Math.PI / 4);
             sub.setPitch(pitch);
