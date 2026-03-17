@@ -63,6 +63,17 @@ public interface SubmarineOutput {
     default void publishWaypoint(Waypoint waypoint) {}
 
     /**
+     * Publishes a torpedo firing solution for viewer visualization and
+     * match recording. Call once per tick when the controller believes
+     * it has a viable solution; do not call when there is no solution.
+     * Has no effect on the simulation (torpedoes are not yet implemented).
+     *
+     * <p>The controller decides its own criteria for what constitutes a
+     * valid firing solution (range, uncertainty, target geometry, environment).
+     */
+    default void publishFiringSolution(FiringSolution solution) {}
+
+    /**
      * Engages or disengages the engine clutch. When disengaged, the prop
      * freewheels: no thrust, no engine braking, minimal machinery noise.
      * This gives the longest coast and quietest operation while moving.

@@ -54,6 +54,10 @@ public final class SubmarineEntity implements SubmarineOutput {
     private double sourceLevelDb;           // radiated noise in dB, computed by physics
     private double actualBallast = 0.5;     // physical ballast state (lags behind commanded)
     private double previousActualBallast = 0.5; // for tracking ballast change rate
+    private double actualThrottle;               // physical engine state (lags behind commanded)
+    private double swaySpeed;                    // lateral velocity from turning (m/s)
+    private double yawRate;                      // angular velocity around vertical axis (rad/s)
+    private double pitchRate;                    // angular velocity around lateral axis (rad/s)
 
     // sonar state
     private boolean pingRequested;
@@ -72,6 +76,9 @@ public final class SubmarineEntity implements SubmarineOutput {
 
     // navigation waypoints (published by controller, cleared each tick)
     private final List<Waypoint> waypoints = new ArrayList<>();
+
+    // firing solution (published by controller, cleared each tick)
+    private FiringSolution firingSolution;
 
     public SubmarineEntity(VehicleConfig vehicleConfig, int id, SubmarineController controller,
                            Vec3 spawn, double heading, Color color, int maxHp) {
@@ -138,6 +145,11 @@ public final class SubmarineEntity implements SubmarineOutput {
     }
 
     @Override
+    public void publishFiringSolution(FiringSolution solution) {
+        this.firingSolution = solution;
+    }
+
+    @Override
     public void setEngineClutch(boolean engaged) {
         this.engineClutch = engaged;
     }
@@ -176,6 +188,8 @@ public final class SubmarineEntity implements SubmarineOutput {
     public void clearContactEstimates() { contactEstimates.clear(); }
     public List<Waypoint> waypoints() { return List.copyOf(waypoints); }
     public void clearWaypoints() { waypoints.clear(); }
+    public FiringSolution firingSolution() { return firingSolution; }
+    public void clearFiringSolution() { firingSolution = null; }
 
     public void setX(double x) { this.x = x; }
     public void setY(double y) { this.y = y; }
@@ -190,6 +204,14 @@ public final class SubmarineEntity implements SubmarineOutput {
     public void setSourceLevelDb(double db) { this.sourceLevelDb = db; }
     public void setActualBallast(double b) { this.actualBallast = b; }
     public void setPreviousActualBallast(double b) { this.previousActualBallast = b; }
+    public double actualThrottle() { return actualThrottle; }
+    public void setActualThrottle(double t) { this.actualThrottle = t; }
+    public double swaySpeed() { return swaySpeed; }
+    public void setSwaySpeed(double s) { this.swaySpeed = s; }
+    public double yawRate() { return yawRate; }
+    public void setYawRate(double r) { this.yawRate = r; }
+    public double pitchRate() { return pitchRate; }
+    public void setPitchRate(double r) { this.pitchRate = r; }
     public void setPingRequested(boolean p) { this.pingRequested = p; }
     public void setActiveSonarCooldown(int ticks) { this.activeSonarCooldown = ticks; }
 
@@ -206,8 +228,8 @@ public final class SubmarineEntity implements SubmarineOutput {
 
     public SubmarineSnapshot snapshot() {
         return new SubmarineSnapshot(id, controller.name(), pose(), velocity(), speed, color,
-                forfeited, hp, noiseLevel, throttle, status, pingRequested,
-                contactEstimates(), waypoints());
+                forfeited, hp, noiseLevel, throttle, rudder, sternPlanes, status, pingRequested,
+                contactEstimates(), waypoints(), firingSolution);
     }
 
     public SubmarineState state() {

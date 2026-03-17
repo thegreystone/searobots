@@ -14,11 +14,36 @@
     <artifactId>searobots-viewer</artifactId>
     <name>SeaRobots Viewer</name>
 
+    <properties>
+        <jme.version>3.8.1-stable</jme.version>
+    </properties>
+
     <dependencies>
         <dependency>
             <groupId>se.hirt.searobots</groupId>
             <artifactId>searobots-engine</artifactId>
             <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.jmonkeyengine</groupId>
+            <artifactId>jme3-core</artifactId>
+            <version>${jme.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.jmonkeyengine</groupId>
+            <artifactId>jme3-desktop</artifactId>
+            <version>${jme.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.jmonkeyengine</groupId>
+            <artifactId>jme3-effects</artifactId>
+            <version>${jme.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.jmonkeyengine</groupId>
+            <artifactId>jme3-lwjgl3</artifactId>
+            <version>${jme.version}</version>
+            <scope>runtime</scope>
         </dependency>
     </dependencies>
 

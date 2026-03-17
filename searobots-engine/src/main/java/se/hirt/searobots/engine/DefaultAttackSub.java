@@ -108,7 +108,8 @@ public final class DefaultAttackSub implements SubmarineController {
     // Path planner constants
     private static final double WAYPOINT_ARRIVAL_DIST = 200.0;
     private static final long REPLAN_INTERVAL = 2500; // replan every 50 seconds at 50Hz
-    private static final double SHALLOW_WATER_LIMIT = -50.0; // minimum water depth for passage
+    private static final double SHALLOW_WATER_LIMIT = -90.0; // minimum water depth for submerged passage
+    private static final double IMPASSABLE_LIMIT = -25.0;   // floor above this is impassable even surfaced
     private static final int MAX_RECURSION_DEPTH = 3;
     private static final double ROUTE_SAMPLE_STEP = 100.0; // sample terrain every 100m along route
 
@@ -166,6 +167,11 @@ public final class DefaultAttackSub implements SubmarineController {
     private long lastPlanTick = -1;
     private double lastPlanTargetX = Double.NaN, lastPlanTargetY = Double.NaN;
     private BattleArea battleArea;
+    private PathPlanner pathPlanner;
+    private double cachedProximityBearing = Double.NaN;
+    private long proximityCheckTick = -100;
+    private double cachedEscapeBearing = Double.NaN;
+    private long escapeCheckTick = -100;
 
     @Override
     public void onMatchStart(MatchContext context) {
@@ -176,6 +182,7 @@ public final class DefaultAttackSub implements SubmarineController {
         this.thermalLayers = context.thermalLayers();
         this.previousHp = config.startingHp();
         this.battleArea = config.battleArea();
+        this.pathPlanner = new PathPlanner(context.terrain(), SHALLOW_WATER_LIMIT, 200, 75);
     }
 
     State state() { return state; }
@@ -316,7 +323,7 @@ public final class DefaultAttackSub implements SubmarineController {
                 }
             }
             case TRACKING -> {
-                if (tookDamage || shouldEvade()) {
+                if ((tookDamage || shouldEvade()) && terrain.elevationAt(pos.x(), pos.y()) < -60) {
                     enterState(State.EVADE, tick);
                 } else if (bestContact != null && bestContact.isActive() && bestContact.range() > 0) {
                     enterState(State.CHASE, tick);
@@ -334,7 +341,8 @@ public final class DefaultAttackSub implements SubmarineController {
                 }
             }
             case CHASE -> {
-                if (tookDamage) {
+                if (tookDamage && terrain.elevationAt(pos.x(), pos.y()) < -60) {
+                    // Only evade if we're in water deep enough to maneuver
                     enterState(State.EVADE, tick);
                 } else if (estimatedRange < RAM_RANGE && rangeConfirmedByActive) {
                     enterState(State.RAM, tick);
@@ -383,8 +391,13 @@ public final class DefaultAttackSub implements SubmarineController {
                 // Plan patrol route (only when we have no waypoints or have
                 // completed the route). Don't replan mid-route: let the sub
                 // follow the plan to completion so it actually covers ground.
-                if (navWaypoints.isEmpty()
-                        || currentWaypointIndex >= navWaypoints.size() - 1) {
+                // Replan if route completed, or if we've drifted into unsafe territory
+                boolean routeDone = navWaypoints.isEmpty()
+                        || currentWaypointIndex >= navWaypoints.size() - 1;
+                boolean driftedUnsafe = !navWaypoints.isEmpty()
+                        && pathPlanner != null && !pathPlanner.isSafe(pos.x(), pos.y())
+                        && tick - lastPlanTick > 50; // replan at most every 1 second
+                if (routeDone || driftedUnsafe) {
                     planPatrol(pos.x(), pos.y(), terrain, battleArea);
                     lastPlanTick = tick;
                 }
@@ -448,10 +461,12 @@ public final class DefaultAttackSub implements SubmarineController {
                     tacticalRudder = Math.clamp(targetDiff * 2.0, -1, 1);
                 } else if (hasTrackedContact) {
                     // Route toward tracked position using path planner
+                    boolean drifted = pathPlanner != null && !pathPlanner.isSafe(pos.x(), pos.y());
                     boolean needReplan = navWaypoints.isEmpty()
                             || Double.isNaN(lastPlanTargetX)
                             || (Math.sqrt(Math.pow(trackedX - lastPlanTargetX, 2)
-                                + Math.pow(trackedY - lastPlanTargetY, 2)) > 500);
+                                + Math.pow(trackedY - lastPlanTargetY, 2)) > 500)
+                            || drifted;
 
                     if (needReplan) {
                         replanToTarget(pos.x(), pos.y(), trackedX, trackedY, terrain, tick);
@@ -468,14 +483,8 @@ public final class DefaultAttackSub implements SubmarineController {
                         }
 
                         tacticalRudder = steerTowardWaypoint(pos.x(), pos.y(), heading);
-                    } else {
-                        double targetBearing = Math.atan2(trackedX - pos.x(), trackedY - pos.y());
-                        if (targetBearing < 0) targetBearing += 2 * Math.PI;
-                        double diff = angleDiff(targetBearing, heading);
-                        if (Math.abs(diff) > Math.toRadians(5)) {
-                            tacticalRudder = Math.clamp(diff * 2.0, -1, 1);
-                        }
                     }
+                    // No direct bearing fallback without path planning
 
                     // No ping in TRACKING: stay quiet, engine TMA provides range.
                 }
@@ -514,13 +523,17 @@ public final class DefaultAttackSub implements SubmarineController {
                     double targetX = trackedX;
                     double targetY = trackedY;
 
-                    // Aim for stern only at close range
+                    // Aim for stern only at close range, but only if it's safe terrain
                     if (!Double.isNaN(trackedHeading)
                             && trackedDist < 1500 && trackedDist > RAM_RANGE * 2) {
                         double offsetFraction = 1.0 - (trackedDist - RAM_RANGE * 2) / (1500 - RAM_RANGE * 2);
                         double offset = BEHIND_OFFSET * offsetFraction;
-                        targetX -= offset * Math.sin(trackedHeading);
-                        targetY -= offset * Math.cos(trackedHeading);
+                        double sternX = targetX - offset * Math.sin(trackedHeading);
+                        double sternY = targetY - offset * Math.cos(trackedHeading);
+                        if (pathPlanner == null || pathPlanner.isSafe(sternX, sternY)) {
+                            targetX = sternX;
+                            targetY = sternY;
+                        }
                     }
 
                     double directBearing = Math.atan2(targetX - pos.x(), targetY - pos.y());
@@ -544,11 +557,20 @@ public final class DefaultAttackSub implements SubmarineController {
                     double approachX = pos.x() + approachDist * Math.sin(approachBearing);
                     double approachY = pos.y() + approachDist * Math.cos(approachBearing);
 
-                    // Replan if target moved significantly
+                    // If the approach point is in unsafe terrain, fall back to
+                    // the tracked contact position (A* will route around obstacles)
+                    if (pathPlanner != null && !pathPlanner.isSafe(approachX, approachY)) {
+                        approachX = trackedX;
+                        approachY = trackedY;
+                    }
+
+                    // Replan if target moved significantly or we drifted into unsafe territory
+                    boolean driftedUnsafe = pathPlanner != null && !pathPlanner.isSafe(pos.x(), pos.y());
                     boolean needReplan = navWaypoints.isEmpty()
                             || Double.isNaN(lastPlanTargetX)
                             || (Math.sqrt(Math.pow(approachX - lastPlanTargetX, 2)
-                                + Math.pow(approachY - lastPlanTargetY, 2)) > 500);
+                                + Math.pow(approachY - lastPlanTargetY, 2)) > 500)
+                            || driftedUnsafe;
 
                     if (needReplan) {
                         replanToTarget(pos.x(), pos.y(), approachX, approachY, terrain, tick);
@@ -570,10 +592,10 @@ public final class DefaultAttackSub implements SubmarineController {
                         if (!Double.isNaN(wp.z())) {
                             tacticalDepthPreference = wp.z();
                         }
-                    } else {
-                        double diff = angleDiff(approachBearing, heading);
-                        tacticalRudder = Math.clamp(diff * 2.0, -1, 1);
                     }
+                    // No direct bearing fallback: if A* can't find a path,
+                    // the sub keeps its current heading and the proactive
+                    // danger check (step 3b) handles terrain avoidance.
 
                     // Ping to relocate when: close to the dead-reckoned position
                     // and haven't had contact for a while, OR the search area
@@ -629,14 +651,46 @@ public final class DefaultAttackSub implements SubmarineController {
             case EVADE -> {
                 tacticalThrottle = EVADE_THROTTLE;
 
-                // Turn perpendicular to threat
+                // Route perpendicular to threat using A* planned path.
+                // Only replan if we don't already have a safe route.
                 if (lastContactTick >= 0) {
-                    double perpBearing = normalizeBearing(lastContactBearing + Math.PI / 2);
-                    double diff = angleDiff(perpBearing, heading);
-                    double perpBearing2 = normalizeBearing(lastContactBearing - Math.PI / 2);
-                    double diff2 = angleDiff(perpBearing2, heading);
-                    double targetDiff = Math.abs(diff) < Math.abs(diff2) ? diff : diff2;
-                    tacticalRudder = Math.clamp(targetDiff * 2.0, -1, 1);
+                    boolean currentRouteSafe = !navWaypoints.isEmpty()
+                            && currentWaypointIndex < navWaypoints.size()
+                            && pathPlanner != null
+                            && pathPlanner.isSafe(navWaypoints.get(currentWaypointIndex).x(),
+                                                   navWaypoints.get(currentWaypointIndex).y());
+                    boolean needPlan = !currentRouteSafe;
+                    if (needPlan) {
+                        double perpBearing1 = normalizeBearing(lastContactBearing + Math.PI / 2);
+                        double perpBearing2 = normalizeBearing(lastContactBearing - Math.PI / 2);
+                        double escapeDist = 2000;
+                        double tx1 = pos.x() + Math.sin(perpBearing1) * escapeDist;
+                        double ty1 = pos.y() + Math.cos(perpBearing1) * escapeDist;
+                        double tx2 = pos.x() + Math.sin(perpBearing2) * escapeDist;
+                        double ty2 = pos.y() + Math.cos(perpBearing2) * escapeDist;
+
+                        boolean safe1 = pathPlanner != null && pathPlanner.isSafe(tx1, ty1);
+                        boolean safe2 = pathPlanner != null && pathPlanner.isSafe(tx2, ty2);
+                        double tx, ty;
+                        if (safe1 && !safe2) { tx = tx1; ty = ty1; }
+                        else if (safe2 && !safe1) { tx = tx2; ty = ty2; }
+                        else {
+                            double f1 = terrain.elevationAt(tx1, ty1);
+                            double f2 = terrain.elevationAt(tx2, ty2);
+                            if (f1 < f2) { tx = tx1; ty = ty1; }
+                            else { tx = tx2; ty = ty2; }
+                        }
+                        replanToTarget(pos.x(), pos.y(), tx, ty, terrain, tick);
+                    }
+
+                    if (!navWaypoints.isEmpty()) {
+                        var wp = navWaypoints.get(currentWaypointIndex);
+                        double wpDist = Math.sqrt(Math.pow(wp.x() - pos.x(), 2) + Math.pow(wp.y() - pos.y(), 2));
+                        if (wpDist < WAYPOINT_ARRIVAL_DIST && currentWaypointIndex < navWaypoints.size() - 1) {
+                            currentWaypointIndex++;
+                        }
+                        tacticalRudder = steerTowardWaypoint(pos.x(), pos.y(), heading);
+                    }
                 }
 
                 // Dive as deep as possible, below thermocline
@@ -653,6 +707,82 @@ public final class DefaultAttackSub implements SubmarineController {
         double throttle = tacticalThrottle;
         double ballast = 0.5;
         String status = state.name();
+
+
+        // Step 3b: Proactive terrain safety override.
+        // Check if the sub is heading toward dangerous shallow water at multiple ranges.
+        // This overrides all tactical steering -- survival trumps tactics.
+        // Check both ahead (at multiple distances) and nearby (immediate proximity)
+        boolean dangerAhead = false;
+        for (double checkDist : new double[]{200, 500, 1000, 1500}) {
+            double fx = pos.x() + Math.sin(heading) * checkDist;
+            double fy = pos.y() + Math.cos(heading) * checkDist;
+            if (worstFloorNear(fx, fy, 100, terrain) > SHALLOW_WATER_LIMIT) {
+                dangerAhead = true;
+                break;
+            }
+        }
+        // Also check proximity: steer AWAY from the nearest shallow terrain.
+        // Scan every 10 ticks (0.2s) to avoid per-tick overhead.
+        if (!dangerAhead && (tick - proximityCheckTick >= 10)) {
+            proximityCheckTick = tick;
+            double worstBearing = Double.NaN;
+            double worstFloor = Double.NEGATIVE_INFINITY;
+            for (int deg = 0; deg < 360; deg += 30) {
+                double brg = Math.toRadians(deg);
+                double f = terrain.elevationAt(
+                        pos.x() + Math.sin(brg) * 400, pos.y() + Math.cos(brg) * 400);
+                if (f > worstFloor) {
+                    worstFloor = f;
+                    worstBearing = brg;
+                }
+            }
+            if (worstFloor > SHALLOW_WATER_LIMIT + 30 && !Double.isNaN(worstBearing)) {
+                cachedProximityBearing = normalizeBearing(worstBearing + Math.PI);
+            } else {
+                cachedProximityBearing = Double.NaN;
+            }
+        }
+        if (!dangerAhead && !Double.isNaN(cachedProximityBearing)) {
+            dangerAhead = true;
+            double diff = angleDiff(cachedProximityBearing, heading);
+            if (Math.abs(diff) > Math.toRadians(10)) {
+                rudder = Math.clamp(diff * 3.0, -1, 1);
+                status = "TERRAIN PROXIMITY";
+            }
+            throttle = Math.max(throttle, 0.3);
+        }
+        if (dangerAhead) {
+            if (tick - escapeCheckTick >= 10) {
+                escapeCheckTick = tick;
+                cachedEscapeBearing = findDeepWaterBearing(pos.x(), pos.y(), terrain);
+            }
+            double escapeBearing = cachedEscapeBearing;
+            if (!Double.isNaN(escapeBearing)) {
+                double diff = angleDiff(escapeBearing, heading);
+                if (Math.abs(diff) > Math.toRadians(20)) {
+                    rudder = Math.clamp(diff * 3.0, -1, 1);
+                    status = "DANGER AHEAD";
+                }
+                throttle = Math.max(throttle, 0.3);
+
+                // If next waypoint is in danger too, reroute toward escape
+                if (!navWaypoints.isEmpty() && currentWaypointIndex < navWaypoints.size()) {
+                    var wp = navWaypoints.get(currentWaypointIndex);
+                    if (worstFloorNear(wp.x(), wp.y(), 150, terrain) > SHALLOW_WATER_LIMIT) {
+                        double escDist = 800;
+                        double escX = pos.x() + Math.sin(escapeBearing) * escDist;
+                        double escY = pos.y() + Math.cos(escapeBearing) * escDist;
+                        if (terrain.elevationAt(escX, escY) < SHALLOW_WATER_LIMIT) {
+                            navWaypoints.clear();
+                            navWaypoints.add(new Vec3(escX, escY, safeDepthAt(escX, escY, terrain)));
+                            currentWaypointIndex = 0;
+                            lastPlanTick = -1;
+                        }
+                    }
+                }
+            }
+        }
 
         // Use larger floor clearance when tailing
         boolean tailing = (state == State.CHASE && isBehindTarget());
@@ -701,6 +831,7 @@ public final class DefaultAttackSub implements SubmarineController {
         double worstDist = 0;
         boolean dropOffAhead = false;
         boolean shallowWaterAhead = false;
+
         // Scan along current heading (immediate safety)
         for (double dist : SCAN_DISTANCES) {
             double sx = pos.x() + Math.sin(scanHeading) * dist;
@@ -755,19 +886,29 @@ public final class DefaultAttackSub implements SubmarineController {
                 urgency = Math.max(urgency, 0.6);
             }
             if (inShallowWater) {
-                // We are IN dangerously shallow water. Maximum urgency to
-                // get out. Slow down hard and turn toward deeper water.
+                // We are IN dangerously shallow water. Maximum urgency.
+                // Find the nearest deep water and steer toward it.
                 urgency = 1.0;
+                double escapeBearing = findDeepWaterBearing(pos.x(), pos.y(), terrain);
+                if (!Double.isNaN(escapeBearing)) {
+                    double diff = angleDiff(escapeBearing, heading);
+                    rudder = Math.clamp(diff * 3.0, -1, 1);
+                    throttle = 0.15;
+                    status = "SHALLOW ESCAPE";
+                }
             }
-            status = "AVOIDING TERRAIN";
+            if (!inShallowWater) {
+                status = "AVOIDING TERRAIN";
+            }
 
             if (worstTarget > rawTarget) {
                 rawTarget = worstTarget;
             }
 
-            // Slow down when terrain is rising, whether below or ahead.
-            // Slower speed = tighter turn radius = better chance of avoiding.
-            throttle = Math.max(0.15, throttle * (1.0 - urgency * 0.7));
+            // Slow down when terrain is rising.
+            if (!inShallowWater) {
+                throttle = Math.max(0.15, throttle * (1.0 - urgency * 0.7));
+            }
 
             double scanDist = Math.max(worstDist, SCAN_DISTANCES[0]);
             double leftH = heading - SCAN_SIDE_ANGLE;
@@ -779,18 +920,7 @@ public final class DefaultAttackSub implements SubmarineController {
                     pos.x() + Math.sin(rightH) * scanDist,
                     pos.y() + Math.cos(rightH) * scanDist);
 
-            // Only override rudder if the terrain threat is along our current
-            // heading AND the waypoint direction isn't clearly safer.
-            // If the waypoint direction has deep water, let the sub turn toward
-            // it instead of fighting the navigation plan.
-            // Only consider waypoint path clear when we actually have waypoints
-            // in a different direction than our current heading.
-            boolean hasDistinctWaypointPath = !navWaypoints.isEmpty()
-                    && Math.abs(angleDiff(waypointHeading, scanHeading)) > Math.toRadians(15);
-            boolean waypointPathClear = hasDistinctWaypointPath
-                    && waypointWorstFloor < worstFloor - 10;
-
-            if (!waypointPathClear) {
+            if (!inShallowWater) {
                 double floorDiff = Math.abs(floorLeft - floorRight);
                 if (floorDiff > 1.0 || worstFloor > floorBelow + 5) {
                     double avoidRudder;
@@ -802,8 +932,6 @@ public final class DefaultAttackSub implements SubmarineController {
                     rudder = rudder * (1 - urgency) + avoidRudder * urgency;
                 }
             }
-            // When waypoint path is clear, don't override rudder.
-            // The depth controller (Step 8) still handles vertical safety.
         }
 
         double targetDepth = rawTarget;
@@ -853,6 +981,7 @@ public final class DefaultAttackSub implements SubmarineController {
         }
 
         // Step 9: Pull-up (gap closing while sinking)
+        boolean emergencySurface = false;
         if (immediateGap < floorClearance * 1.5 && verticalSpeed < -0.5) {
             double pullUpUrgency = Math.clamp(
                     (floorClearance * 1.5 - immediateGap) / floorClearance, 0.2, 0.8);
@@ -862,16 +991,78 @@ public final class DefaultAttackSub implements SubmarineController {
             status = "PULL UP";
         }
 
-        // Step 10: Emergency pull-up
-        if (immediateGap < EMERGENCY_GAP && depth < targetDepth - 5) {
-            sternPlanes = 0.8;
-            ballast = 0.9;
-            throttle = -1.0;
-            status = "EMERGENCY PULL UP";
+        // Step 9b: Three-point turn when stuck in unsafe territory.
+        // If we're in an A*-blocked cell, slow, and heading away from safety,
+        // reverse to turn around regardless of floor depth.
+        if (pathPlanner != null && !pathPlanner.isSafe(pos.x(), pos.y())
+                && self.velocity().speed() < 3 && !navWaypoints.isEmpty()
+                && currentWaypointIndex < navWaypoints.size()) {
+            var wp = navWaypoints.get(currentWaypointIndex);
+            double wpBearing = Math.atan2(wp.x() - pos.x(), wp.y() - pos.y());
+            double diff = angleDiff(wpBearing, heading);
+            if (Math.abs(diff) > Math.toRadians(60)) {
+                throttle = -0.5;
+                rudder = Math.clamp(diff * 2.0, -1, 1);
+                status = "THREE-POINT TURN";
+            }
         }
 
-        // Step 11: Surface avoidance
-        if (depth > MIN_DEPTH) {
+        // Step 10: Emergency surface -- floor too shallow to operate submerged.
+        // Blow all ballast and surface. Very loud but better than dying.
+        // Only trigger when floor is genuinely shallow (not deep ocean) and gap is tight.
+        if (floorBelow > -30 || (immediateGap < EMERGENCY_GAP && immediateGap >= 0)) {
+            emergencySurface = true;
+            sternPlanes = 0.8;
+            ballast = 1.0;
+
+            double escapeBearing = findDeepWaterBearing(pos.x(), pos.y(), terrain);
+
+            if (depth > -5) {
+                // Surfaced emergency: determine best escape direction.
+                // Prefer existing safe waypoint over escape bearing scan.
+                double escDir = Double.NaN;
+                if (!navWaypoints.isEmpty() && currentWaypointIndex < navWaypoints.size()) {
+                    var wp = navWaypoints.get(currentWaypointIndex);
+                    if (pathPlanner == null || pathPlanner.isSafe(wp.x(), wp.y())) {
+                        escDir = Math.atan2(wp.x() - pos.x(), wp.y() - pos.y());
+                    }
+                }
+                if (Double.isNaN(escDir) && !Double.isNaN(escapeBearing)) {
+                    escDir = escapeBearing;
+                }
+
+                if (!Double.isNaN(escDir)) {
+                    double diff = angleDiff(escDir, heading);
+                    double spd = self.velocity().speed();
+
+                    if (Math.abs(diff) > Math.toRadians(90) && spd < 3) {
+                        throttle = -0.5;
+                        rudder = Math.clamp(diff * 2.0, -1, 1);
+                        status = "THREE-POINT TURN";
+                    } else if (Math.abs(diff) > Math.toRadians(90) && spd > 3) {
+                        throttle = -1.0;
+                        rudder = Math.clamp(diff * 3.0, -1, 1);
+                        status = "EMERGENCY BRAKE";
+                    } else {
+                        rudder = Math.clamp(diff * 3.0, -1, 1);
+                        throttle = 0.4;
+                    }
+                }
+            } else if (depth > -5) {
+                throttle = 0.3;
+            } else {
+                // Still submerged: blow tanks and surface, steer toward safety
+                throttle = -1.0;
+                if (!Double.isNaN(escapeBearing)) {
+                    double diff = angleDiff(escapeBearing, heading);
+                    rudder = Math.clamp(diff * 3.0, -1, 1);
+                }
+            }
+            status = "EMERGENCY SURFACE";
+        }
+
+        // Step 11: Surface avoidance (only when NOT in emergency surface)
+        if (!emergencySurface && depth > MIN_DEPTH) {
             sternPlanes = -0.5;
             ballast = 0.2;
             status = "SURFACE AVOIDANCE";
@@ -905,20 +1096,16 @@ public final class DefaultAttackSub implements SubmarineController {
         output.setStatus(String.format("%s f:%.0f g:%.0f",
                 stateTag, -floorBelow, immediateGap));
 
-        // Torpedo firing check: behind the target, within range, good solution
+        // Torpedo firing solution: behind the target, within range, good track
         if (hasTrackedContact && state == State.CHASE && isBehindTarget()
                 && trackedDist < 1500 && trackedDist > 200
                 && !Double.isNaN(trackedHeading) && trackedSpeed > 0
                 && contactAlive > 0.5 && uncertaintyRadius < 300) {
-            // We have a firing solution: behind the target, within range,
-            // known heading and speed, confident position.
             double solutionAge = (tick - trackedLastFixTick) / 50.0;
-            if (solutionAge < 30) { // solution less than 30 seconds old
-                System.out.printf("TORPEDO SOLUTION t=%d: pos=[%.0f,%.0f] target=[%.0f,%.0f] " +
-                        "range=%.0f hdg=%.0f spd=%.1f ur=%.0f behind=%s%n",
-                        tick, pos.x(), pos.y(), trackedX, trackedY,
-                        trackedDist, Math.toDegrees(trackedHeading), trackedSpeed,
-                        uncertaintyRadius, isBehindTarget());
+            if (solutionAge < 30) {
+                double quality = Math.clamp(1.0 - uncertaintyRadius / 300.0, 0.1, 1.0);
+                output.publishFiringSolution(new FiringSolution(
+                        trackedX, trackedY, trackedHeading, trackedSpeed, quality));
             }
         }
 
@@ -1133,119 +1320,20 @@ public final class DefaultAttackSub implements SubmarineController {
     }
 
     /**
-     * Plans a route from (fromX, fromY) to (toX, toY), inserting detour
-     * waypoints where the sea floor is too shallow for safe passage.
-     * Returns a list of Vec3 waypoints with safe depths.
+     * Plans a route from (fromX, fromY) to (toX, toY) using A* path planning
+     * to avoid shallow terrain. Returns a list of Vec3 waypoints with safe depths.
      */
     List<Vec3> planRoute(double fromX, double fromY, double toX, double toY,
                          TerrainMap terrain) {
-        var result = new ArrayList<Vec3>();
-        planRouteRecursive(fromX, fromY, toX, toY, terrain, result, 0);
-        // Add the final destination
-        double endDepth = safeDepthAt(toX, toY, terrain);
-        result.add(new Vec3(toX, toY, endDepth));
-        return result;
+        if (pathPlanner != null) {
+            double operatingDepth = stealthDepthAt(fromX, fromY, terrain);
+            var path = pathPlanner.findPath(fromX, fromY, toX, toY, operatingDepth);
+            if (!path.isEmpty()) return path;
+        }
+        // Fallback: direct route with safe depth
+        return List.of(new Vec3(toX, toY, safeDepthAt(toX, toY, terrain)));
     }
 
-    /**
-     * Recursive route planner. Checks if the segment from (ax,ay) to (bx,by)
-     * is blocked by shallow terrain. If blocked, finds a detour midpoint
-     * and recursively checks each sub-segment.
-     */
-    private void planRouteRecursive(double ax, double ay, double bx, double by,
-                                     TerrainMap terrain, List<Vec3> result, int depth) {
-        if (depth > MAX_RECURSION_DEPTH) {
-            // Max depth reached: just add the start point with safe depth
-            double safeZ = safeDepthAt(ax, ay, terrain);
-            result.add(new Vec3(ax, ay, safeZ));
-            return;
-        }
-
-        // Check if the segment is blocked
-        double dx = bx - ax;
-        double dy = by - ay;
-        double segLen = Math.sqrt(dx * dx + dy * dy);
-        if (segLen < 10) {
-            result.add(new Vec3(ax, ay, safeDepthAt(ax, ay, terrain)));
-            return;
-        }
-
-        int samples = Math.max(2, (int) Math.ceil(segLen / ROUTE_SAMPLE_STEP));
-        boolean blocked = false;
-        double blockedT = 0;
-
-        for (int i = 1; i < samples; i++) {
-            double t = (double) i / samples;
-            double sx = ax + dx * t;
-            double sy = ay + dy * t;
-            double floor = terrain.elevationAt(sx, sy);
-            // Blocked if the floor is above SHALLOW_WATER_LIMIT
-            // (meaning less than 50m of water above the floor)
-            if (floor > SHALLOW_WATER_LIMIT) {
-                blocked = true;
-                blockedT = t;
-                break;
-            }
-        }
-
-        if (!blocked) {
-            // Segment is clear: add start point with safe depth
-            result.add(new Vec3(ax, ay, safeDepthAt(ax, ay, terrain)));
-            return;
-        }
-
-        // Segment is blocked: find a detour by offsetting the midpoint perpendicular
-        double midX = ax + dx * 0.5;
-        double midY = ay + dy * 0.5;
-
-        // Perpendicular direction (normalized)
-        double perpX = -dy / segLen;
-        double perpY = dx / segLen;
-
-        double[] offsets = {200, 400, 800, 1600};
-        double bestOffsetX = midX;
-        double bestOffsetY = midY;
-        double bestFloor = Double.MAX_VALUE;
-        boolean foundDetour = false;
-
-        for (double offset : offsets) {
-            // Try left
-            double lx = midX + perpX * offset;
-            double ly = midY + perpY * offset;
-            double lFloor = terrain.elevationAt(lx, ly);
-
-            // Try right
-            double rx = midX - perpX * offset;
-            double ry = midY - perpY * offset;
-            double rFloor = terrain.elevationAt(rx, ry);
-
-            // Pick the deeper side
-            if (lFloor < SHALLOW_WATER_LIMIT && lFloor < bestFloor) {
-                bestFloor = lFloor;
-                bestOffsetX = lx;
-                bestOffsetY = ly;
-                foundDetour = true;
-            }
-            if (rFloor < SHALLOW_WATER_LIMIT && rFloor < bestFloor) {
-                bestFloor = rFloor;
-                bestOffsetX = rx;
-                bestOffsetY = ry;
-                foundDetour = true;
-            }
-
-            if (foundDetour) break; // use smallest offset that works
-        }
-
-        if (!foundDetour) {
-            // Could not find a detour: just go straight with safe depth
-            result.add(new Vec3(ax, ay, safeDepthAt(ax, ay, terrain)));
-            return;
-        }
-
-        // Recursively check each sub-segment
-        planRouteRecursive(ax, ay, bestOffsetX, bestOffsetY, terrain, result, depth + 1);
-        planRouteRecursive(bestOffsetX, bestOffsetY, bx, by, terrain, result, depth + 1);
-    }
 
     /**
      * Plans a patrol route that explores the arena.
@@ -1310,10 +1398,31 @@ public final class DefaultAttackSub implements SubmarineController {
             double margin = BOUNDARY_TURN_DIST + 200;
             double distToBound = area.distanceToBoundary(px, py);
             if (distToBound < margin) {
-                // Pull point inward toward center
                 double scale = 0.7;
                 px = px * scale;
                 py = py * scale;
+            }
+
+            // Reject waypoints in unsafe terrain (A* planner knows what's safe)
+            boolean waypointUnsafe = pathPlanner != null
+                    ? !pathPlanner.isSafe(px, py)
+                    : worstFloorNear(px, py, 200, terrain) > SHALLOW_WATER_LIMIT;
+            if (waypointUnsafe) {
+                // Waypoint is in shallow water: try to find a safe nearby point
+                // by scanning outward from the center of the arena
+                double toCenterAngle = Math.atan2(-px, -py);
+                boolean relocated = false;
+                for (double pullDist = 500; pullDist <= 2000; pullDist += 500) {
+                    double npx = px + Math.sin(toCenterAngle) * pullDist;
+                    double npy = py + Math.cos(toCenterAngle) * pullDist;
+                    if (terrain.elevationAt(npx, npy) < SHALLOW_WATER_LIMIT - 50) {
+                        px = npx;
+                        py = npy;
+                        relocated = true;
+                        break;
+                    }
+                }
+                if (!relocated) continue; // skip this waypoint entirely
             }
 
             double safeZ = stealthDepthAt(px, py, terrain);
@@ -1345,6 +1454,59 @@ public final class DefaultAttackSub implements SubmarineController {
      * Returns the safe operating depth at a world position:
      * terrain elevation + floor clearance, clamped to operating limits.
      */
+    /**
+     * Finds the bearing toward the nearest deep water from the given position.
+     * Scans 36 directions (every 10 degrees) at increasing distances until
+     * deep water (below SHALLOW_WATER_LIMIT) is found.
+     * Returns the bearing in radians, or NaN if no deep water found.
+     */
+    private double findDeepWaterBearing(double x, double y, TerrainMap terrain) {
+        double bestBearing = Double.NaN;
+        double bestDist = Double.MAX_VALUE;
+        double deepestBearing = Double.NaN;
+        double deepestFloor = Double.MAX_VALUE;
+        for (int deg = 0; deg < 360; deg += 10) {
+            double brg = Math.toRadians(deg);
+            boolean pathBlocked = false;
+            for (double dist = 200; dist <= 3000; dist += 200) {
+                double sx = x + Math.sin(brg) * dist;
+                double sy = y + Math.cos(brg) * dist;
+                double floor = terrain.elevationAt(sx, sy);
+                // If the path crosses very shallow or impassable terrain, skip
+                if (floor > IMPASSABLE_LIMIT) {
+                    pathBlocked = true;
+                    break;
+                }
+                if (floor < SHALLOW_WATER_LIMIT) {
+                    if (dist < bestDist) {
+                        bestDist = dist;
+                        bestBearing = brg;
+                    }
+                    break;
+                }
+                if (floor < deepestFloor) {
+                    deepestFloor = floor;
+                    deepestBearing = brg;
+                }
+            }
+        }
+        return Double.isNaN(bestBearing) ? deepestBearing : bestBearing;
+    }
+
+    /**
+     * Returns the shallowest (worst) floor elevation within a radius around (x,y).
+     * Checks 8 compass directions plus the center.
+     */
+    private static double worstFloorNear(double x, double y, double radius, TerrainMap terrain) {
+        double worst = terrain.elevationAt(x, y);
+        for (int deg = 0; deg < 360; deg += 45) {
+            double brg = Math.toRadians(deg);
+            double floor = terrain.elevationAt(x + Math.sin(brg) * radius, y + Math.cos(brg) * radius);
+            if (floor > worst) worst = floor;
+        }
+        return worst;
+    }
+
     private double safeDepthAt(double x, double y, TerrainMap terrain) {
         double floor = terrain.elevationAt(x, y);
         double target = floor + FLOOR_CLEARANCE;
@@ -1368,6 +1530,15 @@ public final class DefaultAttackSub implements SubmarineController {
         if (target < depthLimit) target = depthLimit;
         if (target > MIN_DEPTH) target = MIN_DEPTH;
         return target;
+    }
+
+    /**
+     * Clamp rudder command based on current speed to avoid control surface stall.
+     * At low speed, caps at ~0.35 (stall peak); at high speed, allows more
+     * since v^2 provides ample authority even at moderate deflections.
+     */
+    static double speedAdaptiveRudder(double rawRudder, double speed) {
+        return Math.clamp(rawRudder, -1, 1);
     }
 
     static double angleDiff(double a, double b) {

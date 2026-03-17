@@ -37,14 +37,20 @@ package se.hirt.searobots.api;
 public record VehicleConfig(
     double dryMass,
     double addedMassSurge,
+    double addedMassSway,
     double addedMassHeave,
     double maxThrust,
     double reverseThrustFactor,
     double maxReverseSpeed,
     double dragCoeff,
-    double maxYawRate,
-    double maxPitchRate,
-    double refSpeed,
+    double swayDragCoeff,
+    double hullMomentArm,
+    double rudderArea,
+    double rudderArm,
+    double planesArea,
+    double planesArm,
+    double stallAngle,
+    double rotationalInertia,
     double ballastSlewRate,
     double ballastForceMax,
     double verticalDragCoeff,
@@ -65,12 +71,17 @@ public record VehicleConfig(
     double surfaceNoiseDepth,
     double surfaceNoiseDb,
     double ballastNoiseDb,
+    // Engine dynamics
+    double thrustSlewRate,
     // Vehicle type flags
     boolean surfaceLocked,
     boolean hasBallast
 ) {
     /** Effective mass in surge (forward/aft) direction. */
     public double massSurge() { return dryMass + addedMassSurge; }
+
+    /** Effective mass in sway (lateral) direction. */
+    public double massSway() { return dryMass + addedMassSway; }
 
     /** Effective mass in heave (vertical) direction. */
     public double massHeave() { return dryMass + addedMassHeave; }
@@ -80,14 +91,20 @@ public record VehicleConfig(
         return new VehicleConfig(
             700_000,                    // dryMass
             350_000,                    // addedMassSurge
+            700_000 * 1.5,              // addedMassSway (blunt cross-section)
             700_000 * 1.25,             // addedMassHeave
             870_000,                    // maxThrust
             0.3,                        // reverseThrustFactor
             3.0,                        // maxReverseSpeed
             3_864,                      // dragCoeff
-            0.15,                       // maxYawRate
-            0.08,                       // maxPitchRate
-            10.0,                       // refSpeed
+            3_864 * 3,                  // swayDragCoeff (lateral drag)
+            5.0,                        // hullMomentArm (CG to lateral center of pressure)
+            4.0,                        // rudderArea (m^2)
+            12.0,                       // rudderArm (m from CG)
+            3.5,                        // planesArea (m^2)
+            12.0,                       // planesArm (m from CG)
+            Math.toRadians(16),         // stallAngle (~0.28 rad)
+            8.0,                        // rotationalInertia (effective radius of gyration^2)
             1.0 / 20.0,                // ballastSlewRate
             0.03 * 700_000 * 9.81,     // ballastForceMax
             0.5 * 1025 * 1.0 * 520,    // verticalDragCoeff
@@ -107,6 +124,7 @@ public record VehicleConfig(
             -50.0,                      // surfaceNoiseDepth
             5.0,                        // surfaceNoiseDb
             5.0,                        // ballastNoiseDb
+            0.25,                       // thrustSlewRate (full power in 4 seconds)
             false,                      // surfaceLocked
             true                        // hasBallast
         );
@@ -120,14 +138,20 @@ public record VehicleConfig(
         return new VehicleConfig(
             shipMass,
             shipMass * 0.3,             // addedMassSurge
+            shipMass * 1.5,             // addedMassSway
             shipMass * 1.0,             // addedMassHeave (not used, surface locked)
             shipThrust,
             0.2,                        // reverseThrustFactor
             2.0,                        // maxReverseSpeed
             shipDrag,
-            0.10,                       // maxYawRate (slower turning)
-            0.0,                        // maxPitchRate (no pitch control)
-            8.0,                        // refSpeed
+            shipDrag * 8,               // swayDragCoeff (lateral ~8x surge for wide hull)
+            20.0,                       // hullMomentArm (CG to lateral center of pressure)
+            8.0,                        // rudderArea (m^2, larger ship)
+            25.0,                       // rudderArm (m from CG)
+            0.0,                        // planesArea (no pitch control)
+            0.0,                        // planesArm
+            Math.toRadians(16),         // stallAngle
+            17.5,                       // rotationalInertia
             0,                          // ballastSlewRate (no ballast)
             0,                          // ballastForceMax
             0,                          // verticalDragCoeff (not used)
@@ -147,6 +171,7 @@ public record VehicleConfig(
             -10.0,                      // surfaceNoiseDepth
             8.0,                        // surfaceNoiseDb (always at surface)
             0,                          // ballastNoiseDb
+            0.5,                        // thrustSlewRate (full power in 2 seconds, bigger engines)
             true,                       // surfaceLocked
             false                       // hasBallast
         );

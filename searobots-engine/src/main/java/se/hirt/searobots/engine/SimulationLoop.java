@@ -139,9 +139,10 @@ public final class SimulationLoop {
             // Snapshot before postTick clears pingRequested
             var snapshots = entities.stream().map(SubmarineEntity::snapshot).toList();
 
-            // Clear contact estimates and waypoints after snapshot
+            // Clear per-tick published data after snapshot
             entities.forEach(SubmarineEntity::clearContactEstimates);
             entities.forEach(SubmarineEntity::clearWaypoints);
+            entities.forEach(SubmarineEntity::clearFiringSolution);
 
             // Post-tick: consume pings, tick cooldowns
             sonar.postTick(entities);

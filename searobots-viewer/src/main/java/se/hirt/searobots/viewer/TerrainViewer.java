@@ -54,7 +54,7 @@ public final class TerrainViewer {
 
         SwingUtilities.invokeLater(() -> {
             var frame = new JFrame("SeaRobots: Simulation Viewer");
-            frame.setDefaultCloseOperation(WindowConstants.EXIT_ON_CLOSE);
+            frame.setDefaultCloseOperation(WindowConstants.DISPOSE_ON_CLOSE);
             loadIcons(frame);
 
             var panel = new MapPanel(world);
@@ -63,13 +63,43 @@ public final class TerrainViewer {
             var simHolder = new SimulationHolder();
             long[] currentSeed = {seed}; // mutable for lambda capture
 
+            // Lazily created 3D scene (declared early so restartWith can reference it)
+            final SubmarineScene3D[] scene3D = {null};
+            final java.awt.Canvas[] canvas3D = {null};
+            final GeneratedWorld[] lastWorld3D = {null};
+
+            frame.addWindowListener(new java.awt.event.WindowAdapter() {
+                @Override
+                public void windowClosed(java.awt.event.WindowEvent e) {
+                    simHolder.stop();
+                    if (scene3D[0] != null) {
+                        scene3D[0].stop();
+                    }
+                    System.exit(0);
+                }
+            });
+
+            // Helper to start/restart with an arbitrary world
+            java.util.function.Consumer<GeneratedWorld> restartWith = w -> {
+                try {
+                    simHolder.stop();
+                    panel.setWorld(w);
+                    panel.setSimPaused(false);
+                    simHolder.start(w, panel);
+                    frame.setTitle("SeaRobots: Simulation Viewer [seed: " + w.config().worldSeed() + "]");
+                    if (scene3D[0] != null) {
+                        scene3D[0].setWorld(w);
+                        lastWorld3D[0] = w;
+                    }
+                    panel.requestFocusInWindow();
+                } catch (Exception ex) {
+                    ex.printStackTrace();
+                }
+            };
+
             // Helper to start/restart with a given seed
             Runnable restartWithCurrentSeed = () -> {
-                simHolder.stop();
-                var w = generator.generate(MatchConfig.withDefaults(currentSeed[0]));
-                panel.setWorld(w);
-                simHolder.start(w, panel);
-                frame.setTitle("SeaRobots: Simulation Viewer [seed: " + currentSeed[0] + "]");
+                restartWith.accept(generator.generate(MatchConfig.withDefaults(currentSeed[0])));
             };
 
             // Menu bar
@@ -116,6 +146,12 @@ public final class TerrainViewer {
 
             simMenu.addSeparator();
 
+            var flatOceanItem = new JMenuItem("Deep flat ocean (no terrain)");
+            flatOceanItem.addActionListener(e -> restartWith.accept(GeneratedWorld.deepFlat()));
+            simMenu.add(flatOceanItem);
+
+            simMenu.addSeparator();
+
             var pauseOnDeathItem = new JCheckBoxMenuItem("Pause on ship death", true);
             simHolder.pauseOnDeath = true;
             pauseOnDeathItem.addActionListener(e -> {
@@ -123,18 +159,149 @@ public final class TerrainViewer {
             });
             simMenu.add(pauseOnDeathItem);
 
+            var pauseOnSolutionItem = new JCheckBoxMenuItem("Pause on torpedo solution", true);
+            simHolder.pauseOnTorpedoSolution = true;
+            pauseOnSolutionItem.addActionListener(e -> {
+                simHolder.pauseOnTorpedoSolution = pauseOnSolutionItem.isSelected();
+            });
+            simMenu.add(pauseOnSolutionItem);
+
             menuBar.add(simMenu);
+
+            // View menu: 2D / 3D toggle
+            var viewMenu = new JMenu("View");
+            var viewGroup = new ButtonGroup();
+            var view2DItem = new JRadioButtonMenuItem("2D Map", true);
+            var view3DItem = new JRadioButtonMenuItem("3D Scene");
+            viewGroup.add(view2DItem);
+            viewGroup.add(view3DItem);
+            viewMenu.add(view2DItem);
+            viewMenu.add(view3DItem);
+
+            view2DItem.addActionListener(e -> {
+                frame.getContentPane().removeAll();
+                frame.getContentPane().add(panel);
+                frame.revalidate();
+                frame.repaint();
+                panel.requestFocusInWindow();
+            });
+
+            view3DItem.addActionListener(e -> {
+                boolean firstTime = scene3D[0] == null;
+                if (firstTime) {
+                    scene3D[0] = SubmarineScene3D.create();
+                    simHolder.scene3DRef = scene3D[0];
+                    canvas3D[0] = scene3D[0].getCanvas();
+                    canvas3D[0].setPreferredSize(new java.awt.Dimension(1280, 800));
+                    // Disable Swing focus traversal so Tab reaches jME input manager
+                    canvas3D[0].setFocusTraversalKeysEnabled(false);
+                    scene3D[0].startCanvas();
+                }
+                frame.getContentPane().removeAll();
+                frame.getContentPane().add(canvas3D[0]);
+                frame.revalidate();
+                frame.repaint();
+                // Delay setWorld to let jME canvas initialize first
+                var w3d = panel.getWorld();
+                if (w3d != lastWorld3D[0]) {
+                    lastWorld3D[0] = w3d;
+                    var s = scene3D[0];
+                    Timer timer = new Timer(firstTime ? 500 : 50, evt -> s.setWorld(w3d));
+                    timer.setRepeats(false);
+                    timer.start();
+                }
+            });
+
+            viewMenu.addSeparator();
+            var atmosphereItem = new JCheckBoxMenuItem("Atmosphere", true);
+            atmosphereItem.addActionListener(e -> {
+                if (scene3D[0] != null) {
+                    scene3D[0].setAtmosphereEnabled(atmosphereItem.isSelected());
+                }
+            });
+            viewMenu.add(atmosphereItem);
+
+            var godRaysItem = new JCheckBoxMenuItem("God Rays", true);
+            godRaysItem.addActionListener(e -> {
+                if (scene3D[0] != null) {
+                    scene3D[0].setGodRaysEnabled(godRaysItem.isSelected());
+                }
+            });
+            viewMenu.add(godRaysItem);
+
+            var waterSettingsItem = new JMenuItem("Water Settings...");
+            waterSettingsItem.addActionListener(e -> {
+                if (scene3D[0] != null && scene3D[0].getWaterFilter() != null) {
+                    new WaterSettingsDialog(frame, scene3D[0].getWaterFilter()).setVisible(true);
+                } else {
+                    JOptionPane.showMessageDialog(frame, "Switch to 3D view first.",
+                            "Water Settings", JOptionPane.INFORMATION_MESSAGE);
+                }
+            });
+            viewMenu.add(waterSettingsItem);
+
+            menuBar.add(viewMenu);
             frame.setJMenuBar(menuBar);
             frame.setTitle("SeaRobots: Simulation Viewer [seed: " + currentSeed[0] + "]");
 
-            var im = panel.getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW);
-            var am = panel.getActionMap();
+            // Global keybindings on root pane (work in both 2D and 3D views)
+            var rootPane = frame.getRootPane();
+            var gim = rootPane.getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW);
+            var gam = rootPane.getActionMap();
 
-            im.put(KeyStroke.getKeyStroke(KeyEvent.VK_SPACE, 0), "newMap");
-            am.put("newMap", action(() -> {
+            gim.put(KeyStroke.getKeyStroke(KeyEvent.VK_SPACE, 0), "newMap");
+            gam.put("newMap", action(() -> {
                 currentSeed[0] = ThreadLocalRandom.current().nextLong();
                 restartWithCurrentSeed.run();
             }));
+
+            gim.put(KeyStroke.getKeyStroke('p'), "pause");
+            gim.put(KeyStroke.getKeyStroke('P'), "pause");
+            gam.put("pause", action(() -> {
+                var sim = simHolder.loop;
+                if (sim != null) {
+                    boolean p = !sim.isPaused();
+                    sim.setPaused(p);
+                    panel.setSimPaused(p);
+                }
+            }));
+
+            gim.put(KeyStroke.getKeyStroke('n'), "step");
+            gim.put(KeyStroke.getKeyStroke('N'), "step");
+            gam.put("step", action(() -> {
+                var sim = simHolder.loop;
+                if (sim != null) sim.stepOnce();
+            }));
+
+            gim.put(KeyStroke.getKeyStroke('1'), "speed1");
+            gam.put("speed1", action(() -> {
+                var sim = simHolder.loop;
+                if (sim != null) { sim.setSpeedMultiplier(1); panel.setSimSpeed(1); }
+            }));
+            gim.put(KeyStroke.getKeyStroke('2'), "speed2");
+            gam.put("speed2", action(() -> {
+                var sim = simHolder.loop;
+                if (sim != null) { sim.setSpeedMultiplier(2); panel.setSimSpeed(2); }
+            }));
+            gim.put(KeyStroke.getKeyStroke('3'), "speed5");
+            gam.put("speed5", action(() -> {
+                var sim = simHolder.loop;
+                if (sim != null) { sim.setSpeedMultiplier(5); panel.setSimSpeed(5); }
+            }));
+            gim.put(KeyStroke.getKeyStroke('4'), "speed10");
+            gam.put("speed10", action(() -> {
+                var sim = simHolder.loop;
+                if (sim != null) { sim.setSpeedMultiplier(10); panel.setSimSpeed(10); }
+            }));
+            gim.put(KeyStroke.getKeyStroke('5'), "speed15");
+            gam.put("speed15", action(() -> {
+                var sim = simHolder.loop;
+                if (sim != null) { sim.setSpeedMultiplier(22); panel.setSimSpeed(22); }
+            }));
+
+            // 2D-only keybindings on MapPanel
+            var im = panel.getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW);
+            var am = panel.getActionMap();
 
             im.put(KeyStroke.getKeyStroke('='), "zoomIn");
             im.put(KeyStroke.getKeyStroke('+'), "zoomIn");
@@ -169,50 +336,6 @@ public final class TerrainViewer {
             im.put(KeyStroke.getKeyStroke('W'), "waypoints");
             am.put("waypoints", action(panel::toggleWaypoints));
 
-            im.put(KeyStroke.getKeyStroke('p'), "pause");
-            im.put(KeyStroke.getKeyStroke('P'), "pause");
-            am.put("pause", action(() -> {
-                var sim = simHolder.loop;
-                if (sim != null) {
-                    boolean p = !sim.isPaused();
-                    sim.setPaused(p);
-                    panel.setSimPaused(p);
-                }
-            }));
-
-            im.put(KeyStroke.getKeyStroke('n'), "step");
-            im.put(KeyStroke.getKeyStroke('N'), "step");
-            am.put("step", action(() -> {
-                var sim = simHolder.loop;
-                if (sim != null) sim.stepOnce();
-            }));
-
-            im.put(KeyStroke.getKeyStroke('1'), "speed1");
-            am.put("speed1", action(() -> {
-                var sim = simHolder.loop;
-                if (sim != null) { sim.setSpeedMultiplier(1); panel.setSimSpeed(1); }
-            }));
-            im.put(KeyStroke.getKeyStroke('2'), "speed2");
-            am.put("speed2", action(() -> {
-                var sim = simHolder.loop;
-                if (sim != null) { sim.setSpeedMultiplier(2); panel.setSimSpeed(2); }
-            }));
-            im.put(KeyStroke.getKeyStroke('3'), "speed5");
-            am.put("speed5", action(() -> {
-                var sim = simHolder.loop;
-                if (sim != null) { sim.setSpeedMultiplier(5); panel.setSimSpeed(5); }
-            }));
-            im.put(KeyStroke.getKeyStroke('4'), "speed10");
-            am.put("speed10", action(() -> {
-                var sim = simHolder.loop;
-                if (sim != null) { sim.setSpeedMultiplier(10); panel.setSimSpeed(10); }
-            }));
-            im.put(KeyStroke.getKeyStroke('5'), "speed25");
-            am.put("speed25", action(() -> {
-                var sim = simHolder.loop;
-                if (sim != null) { sim.setSpeedMultiplier(25); panel.setSimSpeed(25); }
-            }));
-
             frame.setSize(1200, 900);
             frame.setLocationRelativeTo(null);
             frame.setVisible(true);
@@ -226,6 +349,9 @@ public final class TerrainViewer {
         volatile SimulationLoop loop;
         volatile Thread thread;
         volatile boolean pauseOnDeath;
+        volatile boolean pauseOnTorpedoSolution;
+        volatile SubmarineScene3D scene3DRef;
+        private boolean torpedoSolutionTriggered;
         private final java.util.Set<Integer> deadEntities = java.util.Collections.synchronizedSet(new java.util.HashSet<>());
 
         void start(GeneratedWorld world, MapPanel panel) {
@@ -250,11 +376,14 @@ public final class TerrainViewer {
             final var rec = recorder;
 
             deadEntities.clear();
+            torpedoSolutionTriggered = false;
 
             var listener = new SimulationListener() {
                 @Override
                 public void onTick(long tick, List<SubmarineSnapshot> submarines) {
                     panel.updateSubmarines(tick, submarines);
+                    var s3d = scene3DRef;
+                    if (s3d != null) s3d.updateSubmarines(tick, submarines);
                     if (rec != null) rec.onTick(tick, submarines);
 
                     // Pause on death detection
@@ -264,6 +393,22 @@ public final class TerrainViewer {
                                 deadEntities.add(sub.id());
                                 sim.setPaused(true);
                                 panel.setSimPaused(true);
+                            }
+                        }
+                    }
+
+                    // Pause on first torpedo solution (crosshair drawn by MapPanel from snapshot)
+                    if (pauseOnTorpedoSolution && !torpedoSolutionTriggered) {
+                        for (var sub : submarines) {
+                            if (sub.firingSolution() != null) {
+                                torpedoSolutionTriggered = true;
+                                sim.setPaused(true);
+                                panel.setSimPaused(true);
+                                var sol = sub.firingSolution();
+                                System.out.printf("TORPEDO SOLUTION at tick %d: %s target=[%.0f,%.0f] hdg=%.0f spd=%.1f q=%.2f%n",
+                                        tick, sub.name(), sol.targetX(), sol.targetY(),
+                                        Math.toDegrees(sol.targetHeading()), sol.targetSpeed(), sol.quality());
+                                break;
                             }
                         }
                     }

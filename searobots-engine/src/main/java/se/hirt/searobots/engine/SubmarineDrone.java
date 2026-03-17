@@ -44,7 +44,7 @@ public final class SubmarineDrone implements SubmarineController {
 
     private static final double CRUISE_THROTTLE = 0.2;  // quiet patrol, ~6 m/s
     private static final double TARGET_DEPTH = -40;      // fixed operating depth
-    private static final double BOUNDARY_MARGIN = 1000;
+    private static final double BOUNDARY_MARGIN = 1500;
     private static final double TERRAIN_SCAN_DIST = 1200;
     private static final double FLOOR_CLEARANCE = 80;
     private static final double MIN_DEPTH = -20;
@@ -81,6 +81,7 @@ public final class SubmarineDrone implements SubmarineController {
         output.setSternPlanes(sternPlanes);
 
         // Avoid arena boundary: steer toward center
+        // Lift model: rudder authority scales with v^2, avoid stall at full deflection
         double distToBoundary = battleArea.distanceToBoundary(pos.x(), pos.y());
         if (distToBoundary < BOUNDARY_MARGIN) {
             double toCenter = Math.atan2(-pos.x(), -pos.y());
@@ -90,6 +91,8 @@ public final class SubmarineDrone implements SubmarineController {
             while (diff < -Math.PI) diff += 2 * Math.PI;
             double urgency = 1.0 - distToBoundary / BOUNDARY_MARGIN;
             rudder = Math.clamp(diff * 2, -1, 1) * Math.max(urgency, 0.5);
+            // More speed for turning authority when near boundary
+            output.setThrottle(Math.max(CRUISE_THROTTLE, 0.3 + urgency * 0.2));
         }
 
         // Avoid terrain: scan ahead and to the sides at multiple distances.

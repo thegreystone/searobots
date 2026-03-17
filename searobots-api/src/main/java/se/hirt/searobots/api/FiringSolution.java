@@ -26,17 +26,27 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
-package se.hirt.searobots.engine;
+package se.hirt.searobots.api;
 
-import se.hirt.searobots.api.*;
-
-import java.awt.Color;
-import java.util.List;
-
-public record SubmarineSnapshot(int id, String name, Pose pose, Velocity velocity, double speed,
-                                 Color color, boolean forfeited, int hp, double noiseLevel,
-                                 double throttle, double rudder, double sternPlanes,
-                                 String status, boolean pingRequested,
-                                 List<ContactEstimate> contactEstimates,
-                                 List<Waypoint> waypoints,
-                                 FiringSolution firingSolution) {}
+/**
+ * A submarine's declaration that it has a viable torpedo firing solution
+ * on a target. Published via {@link SubmarineOutput#publishFiringSolution}
+ * for viewer visualization and match recording.
+ *
+ * <p>The controller decides when it has a solution based on its own
+ * criteria (range, uncertainty, environment, target geometry, etc.).
+ * Different controllers may use different criteria.
+ *
+ * @param targetX         estimated target world X coordinate (meters)
+ * @param targetY         estimated target world Y coordinate (meters)
+ * @param targetHeading   estimated target heading in radians [0, 2pi), or NaN if unknown
+ * @param targetSpeed     estimated target speed in m/s, or -1 if unknown
+ * @param quality         solution quality 0.0 (marginal) to 1.0 (excellent)
+ */
+public record FiringSolution(double targetX, double targetY,
+                              double targetHeading, double targetSpeed,
+                              double quality) {
+    public FiringSolution {
+        quality = Math.clamp(quality, 0.0, 1.0);
+    }
+}

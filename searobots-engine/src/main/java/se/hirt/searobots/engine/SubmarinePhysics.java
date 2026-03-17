@@ -35,29 +35,60 @@ import se.hirt.searobots.api.VehicleConfig;
 
 public final class SubmarinePhysics {
 
+    private static final double WATER_DENSITY = 1025.0; // kg/m^3 seawater
+    private static final double CL_SLOPE = 2 * Math.PI; // thin airfoil theory
+
+    /**
+     * Lift coefficient with stall. Linear below stallAngle, smooth
+     * rolloff above (drops to ~60% at full deflection).
+     */
+    static double liftCoefficient(double alpha, double stallAngle) {
+        double absAlpha = Math.abs(alpha);
+        double cl;
+        if (absAlpha <= stallAngle) {
+            cl = CL_SLOPE * absAlpha;
+        } else {
+            double clMax = CL_SLOPE * stallAngle;
+            double maxDeflection = Math.PI / 4;
+            double postStallFraction = (absAlpha - stallAngle) / (maxDeflection - stallAngle);
+            cl = clMax * (1.0 - 0.4 * Math.min(postStallFraction, 1.0));
+        }
+        return Math.copySign(cl, alpha);
+    }
+
     public void step(SubmarineEntity sub, double dt, TerrainMap terrain,
                      CurrentField currentField, BattleArea battleArea) {
         if (sub.forfeited() || sub.hp() <= 0) return;
 
         var cfg = sub.vehicleConfig();
 
-        // 1. Thrust and drag (with engine clutch mechanic)
-        double throttle = sub.throttle();
+        // 1. Thrust lag: actual throttle tracks commanded with slew limit
+        double commandedThrottle = sub.throttle();
+        double actualThrottle = sub.actualThrottle();
+        double maxThrottleChange = cfg.thrustSlewRate() * dt;
+        if (commandedThrottle > actualThrottle) {
+            actualThrottle = Math.min(actualThrottle + maxThrottleChange, commandedThrottle);
+        } else if (commandedThrottle < actualThrottle) {
+            actualThrottle = Math.max(actualThrottle - maxThrottleChange, commandedThrottle);
+        }
+        sub.setActualThrottle(actualThrottle);
+
+        // 2. Thrust and drag (with engine clutch mechanic)
         boolean clutchEngaged = sub.engineClutch();
         double thrust;
         if (!clutchEngaged) {
             // Clutch disengaged: prop freewheels, no thrust, no engine braking
             thrust = 0;
-        } else if (throttle >= 0) {
-            thrust = cfg.maxThrust() * throttle;
+        } else if (actualThrottle >= 0) {
+            thrust = cfg.maxThrust() * actualThrottle;
         } else {
             // Reverse thrust is weaker; props are optimized for forward
-            thrust = cfg.maxThrust() * cfg.reverseThrustFactor() * throttle;
+            thrust = cfg.maxThrust() * cfg.reverseThrustFactor() * actualThrottle;
         }
         double speed = sub.speed();
         double drag = cfg.dragCoeff() * speed * Math.abs(speed);
         // Extra drag from windmilling prop when clutch engaged at zero throttle
-        if (clutchEngaged && throttle == 0) {
+        if (clutchEngaged && actualThrottle == 0) {
             drag += cfg.dragCoeff() * cfg.propDragFactor() * speed * Math.abs(speed);
         }
         speed += (thrust - drag) / cfg.massSurge() * dt;
@@ -65,23 +96,47 @@ public final class SubmarinePhysics {
         if (speed < -cfg.maxReverseSpeed()) speed = -cfg.maxReverseSpeed();
         sub.setSpeed(speed);
 
-        // 2. Yaw (rudder)
-        // Control surfaces reverse in reverse: water flows from the other direction.
-        // Using signed speed preserves this: negative speed flips rudder/plane effect.
-        // sqrt relationship: at low speed, turn radius shrinks (more realistic than linear).
-        // At refSpeed: factor=1.0 (unchanged). At 1 m/s: factor=0.32 (was 0.1 with linear).
-        double speedFactor = Math.signum(speed)
-                * Math.clamp(Math.sqrt(Math.abs(speed) / cfg.refSpeed()), 0.0, 1.0);
-        double yawRate = cfg.maxYawRate() * sub.rudder() * speedFactor;
+        // 3. Yaw with sway coupling
+        // Rudder produces yaw moment. Hull lateral drag opposes turning.
+        double rudderAngle = sub.rudder() * Math.PI / 4;  // -1..1 maps to -45..+45 deg
+        double rudderCl = liftCoefficient(rudderAngle, cfg.stallAngle());
+        double rudderMoment = 0.5 * WATER_DENSITY * speed * Math.abs(speed)
+                * cfg.rudderArea() * rudderCl * cfg.rudderArm();
+
+        // Sway dynamics: turning creates centripetal sway, hull drag damps it
+        double swaySpeed = sub.swaySpeed();
+        double yawRate = sub.yawRate();
+
+        // Net yaw moment = rudder moment - hull lateral drag moment
+        // Hull lateral drag acts at hullMomentArm ahead of CG, creating a restoring moment
+        double swayDrag = cfg.swayDragCoeff() * swaySpeed * Math.abs(swaySpeed);
+        double hullDragMoment = swayDrag * cfg.hullMomentArm();
+
+        double netYawMoment = rudderMoment - hullDragMoment;
+        double yawInertia = cfg.massSurge() * cfg.rotationalInertia();
+        double yawAccel = netYawMoment / yawInertia;
+        yawRate += yawAccel * dt;
+        sub.setYawRate(yawRate);
+
         double heading = sub.heading() + yawRate * dt;
-        // Normalize to [0, 2pi)
         heading = heading % (2 * Math.PI);
         if (heading < 0) heading += 2 * Math.PI;
         sub.setHeading(heading);
 
-        // 3. Pitch (stern planes) -- skip for surfaceLocked vehicles
-        if (!cfg.surfaceLocked()) {
-            double pitchRate = cfg.maxPitchRate() * sub.sternPlanes() * speedFactor;
+        // Update sway: centripetal force from turning, minus lateral drag
+        double centripetalForce = cfg.massSurge() * speed * yawRate;
+        swaySpeed += (centripetalForce - swayDrag) / cfg.massSway() * dt;
+        sub.setSwaySpeed(swaySpeed);
+
+        // 3. Pitch (stern planes): lift-based model with stall
+        if (!cfg.surfaceLocked() && cfg.planesArea() > 0) {
+            double planesAngle = sub.sternPlanes() * Math.PI / 4;  // -1..1 maps to -45..+45 deg
+            double planesCl = liftCoefficient(planesAngle, cfg.stallAngle());
+            double pitchMoment = 0.5 * WATER_DENSITY * speed * Math.abs(speed)
+                    * cfg.planesArea() * planesCl * cfg.planesArm();
+            double pitchAccel = pitchMoment / (cfg.massHeave() * cfg.rotationalInertia());
+            double pitchRate = sub.pitchRate() + pitchAccel * dt;
+            sub.setPitchRate(pitchRate);
             double pitch = sub.pitch() + pitchRate * dt;
             pitch = Math.clamp(pitch, -Math.PI / 4, Math.PI / 4);
             sub.setPitch(pitch);
@@ -120,10 +175,16 @@ public final class SubmarinePhysics {
             sub.setVerticalSpeed(0);
         }
 
-        // 5. Position update
+        // 5. Position update (surge + sway components)
         double pitch = sub.pitch();
+        // Surge: along heading
         double vx = speed * Math.sin(heading) * Math.cos(pitch);
         double vy = speed * Math.cos(heading) * Math.cos(pitch);
+        // Sway: perpendicular to heading (positive = starboard)
+        double swayX = swaySpeed * Math.cos(heading);
+        double swayY = -swaySpeed * Math.sin(heading);
+        vx += swayX;
+        vy += swayY;
         double vz = speed * Math.sin(pitch) + verticalSpeed;
 
         // Apply current
@@ -167,7 +228,9 @@ public final class SubmarinePhysics {
                                   Math.max(floorPort, floorStbd)));
 
         double minZ = floorZ + cfg.terrainClearance();
+        boolean scraping = false;
         if (newZ < minZ) {
+            scraping = true;
             double penetration = minZ - newZ;
             double closingSpeed = penetration / dt;
 
@@ -178,8 +241,12 @@ public final class SubmarinePhysics {
             sub.setVerticalSpeed(cfg.bounceSpeed());
             sub.setPitch(Math.max(sub.pitch(), 0));
 
+            // Terrain friction: scraping absorbs energy proportional to speed
+            // Hard impact halves speed; continuous scraping bleeds 5% per tick
             if (closingSpeed > 3.0) {
                 sub.setSpeed(speed * 0.5);
+            } else {
+                sub.setSpeed(speed * 0.95);
             }
         }
 
@@ -191,7 +258,7 @@ public final class SubmarinePhysics {
         double sl = cfg.baseSlDb();
 
         // When clutch is disengaged and throttle is zero, machinery noise drops
-        if (!clutchEngaged && throttle == 0) {
+        if (!clutchEngaged && actualThrottle == 0) {
             sl -= cfg.clutchDisengagedSlReduction();
         }
 
@@ -208,8 +275,13 @@ public final class SubmarinePhysics {
         }
 
         // Reverse thrust cavitation (prop wash turbulence)
-        if (sub.throttle() < -0.1) {
-            sl += cfg.reverseCavitationDb() * Math.abs(sub.throttle());
+        if (actualThrottle < -0.1) {
+            sl += cfg.reverseCavitationDb() * Math.abs(actualThrottle);
+        }
+
+        // Hull scraping noise (metal on rock is extremely loud)
+        if (scraping && Math.abs(speed) > 0.5) {
+            sl += 20.0 * Math.min(Math.abs(speed) / 5.0, 1.0);
         }
 
         // Surface proximity noise

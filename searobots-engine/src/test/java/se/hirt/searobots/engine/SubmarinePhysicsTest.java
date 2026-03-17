@@ -162,12 +162,13 @@ class SubmarinePhysicsTest {
         var physics = new SubmarinePhysics();
         var subForward = makeSub(5, 0);
         subForward.setThrottle(0.6);
-        physics.step(subForward, DT, TERRAIN, NO_CURRENT, CONFIG.battleArea());
+        // Let thrust lag settle
+        for (int i = 0; i < 250; i++) physics.step(subForward, DT, TERRAIN, NO_CURRENT, CONFIG.battleArea());
         double noiseForward = subForward.noiseLevel();
 
         var subReverse = makeSub(5, 0);
         subReverse.setThrottle(-1.0);
-        physics.step(subReverse, DT, TERRAIN, NO_CURRENT, CONFIG.battleArea());
+        for (int i = 0; i < 250; i++) physics.step(subReverse, DT, TERRAIN, NO_CURRENT, CONFIG.battleArea());
         double noiseReverse = subReverse.noiseLevel();
 
         assertTrue(noiseReverse > noiseForward,
@@ -278,6 +279,145 @@ class SubmarinePhysicsTest {
         assertTrue(blowingSl > quietSl,
                 "Ballast change should increase SL: quiet=" + quietSl
                         + " blowing=" + blowingSl);
+    }
+
+    // ── Thrust lag ─────────────────────────────────────────────────
+
+    @Test
+    void thrustLagsCommandedThrottle() {
+        var physics = new SubmarinePhysics();
+        var sub = makeSub(0, 0);
+        sub.setThrottle(1.0);
+        physics.step(sub, DT, TERRAIN, NO_CURRENT, CONFIG.battleArea());
+
+        // After 1 tick (0.02s), actual throttle should be 0.25 * 0.02 = 0.005
+        assertEquals(0.005, sub.actualThrottle(), 1e-6,
+                "Thrust should lag: after 1 tick actual=" + sub.actualThrottle());
+    }
+
+    @Test
+    void thrustReachesFullPowerIn4Seconds() {
+        var physics = new SubmarinePhysics();
+        var sub = makeSub(0, 0);
+        sub.setThrottle(1.0);
+        // 4 seconds = 200 ticks at 50 Hz
+        for (int i = 0; i < 200; i++) physics.step(sub, DT, TERRAIN, NO_CURRENT, CONFIG.battleArea());
+
+        assertEquals(1.0, sub.actualThrottle(), 0.01,
+                "Thrust should reach full power in 4s, actual=" + sub.actualThrottle());
+    }
+
+    @Test
+    void thrustLagReducesInitialAcceleration() {
+        var physics = new SubmarinePhysics();
+        // With lag: throttle 1.0 from rest, check speed after 1 second
+        var withLag = makeSub(0, 0);
+        withLag.setThrottle(1.0);
+        for (int i = 0; i < 50; i++) physics.step(withLag, DT, TERRAIN, NO_CURRENT, CONFIG.battleArea());
+
+        // Without lag, at t=1s full thrust would give much higher speed.
+        // With lag at 0.25/s slew, average actual throttle over 1s is ~0.125.
+        // So speed should be much less than what full throttle would give.
+        assertTrue(withLag.speed() < 0.2,
+                "With thrust lag, speed after 1s should be low, got " + withLag.speed());
+        assertTrue(withLag.speed() > 0,
+                "Speed should be positive after 1s of throttle");
+    }
+
+    @Test
+    void emergencyBrakeHasDelay() {
+        var physics = new SubmarinePhysics();
+        var sub = makeSub(10, 0);
+        sub.setThrottle(0.8);
+        // Let engine reach 0.8 actual throttle
+        for (int i = 0; i < 200; i++) physics.step(sub, DT, TERRAIN, NO_CURRENT, CONFIG.battleArea());
+        assertTrue(sub.actualThrottle() > 0.7, "Engine should be near 0.8");
+
+        // Command full reverse
+        sub.setThrottle(-1.0);
+        // After 0.5s (25 ticks), engine should still be positive (slewing down)
+        for (int i = 0; i < 25; i++) physics.step(sub, DT, TERRAIN, NO_CURRENT, CONFIG.battleArea());
+        assertTrue(sub.actualThrottle() > 0,
+                "After 0.5s of emergency brake, engine should still be positive, actual=" + sub.actualThrottle());
+    }
+
+    // ── Lift-curve control surfaces ─────────────────────────────────
+
+    @Test
+    void liftCoefficientLinearBelowStall() {
+        double stallAngle = Math.toRadians(16);
+        double cl5 = SubmarinePhysics.liftCoefficient(Math.toRadians(5), stallAngle);
+        double cl10 = SubmarinePhysics.liftCoefficient(Math.toRadians(10), stallAngle);
+        // In linear region, Cl should roughly double when angle doubles
+        assertEquals(cl10 / cl5, 2.0, 0.01, "Cl should be linear below stall");
+    }
+
+    @Test
+    void liftCoefficientReducedAboveStall() {
+        double stallAngle = Math.toRadians(16);
+        double clAtStall = SubmarinePhysics.liftCoefficient(stallAngle, stallAngle);
+        double clAt30 = SubmarinePhysics.liftCoefficient(Math.toRadians(30), stallAngle);
+        assertTrue(Math.abs(clAt30) < Math.abs(clAtStall),
+                "Cl should be reduced above stall: atStall=" + clAtStall + " at30=" + clAt30);
+    }
+
+    @Test
+    void moderateDeflectionTurnsBetterThanFull() {
+        var physics = new SubmarinePhysics();
+        // At 10 m/s, moderate rudder (0.35, near stall peak) vs full (1.0)
+        var subModerate = makeSub(10, 0);
+        subModerate.setRudder(0.35);
+        physics.step(subModerate, DT, TERRAIN, NO_CURRENT, CONFIG.battleArea());
+        double headingModerate = subModerate.heading();
+
+        var subFull = makeSub(10, 0);
+        subFull.setRudder(1.0);
+        physics.step(subFull, DT, TERRAIN, NO_CURRENT, CONFIG.battleArea());
+        double headingFull = subFull.heading();
+
+        assertTrue(headingModerate > headingFull,
+                "Moderate rudder should turn faster than full due to stall: moderate="
+                        + headingModerate + " full=" + headingFull);
+    }
+
+    @Test
+    void controlAuthorityScalesWithSpeedSquared() {
+        var physics = new SubmarinePhysics();
+        // Same rudder at 5 m/s vs 10 m/s
+        var subSlow = makeSub(5, 0);
+        subSlow.setRudder(0.3);
+        physics.step(subSlow, DT, TERRAIN, NO_CURRENT, CONFIG.battleArea());
+        double yawSlow = subSlow.heading(); // heading delta from 0
+
+        var subFast = makeSub(10, 0);
+        subFast.setRudder(0.3);
+        physics.step(subFast, DT, TERRAIN, NO_CURRENT, CONFIG.battleArea());
+        double yawFast = subFast.heading();
+
+        // v^2 scaling: 10^2/5^2 = 4x
+        double ratio = yawFast / yawSlow;
+        assertTrue(ratio > 3.5 && ratio < 4.5,
+                "Yaw rate should scale ~4x with 2x speed, ratio=" + ratio);
+    }
+
+    @Test
+    void reverseStillWorksWithLiftModel() {
+        var physics = new SubmarinePhysics();
+        var subForward = makeSub(5, Math.PI); // heading south, 5 m/s forward
+        subForward.setRudder(1.0);
+        double headingBefore = subForward.heading();
+        physics.step(subForward, DT, TERRAIN, NO_CURRENT, CONFIG.battleArea());
+        double deltaForward = subForward.heading() - headingBefore;
+
+        var subReverse = makeSub(-3, Math.PI); // heading south, 3 m/s reverse
+        subReverse.setRudder(1.0);
+        headingBefore = subReverse.heading();
+        physics.step(subReverse, DT, TERRAIN, NO_CURRENT, CONFIG.battleArea());
+        double deltaReverse = subReverse.heading() - headingBefore;
+
+        // Forward and reverse should turn in opposite directions
+        assertTrue(deltaForward * deltaReverse < 0,
+                "Rudder should reverse in reverse: fwd=" + deltaForward + " rev=" + deltaReverse);
     }
 
     @Test

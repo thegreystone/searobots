@@ -106,8 +106,13 @@ public class MapPanel extends JPanel {
 
     public MapPanel(GeneratedWorld world) {
         setBackground(new Color(5, 10, 30));
+        setFocusable(true);
         setWorld(world);
         setupInputHandlers();
+    }
+
+    public GeneratedWorld getWorld() {
+        return world;
     }
 
     public void setWorld(GeneratedWorld world) {
@@ -320,6 +325,7 @@ public class MapPanel extends JPanel {
         if (showWaypoints) drawWaypoints(g2);
         drawPingAnimations(g2);
         drawDetectionHighlights(g2);
+        drawFiringSolution(g2);
 
         g2.setTransform(baseTransform);
         g2.setStroke(new BasicStroke(1.0f));
@@ -569,6 +575,7 @@ public class MapPanel extends JPanel {
             g2.draw(triangle);
 
             g2.setTransform(saved);
+
         }
     }
 
@@ -781,6 +788,27 @@ public class MapPanel extends JPanel {
         return new Color(r, g, b, 200);
     }
 
+    private void drawFiringSolution(Graphics2D g2) {
+        for (var sub : submarines) {
+            var sol = sub.firingSolution();
+            if (sol == null) continue;
+
+            double r1 = 32 / pixelsPerMeter;
+            double r2 = 48 / pixelsPerMeter;
+            var c = sub.color();
+
+            g2.setColor(new Color(c.getRed(), c.getGreen(), c.getBlue(), 220));
+            g2.setStroke(new BasicStroke((float) (2.5 / pixelsPerMeter)));
+            g2.draw(new Line2D.Double(sol.targetX() - r2, sol.targetY(), sol.targetX() - r1, sol.targetY()));
+            g2.draw(new Line2D.Double(sol.targetX() + r1, sol.targetY(), sol.targetX() + r2, sol.targetY()));
+            g2.draw(new Line2D.Double(sol.targetX(), sol.targetY() - r2, sol.targetX(), sol.targetY() - r1));
+            g2.draw(new Line2D.Double(sol.targetX(), sol.targetY() + r1, sol.targetX(), sol.targetY() + r2));
+            g2.draw(new Ellipse2D.Double(sol.targetX() - r2, sol.targetY() - r2, r2 * 2, r2 * 2));
+            double dot = 4 / pixelsPerMeter;
+            g2.fill(new Ellipse2D.Double(sol.targetX() - dot, sol.targetY() - dot, dot * 2, dot * 2));
+        }
+    }
+
     private void drawPingAnimations(Graphics2D g2) {
         // g2 is in world-coordinate transform
         long tick = simTick;
@@ -942,9 +970,8 @@ public class MapPanel extends JPanel {
         int padding = 8;
         int boxW = 310;
 
-        // Calculate box height: 1 line for tick + 4px gap + 4 lines per sub
         var subs = submarines;
-        int boxH = lineH + 4 + subs.size() * 4 * lineH + padding;
+        int boxH = subs.size() * 4 * lineH + padding * 2;
 
         int boxX = getWidth() - boxW - padding;
         int boxY = padding;
@@ -956,11 +983,8 @@ public class MapPanel extends JPanel {
         int x = boxX + padding;
         int y = boxY + padding + 12;
 
-        // Sim status
-        g2.setColor(new Color(200, 220, 255));
-        String status = simPaused ? "PAUSED" : String.format("%.0fx", simSpeed);
-        g2.drawString(String.format("Tick: %d  [%s]", simTick, status), x, y);
-        y += lineH + 4;
+        // Sub header (tick/time moved to left info overlay)
+        y += 0;
 
         for (var sub : subs) {
             var pos = sub.pose().position();
@@ -1004,9 +1028,9 @@ public class MapPanel extends JPanel {
         int lineH = 16;
         int padding = 6;
 
-        // Top-left info panel: seed, thermoclines, spawns
-        int infoLines = 2 + world.thermalLayers().size(); // seed + spawns + thermoclines
-        int infoW = 320;
+        // Top-left info panel: seed, tick, time, thermoclines, spawns
+        int infoLines = 4 + world.thermalLayers().size(); // seed + tick + time + spawns + thermoclines
+        int infoW = 360;
         int infoH = infoLines * lineH + padding * 2;
         g2.setColor(new Color(0, 0, 0, 128));
         g2.fillRoundRect(padding, padding, infoW, infoH, 8, 8);
@@ -1016,6 +1040,17 @@ public class MapPanel extends JPanel {
         int x = padding + padding;
 
         g2.drawString("Seed: " + world.config().worldSeed(), x, y);
+        y += lineH;
+
+        long tick = simTick;
+        String status = simPaused ? "PAUSED" : String.format("%.0fx", simSpeed);
+        g2.drawString(String.format("Tick: %d  [%s]", tick, status), x, y);
+        y += lineH;
+
+        long totalSeconds = tick / world.config().tickRateHz();
+        long minutes = totalSeconds / 60;
+        long seconds = totalSeconds % 60;
+        g2.drawString(String.format("Time: %d:%02d", minutes, seconds), x, y);
         y += lineH;
 
         for (int i = 0; i < world.thermalLayers().size(); i++) {
@@ -1049,7 +1084,7 @@ public class MapPanel extends JPanel {
                 "W      waypoints " + (showWaypoints ? "ON" : "OFF"),
                 "P      pause/resume",
                 "N      single step",
-                "1-5    speed 1x/2x/5x/10x/25x",
+                "1-5    speed 1x/2x/5x/10x/22x",
                 "drag   pan"
         };
         int helpW = 220;
@@ -1268,6 +1303,7 @@ public class MapPanel extends JPanel {
         addMouseListener(new MouseAdapter() {
             @Override
             public void mousePressed(MouseEvent e) {
+                requestFocusInWindow();
                 dragStart = e.getPoint();
                 dragViewX = viewX;
                 dragViewY = viewY;
