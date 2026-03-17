@@ -38,6 +38,7 @@ import com.jme3.system.AppSettings;
 import com.jme3.system.JmeCanvasContext;
 import com.jme3.texture.Image;
 import com.jme3.texture.Texture2D;
+import com.jme3.texture.TextureCubeMap;
 import com.jme3.texture.image.ColorSpace;
 import com.jme3.util.BufferUtils;
 import com.jme3.util.SkyFactory;
@@ -130,19 +131,48 @@ public final class SubmarineScene3D extends SimpleApplication {
         setupOrbitInput();
 
         // Lighting
-        DirectionalLight dl = new DirectionalLight();
-        dl.setDirection(new Vector3f(-1, -1, -1).normalizeLocal());
-        dl.setColor(ColorRGBA.White.mult(1.2f));
-        rootNode.addLight(dl);
+        sun = new DirectionalLight();
+        sun.setDirection(new Vector3f(-1, -1, -1).normalizeLocal());
+        sun.setColor(ColorRGBA.White.mult(1.2f));
+        rootNode.addLight(sun);
 
-        DirectionalLight backLight = new DirectionalLight();
-        backLight.setDirection(new Vector3f(1, 0.5f, 1).normalizeLocal());
-        backLight.setColor(new ColorRGBA(0.3f, 0.4f, 0.5f, 1f));
-        rootNode.addLight(backLight);
+        fill = new DirectionalLight();
+        fill.setDirection(new Vector3f(1, 0.5f, 1).normalizeLocal());
+        fill.setColor(new ColorRGBA(0.3f, 0.4f, 0.5f, 1f));
+        rootNode.addLight(fill);
 
-        AmbientLight al = new AmbientLight();
-        al.setColor(new ColorRGBA(0.3f, 0.35f, 0.4f, 1f));
-        rootNode.addLight(al);
+        ambient = new AmbientLight();
+        ambient.setColor(new ColorRGBA(0.3f, 0.35f, 0.4f, 1f));
+        rootNode.addLight(ambient);
+
+        // Sky (procedural cube map, no projection artifacts) - must be before water for reflections
+        sky = SkyFactory.createSky(assetManager, createSkyCubeMap(), SkyFactory.EnvMapType.CubeMap);
+        rootNode.attachChild(sky);
+
+        // Water surface (after sky so reflections pick it up)
+        fpp = new FilterPostProcessor(assetManager);
+        waterFilter = new WaterFilter(rootNode, sun.getDirection().mult(-1));
+        waterFilter.setWaterHeight(0f);
+        waterFilter.setSpeed(0.8f);
+        waterFilter.setWaveScale(0.003f);
+        waterFilter.setMaxAmplitude(1.5f);
+        waterFilter.setWaterColor(new ColorRGBA(0.0f, 0.18f, 0.60f, 1f));
+        waterFilter.setDeepWaterColor(new ColorRGBA(0.0f, 0.14f, 0.42f, 1f));
+        waterFilter.setWaterTransparency(0.1f);
+        waterFilter.setColorExtinction(new Vector3f(10f, 30f, 60f));
+        waterFilter.setSunScale(3f);
+        waterFilter.setLightDirection(sun.getDirection());
+        waterFilter.setLightColor(ColorRGBA.White);
+        waterFilter.setFoamExistence(new Vector3f(0.8f, 3f, 0.5f));
+        waterFilter.setFoamHardness(50f);
+        waterFilter.setCausticsIntensity(0.3f);
+        waterFilter.setShininess(14f);
+        waterFilter.setReflectionMapSize(512);
+        waterFilter.setUseRipples(true);
+        waterFilter.setUseSpecular(true);
+        waterFilter.setUseRefraction(true);
+        fpp.addFilter(waterFilter);
+        viewPort.addProcessor(fpp);
 
         // Load submarine model
         modelNode = new Node("submarineTemplate");
@@ -672,50 +702,56 @@ public final class SubmarineScene3D extends SimpleApplication {
         }
     }
 
-    private Texture2D createSkyTexture() {
-        // Sphere-mapped sky: gradient from deep blue (top) to bright horizon,
-        // with a bright sun spot. The sphere map maps the center of the image
-        // to "forward", edges to "behind", top to "up", bottom to "down".
-        // For a sphere map, Y=0 is up (zenith), Y=size is down (nadir).
-        int size = 512;
-        ByteBuffer buf = BufferUtils.createByteBuffer(size * size * 4);
-        float cx = size / 2f, cy = size / 2f;
-        for (int y = 0; y < size; y++) {
-            for (int x = 0; x < size; x++) {
-                float dx = (x - cx) / cx;
-                float dy = (y - cy) / cy;
-                float dist = (float) Math.sqrt(dx * dx + dy * dy);
+    private TextureCubeMap createSkyCubeMap() {
+        int size = 256;
+        var faces = new java.util.ArrayList<ByteBuffer>();
+        for (int face = 0; face < 6; face++) {
+            ByteBuffer buf = BufferUtils.createByteBuffer(size * size * 4);
+            for (int py = 0; py < size; py++) {
+                for (int px = 0; px < size; px++) {
+                    float s = 2f * (px + 0.5f) / size - 1f;
+                    float t = 2f * (py + 0.5f) / size - 1f;
+                    Vector3f dir = cubeFaceDir(face, s, t).normalizeLocal();
 
-                // Elevation: center of sphere map = horizon, top = zenith
-                // dy: -1 = top (zenith), +1 = bottom (nadir)
-                float elevation = -dy; // +1 at top, -1 at bottom
+                    // dir.y = elevation: +1 at zenith, -1 at nadir
+                    float elevation = dir.y;
 
-                int r, g, b;
-                if (elevation > 0) {
-                    // Sky: gradient from bright horizon to deep blue at zenith
-                    float t = elevation;
-                    r = (int) (180 - t * 130);  // 180 -> 50
-                    g = (int) (210 - t * 100);  // 210 -> 110
-                    b = (int) (245 - t * 30);   // 245 -> 215
-                } else {
-                    // Below horizon: dark (underwater/ground)
-                    float t = -elevation;
-                    r = (int) (180 - t * 170);
-                    g = (int) (210 - t * 200);
-                    b = (int) (245 - t * 220);
+                    int r, g, b;
+                    if (elevation > 0) {
+                        // Sky: bright horizon to deep blue at zenith
+                        r = (int) (180 - elevation * 130);
+                        g = (int) (210 - elevation * 100);
+                        b = (int) (245 - elevation * 30);
+                    } else {
+                        // Below horizon: dark
+                        float d = -elevation;
+                        r = (int) (180 - d * 170);
+                        g = (int) (210 - d * 200);
+                        b = (int) (245 - d * 220);
+                    }
+                    r = Math.max(0, Math.min(255, r));
+                    g = Math.max(0, Math.min(255, g));
+                    b = Math.max(0, Math.min(255, b));
+                    buf.put((byte) r).put((byte) g).put((byte) b).put((byte) 255);
                 }
-
-                // Clamp and outside sphere = black
-                if (dist > 1f) { r = 0; g = 0; b = 0; }
-                r = Math.max(0, Math.min(255, r));
-                g = Math.max(0, Math.min(255, g));
-                b = Math.max(0, Math.min(255, b));
-
-                buf.put((byte) r).put((byte) g).put((byte) b).put((byte) 255);
             }
+            buf.flip();
+            faces.add(buf);
         }
-        buf.flip();
-        return new Texture2D(new Image(Image.Format.RGBA8, size, size, buf, ColorSpace.sRGB));
+        var img = new Image(Image.Format.RGBA8, size, size, 0, faces, ColorSpace.sRGB);
+        return new TextureCubeMap(img);
+    }
+
+    private Vector3f cubeFaceDir(int face, float s, float t) {
+        return switch (face) {
+            case 0 -> new Vector3f(+1, -t, -s);  // +X
+            case 1 -> new Vector3f(-1, -t, +s);  // -X
+            case 2 -> new Vector3f(+s, +1, +t);  // +Y
+            case 3 -> new Vector3f(+s, -1, -t);  // -Y
+            case 4 -> new Vector3f(+s, -t, +1);  // +Z
+            case 5 -> new Vector3f(-s, -t, -1);  // -Z
+            default -> throw new IllegalArgumentException();
+        };
     }
 
     private Texture2D createBubbleTexture() {
