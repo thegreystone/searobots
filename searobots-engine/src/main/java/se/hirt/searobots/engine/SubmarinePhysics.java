@@ -96,26 +96,21 @@ public final class SubmarinePhysics {
         if (speed < -cfg.maxReverseSpeed()) speed = -cfg.maxReverseSpeed();
         sub.setSpeed(speed);
 
-        // 3. Yaw with sway coupling
-        // Rudder produces yaw moment. Hull lateral drag opposes turning.
+        // 3. Yaw: rudder lift -> yaw rate (direct, no accumulation)
+        // Yaw rate is computed fresh each tick from the rudder moment.
+        // This gives steady-state turning: constant rudder = constant turn rate.
         double rudderAngle = sub.rudder() * Math.PI / 4;  // -1..1 maps to -45..+45 deg
         double rudderCl = liftCoefficient(rudderAngle, cfg.stallAngle());
         double rudderMoment = 0.5 * WATER_DENSITY * speed * Math.abs(speed)
                 * cfg.rudderArea() * rudderCl * cfg.rudderArm();
-
-        // Sway dynamics: turning creates centripetal sway, hull drag damps it
-        double swaySpeed = sub.swaySpeed();
-        double yawRate = sub.yawRate();
-
-        // Net yaw moment = rudder moment - hull lateral drag moment
-        // Hull lateral drag acts at hullMomentArm ahead of CG, creating a restoring moment
-        double swayDrag = cfg.swayDragCoeff() * swaySpeed * Math.abs(swaySpeed);
-        double hullDragMoment = swayDrag * cfg.hullMomentArm();
-
-        double netYawMoment = rudderMoment - hullDragMoment;
-        double yawInertia = cfg.massSurge() * cfg.rotationalInertia();
-        double yawAccel = netYawMoment / yawInertia;
-        yawRate += yawAccel * dt;
+        // Effective inertia increases with speed squared (centrifugal resistance).
+        // At low speed: mostly base inertia, tighter turns.
+        // At high speed: centrifugal force (∝ v²) resists turning, wider circles.
+        // Rudder force also scales with v², so turn radius increases gently with speed.
+        double baseInertia = cfg.massSurge() * cfg.rotationalInertia();
+        double speedDamping = baseInertia * 0.02 * speed * Math.abs(speed);
+        double effectiveInertia = baseInertia + speedDamping;
+        double yawRate = rudderMoment / effectiveInertia;
         sub.setYawRate(yawRate);
 
         double heading = sub.heading() + yawRate * dt;
@@ -123,19 +118,21 @@ public final class SubmarinePhysics {
         if (heading < 0) heading += 2 * Math.PI;
         sub.setHeading(heading);
 
-        // Update sway: centripetal force from turning, minus lateral drag
-        double centripetalForce = cfg.massSurge() * speed * yawRate;
-        swaySpeed += (centripetalForce - swayDrag) / cfg.massSway() * dt;
-        sub.setSwaySpeed(swaySpeed);
-
-        // 3. Pitch (stern planes): lift-based model with stall
+        // 4. Pitch: stern planes lift -> pitch rate (direct, no accumulation)
+        // Pitch restoring: buoyancy naturally levels the sub (metacentric height).
         if (!cfg.surfaceLocked() && cfg.planesArea() > 0) {
-            double planesAngle = sub.sternPlanes() * Math.PI / 4;  // -1..1 maps to -45..+45 deg
+            // Positive planes = nose up, negative = nose down
+            double planesAngle = sub.sternPlanes() * Math.PI / 4;
             double planesCl = liftCoefficient(planesAngle, cfg.stallAngle());
             double pitchMoment = 0.5 * WATER_DENSITY * speed * Math.abs(speed)
                     * cfg.planesArea() * planesCl * cfg.planesArm();
-            double pitchAccel = pitchMoment / (cfg.massHeave() * cfg.rotationalInertia());
-            double pitchRate = sub.pitchRate() + pitchAccel * dt;
+            // Hydrostatic restoring moment: buoyancy above CG pulls pitch back to level.
+            double restoringMoment = cfg.dryMass() * 9.81 * 1.0 * Math.sin(sub.pitch());
+            // Speed-dependent pitch resistance (same principle as yaw)
+            double pitchBaseInertia = cfg.massHeave() * cfg.rotationalInertia();
+            double pitchSpeedDamping = pitchBaseInertia * 0.02 * speed * Math.abs(speed);
+            double pitchEffectiveInertia = pitchBaseInertia + pitchSpeedDamping;
+            double pitchRate = (pitchMoment - restoringMoment) / pitchEffectiveInertia;
             sub.setPitchRate(pitchRate);
             double pitch = sub.pitch() + pitchRate * dt;
             pitch = Math.clamp(pitch, -Math.PI / 4, Math.PI / 4);
@@ -175,16 +172,10 @@ public final class SubmarinePhysics {
             sub.setVerticalSpeed(0);
         }
 
-        // 5. Position update (surge + sway components)
+        // 5. Position update (surge only, sway removed for simplicity)
         double pitch = sub.pitch();
-        // Surge: along heading
         double vx = speed * Math.sin(heading) * Math.cos(pitch);
         double vy = speed * Math.cos(heading) * Math.cos(pitch);
-        // Sway: perpendicular to heading (positive = starboard)
-        double swayX = swaySpeed * Math.cos(heading);
-        double swayY = -swaySpeed * Math.sin(heading);
-        vx += swayX;
-        vy += swayY;
         double vz = speed * Math.sin(pitch) + verticalSpeed;
 
         // Apply current

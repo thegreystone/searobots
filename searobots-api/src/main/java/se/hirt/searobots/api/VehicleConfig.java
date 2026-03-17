@@ -103,9 +103,9 @@ public record VehicleConfig(
             12.0,                       // rudderArm (m from CG)
             3.5,                        // planesArea (m^2)
             12.0,                       // planesArm (m from CG)
-            Math.toRadians(16),         // stallAngle (~0.28 rad)
-            8.0,                        // rotationalInertia (effective radius of gyration^2)
-            1.0 / 20.0,                // ballastSlewRate
+            Math.toRadians(25),         // stallAngle (~0.44 rad, wider before stall)
+            40.0,                       // rotationalInertia (tuned for ~2-3 deg/s at patrol speed)
+            1.0 / 5.0,                 // ballastSlewRate (full blow in ~2.5s from neutral)
             0.03 * 700_000 * 9.81,     // ballastForceMax
             0.5 * 1025 * 1.0 * 520,    // verticalDragCoeff
             10.0,                       // terrainClearance
