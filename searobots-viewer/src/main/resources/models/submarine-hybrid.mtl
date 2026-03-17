@@ -1,0 +1,27 @@
+# Hybrid submarine materials
+#
+newmtl Metal_Black_Plain
+Ka  0.0 0.0 0.0
+Kd  0.4 0.4 0.4
+Ks  0.9 0.9 0.9
+d  1.0
+Ns  14.1
+illum 2
+#
+newmtl Metal_Chrome
+Ka  0.4 0.4 0.4
+Kd  0.4 0.4 0.4
+Ks  0.9 0.9 0.9
+d  1.0
+Ns  15.0
+illum 2
+#
+newmtl rubber
+Ka  0.0 0.0 0.0
+Kd  0.4 0.4 0.4
+Ks  0.9 0.9 0.9
+d  1.0
+Ns  14.1
+illum 2
+#
+# EOF
