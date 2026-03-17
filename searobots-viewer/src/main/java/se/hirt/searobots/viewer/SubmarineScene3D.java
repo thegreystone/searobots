@@ -78,6 +78,20 @@ public final class SubmarineScene3D extends SimpleApplication {
     private BitmapText hudText;
     private BitmapText keysText;
 
+    // 3D overlays: trails, waypoints, routes
+    private boolean showTrails = true;
+    private boolean showWaypoints = true;
+    private boolean showRoute = true;
+    private final Map<Integer, java.util.Deque<Vector3f>> trailBuffers = new HashMap<>();
+    private final Map<Integer, Node> trailNodes = new HashMap<>();
+    private final Map<Integer, Node> waypointNodes = new HashMap<>();
+    private final Map<Integer, Node> routeNodes = new HashMap<>();
+    private static final int MAX_TRAIL_POINTS = 500; // match 2D viewer
+    private static final int TRAIL_SAMPLE_INTERVAL = 1; // every tick, like 2D
+    private final Map<Integer, java.util.List<Vector3f>> routeBuffers = new HashMap<>();
+    private static final int ROUTE_SAMPLE_INTERVAL = 100; // ~2 seconds between samples
+    private long lastTrailTick = -1;
+
     // Firing solution crosshair
     private Geometry crosshairGeom;
     private Node crosshairNode;
@@ -278,7 +292,7 @@ public final class SubmarineScene3D extends SimpleApplication {
         keysText.setText(
                 "[1] 1x  [2] 2x  [3] 5x  [4] 10x  [5] 22x\n" +
                 "[P] Pause  [N] Step  [Tab] Cycle sub  [V] Camera\n" +
-                "[Space] New map");
+                "[T] Trails  [W] Waypoints  [R] Route  [Space] New map");
         float keysWidth = keysText.getLineWidth();
         float keysHeight = keysText.getHeight();
         keysText.setLocalTranslation(settings.getWidth() - keysWidth - 10, keysHeight + 10, 0);
@@ -328,6 +342,7 @@ public final class SubmarineScene3D extends SimpleApplication {
         updateCamera(tpf);
         updateHud();
         updateCrosshair();
+        updateOverlays();
         // Keep sun billboard centered on camera (infinitely far away)
         if (sunBillboard != null) {
             Vector3f sunPos = cam.getLocation().add(sun.getDirection().mult(-900f));
@@ -398,9 +413,18 @@ public final class SubmarineScene3D extends SimpleApplication {
         // Read start time from config
         startTime = world.config().startTime();
 
-        // Clear previous vehicle models
+        // Clear previous vehicle models and overlays
         for (Node n : subNodes.values()) n.removeFromParent();
         subNodes.clear();
+        for (Node n : trailNodes.values()) n.removeFromParent();
+        trailNodes.clear();
+        trailBuffers.clear();
+        for (Node n : waypointNodes.values()) n.removeFromParent();
+        waypointNodes.clear();
+        for (Node n : routeNodes.values()) n.removeFromParent();
+        routeNodes.clear();
+        routeBuffers.clear();
+        lastTrailTick = -1;
         latestSnapshots = List.of();
 
         // Position orbit camera at first spawn
@@ -598,6 +622,219 @@ public final class SubmarineScene3D extends SimpleApplication {
         crosshairNode.setCullHint(Spatial.CullHint.Never);
     }
 
+    // ---- 3D overlays: trails, waypoints, routes ----
+
+    private void updateOverlays() {
+        var snapshots = latestSnapshots;
+        long tick = latestTick;
+
+        for (var snap : snapshots) {
+            int id = snap.id();
+            var pos = snap.pose().position();
+            Vector3f jmePos = new Vector3f((float) pos.x(), (float) pos.z(), (float) -pos.y());
+
+            // Sub colour
+            java.awt.Color awtColor = snap.color();
+            ColorRGBA color = new ColorRGBA(
+                    awtColor.getRed() / 255f, awtColor.getGreen() / 255f,
+                    awtColor.getBlue() / 255f, 1f);
+
+            // --- Trails ---
+            var trail = trailBuffers.computeIfAbsent(id, k -> new java.util.ArrayDeque<>());
+            if (tick > lastTrailTick && tick % TRAIL_SAMPLE_INTERVAL == 0) {
+                trail.addLast(jmePos.clone());
+                if (trail.size() > MAX_TRAIL_POINTS) trail.removeFirst();
+            }
+
+            Node trailNode = trailNodes.get(id);
+            if (trailNode == null) {
+                trailNode = new Node("trail-" + id);
+                trailNodes.put(id, trailNode);
+                rootNode.attachChild(trailNode);
+            }
+            trailNode.setCullHint(showTrails ? Spatial.CullHint.Never : Spatial.CullHint.Always);
+
+            if (showTrails && trail.size() >= 2 && tick % 10 == 0) {
+                trailNode.detachAllChildren();
+                float[] positions = new float[trail.size() * 3];
+                float[] colors = new float[trail.size() * 4];
+                int i = 0;
+                int total = trail.size();
+                for (Vector3f p : trail) {
+                    float alpha = (float) i / total * 0.6f; // 0 = old (faded), 0.6 = newest (match 2D)
+                    positions[i * 3] = p.x;
+                    positions[i * 3 + 1] = p.y;
+                    positions[i * 3 + 2] = p.z;
+                    float glow = 2f; // overbright for additive glow
+                    colors[i * 4] = color.r * glow;
+                    colors[i * 4 + 1] = color.g * glow;
+                    colors[i * 4 + 2] = color.b * glow;
+                    colors[i * 4 + 3] = alpha;
+                    i++;
+                }
+                Mesh trailMesh = new Mesh();
+                trailMesh.setMode(Mesh.Mode.LineStrip);
+                trailMesh.setBuffer(VertexBuffer.Type.Position, 3, positions);
+                trailMesh.setBuffer(VertexBuffer.Type.Color, 4, colors);
+                trailMesh.updateBound();
+                Geometry trailGeom = new Geometry("trailLine-" + id, trailMesh);
+                Material mat = new Material(assetManager, "Common/MatDefs/Misc/Unshaded.j3md");
+                mat.setBoolean("VertexColor", true);
+                mat.getAdditionalRenderState().setBlendMode(RenderState.BlendMode.Additive);
+                mat.getAdditionalRenderState().setDepthWrite(false);
+                trailGeom.setMaterial(mat);
+                trailGeom.setQueueBucket(RenderQueue.Bucket.Transparent);
+                trailGeom.setCullHint(Spatial.CullHint.Never);
+                trailNode.attachChild(trailGeom);
+            }
+
+            // --- Waypoints ---
+            Node wpNode = waypointNodes.get(id);
+            if (wpNode == null) {
+                wpNode = new Node("waypoints-" + id);
+                waypointNodes.put(id, wpNode);
+                rootNode.attachChild(wpNode);
+            }
+            wpNode.setCullHint(showWaypoints ? Spatial.CullHint.Never : Spatial.CullHint.Always);
+
+            if (showWaypoints) {
+                wpNode.detachAllChildren();
+                var waypoints = snap.waypoints();
+                if (!waypoints.isEmpty()) {
+                    // Spline connecting waypoints (like 2D Catmull-Rom, simplified to line strip)
+                    if (waypoints.size() >= 2) {
+                        float[] spos = new float[waypoints.size() * 3];
+                        for (int j = 0; j < waypoints.size(); j++) {
+                            var wp = waypoints.get(j);
+                            spos[j * 3] = (float) wp.x();
+                            spos[j * 3 + 1] = (float) wp.z();
+                            spos[j * 3 + 2] = (float) -wp.y();
+                        }
+                        Mesh splineMesh = new Mesh();
+                        splineMesh.setMode(Mesh.Mode.LineStrip);
+                        splineMesh.setBuffer(VertexBuffer.Type.Position, 3, spos);
+                        splineMesh.updateBound();
+                        Geometry splineGeom = new Geometry("wpSpline", splineMesh);
+                        Material spMat = new Material(assetManager, "Common/MatDefs/Misc/Unshaded.j3md");
+                        spMat.setColor("Color", new ColorRGBA(color.r * 0.5f, color.g * 0.5f, color.b * 0.5f, 1f));
+                        spMat.getAdditionalRenderState().setBlendMode(RenderState.BlendMode.Additive);
+                        spMat.getAdditionalRenderState().setDepthWrite(false);
+                        splineGeom.setMaterial(spMat);
+                        splineGeom.setQueueBucket(RenderQueue.Bucket.Transparent);
+                        splineGeom.setCullHint(Spatial.CullHint.Never);
+                        wpNode.attachChild(splineGeom);
+                    }
+
+                    // Waypoint markers: all shown, active one larger and white
+                    for (var wp : waypoints) {
+                        float wpX = (float) wp.x();
+                        float wpY = (float) wp.z();
+                        float wpZ = (float) -wp.y();
+                        boolean active = wp.active();
+                        float s = active ? 20f : 10f;
+
+                        // Diamond marker
+                        Mesh dm = new Mesh();
+                        dm.setMode(Mesh.Mode.Lines);
+                        dm.setBuffer(VertexBuffer.Type.Position, 3, new float[]{
+                                0, s, 0,  s, 0, 0,  s, 0, 0,  0, -s, 0,
+                                0, -s, 0, -s, 0, 0, -s, 0, 0,  0, s, 0});
+                        dm.setBuffer(VertexBuffer.Type.Index, 1, new short[]{0,1,2,3,4,5,6,7});
+                        dm.updateBound();
+                        Geometry wpGeom = new Geometry("wp", dm);
+                        Material wpMat = new Material(assetManager, "Common/MatDefs/Misc/Unshaded.j3md");
+                        wpMat.setColor("Color", active ? ColorRGBA.White : color);
+                        wpGeom.setMaterial(wpMat);
+                        wpGeom.setLocalTranslation(wpX, wpY, wpZ);
+                        wpGeom.addControl(new BillboardControl());
+                        wpGeom.setCullHint(Spatial.CullHint.Never);
+                        wpNode.attachChild(wpGeom);
+
+                        // Active waypoint: extra outer ring
+                        if (active) {
+                            float outerS = s * 1.5f;
+                            Mesh ring = new Mesh();
+                            ring.setMode(Mesh.Mode.Lines);
+                            ring.setBuffer(VertexBuffer.Type.Position, 3, new float[]{
+                                    0, outerS, 0,  outerS, 0, 0,  outerS, 0, 0,  0, -outerS, 0,
+                                    0, -outerS, 0, -outerS, 0, 0, -outerS, 0, 0,  0, outerS, 0});
+                            ring.setBuffer(VertexBuffer.Type.Index, 1, new short[]{0,1,2,3,4,5,6,7});
+                            ring.updateBound();
+                            Geometry ringGeom = new Geometry("wpRing", ring);
+                            Material ringMat = new Material(assetManager, "Common/MatDefs/Misc/Unshaded.j3md");
+                            ringMat.setColor("Color", new ColorRGBA(1f, 1f, 1f, 0.4f));
+                            ringMat.getAdditionalRenderState().setBlendMode(RenderState.BlendMode.Alpha);
+                            ringGeom.setMaterial(ringMat);
+                            ringGeom.setLocalTranslation(wpX, wpY, wpZ);
+                            ringGeom.addControl(new BillboardControl());
+                            ringGeom.setQueueBucket(RenderQueue.Bucket.Transparent);
+                            ringGeom.setCullHint(Spatial.CullHint.Never);
+                            wpNode.attachChild(ringGeom);
+                        }
+                    }
+                }
+            }
+
+            // --- Route ---
+            Node rtNode = routeNodes.get(id);
+            if (rtNode == null) {
+                rtNode = new Node("route-" + id);
+                routeNodes.put(id, rtNode);
+                rootNode.attachChild(rtNode);
+            }
+            rtNode.setCullHint(showRoute ? Spatial.CullHint.Never : Spatial.CullHint.Always);
+
+            // Sample route history (less frequent than trails, full match history)
+            var route = routeBuffers.computeIfAbsent(id, k -> new java.util.ArrayList<>());
+            if (tick > lastTrailTick && tick % ROUTE_SAMPLE_INTERVAL == 0) {
+                route.add(jmePos.clone());
+            }
+
+            if (showRoute && route.size() >= 2 && tick % 10 == 0) {
+                rtNode.detachAllChildren();
+                int n = route.size();
+                float w = 4f; // half-width of the duct
+
+                // Build a rectangular duct: 4 walls (top, bottom, left, right)
+                // Cross-section in YZ plane (perpendicular to travel in XZ)
+                // Each offset pair: (dY1, dZ1, dY2, dZ2)
+                float[][] offsets = {
+                    {+w, -w, +w, +w},  // top wall:    top-left to top-right
+                    {-w, -w, -w, +w},  // bottom wall: bottom-left to bottom-right
+                    {-w, -w, +w, -w},  // left wall:   bottom-left to top-left
+                    {-w, +w, +w, +w},  // right wall:  bottom-right to top-right
+                };
+
+                Material rtMat = new Material(assetManager, "Common/MatDefs/Misc/Unshaded.j3md");
+                rtMat.setColor("Color", color);
+                rtMat.getAdditionalRenderState().setFaceCullMode(RenderState.FaceCullMode.Off);
+
+                for (float[] off : offsets) {
+                    float[] rpos = new float[n * 2 * 3];
+                    for (int j = 0; j < n; j++) {
+                        var rp = route.get(j);
+                        rpos[j * 6]     = rp.x;
+                        rpos[j * 6 + 1] = rp.y + off[0];
+                        rpos[j * 6 + 2] = rp.z + off[1];
+                        rpos[j * 6 + 3] = rp.x;
+                        rpos[j * 6 + 4] = rp.y + off[2];
+                        rpos[j * 6 + 5] = rp.z + off[3];
+                    }
+                    Mesh wall = new Mesh();
+                    wall.setMode(Mesh.Mode.TriangleStrip);
+                    wall.setBuffer(VertexBuffer.Type.Position, 3, rpos);
+                    wall.updateBound();
+                    Geometry wallGeom = new Geometry("routeWall-" + id, wall);
+                    wallGeom.setMaterial(rtMat);
+                    wallGeom.setQueueBucket(RenderQueue.Bucket.Opaque);
+                    wallGeom.setCullHint(Spatial.CullHint.Never);
+                    rtNode.attachChild(wallGeom);
+                }
+            }
+        }
+        lastTrailTick = tick;
+    }
+
     // ---- vehicle tracking ----
 
     private void updateVehicles() {
@@ -750,6 +987,19 @@ public final class SubmarineScene3D extends SimpleApplication {
                 System.out.println("Camera: " + cameraMode.label());
             }
         }, "CycleCamera");
+
+        // T/W/R to toggle overlays
+        inputManager.addMapping("ToggleTrails", new KeyTrigger(KeyInput.KEY_T));
+        inputManager.addMapping("ToggleWaypoints", new KeyTrigger(KeyInput.KEY_W));
+        inputManager.addMapping("ToggleRoute", new KeyTrigger(KeyInput.KEY_R));
+        inputManager.addListener((ActionListener) (name, isPressed, tpf) -> {
+            if (!isPressed) return;
+            switch (name) {
+                case "ToggleTrails" -> showTrails = !showTrails;
+                case "ToggleWaypoints" -> showWaypoints = !showWaypoints;
+                case "ToggleRoute" -> showRoute = !showRoute;
+            }
+        }, "ToggleTrails", "ToggleWaypoints", "ToggleRoute");
 
         // Mouse orbit/zoom (Orbit and Free Look modes)
         inputManager.addMapping("OrbitLeft", new MouseAxisTrigger(MouseInput.AXIS_X, true));
