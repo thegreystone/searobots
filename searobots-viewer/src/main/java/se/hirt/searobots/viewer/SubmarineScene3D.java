@@ -733,76 +733,87 @@ public final class SubmarineScene3D extends SimpleApplication {
                 wpNode.detachAllChildren();
                 var waypoints = snap.waypoints();
                 if (!waypoints.isEmpty()) {
-                    // Spline connecting waypoints (like 2D Catmull-Rom, simplified to line strip)
+                    // Solid ribbon connecting waypoints (triangle strip tube)
                     if (waypoints.size() >= 2) {
-                        float[] spos = new float[waypoints.size() * 3];
+                        float hw = 2f; // ribbon half-width
+                        // Build a flat ribbon strip: for each waypoint, emit two
+                        // vertices offset perpendicular to the segment direction
+                        float[] spos = new float[waypoints.size() * 2 * 3];
                         for (int j = 0; j < waypoints.size(); j++) {
                             var wp = waypoints.get(j);
-                            spos[j * 3] = (float) wp.x();
-                            spos[j * 3 + 1] = (float) wp.z();
-                            spos[j * 3 + 2] = (float) -wp.y();
+                            float cx = (float) wp.x();
+                            float cy = (float) wp.z();
+                            float cz = (float) -wp.y();
+                            // Perpendicular in XZ plane (horizontal ribbon)
+                            float dx = 0, dz = 0;
+                            if (j < waypoints.size() - 1) {
+                                var next = waypoints.get(j + 1);
+                                dx = (float) next.x() - cx;
+                                dz = (float) -next.y() - cz;
+                            } else {
+                                var prev = waypoints.get(j - 1);
+                                dx = cx - (float) prev.x();
+                                dz = cz - (float) (-prev.y());
+                            }
+                            float len = (float) Math.sqrt(dx * dx + dz * dz);
+                            if (len > 0.001f) { dx /= len; dz /= len; }
+                            // Perpendicular: rotate 90 degrees in XZ
+                            float px = -dz * hw, pz = dx * hw;
+                            spos[j * 6]     = cx + px;
+                            spos[j * 6 + 1] = cy;
+                            spos[j * 6 + 2] = cz + pz;
+                            spos[j * 6 + 3] = cx - px;
+                            spos[j * 6 + 4] = cy;
+                            spos[j * 6 + 5] = cz - pz;
                         }
                         Mesh splineMesh = new Mesh();
-                        splineMesh.setMode(Mesh.Mode.LineStrip);
+                        splineMesh.setMode(Mesh.Mode.TriangleStrip);
                         splineMesh.setBuffer(VertexBuffer.Type.Position, 3, spos);
                         splineMesh.updateBound();
                         Geometry splineGeom = new Geometry("wpSpline", splineMesh);
                         Material spMat = new Material(assetManager, "Common/MatDefs/Misc/Unshaded.j3md");
                         spMat.setColor("Color", new ColorRGBA(color.r * 0.5f, color.g * 0.5f, color.b * 0.5f, 1f));
-                        spMat.getAdditionalRenderState().setBlendMode(RenderState.BlendMode.Additive);
-                        spMat.getAdditionalRenderState().setDepthWrite(false);
+                        spMat.getAdditionalRenderState().setFaceCullMode(RenderState.FaceCullMode.Off);
                         splineGeom.setMaterial(spMat);
-                        splineGeom.setQueueBucket(RenderQueue.Bucket.Transparent);
                         splineGeom.setCullHint(Spatial.CullHint.Never);
                         wpNode.attachChild(splineGeom);
                     }
 
-                    // Waypoint markers: all shown, active one larger and white
+                    // Waypoint markers: solid circle rings, active one larger and white
+                    int circSegs = 24;
                     for (var wp : waypoints) {
                         float wpX = (float) wp.x();
                         float wpY = (float) wp.z();
                         float wpZ = (float) -wp.y();
                         boolean active = wp.active();
-                        float s = active ? 20f : 10f;
+                        float r = active ? 18f : 10f;
+                        float w = active ? 2.5f : 1.5f;
 
-                        // Diamond marker
-                        Mesh dm = new Mesh();
-                        dm.setMode(Mesh.Mode.Lines);
-                        dm.setBuffer(VertexBuffer.Type.Position, 3, new float[]{
-                                0, s, 0,  s, 0, 0,  s, 0, 0,  0, -s, 0,
-                                0, -s, 0, -s, 0, 0, -s, 0, 0,  0, s, 0});
-                        dm.setBuffer(VertexBuffer.Type.Index, 1, new short[]{0,1,2,3,4,5,6,7});
-                        dm.updateBound();
-                        Geometry wpGeom = new Geometry("wp", dm);
+                        // Solid circle ring (triangle strip)
+                        float[] cpos = new float[circSegs * 2 * 3];
+                        for (int ci = 0; ci < circSegs; ci++) {
+                            float a = (float) (2 * Math.PI * ci / (circSegs - 1));
+                            float cos = FastMath.cos(a), sin = FastMath.sin(a);
+                            cpos[ci * 6]     = (r - w) * cos;
+                            cpos[ci * 6 + 1] = (r - w) * sin;
+                            cpos[ci * 6 + 2] = 0;
+                            cpos[ci * 6 + 3] = (r + w) * cos;
+                            cpos[ci * 6 + 4] = (r + w) * sin;
+                            cpos[ci * 6 + 5] = 0;
+                        }
+                        Mesh cm = new Mesh();
+                        cm.setMode(Mesh.Mode.TriangleStrip);
+                        cm.setBuffer(VertexBuffer.Type.Position, 3, cpos);
+                        cm.updateBound();
+                        Geometry wpGeom = new Geometry("wp", cm);
                         Material wpMat = new Material(assetManager, "Common/MatDefs/Misc/Unshaded.j3md");
                         wpMat.setColor("Color", active ? ColorRGBA.White : color);
+                        wpMat.getAdditionalRenderState().setFaceCullMode(RenderState.FaceCullMode.Off);
                         wpGeom.setMaterial(wpMat);
                         wpGeom.setLocalTranslation(wpX, wpY, wpZ);
                         wpGeom.addControl(new BillboardControl());
                         wpGeom.setCullHint(Spatial.CullHint.Never);
                         wpNode.attachChild(wpGeom);
-
-                        // Active waypoint: extra outer ring
-                        if (active) {
-                            float outerS = s * 1.5f;
-                            Mesh ring = new Mesh();
-                            ring.setMode(Mesh.Mode.Lines);
-                            ring.setBuffer(VertexBuffer.Type.Position, 3, new float[]{
-                                    0, outerS, 0,  outerS, 0, 0,  outerS, 0, 0,  0, -outerS, 0,
-                                    0, -outerS, 0, -outerS, 0, 0, -outerS, 0, 0,  0, outerS, 0});
-                            ring.setBuffer(VertexBuffer.Type.Index, 1, new short[]{0,1,2,3,4,5,6,7});
-                            ring.updateBound();
-                            Geometry ringGeom = new Geometry("wpRing", ring);
-                            Material ringMat = new Material(assetManager, "Common/MatDefs/Misc/Unshaded.j3md");
-                            ringMat.setColor("Color", new ColorRGBA(1f, 1f, 1f, 0.4f));
-                            ringMat.getAdditionalRenderState().setBlendMode(RenderState.BlendMode.Alpha);
-                            ringGeom.setMaterial(ringMat);
-                            ringGeom.setLocalTranslation(wpX, wpY, wpZ);
-                            ringGeom.addControl(new BillboardControl());
-                            ringGeom.setQueueBucket(RenderQueue.Bucket.Transparent);
-                            ringGeom.setCullHint(Spatial.CullHint.Never);
-                            wpNode.attachChild(ringGeom);
-                        }
                     }
                 }
             }

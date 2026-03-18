@@ -123,7 +123,8 @@ public final class DefaultAttackSub implements SubmarineController {
     private List<ThermalLayer> thermalLayers = List.of();
 
     // Contact tracking (sonar analysis, per-tick)
-    private double lastHeading;  // cached for use in planPatrol
+    private double lastHeading;  // cached for use in planPatrol / planRoute
+    private double lastSpeed;    // cached for heading-aware route planning
     private double lastContactBearing;
     private double lastContactSE;
     private long lastContactTick = -1000;
@@ -200,6 +201,7 @@ public final class DefaultAttackSub implements SubmarineController {
         var pos = self.pose().position();
         double heading = self.pose().heading();
         this.lastHeading = heading;
+        this.lastSpeed = self.velocity().speed();
         double depth = pos.z();
         long tick = input.tick();
 
@@ -409,8 +411,8 @@ public final class DefaultAttackSub implements SubmarineController {
                     double wpDy = wp.y() - pos.y();
                     double wpDist = Math.sqrt(wpDx * wpDx + wpDy * wpDy);
 
-                    if (wpDist < WAYPOINT_ARRIVAL_DIST) {
-                        currentWaypointIndex = (currentWaypointIndex + 1) % navWaypoints.size();
+                    if (wpDist < WAYPOINT_ARRIVAL_DIST && currentWaypointIndex < navWaypoints.size() - 1) {
+                        currentWaypointIndex++;
                         wp = navWaypoints.get(currentWaypointIndex);
                     }
 
@@ -1263,21 +1265,9 @@ public final class DefaultAttackSub implements SubmarineController {
      */
     private void replanFromCurrentWaypoint(double posX, double posY,
                                             TerrainMap terrain, BattleArea area) {
-        if (navWaypoints.isEmpty()) {
-            planPatrol(posX, posY, terrain, area);
-            return;
-        }
-        var currentWp = navWaypoints.get(currentWaypointIndex);
-        // Remove everything after the current waypoint
-        while (navWaypoints.size() > currentWaypointIndex + 1) {
-            navWaypoints.removeLast();
-        }
-        // Plan new waypoints from the current waypoint's position
-        var oldPlan = new ArrayList<>(navWaypoints);
-        planPatrol(currentWp.x(), currentWp.y(), terrain, area);
-        // Prepend the preserved current waypoint
-        navWaypoints.addFirst(oldPlan.get(currentWaypointIndex));
-        // currentWaypointIndex stays the same (still heading toward the preserved waypoint)
+        // Simply replan from the sub's current position.
+        // planPatrol handles prepending the marker and heading-aware first leg.
+        planPatrol(posX, posY, terrain, area);
     }
 
     /**
@@ -1287,11 +1277,18 @@ public final class DefaultAttackSub implements SubmarineController {
     private void replanToTarget(double posX, double posY, double targetX, double targetY,
                                  TerrainMap terrain, long tick) {
         if (navWaypoints.isEmpty()) {
-            // No existing plan: plan from current position
-            var route = planRoute(posX, posY, targetX, targetY, terrain);
+            // No existing plan: prepend current position marker, then
+            // use heading-aware planning for a physically reachable path
+            navWaypoints.add(new Vec3(posX, posY, safeDepthAt(posX, posY, terrain)));
+            var route = planRouteFromSub(posX, posY, lastHeading, lastSpeed,
+                    targetX, targetY, terrain);
             if (!route.isEmpty()) {
                 navWaypoints.addAll(route);
-                currentWaypointIndex = 0;
+                currentWaypointIndex = 1;
+            } else {
+                // No route found; add direct fallback so index 1 is valid
+                navWaypoints.add(new Vec3(targetX, targetY, safeDepthAt(targetX, targetY, terrain)));
+                currentWaypointIndex = 1;
             }
         } else {
             var currentWp = navWaypoints.get(currentWaypointIndex);
@@ -1334,6 +1331,85 @@ public final class DefaultAttackSub implements SubmarineController {
         return List.of(new Vec3(toX, toY, safeDepthAt(toX, toY, terrain)));
     }
 
+    /**
+     * Plans a heading-aware route from the sub's current position. First
+     * tries a normal A* route. If the first waypoint requires a sharp turn
+     * (> 90° from current heading), inserts a "lead point" ahead of the sub
+     * so the path starts in a physically reachable direction.
+     *
+     * Returns the route (without the current-position marker; caller prepends that).
+     */
+    private List<Vec3> planRouteFromSub(double posX, double posY, double heading,
+                                         double speed, double goalX, double goalY,
+                                         TerrainMap terrain) {
+        // Plan normally first
+        var directRoute = new ArrayList<>(planRoute(posX, posY, goalX, goalY, terrain));
+        if (directRoute.isEmpty()) return directRoute;
+
+        // Strip the grid-snapped start waypoint if it's just the origin
+        // snapped to the A* grid (not a useful navigation target)
+        if (directRoute.size() > 1) {
+            var first = directRoute.get(0);
+            double d = Math.sqrt(Math.pow(first.x() - posX, 2) + Math.pow(first.y() - posY, 2));
+            if (d < 150) directRoute.remove(0);
+        }
+
+        // Check angle to first waypoint
+        var firstWp = directRoute.get(0);
+        double wpBearing = Math.atan2(firstWp.x() - posX, firstWp.y() - posY);
+        double turnAngle = wpBearing - heading;
+        while (turnAngle > Math.PI) turnAngle -= 2 * Math.PI;
+        while (turnAngle < -Math.PI) turnAngle += 2 * Math.PI;
+
+        // If first waypoint is reachable with a moderate turn, use direct route
+        if (Math.abs(turnAngle) < Math.PI / 2) {
+            return directRoute;
+        }
+
+        // Sharp turn needed (> 90°): insert a lead point ahead of the sub
+        // to create a gentle curve instead of an immediate reversal
+        double leadDist = Math.max(200, speed * 20);
+        double goalDist = Math.sqrt(Math.pow(goalX - posX, 2) + Math.pow(goalY - posY, 2));
+        leadDist = Math.min(leadDist, goalDist * 0.4);
+        leadDist = Math.max(leadDist, 100);
+
+        double leadX = posX + Math.sin(heading) * leadDist;
+        double leadY = posY + Math.cos(heading) * leadDist;
+
+        // Check if lead point is safe; if not, try shorter distances
+        if (pathPlanner != null && !pathPlanner.isSafe(leadX, leadY)) {
+            boolean found = false;
+            for (double tryDist = leadDist * 0.5; tryDist >= 100; tryDist *= 0.5) {
+                double tx = posX + Math.sin(heading) * tryDist;
+                double ty = posY + Math.cos(heading) * tryDist;
+                if (pathPlanner.isSafe(tx, ty)) {
+                    leadX = tx;
+                    leadY = ty;
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                return directRoute; // can't insert safe lead point
+            }
+        }
+
+        // Build route: lead point, then A* from lead to goal
+        var result = new ArrayList<Vec3>();
+        result.add(new Vec3(leadX, leadY, safeDepthAt(leadX, leadY, terrain)));
+
+        var astarPath = planRoute(leadX, leadY, goalX, goalY, terrain);
+        for (int i = 0; i < astarPath.size(); i++) {
+            var wp = astarPath.get(i);
+            if (i == 0) {
+                double d = Math.sqrt(Math.pow(wp.x() - leadX, 2) + Math.pow(wp.y() - leadY, 2));
+                if (d < 100) continue; // skip near-duplicate
+            }
+            result.add(wp);
+        }
+        return result;
+    }
+
 
     /**
      * Plans a patrol route that explores the arena.
@@ -1343,7 +1419,9 @@ public final class DefaultAttackSub implements SubmarineController {
      */
     void planPatrol(double x, double y, TerrainMap terrain, BattleArea area) {
         navWaypoints.clear();
-        currentWaypointIndex = 0;
+        // Waypoint 0: current position marker (not navigated toward)
+        navWaypoints.add(new Vec3(x, y, safeDepthAt(x, y, terrain)));
+        currentWaypointIndex = 1;
 
         int numPoints = 5;
         double arenaExtent = area.extent();
@@ -1429,24 +1507,37 @@ public final class DefaultAttackSub implements SubmarineController {
             rawPoints.add(new Vec3(px, py, safeZ));
         }
 
-        // Build the final waypoint list, checking each leg for terrain obstacles
+        // Build the final waypoint list, checking each leg for terrain obstacles.
+        // First leg uses heading-aware planning so the path starts in a
+        // physically reachable direction for the sub.
         for (int i = 0; i < rawPoints.size(); i++) {
-            var from = (i == 0) ? new Vec3(x, y, safeDepthAt(x, y, terrain)) : rawPoints.get(i - 1);
             var to = rawPoints.get(i);
-
-            var leg = planRoute(from.x(), from.y(), to.x(), to.y(), terrain);
-            // planRoute includes the destination, add all points
+            List<Vec3> leg;
+            if (i == 0) {
+                // First leg: from sub's current position, heading-aware
+                leg = planRouteFromSub(x, y, lastHeading, lastSpeed,
+                        to.x(), to.y(), terrain);
+            } else {
+                var from = rawPoints.get(i - 1);
+                leg = planRoute(from.x(), from.y(), to.x(), to.y(), terrain);
+            }
             navWaypoints.addAll(leg);
         }
 
         // Remove duplicate waypoints that are very close together
-        for (int i = navWaypoints.size() - 1; i > 0; i--) {
+        // (but never remove the marker at index 0)
+        for (int i = navWaypoints.size() - 1; i > 1; i--) {
             var a = navWaypoints.get(i);
             var b = navWaypoints.get(i - 1);
             double dist = Math.sqrt(Math.pow(a.x() - b.x(), 2) + Math.pow(a.y() - b.y(), 2));
             if (dist < 50) {
                 navWaypoints.remove(i);
             }
+        }
+
+        // Safety: ensure at least one navigable waypoint after marker
+        if (navWaypoints.size() < 2) {
+            currentWaypointIndex = 0; // fall back to navigating toward marker
         }
     }
 
