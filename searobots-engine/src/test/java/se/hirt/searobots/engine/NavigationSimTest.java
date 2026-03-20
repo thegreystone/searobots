@@ -187,7 +187,7 @@ class NavigationSimTest {
         var terrain = terrainWithIsland(-500, -250, 250, -500, 500);
         startMatch(terrain);
 
-        var route = controller.planRoute(-2000, 0, 2000, 0, terrain);
+        var route = controller.autopilot().planRoute(-2000, 0, 2000, 0);
 
         // Route should have more than 2 waypoints (needs detour around island)
         assertTrue(route.size() > 2,
@@ -221,7 +221,7 @@ class NavigationSimTest {
         var terrain = flatTerrain(-500);
         startMatch(terrain);
 
-        var route = controller.planRoute(-2000, 0, 2000, 0, terrain);
+        var route = controller.autopilot().planRoute(-2000, 0, 2000, 0);
 
         // Direct route should be simple: start + end = 2 waypoints
         assertTrue(route.size() <= 2,
@@ -237,9 +237,7 @@ class NavigationSimTest {
         startMatch(terrain);
 
         // Start patrol from a point in the deep quadrant (x < 0, y < 0)
-        controller.planPatrol(-2000, -2000, terrain, CONFIG.battleArea());
-
-        // Access internal navWaypoints via behavior: tick the sub and check published waypoints
+        // The controller generates patrol waypoints on first tick
         var out = tickFull(terrain, 0, -2000, -2000, -400, 0, Vec3.ZERO, 1000);
 
         // The patrol should have generated waypoints

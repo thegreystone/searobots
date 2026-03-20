@@ -86,34 +86,39 @@ public record VehicleConfig(
     /** Effective mass in heave (vertical) direction. */
     public double massHeave() { return dryMass + addedMassHeave; }
 
-    /** Standard submarine configuration (reproduces the original SubmarinePhysics constants exactly). */
+    /**
+     * Attack submarine: 75m length, 12m beam, ~2500 tonnes.
+     * Max speed 15 m/s (~29 knots). Turn radius ~150-300m at patrol speed.
+     */
     public static VehicleConfig submarine() {
+        double mass = 2_500_000;         // 2500 tonnes
+        double drag = 12_000;            // tuned for 15 m/s max: sqrt(thrust/drag) = 15
         return new VehicleConfig(
-            700_000,                    // dryMass
-            350_000,                    // addedMassSurge
-            700_000 * 1.5,              // addedMassSway (blunt cross-section)
-            700_000 * 1.25,             // addedMassHeave
-            870_000,                    // maxThrust
-            0.3,                        // reverseThrustFactor
-            3.0,                        // maxReverseSpeed
-            3_864,                      // dragCoeff
-            3_864 * 3,                  // swayDragCoeff (lateral drag)
-            5.0,                        // hullMomentArm (CG to lateral center of pressure)
-            4.0,                        // rudderArea (m^2)
-            12.0,                       // rudderArm (m from CG)
-            3.5,                        // planesArea (m^2)
-            12.0,                       // planesArm (m from CG)
-            Math.toRadians(25),         // stallAngle (~0.44 rad, wider before stall)
-            40.0,                       // rotationalInertia (tuned for ~2-3 deg/s at patrol speed)
-            1.0 / 5.0,                 // ballastSlewRate (full blow in ~2.5s from neutral)
-            0.03 * 700_000 * 9.81,     // ballastForceMax
-            0.5 * 1025 * 1.0 * 520,    // verticalDragCoeff
-            10.0,                       // terrainClearance
-            32.5,                       // hullHalfLength
-            4.0,                        // hullHalfBeam
-            5.0,                        // collisionDamageFactor
-            0.5,                        // bounceSpeed
-            0.5,                        // propDragFactor
+            mass,                           // dryMass
+            mass / 2,                       // addedMassSurge (50% for streamlined hull)
+            mass * 1.5,                     // addedMassSway (blunt cross-section)
+            mass * 1.25,                    // addedMassHeave
+            drag * 15 * 15,                 // maxThrust: drag * v_max^2 = 2,700,000
+            0.3,                            // reverseThrustFactor
+            3.0,                            // maxReverseSpeed
+            drag,                           // dragCoeff
+            drag * 3,                       // swayDragCoeff (lateral drag ~3x surge)
+            6.0,                            // hullMomentArm (CG to lateral center of pressure)
+            6.0,                            // rudderArea (m^2)
+            30.0,                           // rudderArm (rudder near stern of 75m hull)
+            5.0,                            // planesArea (m^2)
+            30.0,                           // planesArm (stern planes near rudder)
+            Math.toRadians(25),             // stallAngle
+            15.0,                           // rotationalInertia (low base = tight turns at low speed)
+            1.0 / 5.0,                     // ballastSlewRate (full blow in ~2.5s from neutral)
+            0.03 * mass * 9.81,            // ballastForceMax
+            0.5 * 1025 * 1.0 * 520 * 1.5, // verticalDragCoeff (scaled for hull)
+            12.0,                           // terrainClearance
+            37.5,                           // hullHalfLength (75m / 2)
+            6.0,                            // hullHalfBeam (12m / 2)
+            5.0,                            // collisionDamageFactor
+            0.5,                            // bounceSpeed
+            0.5,                            // propDragFactor
             80.0,                       // baseSlDb
             15.0,                       // clutchDisengagedSlReduction
             2.0,                        // speedNoiseDbPerMs

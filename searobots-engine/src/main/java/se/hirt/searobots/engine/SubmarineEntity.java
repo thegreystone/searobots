@@ -64,8 +64,10 @@ public final class SubmarineEntity implements SubmarineOutput {
     private int activeSonarCooldown;
 
     // actuators (written by controller each tick)
-    private double rudder;
-    private double sternPlanes;
+    private double rudder;           // commanded (-1..1)
+    private double actualRudder;     // slew-limited actual position
+    private double sternPlanes;      // commanded (-1..1)
+    private double actualSternPlanes; // slew-limited actual position
     private double throttle;
     private double ballast = 0.5;
     private boolean engineClutch = true;  // true = engaged
@@ -76,6 +78,9 @@ public final class SubmarineEntity implements SubmarineOutput {
 
     // navigation waypoints (published by controller, cleared each tick)
     private final List<Waypoint> waypoints = new ArrayList<>();
+
+    // strategic waypoints (published by controller, cleared each tick)
+    private final List<SubmarineSnapshot.StrategicWaypointViz> strategicWaypoints = new ArrayList<>();
 
     // firing solution (published by controller, cleared each tick)
     private FiringSolution firingSolution;
@@ -150,6 +155,13 @@ public final class SubmarineEntity implements SubmarineOutput {
     }
 
     @Override
+    public void publishStrategicWaypoint(Waypoint waypoint, Purpose purpose) {
+        if (waypoint != null && purpose != null) {
+            strategicWaypoints.add(new SubmarineSnapshot.StrategicWaypointViz(waypoint, purpose));
+        }
+    }
+
+    @Override
     public void setEngineClutch(boolean engaged) {
         this.engineClutch = engaged;
     }
@@ -180,7 +192,11 @@ public final class SubmarineEntity implements SubmarineOutput {
     public int activeSonarCooldown() { return activeSonarCooldown; }
 
     public double rudder() { return rudder; }
+    public double actualRudder() { return actualRudder; }
+    public void setActualRudder(double v) { actualRudder = v; }
     public double sternPlanes() { return sternPlanes; }
+    public double actualSternPlanes() { return actualSternPlanes; }
+    public void setActualSternPlanes(double v) { actualSternPlanes = v; }
     public double throttle() { return throttle; }
     public double ballast() { return ballast; }
     public String status() { return status; }
@@ -188,6 +204,8 @@ public final class SubmarineEntity implements SubmarineOutput {
     public void clearContactEstimates() { contactEstimates.clear(); }
     public List<Waypoint> waypoints() { return List.copyOf(waypoints); }
     public void clearWaypoints() { waypoints.clear(); }
+    public List<SubmarineSnapshot.StrategicWaypointViz> strategicWaypoints() { return List.copyOf(strategicWaypoints); }
+    public void clearStrategicWaypoints() { strategicWaypoints.clear(); }
     public FiringSolution firingSolution() { return firingSolution; }
     public void clearFiringSolution() { firingSolution = null; }
 
@@ -229,10 +247,10 @@ public final class SubmarineEntity implements SubmarineOutput {
     public SubmarineSnapshot snapshot() {
         return new SubmarineSnapshot(id, controller.name(), pose(), velocity(), speed, color,
                 forfeited, hp, noiseLevel, throttle, rudder, sternPlanes, status, pingRequested,
-                contactEstimates(), waypoints(), firingSolution);
+                contactEstimates(), waypoints(), strategicWaypoints(), firingSolution);
     }
 
     public SubmarineState state() {
-        return new SubmarineState(pose(), velocity(), hp, 0);
+        return new SubmarineState(pose(), velocity(), speed, hp, 0);
     }
 }

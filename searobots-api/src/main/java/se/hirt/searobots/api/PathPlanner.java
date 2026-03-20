@@ -306,13 +306,29 @@ public final class PathPlanner {
 
     private List<Vec3> simplifyPath(List<int[]> gridPath, double operatingDepth) {
         if (gridPath.size() <= 2) {
+            // Short path: still apply depth lookahead by scanning terrain
+            // between start and end for the worst floor
             var result = new ArrayList<Vec3>();
+            double worstFloor = Double.NEGATIVE_INFINITY;
             for (var cell : gridPath) {
-                double wx = colToWorldX(cell[0]);
-                double wy = rowToWorldY(cell[1]);
-                double floor = terrain.elevationAt(wx, wy);
-                double z = Math.max(operatingDepth, floor + 50);
-                result.add(new Vec3(wx, wy, Math.min(z, -20)));
+                double f = terrain.elevationAt(colToWorldX(cell[0]), rowToWorldY(cell[1]));
+                if (f > worstFloor) worstFloor = f;
+            }
+            if (gridPath.size() == 2) {
+                var c0 = gridPath.get(0);
+                var c1 = gridPath.get(1);
+                double x0 = colToWorldX(c0[0]), y0 = rowToWorldY(c0[1]);
+                double x1 = colToWorldX(c1[0]), y1 = rowToWorldY(c1[1]);
+                double len = Math.sqrt(Math.pow(x1 - x0, 2) + Math.pow(y1 - y0, 2));
+                for (int s = 1; s < Math.max(2, (int) (len / 100)); s++) {
+                    double t = (double) s / (int) (len / 100);
+                    double f = terrain.elevationAt(x0 + (x1 - x0) * t, y0 + (y1 - y0) * t);
+                    if (f > worstFloor) worstFloor = f;
+                }
+            }
+            double z = Math.min(Math.max(operatingDepth, worstFloor + 50), -20);
+            for (var cell : gridPath) {
+                result.add(new Vec3(colToWorldX(cell[0]), rowToWorldY(cell[1]), z));
             }
             return result;
         }
@@ -331,19 +347,167 @@ public final class PathPlanner {
         }
         simplified.add(gridPath.getLast());
 
-        var result = new ArrayList<Vec3>();
+        // Convert grid cells to world coordinates with proactive depth planning.
+        // For each waypoint, scan ahead along the route to find the shallowest
+        // floor within a lookahead distance. Set the depth to clear that floor
+        // BEFORE arriving at it, so the sub is pre-positioned at the right depth.
+        var worldPoints = new ArrayList<double[]>(); // [wx, wy, localFloor]
         for (var cell : simplified) {
             double wx = colToWorldX(cell[0]);
             double wy = rowToWorldY(cell[1]);
             double floor = terrain.elevationAt(wx, wy);
-            double z = Math.max(operatingDepth, floor + 50);
-            result.add(new Vec3(wx, wy, Math.min(z, -20)));
+            worldPoints.add(new double[]{wx, wy, floor});
         }
+
+        // Compute cumulative distances along the route
+        double[] cumDist = new double[worldPoints.size()];
+        cumDist[0] = 0;
+        for (int i = 1; i < worldPoints.size(); i++) {
+            double dx = worldPoints.get(i)[0] - worldPoints.get(i - 1)[0];
+            double dy = worldPoints.get(i)[1] - worldPoints.get(i - 1)[1];
+            cumDist[i] = cumDist[i - 1] + Math.sqrt(dx * dx + dy * dy);
+        }
+
+        // For each waypoint, find the worst floor within DEPTH_LOOKAHEAD meters
+        // ahead along the route, including intermediate terrain samples.
+        double DEPTH_LOOKAHEAD = 2500; // meters: depth controller rises ~0.6m/s at 9.5m/s cruise
+        double CLEARANCE = 75;      // must exceed EMERGENCY_GAP (60) + margin
+        double[] targetDepths = new double[worldPoints.size()];
+        for (int i = 0; i < worldPoints.size(); i++) {
+            double worstFloor = worldPoints.get(i)[2];
+
+            // Scan ahead along subsequent waypoints and legs
+            for (int j = i; j < worldPoints.size() - 1; j++) {
+                if (cumDist[j] - cumDist[i] > DEPTH_LOOKAHEAD) break;
+
+                // Sample terrain between waypoints j and j+1
+                double[] from = worldPoints.get(j);
+                double[] to = worldPoints.get(j + 1);
+                double legLen = cumDist[j + 1] - cumDist[j];
+                int samples = Math.max(2, (int) (legLen / 100));
+                for (int s = 0; s <= samples; s++) {
+                    double t = (double) s / samples;
+                    double sx = from[0] + (to[0] - from[0]) * t;
+                    double sy = from[1] + (to[1] - from[1]) * t;
+                    double sampleDist = cumDist[j] + legLen * t - cumDist[i];
+                    if (sampleDist > DEPTH_LOOKAHEAD) break;
+                    double f = terrain.elevationAt(sx, sy);
+                    if (f > worstFloor) worstFloor = f;
+                }
+            }
+
+            targetDepths[i] = Math.min(
+                    Math.max(operatingDepth, worstFloor + CLEARANCE), -20);
+        }
+
+        // Depth rate limiting: asymmetric because rising is slow (depth
+        // controller fights gravity) but diving is fast (gravity helps).
+        // Rise rate: ~1m per 15m horizontal (pitch ~4 deg, limited by
+        //   ballast response and stern plane authority)
+        // Dive rate: ~1m per 6m horizontal (pitch ~10 deg, gravity-assisted)
+        double MAX_RISE_RATE = 1.0 / 15.0;
+        double MAX_DIVE_RATE = 1.0 / 6.0;
+
+        // Backward pass: ensure waypoints before a rise have started rising
+        for (int i = worldPoints.size() - 2; i >= 0; i--) {
+            double legDist = cumDist[i + 1] - cumDist[i];
+            double maxRise = legDist * MAX_RISE_RATE;
+            // Rising = getting less negative. If next WP is shallower, this WP
+            // must already be within maxRise of it.
+            if (targetDepths[i] < targetDepths[i + 1] - maxRise) {
+                targetDepths[i] = targetDepths[i + 1] - maxRise;
+            }
+        }
+        // Forward pass: limit dive rate (diving = getting more negative)
+        for (int i = 1; i < worldPoints.size(); i++) {
+            double legDist = cumDist[i] - cumDist[i - 1];
+            double maxDive = legDist * MAX_DIVE_RATE;
+            if (targetDepths[i] < targetDepths[i - 1] - maxDive) {
+                targetDepths[i] = targetDepths[i - 1] - maxDive;
+            }
+        }
+
+        var withDepths = new ArrayList<Vec3>();
+        for (int i = 0; i < worldPoints.size(); i++) {
+            withDepths.add(new Vec3(worldPoints.get(i)[0], worldPoints.get(i)[1],
+                    targetDepths[i]));
+        }
+
+        // Corner smoothing: replace sharp corners with achievable arcs.
+        // At patrol speed (~6 m/s) and max yaw rate (~2 deg/s), the minimum
+        // turn radius is ~170m. For each corner where the turn angle exceeds
+        // ~20 degrees, pull the tangent points back along each leg so the
+        // sub can follow the arc smoothly.
+        return smoothCorners(withDepths, 170);
+    }
+
+    private List<Vec3> smoothCorners(List<Vec3> path, double turnRadius) {
+        if (path.size() < 3) return path;
+
+        var result = new ArrayList<Vec3>();
+        result.add(path.getFirst());
+
+        for (int i = 1; i < path.size() - 1; i++) {
+            var prev = path.get(i - 1);
+            var curr = path.get(i);
+            var next = path.get(i + 1);
+
+            // Bearings of incoming and outgoing legs
+            double inBearing = Math.atan2(curr.x() - prev.x(), curr.y() - prev.y());
+            double outBearing = Math.atan2(next.x() - curr.x(), next.y() - curr.y());
+            double turnAngle = outBearing - inBearing;
+            while (turnAngle > Math.PI) turnAngle -= 2 * Math.PI;
+            while (turnAngle < -Math.PI) turnAngle += 2 * Math.PI;
+
+            double absTurn = Math.abs(turnAngle);
+            if (absTurn < Math.toRadians(20)) {
+                // Gentle turn: keep the waypoint as-is
+                result.add(curr);
+                continue;
+            }
+
+            // Sharp turn: compute tangent distance from corner
+            // d = R * tan(angle/2), capped to half the shorter leg
+            double tangentDist = turnRadius * Math.tan(Math.min(absTurn, Math.toRadians(150)) / 2);
+            double legIn = curr.horizontalDistanceTo(prev);
+            double legOut = curr.horizontalDistanceTo(next);
+            tangentDist = Math.min(tangentDist, Math.min(legIn, legOut) * 0.4);
+            tangentDist = Math.max(tangentDist, 50); // minimum offset
+
+            // Entry tangent point: back along incoming leg
+            double entryX = curr.x() - Math.sin(inBearing) * tangentDist;
+            double entryY = curr.y() - Math.cos(inBearing) * tangentDist;
+            // Exit tangent point: forward along outgoing leg
+            double exitX = curr.x() + Math.sin(outBearing) * tangentDist;
+            double exitY = curr.y() + Math.cos(outBearing) * tangentDist;
+
+            // Depth: interpolate from incoming to outgoing
+            double entryZ = (prev.z() + curr.z()) / 2;
+            double exitZ = (curr.z() + next.z()) / 2;
+
+            // Verify tangent points are in safe water
+            boolean entrySafe = isSafe(entryX, entryY);
+            boolean exitSafe = isSafe(exitX, exitY);
+
+            if (entrySafe && exitSafe) {
+                result.add(new Vec3(entryX, entryY, entryZ));
+                result.add(new Vec3(exitX, exitY, exitZ));
+            } else {
+                // Can't smooth: keep original corner
+                result.add(curr);
+            }
+        }
+
+        result.add(path.getLast());
         return result;
     }
 
     private boolean lineOfSight(int[] from, int[] to) {
-        // Bresenham-style walk checking all cells along the line
+        // Bresenham-style walk checking all cells along the line.
+        // Rejects lines through blocked cells AND high-cost cells
+        // (near dangerous terrain). This preserves intermediate waypoints
+        // that guide the sub through safe corridors, accounting for
+        // the sub's inertia and turn radius.
         int c0 = from[0], r0 = from[1];
         int c1 = to[0], r1 = to[1];
         int dc = Math.abs(c1 - c0), dr = Math.abs(r1 - r0);
@@ -352,7 +516,10 @@ public final class PathPlanner {
 
         while (true) {
             if (c0 < 0 || c0 >= gridCols || r0 < 0 || r0 >= gridRows) return false;
-            if (costGrid[r0 * gridCols + c0] == 0) return false;
+            float cost = costGrid[r0 * gridCols + c0];
+            // Block if impassable or near dangerous terrain (cost > 1.5
+            // means within the safety margin of blocked cells)
+            if (cost == 0 || cost > 1.5f) return false;
             if (c0 == c1 && r0 == r1) break;
             int e2 = 2 * err;
             if (e2 > -dr) { err -= dr; c0 += sc; }

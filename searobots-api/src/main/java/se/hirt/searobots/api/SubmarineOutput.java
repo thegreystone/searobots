@@ -79,4 +79,15 @@ public interface SubmarineOutput {
      * This gives the longest coast and quietest operation while moving.
      */
     default void setEngineClutch(boolean engaged) {}
+
+    /**
+     * Publishes a strategic waypoint for viewer visualization.
+     * Strategic waypoints represent high-level mission goals (where and why),
+     * while regular waypoints represent the A* navigation route (how).
+     * Has no effect on the simulation.
+     *
+     * @param waypoint  the waypoint position and active flag
+     * @param purpose   the tactical purpose (e.g. PATROL, INTERCEPT, EVADE)
+     */
+    default void publishStrategicWaypoint(Waypoint waypoint, Purpose purpose) {}
 }

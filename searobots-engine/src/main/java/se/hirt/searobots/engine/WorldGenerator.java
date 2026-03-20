@@ -157,6 +157,11 @@ public final class WorldGenerator {
     private static final double SPAWN_MIN_CLEARANCE = 150.0; // 150m below the sub
     // Minimum water depth (the floor must be at least this deep)
     private static final double SPAWN_MIN_FLOOR_DEPTH = -200.0;
+    // Heading safety: floor must stay below this depth for SAFE_HEADING_DISTANCE ahead
+    private static final double SAFE_HEADING_MIN_FLOOR = -40.0;
+    private static final double SAFE_HEADING_DISTANCE = 250.0;
+    private static final double SAFE_HEADING_STEP = 50.0;
+    private static final int HEADING_CANDIDATES = 36; // every 10 degrees
 
     private List<Vec3> generateSpawnPoints(MatchConfig config, TerrainMap terrain,
                                            Random rng) {
@@ -188,6 +193,9 @@ public final class WorldGenerator {
             // Must have enough clearance below
             if (spawnDepth < floorZ + SPAWN_MIN_CLEARANCE) continue;
 
+            // Must have at least one safe heading (no shallow water ahead)
+            if (Double.isNaN(findSafeHeading(terrain, x, y))) continue;
+
             boolean tooClose = false;
             for (var p : points) {
                 if (p.horizontalDistanceTo(new Vec3(x, y, spawnDepth)) < minSeparation) {
@@ -200,5 +208,43 @@ public final class WorldGenerator {
             points.add(new Vec3(x, y, spawnDepth));
         }
         return List.copyOf(points);
+    }
+
+    /**
+     * Finds the safest heading from (x, y) by scanning 36 directions.
+     * Returns the heading where the minimum floor depth over
+     * {@link #SAFE_HEADING_DISTANCE} is deepest, or {@code NaN} if no
+     * direction keeps the floor below {@link #SAFE_HEADING_MIN_FLOOR}.
+     */
+    static double findSafeHeading(TerrainMap terrain, double x, double y) {
+        double bestHeading = Double.NaN;
+        double bestWorstFloor = 0; // shallowest floor along best heading (most negative = deepest)
+
+        for (int i = 0; i < HEADING_CANDIDATES; i++) {
+            double heading = i * (2 * Math.PI / HEADING_CANDIDATES);
+            double sinH = Math.sin(heading);
+            double cosH = Math.cos(heading);
+
+            double worstFloor = Double.NEGATIVE_INFINITY;
+            boolean safe = true;
+            for (double d = SAFE_HEADING_STEP; d <= SAFE_HEADING_DISTANCE; d += SAFE_HEADING_STEP) {
+                double fx = x + sinH * d;
+                double fy = y + cosH * d;
+                double floor = terrain.elevationAt(fx, fy);
+                if (floor > SAFE_HEADING_MIN_FLOOR) {
+                    safe = false;
+                    break;
+                }
+                if (floor > worstFloor) {
+                    worstFloor = floor;
+                }
+            }
+
+            if (safe && (Double.isNaN(bestHeading) || worstFloor < bestWorstFloor)) {
+                bestHeading = heading;
+                bestWorstFloor = worstFloor;
+            }
+        }
+        return bestHeading;
     }
 }

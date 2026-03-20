@@ -28,8 +28,26 @@
  */
 package se.hirt.searobots.api;
 
-public record SubmarineState(Pose pose, Velocity velocity, double surgeSpeed, int hp, int torpedoesRemaining) {
-    public SubmarineState(Pose pose, Velocity velocity, int hp, int torpedoesRemaining) {
-        this(pose, velocity, velocity.linear().length(), hp, torpedoesRemaining);
-    }
-}
+/**
+ * Bundled context about a tracked contact, used by strategic waypoint
+ * generation methods to decide approach geometry and noise policy.
+ *
+ * @param x                estimated world X coordinate
+ * @param y                estimated world Y coordinate
+ * @param heading          estimated heading in radians, or NaN if unknown
+ * @param speed            estimated speed in m/s
+ * @param distance         distance from own sub to the contact
+ * @param behindTarget     true if we are in the target's stern arc
+ * @param ticksSinceContact ticks since the last sonar fix
+ * @param contactStale     true if the contact hasn't been updated recently
+ */
+public record TrackedContact(
+        double x,
+        double y,
+        double heading,
+        double speed,
+        double distance,
+        boolean behindTarget,
+        long ticksSinceContact,
+        boolean contactStale
+) {}

@@ -36,5 +36,10 @@ package se.hirt.searobots.api;
  * @param y world Y coordinate (meters)
  * @param z target depth (negative, meters below sea level)
  * @param active true if this is the waypoint the sub is currently heading toward
+ * @param reverse true if this is a reverse waypoint (sub backs toward it)
  */
-public record Waypoint(double x, double y, double z, boolean active) {}
+public record Waypoint(double x, double y, double z, boolean active, boolean reverse) {
+    public Waypoint(double x, double y, double z, boolean active) {
+        this(x, y, z, active, false);
+    }
+}

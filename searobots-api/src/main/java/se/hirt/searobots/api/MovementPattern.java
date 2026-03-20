@@ -28,8 +28,11 @@
  */
 package se.hirt.searobots.api;
 
-public record SubmarineState(Pose pose, Velocity velocity, double surgeSpeed, int hp, int torpedoesRemaining) {
-    public SubmarineState(Pose pose, Velocity velocity, int hp, int torpedoesRemaining) {
-        this(pose, velocity, velocity.linear().length(), hp, torpedoesRemaining);
-    }
+/**
+ * Movement pattern describing how the submarine moves toward a waypoint.
+ */
+public enum MovementPattern {
+    DIRECT,
+    ZIGZAG_TMA,
+    SPRINT_DRIFT
 }

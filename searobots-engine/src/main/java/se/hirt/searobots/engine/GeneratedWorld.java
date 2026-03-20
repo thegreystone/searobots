@@ -76,4 +76,40 @@ public record GeneratedWorld(
     public static GeneratedWorld deepFlat() {
         return flatOcean(-1000, -100);
     }
+
+    /**
+     * L-shaped island on deep ocean for testing three-point turn recovery.
+     * Sub 0 spawns 900m south of the island, facing north (into the wall).
+     */
+    public static GeneratedWorld lIslandRecovery() {
+        var config = MatchConfig.withDefaults(0);
+        double halfSize = config.battleArea() instanceof BattleArea.Circular c
+                ? c.radius() : 7000;
+        double margin = config.terrainMarginMeters();
+        double totalSize = (halfSize + margin) * 2;
+        double cellSize = config.gridCellMeters();
+        int gridSize = (int) Math.ceil(totalSize / cellSize) + 1;
+        double origin = -(gridSize / 2) * cellSize;
+
+        double[] data = new double[gridSize * gridSize];
+        for (int row = 0; row < gridSize; row++) {
+            double worldY = origin + row * cellSize;
+            for (int col = 0; col < gridSize; col++) {
+                double worldX = origin + col * cellSize;
+                boolean inHArm = worldX >= -2000 && worldX <= 2000
+                        && worldY >= -500 && worldY <= 500;
+                boolean inVArm = worldX >= -500 && worldX <= 500
+                        && worldY >= -500 && worldY <= 2000;
+                data[row * gridSize + col] = (inHArm || inVArm) ? 5.0 : -500;
+            }
+        }
+        var terrain = new TerrainMap(data, gridSize, gridSize, origin, origin, cellSize);
+
+        var spawns = List.of(
+                new Vec3(0, -900, -150),    // sub 0: south of island, facing north
+                new Vec3(5000, -5000, -200));
+
+        return new GeneratedWorld(config, terrain, List.of(),
+                new CurrentField(List.of()), spawns);
+    }
 }

@@ -731,21 +731,38 @@ public class MapPanel extends JPanel {
             for (int i = 0; i < waypoints.size(); i++) {
                 var wp = waypoints.get(i);
                 boolean isActive = wp.active();
+                boolean isReverse = wp.reverse();
 
                 double r = isActive ? markerRadius * 1.4 : markerRadius;
 
-                // Depth-based coloring
-                Color depthColor = waypointDepthColor(wp.z());
+                // Reverse waypoints are purple; normal use depth-based coloring
+                Color fillColor = isReverse
+                        ? new Color(180, 60, 220)
+                        : waypointDepthColor(wp.z());
 
-                // Inner fill
-                g2.setColor(depthColor);
-                g2.fill(new Ellipse2D.Double(wp.x() - r, wp.y() - r, 2 * r, 2 * r));
-
-                // White outline (thicker for active)
-                float strokeWidth = isActive ? (float) (2.5 / pixelsPerMeter) : (float) (1.0 / pixelsPerMeter);
-                g2.setStroke(new BasicStroke(strokeWidth));
-                g2.setColor(isActive ? Color.WHITE : new Color(255, 255, 255, 160));
-                g2.draw(new Ellipse2D.Double(wp.x() - r, wp.y() - r, 2 * r, 2 * r));
+                if (isReverse) {
+                    // Diamond shape for reverse waypoints
+                    var diamond = new java.awt.geom.Path2D.Double();
+                    diamond.moveTo(wp.x(), wp.y() - r * 1.3);
+                    diamond.lineTo(wp.x() + r, wp.y());
+                    diamond.lineTo(wp.x(), wp.y() + r * 1.3);
+                    diamond.lineTo(wp.x() - r, wp.y());
+                    diamond.closePath();
+                    g2.setColor(fillColor);
+                    g2.fill(diamond);
+                    float strokeWidth = isActive ? (float) (2.5 / pixelsPerMeter) : (float) (1.0 / pixelsPerMeter);
+                    g2.setStroke(new BasicStroke(strokeWidth));
+                    g2.setColor(isActive ? Color.WHITE : new Color(255, 255, 255, 160));
+                    g2.draw(diamond);
+                } else {
+                    // Circle for normal waypoints
+                    g2.setColor(fillColor);
+                    g2.fill(new Ellipse2D.Double(wp.x() - r, wp.y() - r, 2 * r, 2 * r));
+                    float strokeWidth = isActive ? (float) (2.5 / pixelsPerMeter) : (float) (1.0 / pixelsPerMeter);
+                    g2.setStroke(new BasicStroke(strokeWidth));
+                    g2.setColor(isActive ? Color.WHITE : new Color(255, 255, 255, 160));
+                    g2.draw(new Ellipse2D.Double(wp.x() - r, wp.y() - r, 2 * r, 2 * r));
+                }
 
                 // Active waypoint gets an extra bright ring
                 if (isActive) {

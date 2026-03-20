@@ -28,8 +28,16 @@
  */
 package se.hirt.searobots.api;
 
-public record SubmarineState(Pose pose, Velocity velocity, double surgeSpeed, int hp, int torpedoesRemaining) {
-    public SubmarineState(Pose pose, Velocity velocity, int hp, int torpedoesRemaining) {
-        this(pose, velocity, velocity.linear().length(), hp, torpedoesRemaining);
-    }
+/**
+ * The tactical purpose of a strategic waypoint: why the submarine
+ * is heading to this position.
+ */
+public enum Purpose {
+    PATROL,
+    INVESTIGATE,
+    PING_POSITION,
+    STEALTH_TRANSIT,
+    INTERCEPT,
+    EVADE,
+    RALLY
 }

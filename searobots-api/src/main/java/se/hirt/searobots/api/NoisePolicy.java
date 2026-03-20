@@ -28,8 +28,14 @@
  */
 package se.hirt.searobots.api;
 
-public record SubmarineState(Pose pose, Velocity velocity, double surgeSpeed, int hp, int torpedoesRemaining) {
-    public SubmarineState(Pose pose, Velocity velocity, int hp, int torpedoesRemaining) {
-        this(pose, velocity, velocity.linear().length(), hp, torpedoesRemaining);
-    }
+/**
+ * Noise discipline policy for a strategic waypoint. The autopilot
+ * translates this into throttle limits; the strategic layer does
+ * not set throttle directly.
+ */
+public enum NoisePolicy {
+    SILENT,
+    QUIET,
+    NORMAL,
+    SPRINT
 }

@@ -84,8 +84,15 @@ public final class SimulationLoop {
             if (headings != null && i < headings.size() && !Double.isNaN(headings.get(i))) {
                 heading = headings.get(i);
             } else {
-                heading = Math.atan2(-spawn.x(), -spawn.y()); // face toward center
-                if (heading < 0) heading += 2 * Math.PI;
+                // Pick a heading that doesn't point into shallow water
+                double safeHeading = WorldGenerator.findSafeHeading(
+                        world.terrain(), spawn.x(), spawn.y());
+                if (!Double.isNaN(safeHeading)) {
+                    heading = safeHeading;
+                } else {
+                    heading = Math.atan2(-spawn.x(), -spawn.y()); // fallback: face center
+                    if (heading < 0) heading += 2 * Math.PI;
+                }
             }
             var vCfg = i < vehicleConfigs.size() ? vehicleConfigs.get(i) : VehicleConfig.submarine();
             var entity = new SubmarineEntity(vCfg, i, controllers.get(i), spawn, heading,
@@ -142,6 +149,7 @@ public final class SimulationLoop {
             // Clear per-tick published data after snapshot
             entities.forEach(SubmarineEntity::clearContactEstimates);
             entities.forEach(SubmarineEntity::clearWaypoints);
+            entities.forEach(SubmarineEntity::clearStrategicWaypoints);
             entities.forEach(SubmarineEntity::clearFiringSolution);
 
             // Post-tick: consume pings, tick cooldowns

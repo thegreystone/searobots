@@ -39,4 +39,8 @@ public record SubmarineSnapshot(int id, String name, Pose pose, Velocity velocit
                                  String status, boolean pingRequested,
                                  List<ContactEstimate> contactEstimates,
                                  List<Waypoint> waypoints,
-                                 FiringSolution firingSolution) {}
+                                 List<StrategicWaypointViz> strategicWaypoints,
+                                 FiringSolution firingSolution) {
+
+    public record StrategicWaypointViz(Waypoint waypoint, Purpose purpose) {}
+}

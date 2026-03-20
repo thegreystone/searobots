@@ -80,13 +80,15 @@ public final class SubmarineScene3D extends SimpleApplication {
 
     // 3D overlays: trails, waypoints, routes
     private boolean showTrails = true;
-    private boolean showWaypoints = true;
+    private boolean showWaypoints = true;      // [W] strategic waypoints
+    private boolean showAutopilotRoute = true;  // [A] autopilot A* route
     private boolean showRoute = true;
     private final Map<Integer, java.util.Deque<Vector3f>> trailBuffers = new HashMap<>();
     private final Map<Integer, Node> trailNodes = new HashMap<>();
-    private final Map<Integer, Node> waypointNodes = new HashMap<>();
+    private final Map<Integer, Node> waypointNodes = new HashMap<>();  // A* nav waypoints
+    private final Map<Integer, Node> strategicNodes = new HashMap<>(); // strategic waypoints
     private final Map<Integer, Node> routeNodes = new HashMap<>();
-    private static final int MAX_TRAIL_POINTS = 500; // match 2D viewer
+    private static final int MAX_TRAIL_POINTS = 2000; // longer trail for larger sub
     private static final int TRAIL_SAMPLE_INTERVAL = 1; // every tick, like 2D
     private final Map<Integer, java.util.List<Vector3f>> routeBuffers = new HashMap<>();
     private static final int ROUTE_SAMPLE_INTERVAL = 100; // ~2 seconds between samples
@@ -108,6 +110,7 @@ public final class SubmarineScene3D extends SimpleApplication {
     private LightScatteringFilter godRaysFilter;
     private FilterPostProcessor fpp;
     private volatile boolean atmosphereEnabled = true;
+    private volatile boolean debugMode = false;
 
     // Sun simulation: time of day = config.startTime + elapsed tick time
     private java.time.LocalTime startTime = java.time.LocalTime.NOON;
@@ -261,11 +264,12 @@ public final class SubmarineScene3D extends SimpleApplication {
             modelNode.attachChild(hull);
             // Set up pivot nodes for control surfaces (hinge at hull attachment)
             // OBJ coords: Y=fore-aft, X=left-right, Z=up-down
-            setupPivotAt(modelNode, "rudderl",   new Vector3f(0f, 51f,  0.33f));
-            setupPivotAt(modelNode, "rudderu",   new Vector3f(0f, 51f,  0.23f));
-            setupPivotAt(modelNode, "elevatorl",  new Vector3f(10.8f, -20.55f, 0f));
-            setupPivotAt(modelNode, "elevatorr", new Vector3f(-11.1f, -20.55f, 0f));
-            setupPivotAt(modelNode, "Propeller",  new Vector3f(0f, 65.25f, 0.28f));
+            // Scaled model: 75m x 12m (sx=0.4, sy=0.567, sz=0.4 from original)
+            setupPivotAt(modelNode, "rudderl",   new Vector3f(0f, 34f, 0.13f));
+            setupPivotAt(modelNode, "rudderu",   new Vector3f(0f, 34f, 0.09f));
+            setupPivotAt(modelNode, "elevatorl",  new Vector3f(4.3f, -10f, 0f));  // under tower center
+            setupPivotAt(modelNode, "elevatorr", new Vector3f(-4.4f, -10f, 0f));  // under tower center
+            setupPivotAt(modelNode, "Propeller",  new Vector3f(0f, 37f, 0.11f));
             System.out.println("Loaded submarine-hybrid.obj");
         } catch (Exception e) {
             System.err.println("Failed to load submarine model: " + e.getMessage());
@@ -295,7 +299,7 @@ public final class SubmarineScene3D extends SimpleApplication {
         keysText.setText(
                 "[1] 1x  [2] 2x  [3] 5x  [4] 10x  [5] 22x\n" +
                 "[P] Pause  [N] Step  [Tab] Cycle sub  [V] Camera\n" +
-                "[T] Trails  [W] Waypoints  [R] Route  [Space] New map");
+                "[T] Trails  [W] Strategic  [A] Autopilot  [R] Route  [Space] New map");
         float keysWidth = keysText.getLineWidth();
         float keysHeight = keysText.getHeight();
         keysText.setLocalTranslation(settings.getWidth() - keysWidth - 10, keysHeight + 10, 0);
@@ -362,31 +366,48 @@ public final class SubmarineScene3D extends SimpleApplication {
         System.out.println("simpleInitApp: PHASE 1 DONE");
     }
 
+    private long frameCount = 0;
+
+    @Override
+    public void handleError(String errMsg, Throwable t) {
+        System.err.println("JME ERROR: " + errMsg);
+        if (t != null) t.printStackTrace(System.err);
+    }
+
     @Override
     public void simpleUpdate(float tpf) {
-        // Phase 3: terrain + vehicles
-        GeneratedWorld w = pendingWorld;
-        if (w != null) {
-            pendingWorld = null;
-            attachTerrain(w);
+        frameCount++;
+        if (frameCount <= 3 || frameCount % 500 == 0) {
+            System.out.println("simpleUpdate frame #" + frameCount);
         }
-        updateVehicles();
-        updateCamera(tpf);
-        updateHud();
-        updateCrosshair();
-        updateOverlays();
-        // Keep sun billboard centered on camera (infinitely far away)
-        if (sunBillboard != null) {
-            Vector3f sunPos = cam.getLocation().add(sun.getDirection().mult(-900f));
-            sunBillboard.setLocalTranslation(sunPos.subtract(200, 200, 0));
+        try {
+            // Phase 3: terrain + vehicles
+            GeneratedWorld w = pendingWorld;
+            if (w != null) {
+                pendingWorld = null;
+                attachTerrain(w);
+            }
+            updateVehicles();
+            updateCamera(tpf);
+            updateHud();
+            updateCrosshair();
+            updateOverlays();
+            // Keep sun billboard centered on camera (infinitely far away)
+            if (sunBillboard != null) {
+                Vector3f sunPos = cam.getLocation().add(sun.getDirection().mult(-900f));
+                sunBillboard.setLocalTranslation(sunPos.subtract(200, 200, 0));
+            }
+            // Keep HUD anchored to current window size
+            hudText.setLocalTranslation(10, cam.getHeight() - 10, 0);
+            keysText.setLocalTranslation(
+                    cam.getWidth() - keysText.getLineWidth() - 10,
+                    keysText.getHeight() + 10, 0);
+            sunHour = (startTime.toSecondOfDay() / 3600f + latestTick / 50f / 3600f) % 24f;
+            updateAtmosphere();
+        } catch (Throwable t) {
+            System.err.println("EXCEPTION in simpleUpdate (frame " + frameCount + "):");
+            t.printStackTrace(System.err);
         }
-        // Keep HUD anchored to current window size
-        hudText.setLocalTranslation(10, cam.getHeight() - 10, 0);
-        keysText.setLocalTranslation(
-                cam.getWidth() - keysText.getLineWidth() - 10,
-                keysText.getHeight() + 10, 0);
-        sunHour = (startTime.toSecondOfDay() / 3600f + latestTick / 50f / 3600f) % 24f;
-        updateAtmosphere();
     }
 
     /**
@@ -408,6 +429,13 @@ public final class SubmarineScene3D extends SimpleApplication {
 
     public void setAtmosphereEnabled(boolean enabled) {
         atmosphereEnabled = enabled;
+    }
+
+    public void setDebugMode(boolean enabled) {
+        debugMode = enabled;
+        if (enabled) {
+            atmosphereEnabled = false;
+        }
     }
 
     public WaterFilter getWaterFilter() {
@@ -453,6 +481,8 @@ public final class SubmarineScene3D extends SimpleApplication {
         trailBuffers.clear();
         for (Node n : waypointNodes.values()) n.removeFromParent();
         waypointNodes.clear();
+        for (Node n : strategicNodes.values()) n.removeFromParent();
+        strategicNodes.clear();
         for (Node n : routeNodes.values()) n.removeFromParent();
         routeNodes.clear();
         routeBuffers.clear();
@@ -515,6 +545,18 @@ public final class SubmarineScene3D extends SimpleApplication {
             sunColor = new ColorRGBA(0.9f + 0.3f * t, 0.3f + 0.6f * t, 0.1f + 0.4f * t, 1f);
         }
         waterFilter.setLightColor(sunColor.mult(1.3f));
+
+        if (debugMode) {
+            // Debug mode: no fog, no water effect, full bright flat lighting
+            sun.setColor(ColorRGBA.White.mult(1.5f));
+            fill.setColor(new ColorRGBA(0.7f, 0.7f, 0.7f, 1f));
+            ambient.setColor(new ColorRGBA(0.6f, 0.6f, 0.6f, 1f));
+            fogFilter.setEnabled(false);
+            waterFilter.setEnabled(false);
+            viewPort.setBackgroundColor(new ColorRGBA(0.15f, 0.15f, 0.25f, 1f));
+            return;
+        }
+        waterFilter.setEnabled(true);
 
         if (!atmosphereEnabled) {
             // Full flat lighting, no fog, but still track sun direction
@@ -727,9 +769,9 @@ public final class SubmarineScene3D extends SimpleApplication {
                 waypointNodes.put(id, wpNode);
                 rootNode.attachChild(wpNode);
             }
-            wpNode.setCullHint(showWaypoints ? Spatial.CullHint.Never : Spatial.CullHint.Always);
+            wpNode.setCullHint(showAutopilotRoute ? Spatial.CullHint.Never : Spatial.CullHint.Always);
 
-            if (showWaypoints) {
+            if (showAutopilotRoute) {
                 wpNode.detachAllChildren();
                 var waypoints = snap.waypoints();
                 if (!waypoints.isEmpty()) {
@@ -818,6 +860,68 @@ public final class SubmarineScene3D extends SimpleApplication {
                 }
             }
 
+            // --- Strategic Waypoints ---
+            Node stNode = strategicNodes.get(id);
+            if (stNode == null) {
+                stNode = new Node("strategic-" + id);
+                strategicNodes.put(id, stNode);
+                rootNode.attachChild(stNode);
+            }
+            stNode.setCullHint(showWaypoints ? Spatial.CullHint.Never : Spatial.CullHint.Always);
+
+            if (showWaypoints) {
+                stNode.detachAllChildren();
+                var stratWps = snap.strategicWaypoints();
+                if (stratWps != null && !stratWps.isEmpty()) {
+                    int circSegs = 24;
+                    for (var sw : stratWps) {
+                        var wp = sw.waypoint();
+                        float wpX = (float) wp.x();
+                        float wpY = (float) wp.z();
+                        float wpZ = (float) -wp.y();
+                        boolean active = wp.active();
+                        float r = active ? 25f : 16f;
+                        float w = active ? 3.5f : 2.5f;
+
+                        // Color-code by purpose
+                        ColorRGBA purposeColor = switch (sw.purpose()) {
+                            case PATROL -> new ColorRGBA(0.2f, 0.8f, 0.2f, 1f);
+                            case INVESTIGATE -> new ColorRGBA(1f, 1f, 0.2f, 1f);
+                            case PING_POSITION -> new ColorRGBA(1f, 0.5f, 0f, 1f);
+                            case STEALTH_TRANSIT -> new ColorRGBA(0.3f, 0.3f, 0.8f, 1f);
+                            case INTERCEPT -> new ColorRGBA(1f, 0.2f, 0.2f, 1f);
+                            case EVADE -> new ColorRGBA(0.8f, 0.2f, 0.8f, 1f);
+                            case RALLY -> ColorRGBA.Cyan;
+                        };
+
+                        float[] cpos = new float[circSegs * 2 * 3];
+                        for (int ci = 0; ci < circSegs; ci++) {
+                            float a = (float) (2 * Math.PI * ci / (circSegs - 1));
+                            float cos = FastMath.cos(a), sin = FastMath.sin(a);
+                            cpos[ci * 6]     = (r - w) * cos;
+                            cpos[ci * 6 + 1] = (r - w) * sin;
+                            cpos[ci * 6 + 2] = 0;
+                            cpos[ci * 6 + 3] = (r + w) * cos;
+                            cpos[ci * 6 + 4] = (r + w) * sin;
+                            cpos[ci * 6 + 5] = 0;
+                        }
+                        Mesh cm = new Mesh();
+                        cm.setMode(Mesh.Mode.TriangleStrip);
+                        cm.setBuffer(VertexBuffer.Type.Position, 3, cpos);
+                        cm.updateBound();
+                        Geometry swGeom = new Geometry("strategic-wp", cm);
+                        Material swMat = new Material(assetManager, "Common/MatDefs/Misc/Unshaded.j3md");
+                        swMat.setColor("Color", active ? ColorRGBA.White : purposeColor);
+                        swMat.getAdditionalRenderState().setFaceCullMode(RenderState.FaceCullMode.Off);
+                        swGeom.setMaterial(swMat);
+                        swGeom.setLocalTranslation(wpX, wpY, wpZ);
+                        swGeom.addControl(new BillboardControl());
+                        swGeom.setCullHint(Spatial.CullHint.Never);
+                        stNode.attachChild(swGeom);
+                    }
+                }
+            }
+
             // --- Route ---
             Node rtNode = routeNodes.get(id);
             if (rtNode == null) {
@@ -836,7 +940,7 @@ public final class SubmarineScene3D extends SimpleApplication {
             if (showRoute && route.size() >= 2 && tick % 10 == 0) {
                 rtNode.detachAllChildren();
                 int n = route.size();
-                float w = 4f; // half-width of the duct
+                float w = 2f; // half-width of the route duct
 
                 // Build a rectangular duct: 4 walls (top, bottom, left, right)
                 // Cross-section in YZ plane (perpendicular to travel in XZ)
@@ -962,16 +1066,16 @@ public final class SubmarineScene3D extends SimpleApplication {
                 bubbles.setMaterial(bubbleMat);
                 bubbles.setImagesX(1);
                 bubbles.setImagesY(1);
-                bubbles.setStartColor(new ColorRGBA(0.8f, 0.9f, 1.0f, 0.6f));
+                bubbles.setStartColor(new ColorRGBA(0.7f, 0.85f, 1.0f, 0.4f));
                 bubbles.setEndColor(new ColorRGBA(0.8f, 0.9f, 1.0f, 0.0f));
-                bubbles.setStartSize(0.5f);
-                bubbles.setEndSize(2.0f);
-                bubbles.setGravity(0, 2f, 0); // bubbles rise
-                bubbles.setLowLife(1f);
-                bubbles.setHighLife(3f);
-                bubbles.getParticleInfluencer().setInitialVelocity(new Vector3f(0, 1f, 0));
-                bubbles.getParticleInfluencer().setVelocityVariation(0.8f);
-                bubbles.setLocalTranslation(0, 0, 0); // at sub position
+                bubbles.setStartSize(0.15f);
+                bubbles.setEndSize(0.5f);
+                bubbles.setGravity(0, -5f, 0); // bubbles rise (negative = upward in local space)
+                bubbles.setLowLife(0.5f);
+                bubbles.setHighLife(2f);
+                bubbles.getParticleInfluencer().setInitialVelocity(new Vector3f(0, 2f, 0));
+                bubbles.getParticleInfluencer().setVelocityVariation(0.5f);
+                bubbles.setLocalTranslation(0, 37f, 0); // stern: model Y=37, try jME Y
                 subNode.attachChild(bubbles);
                 bubbleEmitters.put(snap.id(), bubbles);
             }
@@ -1060,18 +1164,20 @@ public final class SubmarineScene3D extends SimpleApplication {
             }
         }, "CycleCamera");
 
-        // T/W/R to toggle overlays
+        // T/W/A/R to toggle overlays
         inputManager.addMapping("ToggleTrails", new KeyTrigger(KeyInput.KEY_T));
         inputManager.addMapping("ToggleWaypoints", new KeyTrigger(KeyInput.KEY_W));
+        inputManager.addMapping("ToggleAutopilotRoute", new KeyTrigger(KeyInput.KEY_A));
         inputManager.addMapping("ToggleRoute", new KeyTrigger(KeyInput.KEY_R));
         inputManager.addListener((ActionListener) (name, isPressed, tpf) -> {
             if (!isPressed) return;
             switch (name) {
                 case "ToggleTrails" -> showTrails = !showTrails;
                 case "ToggleWaypoints" -> showWaypoints = !showWaypoints;
+                case "ToggleAutopilotRoute" -> showAutopilotRoute = !showAutopilotRoute;
                 case "ToggleRoute" -> showRoute = !showRoute;
             }
-        }, "ToggleTrails", "ToggleWaypoints", "ToggleRoute");
+        }, "ToggleTrails", "ToggleWaypoints", "ToggleAutopilotRoute", "ToggleRoute");
 
         // Mouse orbit/zoom (Orbit and Free Look modes)
         inputManager.addMapping("OrbitLeft", new MouseAxisTrigger(MouseInput.AXIS_X, true));

@@ -101,19 +101,42 @@ public final class SubmarinePhysics {
         if (speed < -cfg.maxReverseSpeed()) speed = -cfg.maxReverseSpeed();
         sub.setSpeed(speed);
 
+        // 2b. Control surface slew: rudder and planes take time to move
+        // Full sweep (-1 to 1) in ~3.5 seconds = slew rate 0.57/s
+        double controlSlewRate = 0.57;
+        double maxRudderChange = controlSlewRate * dt;
+        double actualRudder = sub.actualRudder();
+        double commandedRudder = sub.rudder();
+        if (commandedRudder > actualRudder) {
+            actualRudder = Math.min(actualRudder + maxRudderChange, commandedRudder);
+        } else if (commandedRudder < actualRudder) {
+            actualRudder = Math.max(actualRudder - maxRudderChange, commandedRudder);
+        }
+        sub.setActualRudder(actualRudder);
+
+        double actualPlanes = sub.actualSternPlanes();
+        double commandedPlanes = sub.sternPlanes();
+        if (commandedPlanes > actualPlanes) {
+            actualPlanes = Math.min(actualPlanes + maxRudderChange, commandedPlanes);
+        } else if (commandedPlanes < actualPlanes) {
+            actualPlanes = Math.max(actualPlanes - maxRudderChange, commandedPlanes);
+        }
+        sub.setActualSternPlanes(actualPlanes);
+
         // 3. Yaw: first-order filter toward steady-state yaw rate (Option A from Thune thesis)
         // The steady-state yaw rate is what the rudder moment can sustain against rotary damping.
         // The actual yaw rate exponentially approaches this with a time constant tau.
         // This gives realistic transients (gradual buildup, overshoot in zigzag) while
         // remaining unconditionally stable (no oscillation risk).
-        double rudderAngle = sub.rudder() * Math.PI / 4;  // -1..1 maps to -45..+45 deg
+        double rudderAngle = actualRudder * Math.PI / 4;  // -1..1 maps to -45..+45 deg
         double rudderCl = liftCoefficient(rudderAngle, cfg.stallAngle());
         double rudderMoment = 0.5 * WATER_DENSITY * speed * Math.abs(speed)
                 * cfg.rudderArea() * rudderCl * cfg.rudderArm();
 
-        // Effective inertia increases with v² (centrifugal resistance at high speed)
+        // Effective inertia increases with v² (centrifugal resistance at high speed).
+        // Higher coefficient = bigger difference between slow-speed and flank-speed turning.
         double baseInertia = cfg.massSurge() * cfg.rotationalInertia();
-        double speedDamping = baseInertia * 0.02 * speed * Math.abs(speed);
+        double speedDamping = baseInertia * 0.05 * speed * Math.abs(speed);
         double effectiveInertia = baseInertia + speedDamping;
 
         // Steady-state yaw rate: what the rudder can sustain
@@ -138,7 +161,7 @@ public final class SubmarinePhysics {
 
         // 4. Pitch: first-order filter toward steady-state pitch rate (same approach as yaw)
         if (!cfg.surfaceLocked() && cfg.planesArea() > 0) {
-            double planesAngle = sub.sternPlanes() * Math.PI / 4;
+            double planesAngle = actualPlanes * Math.PI / 4;
             double planesCl = liftCoefficient(planesAngle, cfg.stallAngle());
             double pitchMoment = 0.5 * WATER_DENSITY * speed * Math.abs(speed)
                     * cfg.planesArea() * planesCl * cfg.planesArm();
@@ -146,7 +169,7 @@ public final class SubmarinePhysics {
             double restoringMoment = cfg.dryMass() * 9.81 * 1.0 * Math.sin(sub.pitch());
             // Effective inertia with speed-dependent resistance
             double pitchBaseInertia = cfg.massHeave() * cfg.rotationalInertia();
-            double pitchSpeedDamping = pitchBaseInertia * 0.02 * speed * Math.abs(speed);
+            double pitchSpeedDamping = pitchBaseInertia * 0.05 * speed * Math.abs(speed);
             double pitchEffectiveInertia = pitchBaseInertia + pitchSpeedDamping;
 
             double pitchRateSteady = (pitchMoment - restoringMoment) / pitchEffectiveInertia;
@@ -294,6 +317,17 @@ public final class SubmarinePhysics {
         if (Math.abs(speed) > cavitationSpeed) {
             double excess = (Math.abs(speed) - cavitationSpeed) / cavitationSpeed;
             sl += cfg.cavitationMaxDb() * Math.min(excess, 1.0);
+        }
+
+        // Control surface flow noise: deflected rudder/planes create turbulent
+        // wake. Noise scales with speed² * deflection² (dynamic pressure * area).
+        // A hard turn at flank speed is very loud; gentle turns at low speed are silent.
+        double rudderDeflection = Math.abs(actualRudder);
+        double planesDeflection = Math.abs(actualPlanes);
+        double maxDeflection = Math.max(rudderDeflection, planesDeflection);
+        if (maxDeflection > 0.05 && Math.abs(speed) > 1) {
+            double flowNoise = 8.0 * (speed * speed / 225.0) * maxDeflection * maxDeflection;
+            sl += flowNoise; // up to ~8 dB at flank speed with full deflection
         }
 
         // Reverse thrust cavitation (prop wash turbulence)

@@ -150,6 +150,26 @@ public final class TerrainViewer {
             flatOceanItem.addActionListener(e -> restartWith.accept(GeneratedWorld.deepFlat()));
             simMenu.add(flatOceanItem);
 
+            var lIslandItem = new JMenuItem("Test: L-Island three-point turn");
+            lIslandItem.addActionListener(e -> {
+                var lWorld = GeneratedWorld.lIslandRecovery();
+                try {
+                    simHolder.stop();
+                    panel.setWorld(lWorld);
+                    panel.setSimPaused(false);
+                    simHolder.startWithHeadings(lWorld, panel, List.of(0.0, 0.0));
+                    frame.setTitle("SeaRobots: L-Island Recovery Test");
+                    if (scene3D[0] != null) {
+                        scene3D[0].setWorld(lWorld);
+                        lastWorld3D[0] = lWorld;
+                    }
+                    panel.requestFocusInWindow();
+                } catch (Exception ex) {
+                    ex.printStackTrace();
+                }
+            });
+            simMenu.add(lIslandItem);
+
             simMenu.addSeparator();
 
             var pauseOnDeathItem = new JCheckBoxMenuItem("Pause on ship death", true);
@@ -179,10 +199,8 @@ public final class TerrainViewer {
             viewMenu.add(view3DItem);
 
             view2DItem.addActionListener(e -> {
-                frame.getContentPane().removeAll();
-                frame.getContentPane().add(panel);
-                frame.revalidate();
-                frame.repaint();
+                if (canvas3D[0] != null) canvas3D[0].setVisible(false);
+                panel.setVisible(true);
                 panel.requestFocusInWindow();
             });
 
@@ -193,15 +211,17 @@ public final class TerrainViewer {
                     simHolder.scene3DRef = scene3D[0];
                     canvas3D[0] = scene3D[0].getCanvas();
                     canvas3D[0].setPreferredSize(new java.awt.Dimension(1280, 800));
-                    // Disable Swing focus traversal so Tab reaches jME input manager
                     canvas3D[0].setFocusTraversalKeysEnabled(false);
+                    // Add canvas to content pane (hidden initially, kept alive)
+                    frame.getContentPane().add(canvas3D[0]);
                     scene3D[0].startCanvas();
                 }
-                frame.getContentPane().removeAll();
-                frame.getContentPane().add(canvas3D[0]);
+                panel.setVisible(false);
+                canvas3D[0].setVisible(true);
+                canvas3D[0].requestFocusInWindow();
                 frame.revalidate();
                 frame.repaint();
-                // Delay setWorld to let jME canvas initialize first
+                // Set world if changed
                 var w3d = panel.getWorld();
                 if (w3d != lastWorld3D[0]) {
                     lastWorld3D[0] = w3d;
@@ -213,6 +233,14 @@ public final class TerrainViewer {
             });
 
             viewMenu.addSeparator();
+            var debugModeItem = new JCheckBoxMenuItem("Debug Mode (no effects)", false);
+            debugModeItem.addActionListener(e -> {
+                if (scene3D[0] != null) {
+                    scene3D[0].setDebugMode(debugModeItem.isSelected());
+                }
+            });
+            viewMenu.add(debugModeItem);
+
             var atmosphereItem = new JCheckBoxMenuItem("Atmosphere", true);
             atmosphereItem.addActionListener(e -> {
                 if (scene3D[0] != null) {
@@ -376,7 +404,15 @@ public final class TerrainViewer {
         private boolean torpedoSolutionTriggered;
         private final java.util.Set<Integer> deadEntities = java.util.Collections.synchronizedSet(new java.util.HashSet<>());
 
+        void startWithHeadings(GeneratedWorld world, MapPanel panel, List<Double> headings) {
+            start(world, panel, headings);
+        }
+
         void start(GeneratedWorld world, MapPanel panel) {
+            start(world, panel, null);
+        }
+
+        private void start(GeneratedWorld world, MapPanel panel, List<Double> headings) {
             stop();
             var sim = new SimulationLoop();
             this.loop = sim;
@@ -444,7 +480,7 @@ public final class TerrainViewer {
 
             List<VehicleConfig> configs = List.of(VehicleConfig.submarine(), VehicleConfig.submarine());
             var t = Thread.ofPlatform().daemon().name("sim-loop").start(() ->
-                    sim.run(simWorld, controllers, configs, listener));
+                    sim.run(simWorld, controllers, configs, headings, listener));
             this.thread = t;
         }
 
