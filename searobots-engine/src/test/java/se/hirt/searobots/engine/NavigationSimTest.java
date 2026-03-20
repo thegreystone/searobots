@@ -27,6 +27,7 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 package se.hirt.searobots.engine;
+import se.hirt.searobots.engine.ships.*;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -187,7 +188,7 @@ class NavigationSimTest {
         var terrain = terrainWithIsland(-500, -250, 250, -500, 500);
         startMatch(terrain);
 
-        var route = controller.autopilot().planRoute(-2000, 0, 2000, 0);
+        var route = controller.autopilot().planRoute(-2000, 0, 2000, 0, 7.0);
 
         // Route should have more than 2 waypoints (needs detour around island)
         assertTrue(route.size() > 2,
@@ -221,7 +222,7 @@ class NavigationSimTest {
         var terrain = flatTerrain(-500);
         startMatch(terrain);
 
-        var route = controller.autopilot().planRoute(-2000, 0, 2000, 0);
+        var route = controller.autopilot().planRoute(-2000, 0, 2000, 0, 7.0);
 
         // Direct route should be simple: start + end = 2 waypoints
         assertTrue(route.size() <= 2,
@@ -572,5 +573,392 @@ class NavigationSimTest {
         // Even if it did not make it far, it should not have lost all HP.
         assertTrue(finalHp[0] == 1000,
                 "Sub 0 should not take terrain damage in the channel (hp=" + finalHp[0] + ")");
+    }
+
+    // ── Seed-based full simulation tests ─────────────────────────────
+
+    /**
+     * Runs a full simulation for a given seed and prints detailed autopilot
+     * performance analysis: distance traveled, terrain damage, depth profile,
+     * status breakdown, and waypoint progression.
+     */
+    private void runSeedAnalysis(long seed, int durationTicks) {
+        var config = MatchConfig.withDefaults(seed);
+        var world = new WorldGenerator().generate(config);
+
+        var sim = new SimulationLoop();
+        sim.setSpeedMultiplier(1_000_000);
+
+        List<SubmarineController> controllers = List.of(
+                new DefaultAttackSub(), new SubmarineDrone());
+
+        // Per-sub tracking
+        int subCount = 2;
+        double[][] startPos = new double[subCount][3];
+        double[][] lastPos = new double[subCount][3];
+        int[] finalHp = new int[subCount];
+        double[] totalDist = new double[subCount];
+        double[] minDepth = new double[subCount]; // shallowest (closest to 0)
+        double[] maxDepth = new double[subCount]; // deepest (most negative)
+        double[] maxSpeed = new double[subCount];
+        double[] maxPitch = new double[subCount];
+        java.util.Arrays.fill(minDepth, Double.NEGATIVE_INFINITY);
+        java.util.Arrays.fill(maxDepth, Double.MAX_VALUE);
+        java.util.Arrays.fill(finalHp, 1000);
+
+        // Status tracking for sub 0
+        var statusCounts = new java.util.LinkedHashMap<String, Integer>();
+        int[] tickCount = {0};
+        long[] firstDamageTick = {-1};
+
+        var listener = new SimulationListener() {
+            @Override
+            public void onTick(long tick, List<SubmarineSnapshot> submarines) {
+                tickCount[0]++;
+                for (int i = 0; i < Math.min(subCount, submarines.size()); i++) {
+                    var s = submarines.get(i);
+                    var pos = s.pose().position();
+                    double spd = s.velocity().speed();
+
+                    if (tick == 0) {
+                        startPos[i] = new double[]{pos.x(), pos.y(), pos.z()};
+                        lastPos[i] = new double[]{pos.x(), pos.y(), pos.z()};
+                    }
+
+                    // Accumulate distance
+                    double dx = pos.x() - lastPos[i][0];
+                    double dy = pos.y() - lastPos[i][1];
+                    totalDist[i] += Math.sqrt(dx * dx + dy * dy);
+                    lastPos[i] = new double[]{pos.x(), pos.y(), pos.z()};
+
+                    finalHp[i] = s.hp();
+                    if (pos.z() > minDepth[i]) minDepth[i] = pos.z();
+                    if (pos.z() < maxDepth[i]) maxDepth[i] = pos.z();
+                    if (spd > maxSpeed[i]) maxSpeed[i] = spd;
+                    if (Math.abs(s.pose().pitch()) > maxPitch[i])
+                        maxPitch[i] = Math.abs(s.pose().pitch());
+
+                    if (i == 0 && s.hp() < 1000 && firstDamageTick[0] < 0) {
+                        firstDamageTick[0] = tick;
+                    }
+                }
+
+                // Track sub 0 status (extract state prefix before floor/gap data)
+                if (!submarines.isEmpty()) {
+                    String status = submarines.get(0).status();
+                    if (status == null || status.isEmpty()) status = "(normal)";
+                    // Strip floor/gap suffix like " f:216 g:27" to get just the state
+                    int fIdx = status.indexOf(" f:");
+                    String stateKey = fIdx >= 0 ? status.substring(0, fIdx) : status;
+                    statusCounts.merge(stateKey, 1, Integer::sum);
+                }
+
+                if (tick >= durationTicks) {
+                    sim.stop();
+                }
+            }
+
+            @Override public void onMatchEnd() {}
+        };
+
+        var thread = new Thread(() ->
+                sim.run(world, controllers, List.of(submarine(), submarine()), listener));
+        thread.start();
+        try { thread.join(60_000); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+        sim.stop();
+        try { thread.join(5000); } catch (InterruptedException e) {}
+
+        // Print analysis
+        double seconds = tickCount[0] / 50.0;
+        System.out.println("=== Navigation Analysis: seed " + seed + " ===");
+        System.out.printf("Duration: %.0fs (%d ticks)%n", seconds, tickCount[0]);
+        System.out.println();
+
+        for (int i = 0; i < subCount; i++) {
+            String name = i == 0 ? "DefaultAttackSub" : "SubmarineDrone";
+            System.out.printf("--- %s (sub %d) ---%n", name, i);
+            System.out.printf("  HP: %d/1000%s%n", finalHp[i],
+                    finalHp[i] < 1000 ? " (DAMAGED" +
+                            (firstDamageTick[0] >= 0 && i == 0
+                                    ? " at tick " + firstDamageTick[0] + " / " +
+                                      String.format("%.1fs", firstDamageTick[0] / 50.0)
+                                    : "") + ")" : "");
+            System.out.printf("  Distance traveled: %.0fm%n", totalDist[i]);
+            System.out.printf("  Avg speed: %.1f m/s%n", totalDist[i] / seconds);
+            System.out.printf("  Max speed: %.1f m/s%n", maxSpeed[i]);
+            System.out.printf("  Depth range: %.0fm to %.0fm%n", maxDepth[i], minDepth[i]);
+            System.out.printf("  Max pitch: %.1f\u00b0%n", Math.toDegrees(maxPitch[i]));
+            System.out.println();
+        }
+
+        System.out.println("--- Sub 0 status breakdown ---");
+        int totalStatusTicks = statusCounts.values().stream().mapToInt(Integer::intValue).sum();
+        statusCounts.entrySet().stream()
+                .sorted((a, b) -> b.getValue() - a.getValue())
+                .forEach(e -> System.out.printf("  %-25s %5d ticks (%4.1f%%)%n",
+                        e.getKey(), e.getValue(),
+                        100.0 * e.getValue() / totalStatusTicks));
+        System.out.println();
+
+        // Assertions
+        assertTrue(tickCount[0] > 0, "Simulation should have produced ticks");
+        assertTrue(totalDist[0] > 100,
+                "Sub 0 should have moved significantly, only traveled " + totalDist[0] + "m");
+        assertTrue(finalHp[0] > 0, "Sub 0 should survive (hp=" + finalHp[0] + ")");
+    }
+
+    @Test
+    void seed_neg8551482231658960540() {
+        runSeedAnalysis(-8551482231658960540L, 15000);
+    }
+
+    @Test
+    void seed_neg8551482231658960540_routeDiagnostic() {
+        long seed = -8551482231658960540L;
+        var config = MatchConfig.withDefaults(seed);
+        var world = new WorldGenerator().generate(config);
+        var terrain = world.terrain();
+
+        System.out.println("=== Route Diagnostic: seed " + seed + " ===");
+        var sp = world.spawnPoints().get(0);
+        double floor0 = terrain.elevationAt(sp.x(), sp.y());
+        System.out.printf("Sub 0 spawn: (%.0f, %.0f, %.0f)  floor=%.0fm%n", sp.x(), sp.y(), sp.z(), floor0);
+
+        var ctrl = new DefaultAttackSub();
+        ctrl.onMatchStart(new MatchContext(config, terrain, List.of(), new CurrentField(List.of())));
+
+        double heading = WorldGenerator.findSafeHeading(terrain, sp.x(), sp.y());
+        if (Double.isNaN(heading)) {
+            heading = Math.atan2(-sp.x(), -sp.y());
+            if (heading < 0) heading += 2 * Math.PI;
+        }
+        System.out.printf("Initial heading: %.0f\u00b0%n", Math.toDegrees(heading));
+
+        Vec3 vel = new Vec3(6.0 * Math.sin(heading), 6.0 * Math.cos(heading), 0);
+        var pose = new Pose(sp, heading, 0, 0);
+        var velocity = new Velocity(vel, Vec3.ZERO);
+        var state = new SubmarineState(pose, velocity, 1000, 0);
+        var env = new EnvironmentSnapshot(terrain, List.of(), new CurrentField(List.of()));
+        var input = new TestInputFull(0, 0.02, state, env, List.of(), List.of(), 0);
+        var output = new CapturedOutput();
+        ctrl.onTick(input, output);
+
+        var autopilot = ctrl.autopilot();
+        System.out.println("\nStrategic waypoints:");
+        for (int i = 0; i < autopilot.strategicWaypoints().size(); i++) {
+            var wp = autopilot.strategicWaypoints().get(i);
+            double f = terrain.elevationAt(wp.x(), wp.y());
+            System.out.printf("  [%d] (%.0f, %.0f) depth=%.0f  floor=%.0fm  %s%n",
+                    i, wp.x(), wp.y(), wp.preferredDepth(), f, wp.noise());
+        }
+
+        var navWps = autopilot.navWaypoints();
+        System.out.println("\nNav waypoints:");
+        for (int i = 0; i < navWps.size(); i++) {
+            var wp = navWps.get(i);
+            double f = terrain.elevationAt(wp.x(), wp.y());
+            String marker = i == autopilot.currentNavIndex() ? " <-- ACTIVE" : "";
+            System.out.printf("  [%d] (%.0f, %.0f, %.0f)  floor=%.0fm  clr=%.0fm%s%n",
+                    i, wp.x(), wp.y(), wp.z(), f, wp.z() - f, marker);
+        }
+
+        System.out.println("\nTerrain along each leg:");
+        for (int i = 0; i < navWps.size() - 1; i++) {
+            var from = navWps.get(i);
+            var to = navWps.get(i + 1);
+            double legLen = from.horizontalDistanceTo(to);
+            int samples = Math.max(5, (int) (legLen / 50));
+            double worstFloor = Double.NEGATIVE_INFINITY;
+            double worstClearance = Double.MAX_VALUE;
+            for (int s = 0; s <= samples; s++) {
+                double t = (double) s / samples;
+                double sx = from.x() + (to.x() - from.x()) * t;
+                double sy = from.y() + (to.y() - from.y()) * t;
+                double sz = from.z() + (to.z() - from.z()) * t;
+                double f = terrain.elevationAt(sx, sy);
+                double clr = sz - f;
+                if (f > worstFloor) worstFloor = f;
+                if (clr < worstClearance) worstClearance = clr;
+            }
+            String danger = worstClearance < 50 ? " *** COLLISION RISK ***" : "";
+            System.out.printf("  Leg %d->%d (%.0fm): worst_floor=%.0f  worst_clr=%.0f%s%n",
+                    i, i + 1, legLen, worstFloor, worstClearance, danger);
+        }
+    }
+
+    @Test
+    void seed_3823285984661543777() {
+        // Diagnostic: trace the sub's state every second until death
+        long seed = 3823285984661543777L;
+        var config = MatchConfig.withDefaults(seed);
+        var world = new WorldGenerator().generate(config);
+
+        var sim = new SimulationLoop();
+        sim.setSpeedMultiplier(1_000_000);
+
+        List<SubmarineController> controllers = List.of(
+                new DefaultAttackSub(), new SubmarineDrone());
+
+        boolean[] dead = {false};
+
+        var listener = new SimulationListener() {
+            @Override
+            public void onTick(long tick, List<SubmarineSnapshot> submarines) {
+                if (submarines.isEmpty()) return;
+                var s = submarines.get(0);
+                var pos = s.pose().position();
+                double spd = s.velocity().speed();
+                double floor = world.terrain().elevationAt(pos.x(), pos.y());
+                double gap = pos.z() - floor;
+
+                if (tick % 50 == 0 && !dead[0]) { // every 1 second
+                    System.out.printf("t=%3.0fs  pos=(%6.0f,%6.0f,%5.0f)  floor=%5.0f  gap=%4.0f  " +
+                                    "spd=%4.1f  hdg=%3.0f°  pitch=%+5.1f°  hp=%4d  status=%s%n",
+                            tick / 50.0, pos.x(), pos.y(), pos.z(), floor, gap,
+                            spd, Math.toDegrees(s.pose().heading()),
+                            Math.toDegrees(s.pose().pitch()),
+                            s.hp(), s.status());
+                }
+                if (s.hp() <= 0 && !dead[0]) {
+                    dead[0] = true;
+                    System.out.printf("*** DEAD at tick %d (%.1fs) pos=(%6.0f,%6.0f,%5.0f) floor=%5.0f gap=%4.0f%n",
+                            tick, tick / 50.0, pos.x(), pos.y(), pos.z(), floor, gap);
+                    sim.stop();
+                }
+                if (tick >= 5000) sim.stop(); // 100s max
+            }
+
+            @Override public void onMatchEnd() {}
+        };
+
+        var thread = new Thread(() ->
+                sim.run(world, controllers, List.of(submarine(), submarine()), listener));
+        thread.start();
+        try { thread.join(30_000); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+        sim.stop();
+        try { thread.join(5000); } catch (InterruptedException e) {}
+
+        // This seed has challenging terrain. The sub may die due to terrain
+        // avoidance overriding the planned route (a known issue to fix).
+        // For now, this test serves as a diagnostic, not a hard assertion.
+        if (dead[0]) {
+            System.out.println("NOTE: Sub died - terrain avoidance override suspected");
+        }
+    }
+
+    /**
+     * Diagnostic: dump the initial route the autopilot plans for sub 0,
+     * along with terrain elevation at each waypoint and along each leg.
+     */
+    @Test
+    void seed_3823285984661543777_routeDiagnostic() {
+        long seed = 3823285984661543777L;
+        var config = MatchConfig.withDefaults(seed);
+        var world = new WorldGenerator().generate(config);
+        var terrain = world.terrain();
+
+        System.out.println("=== Route Diagnostic: seed " + seed + " ===");
+        System.out.printf("Spawn points: %d%n", world.spawnPoints().size());
+        for (int i = 0; i < world.spawnPoints().size(); i++) {
+            var sp = world.spawnPoints().get(i);
+            double floor = terrain.elevationAt(sp.x(), sp.y());
+            System.out.printf("  Sub %d spawn: (%.0f, %.0f, %.0f)  floor=%.0fm%n",
+                    i, sp.x(), sp.y(), sp.z(), floor);
+        }
+
+        // Initialize controller to get the autopilot's first route
+        var ctrl = new DefaultAttackSub();
+        var context = new MatchContext(config, terrain, List.of(), new CurrentField(List.of()));
+        ctrl.onMatchStart(context);
+
+        // Tick once to trigger patrol waypoint generation
+        var sp = world.spawnPoints().get(0);
+        // Use the same heading logic as SimulationLoop
+        double heading = WorldGenerator.findSafeHeading(terrain, sp.x(), sp.y());
+        if (Double.isNaN(heading)) {
+            heading = Math.atan2(-sp.x(), -sp.y());
+            if (heading < 0) heading += 2 * Math.PI;
+        }
+        System.out.printf("Initial heading: %.0f\u00b0%n", Math.toDegrees(heading));
+        Vec3 vel = new Vec3(6.0 * Math.sin(heading), 6.0 * Math.cos(heading), 0);
+        var pose = new Pose(sp, heading, 0, 0);
+        var velocity = new Velocity(vel, Vec3.ZERO);
+        var state = new SubmarineState(pose, velocity, 1000, 0);
+        var env = new EnvironmentSnapshot(terrain, List.of(), new CurrentField(List.of()));
+        var input = new TestInputFull(0, 0.02, state, env, List.of(), List.of(), 0);
+        var output = new CapturedOutput();
+        ctrl.onTick(input, output);
+
+        // Print strategic waypoints
+        var autopilot = ctrl.autopilot();
+        System.out.println("\nStrategic waypoints:");
+        for (int i = 0; i < autopilot.strategicWaypoints().size(); i++) {
+            var wp = autopilot.strategicWaypoints().get(i);
+            double floor = terrain.elevationAt(wp.x(), wp.y());
+            System.out.printf("  [%d] (%.0f, %.0f) depth=%.0f  floor=%.0fm  %s %s%n",
+                    i, wp.x(), wp.y(), wp.preferredDepth(), floor,
+                    wp.noise(), wp.pattern());
+        }
+
+        // Print nav waypoints (A* route for current leg)
+        System.out.println("\nNav waypoints (A* route, current leg):");
+        var navWps = autopilot.navWaypoints();
+        for (int i = 0; i < navWps.size(); i++) {
+            var wp = navWps.get(i);
+            double floor = terrain.elevationAt(wp.x(), wp.y());
+            double clearance = wp.z() - floor;
+            String marker = i == autopilot.currentNavIndex() ? " <-- ACTIVE" : "";
+            String danger = clearance < 50 ? " *** LOW CLEARANCE ***" : "";
+            System.out.printf("  [%d] (%.0f, %.0f, %.0f)  floor=%.0fm  clearance=%.0fm%s%s%n",
+                    i, wp.x(), wp.y(), wp.z(), floor, clearance, danger, marker);
+        }
+
+        // Sample terrain along each leg of the nav route
+        System.out.println("\nTerrain profile along route:");
+        for (int i = 0; i < navWps.size() - 1; i++) {
+            var from = navWps.get(i);
+            var to = navWps.get(i + 1);
+            double legLen = from.horizontalDistanceTo(to);
+            int samples = Math.max(5, (int) (legLen / 50));
+            double worstFloor = Double.NEGATIVE_INFINITY;
+            double worstDist = 0;
+            double worstWpZ = 0;
+
+            System.out.printf("  Leg %d->%d (%.0fm):%n", i, i + 1, legLen);
+            for (int s = 0; s <= samples; s++) {
+                double t = (double) s / samples;
+                double sx = from.x() + (to.x() - from.x()) * t;
+                double sy = from.y() + (to.y() - from.y()) * t;
+                double sz = from.z() + (to.z() - from.z()) * t;
+                double floor = terrain.elevationAt(sx, sy);
+                double clearance = sz - floor;
+                String danger = clearance < 50 ? " *** COLLISION ***" : "";
+                if (floor > worstFloor) {
+                    worstFloor = floor;
+                    worstDist = t * legLen;
+                    worstWpZ = sz;
+                }
+                if (s % Math.max(1, samples / 10) == 0 || !danger.isEmpty()) {
+                    System.out.printf("    t=%.2f (%.0fm) pos=(%.0f,%.0f) wpZ=%.0f floor=%.0f clr=%.0f%s%n",
+                            t, t * legLen, sx, sy, sz, floor, clearance, danger);
+                }
+            }
+            double worstClearance = worstWpZ - worstFloor;
+            if (worstClearance < 50) {
+                System.out.printf("    WORST: floor=%.0f at %.0fm into leg, wpZ=%.0f, clearance=%.0f%n",
+                        worstFloor, worstDist, worstWpZ, worstClearance);
+            }
+        }
+
+        // Check if planner considers these cells safe
+        System.out.println("\nPath planner safety check:");
+        var planner = autopilot.pathPlanner();
+        for (int i = 0; i < navWps.size(); i++) {
+            var wp = navWps.get(i);
+            boolean safe = planner.isSafe(wp.x(), wp.y());
+            float cost = planner.costAt(wp.x(), wp.y());
+            System.out.printf("  [%d] (%.0f, %.0f) safe=%s cost=%.2f%n",
+                    i, wp.x(), wp.y(), safe, cost);
+        }
     }
 }

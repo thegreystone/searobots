@@ -43,6 +43,8 @@ import com.jme3.texture.image.ColorSpace;
 import com.jme3.util.BufferUtils;
 import com.jme3.util.SkyFactory;
 import se.hirt.searobots.api.TerrainMap;
+import se.hirt.searobots.api.Vec3;
+import se.hirt.searobots.api.Waypoint;
 import se.hirt.searobots.engine.GeneratedWorld;
 
 import com.jme3.input.KeyInput;
@@ -76,6 +78,7 @@ public final class SubmarineScene3D extends SimpleApplication {
     private static final float LERP_SPEED = 8f; // higher = snappier tracking
     private static final float SURFACE_SPEED = 2f; // control surface actuator lerp rate
     private BitmapText hudText;
+    private BitmapText tacticalText;
     private BitmapText keysText;
 
     // 3D overlays: trails, waypoints, routes
@@ -184,6 +187,8 @@ public final class SubmarineScene3D extends SimpleApplication {
     @Override
     public void simpleInitApp() {
         System.out.println("simpleInitApp: PHASE 1 - submarine model only");
+        setDisplayStatView(false);
+        setDisplayFps(false);
         flyCam.setEnabled(false);
         viewPort.setBackgroundColor(new ColorRGBA(0.02f, 0.04f, 0.12f, 1f));
         setupInput();
@@ -291,6 +296,13 @@ public final class SubmarineScene3D extends SimpleApplication {
         hudText.setColor(ColorRGBA.White);
         hudText.setLocalTranslation(10, settings.getHeight() - 10, 0);
         guiNode.attachChild(hudText);
+
+        // HUD overlay - top right: tactical info
+        tacticalText = new BitmapText(guiFont);
+        tacticalText.setSize(guiFont.getCharSet().getRenderedSize());
+        tacticalText.setColor(new ColorRGBA(0.9f, 0.95f, 1.0f, 1f));
+        // Position updated dynamically in updateHud() to track window resize
+        guiNode.attachChild(tacticalText);
 
         // HUD overlay - bottom right: keybindings
         keysText = new BitmapText(guiFont);
@@ -625,6 +637,7 @@ public final class SubmarineScene3D extends SimpleApplication {
                 .filter(s -> s.id() == selectedSubId).findFirst().orElse(null);
         if (snap == null) {
             hudText.setText("");
+            tacticalText.setText("");
             return;
         }
         var pos = snap.pose().position();
@@ -644,6 +657,72 @@ public final class SubmarineScene3D extends SimpleApplication {
                 snap.rudder() * 100, snap.sternPlanes() * 100,
                 tick, elapsed.toHoursPart(), elapsed.toMinutesPart(), elapsed.toSecondsPart(),
                 tod.toString(), cameraMode.label()));
+
+        // Tactical info panel (top right)
+        updateTacticalHud(snap, pos);
+    }
+
+    private void updateTacticalHud(SubmarineSnapshot snap, Vec3 pos) {
+        var sb = new StringBuilder();
+
+        // Status
+        String status = snap.status() != null ? snap.status() : "---";
+        sb.append(String.format("STATUS: %s%n", status));
+        sb.append(String.format("Noise: %.0f dB%n", 80 + 20 * Math.log10(Math.max(0.01, snap.noiseLevel()))));
+
+        // Active nav waypoint
+        var navWps = snap.waypoints();
+        if (navWps != null && !navWps.isEmpty()) {
+            var active = navWps.stream().filter(Waypoint::active).findFirst().orElse(null);
+            if (active != null) {
+                double dx = active.x() - pos.x();
+                double dy = active.y() - pos.y();
+                double dist = Math.sqrt(dx * dx + dy * dy);
+                double bearing = Math.toDegrees(Math.atan2(dx, dy));
+                if (bearing < 0) bearing += 360;
+                String type = active.reverse() ? "REVERSE" : "NAV";
+                sb.append(String.format("%n[%s] WP  %03.0f\u00b0  %.0fm  (%.0fm depth)%n",
+                        type, bearing, dist, -active.z()));
+            }
+        }
+
+        // Strategic waypoints
+        var strats = snap.strategicWaypoints();
+        if (strats != null && !strats.isEmpty()) {
+            sb.append(String.format("%nTACTICAL PLAN:%n"));
+            for (int i = 0; i < strats.size(); i++) {
+                var sw = strats.get(i);
+                var wp = sw.waypoint();
+                double dx = wp.x() - pos.x();
+                double dy = wp.y() - pos.y();
+                double dist = Math.sqrt(dx * dx + dy * dy);
+                double bearing = Math.toDegrees(Math.atan2(dx, dy));
+                if (bearing < 0) bearing += 360;
+                String marker = wp.active() ? "> " : "  ";
+                sb.append(String.format("%s%d. %-10s %03.0f\u00b0 %5.0fm%n",
+                        marker, i + 1, sw.purpose().name(), bearing, dist));
+            }
+        }
+
+        // Contact count
+        var contacts = snap.contactEstimates();
+        if (contacts != null && !contacts.isEmpty()) {
+            sb.append(String.format("%nCONTACTS: %d%n", contacts.size()));
+            for (var c : contacts) {
+                double dx = c.x() - pos.x();
+                double dy = c.y() - pos.y();
+                double dist = Math.sqrt(dx * dx + dy * dy);
+                double bearing = Math.toDegrees(Math.atan2(dx, dy));
+                if (bearing < 0) bearing += 360;
+                sb.append(String.format("  %03.0f\u00b0  %.0fm%n", bearing, dist));
+            }
+        }
+
+        tacticalText.setText(sb.toString());
+        // Position relative to top-right corner
+        tacticalText.setLocalTranslation(
+                cam.getWidth() - 420,
+                cam.getHeight() - 10, 0);
     }
 
     // ---- crosshair ----

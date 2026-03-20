@@ -3,6 +3,7 @@
  * Not a permanent test, just for development validation.
  */
 package se.hirt.searobots.engine;
+import se.hirt.searobots.engine.ships.*;
 
 import org.junit.jupiter.api.Test;
 import se.hirt.searobots.api.MatchConfig;

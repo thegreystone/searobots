@@ -64,32 +64,58 @@ public final class SubmarineAutopilot {
     // stallAngle=25° / 45° max deflection = 0.556. Use 0.55 for margin.
     private static final double OPTIMAL_RUDDER = 0.55;
 
-    // Turn radius table measured from physics simulation at optimal rudder (0.35).
+    // Turn radius table measured from physics simulation at rudder 0.35.
     // Index = speed in m/s (0-15). Value = steady-state turn radius in meters.
-    // Minimum radius ~403m at 7 m/s. Full rudder is slightly worse (stall).
+    // Minimum radius ~213m at 4 m/s. Autopilot steers at up to 0.55 (tighter),
+    // so these are conservative for planning.
     static final double[] TURN_RADIUS = {
-            0, 9999, 648, 505, 444, 416, 404, 403, 409, 419, 433, 449, 467, 487, 508, 530
+            0, 405, 254, 218, 213, 219, 233, 250, 268, 289, 310, 332, 354, 377, 400, 424
+    };
+
+    // Depth rate table measured from physics simulation at optimal planes (0.55).
+    // Index = speed in m/s (0-15). Value = steady-state depth change rate (m/s).
+    // Symmetric: rise rate = dive rate (hull pitch restoring moment).
+    static final double[] DEPTH_RATE = {
+            0, 0.02, 0.09, 0.21, 0.37, 0.59, 0.87, 1.21, 1.58, 1.99, 2.42, 2.86, 3.30, 3.75, 4.20, 4.64
     };
 
     /** Steady-state turn radius at a given speed (interpolated from physics table). */
     static double turnRadiusAtSpeed(double speed) {
         if (speed < 1) return 9999;
-        int idx = Math.min((int) speed, TURN_RADIUS.length - 1);
-        if (idx >= TURN_RADIUS.length - 1) return TURN_RADIUS[TURN_RADIUS.length - 1];
-        double frac = speed - idx;
-        return TURN_RADIUS[idx] * (1 - frac) + TURN_RADIUS[idx + 1] * frac;
+        return interpolateTable(TURN_RADIUS, speed);
+    }
+
+    /** Steady-state depth change rate (m/s) at a given speed. */
+    static double depthRateAtSpeed(double speed) {
+        if (speed < 1) return 0;
+        return interpolateTable(DEPTH_RATE, speed);
+    }
+
+    /**
+     * Depth change ratio: meters of depth change per meter of horizontal travel.
+     * Applies a safety factor (65%) because the PD controller doesn't sustain
+     * optimal plane deflection continuously.
+     */
+    static double depthChangeRatio(double speed) {
+        if (speed < 1) return 0;
+        return depthRateAtSpeed(speed) / speed * 0.65;
     }
 
     /** Maximum speed that can achieve a given turn radius (inverse table lookup). */
     static double maxSpeedForRadius(double radius) {
-        // The minimum radius is ~403m at 7 m/s. For radii below that, return 7.
-        // For radii above, find the highest speed whose radius <= target.
         if (radius >= TURN_RADIUS[TURN_RADIUS.length - 1]) return TURN_RADIUS.length - 1;
         // Search from high speed down
         for (int i = TURN_RADIUS.length - 1; i >= 2; i--) {
             if (TURN_RADIUS[i] <= radius) return i;
         }
         return 2; // minimum useful speed
+    }
+
+    private static double interpolateTable(double[] table, double speed) {
+        int idx = Math.min((int) speed, table.length - 1);
+        if (idx >= table.length - 1) return table[table.length - 1];
+        double frac = speed - idx;
+        return table[idx] * (1 - frac) + table[idx + 1] * frac;
     }
 
     /**
@@ -165,6 +191,8 @@ public final class SubmarineAutopilot {
     private double lastBallast;
     private String lastStatus = "";
 
+    private final TrajectoryProjector trajectoryProjector;
+
     public SubmarineAutopilot(MatchContext context) {
         this.terrain = context.terrain();
         this.battleArea = context.config().battleArea();
@@ -172,6 +200,7 @@ public final class SubmarineAutopilot {
         this.maxSubSpeed = context.config().maxSubSpeed();
         this.thermalLayers = context.thermalLayers();
         this.pathPlanner = new PathPlanner(context.terrain(), SHALLOW_WATER_LIMIT, 200, 75);
+        this.trajectoryProjector = new TrajectoryProjector(pathPlanner, context.terrain());
     }
 
     // ── Public API ──────────────────────────────────────────────────
@@ -227,20 +256,41 @@ public final class SubmarineAutopilot {
         // ── 1. Horizontal steering ─────────────────────────────────
         double tacticalRudder = 0;
 
-        // Follow A* nav waypoints
+        // Follow nav waypoints with forward-looking transitions.
+        // Advance when the sub crosses the perpendicular plane through the
+        // waypoint (oriented along the leg direction), not when it gets close.
+        // This prevents overshoot-then-U-turn behavior.
         if (!navWaypoints.isEmpty() && currentNavIndex < navWaypoints.size()) {
             var wp = navWaypoints.get(currentNavIndex);
-            double wpDx = wp.x() - pos.x();
-            double wpDy = wp.y() - pos.y();
-            double wpDist = Math.sqrt(wpDx * wpDx + wpDy * wpDy);
-
-            // Don't auto-advance past the reverse waypoint during a three-point turn
-            // (the turn execution block handles its own arrival check)
             boolean isReverseWp = threePointTurnActive && currentNavIndex == threePointReverseIndex;
-            if (!isReverseWp && wpDist < WAYPOINT_ARRIVAL_DIST
-                    && currentNavIndex < navWaypoints.size() - 1) {
-                currentNavIndex++;
-                wp = navWaypoints.get(currentNavIndex);
+
+            if (!isReverseWp && currentNavIndex < navWaypoints.size() - 1) {
+                // Compute leg direction (from previous waypoint or sub start)
+                double legDx, legDy;
+                if (currentNavIndex > 0) {
+                    var prev = navWaypoints.get(currentNavIndex - 1);
+                    legDx = wp.x() - prev.x();
+                    legDy = wp.y() - prev.y();
+                } else {
+                    legDx = wp.x() - pos.x();
+                    legDy = wp.y() - pos.y();
+                }
+                double legLen = Math.sqrt(legDx * legDx + legDy * legDy);
+                if (legLen > 0) {
+                    // Dot product: positive means sub has passed the waypoint plane
+                    double dot = (pos.x() - wp.x()) * legDx / legLen
+                               + (pos.y() - wp.y()) * legDy / legLen;
+                    if (dot > -50) { // small negative margin for smooth transition
+                        currentNavIndex++;
+                        wp = navWaypoints.get(currentNavIndex);
+                    }
+                }
+                // Fallback: also advance on distance (safety net)
+                double wpDist = Math.sqrt(Math.pow(wp.x() - pos.x(), 2) + Math.pow(wp.y() - pos.y(), 2));
+                if (wpDist < WAYPOINT_ARRIVAL_DIST && currentNavIndex < navWaypoints.size() - 1) {
+                    currentNavIndex++;
+                    wp = navWaypoints.get(currentNavIndex);
+                }
             }
 
             tacticalRudder = steerToward(pos.x(), pos.y(), heading, wp.x(), wp.y());
@@ -324,13 +374,11 @@ public final class SubmarineAutopilot {
                 && pathPlanner.isSafe(navWaypoints.get(currentNavIndex).x(),
                                        navWaypoints.get(currentNavIndex).y());
 
-        // Step 3a: Imminent wall check (always active, even on safe routes).
-        // If terrain is shallow within 400m along current heading and no
-        // three-point turn is already active, plan one with visible waypoints.
-        if (!threePointTurnActive && tick > threePointCooldownUntil) {
-            // Trigger three-point turn when wall is close along heading.
-            // Very close (< 150m): always trigger (no room to steer around).
-            // Medium range (150-250m): only if waypoint requires sharp turn (> 60°).
+        // Step 3a: Imminent wall check. Only triggers when NOT on a safe route,
+        // or when terrain is dangerously close (< 100m). On a safe route the
+        // A* planner has already routed around obstacles; scanning along the
+        // current heading would fight the route as it arcs toward waypoints.
+        if (!threePointTurnActive && tick > threePointCooldownUntil && !onSafeRoute) {
             double firstWallDist = Double.MAX_VALUE;
             for (double checkDist : new double[]{50, 100, 150, 200, 300, 400}) {
                 double fx = pos.x() + Math.sin(heading) * checkDist;
@@ -341,12 +389,9 @@ public final class SubmarineAutopilot {
                 }
             }
             if (firstWallDist <= 200 && speed > 2) {
-                // Moving toward a close wall: always trigger
                 planThreePointTurn(pos.x(), pos.y(), pos.z(), heading, speed);
             } else if (firstWallDist < Double.MAX_VALUE
                     && !navWaypoints.isEmpty() && currentNavIndex < navWaypoints.size()) {
-                // Wall detected: trigger if waypoint requires a turn
-                // or if the waypoint itself is in unsafe terrain (failed A* fallback)
                 var wp = navWaypoints.get(currentNavIndex);
                 boolean wpUnsafe = pathPlanner != null
                         && !pathPlanner.isSafe(wp.x(), wp.y());
@@ -354,6 +399,18 @@ public final class SubmarineAutopilot {
                 double turnAngle = Math.abs(angleDiff(wpBearing, heading));
                 if (turnAngle > Math.toRadians(30) || wpUnsafe) {
                     planThreePointTurn(pos.x(), pos.y(), pos.z(), heading, speed);
+                }
+            }
+        }
+        // Emergency-only wall check when on a safe route: only if terrain
+        // is within 100m directly ahead (genuine collision imminent).
+        if (!threePointTurnActive && onSafeRoute && speed > 2) {
+            for (double checkDist : new double[]{50, 100}) {
+                double fx = pos.x() + Math.sin(heading) * checkDist;
+                double fy = pos.y() + Math.cos(heading) * checkDist;
+                if (terrain.elevationAt(fx, fy) > SHALLOW_WATER_LIMIT) {
+                    planThreePointTurn(pos.x(), pos.y(), pos.z(), heading, speed);
+                    break;
                 }
             }
         }
@@ -388,7 +445,8 @@ public final class SubmarineAutopilot {
                 // Check every 50 ticks to avoid expensive replanning every tick.
                 if (tick % 50 == 0 && navWaypoints.size() > currentNavIndex + 1) {
                     var exitWp = navWaypoints.get(currentNavIndex + 1);
-                    var route = planRoute(pos.x(), pos.y(), exitWp.x(), exitWp.y());
+                    // Sub is slow after reversing; use 5 m/s for recovery planning
+                    var route = planRoute(pos.x(), pos.y(), exitWp.x(), exitWp.y(), 5.0);
                     if (!route.isEmpty() && pathPlanner.isSafe(route.getFirst().x(), route.getFirst().y())) {
                         // Verify the first turn is physically achievable:
                         // the sub will be slow after reversing, so check at low speed
@@ -531,14 +589,19 @@ public final class SubmarineAutopilot {
         }
 
         // Step 5: Multi-point terrain scan
-        // Always scan for depth targeting (the sub needs to know about rising
-        // terrain ahead to adjust depth). But when on a safe A* route, don't
-        // let the scan results override horizontal steering (Step 6 rudder).
-        double scanHeading = heading;
+        // When on a safe route, scan along the waypoint bearing (the direction
+        // the sub will travel), not the current heading (which may temporarily
+        // point away from the route during turns).
         double waypointHeading = heading;
+        double scanHeading = heading;
         if (!navWaypoints.isEmpty() && currentNavIndex < navWaypoints.size()) {
             var wp = navWaypoints.get(currentNavIndex);
             waypointHeading = Math.atan2(wp.x() - pos.x(), wp.y() - pos.y());
+        }
+        // On a safe route, scan along the waypoint direction to avoid false
+        // positives from terrain the route curves around.
+        if (onSafeRoute) {
+            scanHeading = waypointHeading;
         }
 
         double worstFloor = floorBelow;
@@ -587,9 +650,7 @@ public final class SubmarineAutopilot {
 
         if (margin < avoidanceThreshold || shallowWaterAhead || inShallowWater) {
             double urgency = Math.clamp(1.0 - margin / avoidanceThreshold, 0.0, 1.0);
-            if (shallowWaterAhead) {
-                urgency = Math.max(urgency, 0.6);
-            }
+
             if (inShallowWater) {
                 // Actually in shallow water: always escape regardless of route
                 urgency = 1.0;
@@ -601,35 +662,34 @@ public final class SubmarineAutopilot {
                     status = "SHALLOW ESCAPE";
                 }
             }
-            if (!inShallowWater) {
-                status = "AVOIDING TERRAIN";
-            }
 
-            // Adjust depth target for vertical safety
+            // Adjust depth target for vertical safety (always active, even on safe route)
             if (worstTarget > rawTarget) {
                 rawTarget = worstTarget;
             }
 
-            // Throttle and rudder overrides: only when NOT on a safe route.
-            // On a safe route, the A* waypoints guide the sub through the
-            // corridor. Rudder overrides would fight the route and push the
-            // sub off the safe path. Depth adjustments above still protect
-            // against floor proximity.
+            // Rudder and throttle overrides: ONLY when not on a safe route.
+            // On a safe route, the A* planner and trajectory projector have
+            // already routed around obstacles. Rudder overrides fight the
+            // route and send the sub off-course into the very terrain it's
+            // trying to avoid. Only vertical (depth) adjustments are needed.
             if (!onSafeRoute && !inShallowWater && !threePointTurnActive) {
+                if (shallowWaterAhead) {
+                    urgency = Math.max(urgency, 0.6);
+                }
+                status = "AVOIDING TERRAIN";
                 throttle = Math.max(0.15, throttle * (1.0 - urgency * 0.7));
-            }
 
-            double scanDist = Math.max(worstDist, SCAN_DISTANCES[0]);
-            double leftH = heading - SCAN_SIDE_ANGLE;
-            double rightH = heading + SCAN_SIDE_ANGLE;
-            double floorLeft = terrain.elevationAt(
-                    pos.x() + Math.sin(leftH) * scanDist,
-                    pos.y() + Math.cos(leftH) * scanDist);
-            double floorRight = terrain.elevationAt(
-                    pos.x() + Math.sin(rightH) * scanDist,
-                    pos.y() + Math.cos(rightH) * scanDist);
+                double scanDist = Math.max(worstDist, SCAN_DISTANCES[0]);
+                double leftH = heading - SCAN_SIDE_ANGLE;
+                double rightH = heading + SCAN_SIDE_ANGLE;
+                double floorLeft = terrain.elevationAt(
+                        pos.x() + Math.sin(leftH) * scanDist,
+                        pos.y() + Math.cos(leftH) * scanDist);
+                double floorRight = terrain.elevationAt(
+                        pos.x() + Math.sin(rightH) * scanDist,
+                        pos.y() + Math.cos(rightH) * scanDist);
 
-            if (!onSafeRoute && !inShallowWater && !threePointTurnActive) {
                 double floorDiff = Math.abs(floorLeft - floorRight);
                 if (floorDiff > 1.0 || worstFloor > floorBelow + 5) {
                     double avoidRudder;
@@ -899,18 +959,34 @@ public final class SubmarineAutopilot {
         navWaypoints.clear();
         currentNavIndex = 0;
 
-        // Marker for current position (use actual depth, not terrain-derived)
-        navWaypoints.add(new Vec3(posX, posY, posZ));
-        currentNavIndex = 1;
+        double expectedSpeed = estimateSpeed(target);
 
-        var route = planRouteFromSub(posX, posY, heading, speed,
-                target.x(), target.y());
-        if (!route.isEmpty()) {
-            navWaypoints.addAll(route);
+        // Step 1: Get 2D corridor from A*
+        var corridor = pathPlanner.findCorridor(posX, posY, target.x(), target.y());
+
+        // Step 2: Project trajectory through the corridor from the sub's
+        // actual kinematic state. Every waypoint is physically reachable.
+        var projected = trajectoryProjector.projectRoute(
+                posX, posY, posZ, heading, speed,
+                corridor, target.preferredDepth(), expectedSpeed);
+
+        if (!projected.isEmpty()) {
+            navWaypoints.addAll(projected);
         } else {
             // Direct fallback
             navWaypoints.add(new Vec3(target.x(), target.y(), safeDepthAt(target.x(), target.y())));
         }
+    }
+
+    /** Estimate the cruising speed for a strategic waypoint based on noise policy / target speed. */
+    private double estimateSpeed(StrategicWaypoint wp) {
+        if (wp.targetSpeed() > 0) return wp.targetSpeed();
+        return switch (wp.noise()) {
+            case SILENT -> 3.0;
+            case QUIET -> 5.0;
+            case NORMAL -> 7.0;
+            case SPRINT -> 12.0;
+        };
     }
 
     /**
@@ -985,78 +1061,21 @@ public final class SubmarineAutopilot {
         threePointSafeHeading = safeHeading;
     }
 
-    List<Vec3> planRoute(double fromX, double fromY, double toX, double toY) {
+    List<Vec3> planRoute(double fromX, double fromY, double toX, double toY,
+                          double expectedSpeed) {
         if (pathPlanner != null) {
             double operatingDepth = stealthDepthAt(fromX, fromY);
-            var path = pathPlanner.findPath(fromX, fromY, toX, toY, operatingDepth);
+            double ratio = depthChangeRatio(expectedSpeed);
+            double turnRad = turnRadiusAtSpeed(expectedSpeed);
+            var path = pathPlanner.findPath(fromX, fromY, toX, toY,
+                    operatingDepth, ratio, turnRad);
             if (!path.isEmpty()) return path;
         }
         return List.of(new Vec3(toX, toY, safeDepthAt(toX, toY)));
     }
 
-    private List<Vec3> planRouteFromSub(double posX, double posY, double heading,
-                                         double speed, double goalX, double goalY) {
-        var directRoute = new ArrayList<>(planRoute(posX, posY, goalX, goalY));
-        if (directRoute.isEmpty()) return directRoute;
-
-        // Strip grid-snapped start if too close
-        if (directRoute.size() > 1) {
-            var first = directRoute.getFirst();
-            double d = Math.sqrt(Math.pow(first.x() - posX, 2) + Math.pow(first.y() - posY, 2));
-            if (d < 150) directRoute.removeFirst();
-        }
-
-        // Check angle to first waypoint
-        var firstWp = directRoute.getFirst();
-        double wpBearing = Math.atan2(firstWp.x() - posX, firstWp.y() - posY);
-        double turnAngle = wpBearing - heading;
-        while (turnAngle > Math.PI) turnAngle -= 2 * Math.PI;
-        while (turnAngle < -Math.PI) turnAngle += 2 * Math.PI;
-
-        if (Math.abs(turnAngle) < Math.PI / 2) {
-            return directRoute;
-        }
-
-        // Sharp turn: insert lead point
-        double leadDist = Math.max(200, speed * 20);
-        double goalDist = Math.sqrt(Math.pow(goalX - posX, 2) + Math.pow(goalY - posY, 2));
-        leadDist = Math.min(leadDist, goalDist * 0.4);
-        leadDist = Math.max(leadDist, 100);
-
-        double leadX = posX + Math.sin(heading) * leadDist;
-        double leadY = posY + Math.cos(heading) * leadDist;
-
-        if (pathPlanner != null && !pathPlanner.isSafe(leadX, leadY)) {
-            boolean found = false;
-            for (double tryDist = leadDist * 0.5; tryDist >= 100; tryDist *= 0.5) {
-                double tx = posX + Math.sin(heading) * tryDist;
-                double ty = posY + Math.cos(heading) * tryDist;
-                if (pathPlanner.isSafe(tx, ty)) {
-                    leadX = tx;
-                    leadY = ty;
-                    found = true;
-                    break;
-                }
-            }
-            if (!found) {
-                return directRoute;
-            }
-        }
-
-        var result = new ArrayList<Vec3>();
-        result.add(new Vec3(leadX, leadY, safeDepthAt(leadX, leadY)));
-
-        var astarPath = planRoute(leadX, leadY, goalX, goalY);
-        for (int i = 0; i < astarPath.size(); i++) {
-            var wp = astarPath.get(i);
-            if (i == 0) {
-                double d = Math.sqrt(Math.pow(wp.x() - leadX, 2) + Math.pow(wp.y() - leadY, 2));
-                if (d < 100) continue;
-            }
-            result.add(wp);
-        }
-        return result;
-    }
+    // planRouteFromSub and clampLeadDepth removed: the TrajectoryProjector
+    // handles kinematic feasibility directly, making lead points unnecessary.
 
     // ── Steering ────────────────────────────────────────────────────
 

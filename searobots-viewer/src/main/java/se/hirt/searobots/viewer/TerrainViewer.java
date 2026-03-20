@@ -27,6 +27,7 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 package se.hirt.searobots.viewer;
+import se.hirt.searobots.engine.ships.*;
 
 import se.hirt.searobots.api.MatchConfig;
 import se.hirt.searobots.api.SubmarineController;
@@ -210,7 +211,7 @@ public final class TerrainViewer {
                     scene3D[0] = SubmarineScene3D.create();
                     simHolder.scene3DRef = scene3D[0];
                     canvas3D[0] = scene3D[0].getCanvas();
-                    canvas3D[0].setPreferredSize(new java.awt.Dimension(1280, 800));
+                    canvas3D[0].setPreferredSize(new java.awt.Dimension(2560, 1080));
                     canvas3D[0].setFocusTraversalKeysEnabled(false);
                     // Add canvas to content pane (hidden initially, kept alive)
                     frame.getContentPane().add(canvas3D[0]);
@@ -299,6 +300,17 @@ public final class TerrainViewer {
             var gim = rootPane.getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW);
             var gam = rootPane.getActionMap();
 
+            // F11: toggle maximized window
+            gim.put(KeyStroke.getKeyStroke(KeyEvent.VK_F11, 0), "maximize");
+            gam.put("maximize", action(() -> {
+                int state = frame.getExtendedState();
+                if ((state & java.awt.Frame.MAXIMIZED_BOTH) != 0) {
+                    frame.setExtendedState(state & ~java.awt.Frame.MAXIMIZED_BOTH);
+                } else {
+                    frame.setExtendedState(state | java.awt.Frame.MAXIMIZED_BOTH);
+                }
+            }));
+
             gim.put(KeyStroke.getKeyStroke(KeyEvent.VK_SPACE, 0), "newMap");
             gam.put("newMap", action(() -> {
                 currentSeed[0] = ThreadLocalRandom.current().nextLong();
@@ -333,20 +345,20 @@ public final class TerrainViewer {
                 var sim = simHolder.loop;
                 if (sim != null) { sim.setSpeedMultiplier(2); panel.setSimSpeed(2); }
             }));
-            gim.put(KeyStroke.getKeyStroke('3'), "speed5");
-            gam.put("speed5", action(() -> {
+            gim.put(KeyStroke.getKeyStroke('3'), "speed4");
+            gam.put("speed4", action(() -> {
                 var sim = simHolder.loop;
-                if (sim != null) { sim.setSpeedMultiplier(5); panel.setSimSpeed(5); }
+                if (sim != null) { sim.setSpeedMultiplier(4); panel.setSimSpeed(4); }
             }));
-            gim.put(KeyStroke.getKeyStroke('4'), "speed10");
-            gam.put("speed10", action(() -> {
+            gim.put(KeyStroke.getKeyStroke('4'), "speed8");
+            gam.put("speed8", action(() -> {
                 var sim = simHolder.loop;
-                if (sim != null) { sim.setSpeedMultiplier(10); panel.setSimSpeed(10); }
+                if (sim != null) { sim.setSpeedMultiplier(8); panel.setSimSpeed(8); }
             }));
-            gim.put(KeyStroke.getKeyStroke('5'), "speed15");
-            gam.put("speed15", action(() -> {
+            gim.put(KeyStroke.getKeyStroke('5'), "speed16");
+            gam.put("speed16", action(() -> {
                 var sim = simHolder.loop;
-                if (sim != null) { sim.setSpeedMultiplier(22); panel.setSimSpeed(22); }
+                if (sim != null) { sim.setSpeedMultiplier(16); panel.setSimSpeed(16); }
             }));
 
             // 2D-only keybindings on MapPanel
@@ -386,7 +398,7 @@ public final class TerrainViewer {
             im.put(KeyStroke.getKeyStroke('W'), "waypoints");
             am.put("waypoints", action(panel::toggleWaypoints));
 
-            frame.setSize(1200, 900);
+            frame.setSize(2560, 1080);
             frame.setLocationRelativeTo(null);
             frame.setVisible(true);
 

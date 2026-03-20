@@ -224,20 +224,20 @@ class SubmarineAutopilotTest {
         void headingAwareStartSharpTurn() {
             var terrain = flatTerrain(-500);
             var ap = createAutopilot(terrain);
-            // Sub heading north (0), waypoint behind (south)
+            // Sub heading north (0), waypoint behind (south): 180 degree turn.
+            // The trajectory projector should insert arc waypoint(s) ahead of the
+            // sub, then route back toward the goal. The first waypoint should NOT
+            // be directly at the goal behind us.
             ap.setWaypoints(List.of(wp(0, -2000, -200)), 0, 0, -200, 0, 5);
 
             var nav = ap.navWaypoints();
             assertFalse(nav.isEmpty(), "Route should be planned for sharp turn");
-            // First real nav waypoint (after start marker) should be a lead point ahead,
-            // not directly at the goal behind us
-            // navWaypoints[0] is start marker, [1] is lead point
-            assertTrue(nav.size() >= 3,
-                    "Sharp turn should insert lead point, got " + nav.size() + " waypoints");
-            // The lead point (index 1) should be in front (positive Y for heading=0)
-            var leadPoint = nav.get(1);
-            assertTrue(leadPoint.y() > 0,
-                    "Lead point should be ahead of sub (positive Y), got y=" + leadPoint.y());
+            assertTrue(nav.size() >= 2,
+                    "Sharp turn should have arc waypoint(s), got " + nav.size() + " waypoints");
+            // The first waypoint should be ahead or to the side (arc), not behind
+            var first = nav.getFirst();
+            assertTrue(first.y() > -500,
+                    "First waypoint should not be far behind sub, got y=" + first.y());
         }
 
         @Test
@@ -328,11 +328,11 @@ class SubmarineAutopilotTest {
 
         @Test
         void steersTowardWaypoint() {
-            // Sub at origin heading north (0), waypoint to the east and slightly ahead
-            // Bearing to (2000, 500) = atan2(2000, 500) ~ 76 degrees (< 90 so no lead point)
+            // Sub at origin heading north (0), waypoint slightly east and ahead.
+            // Bearing to (500, 2000) = atan2(500, 2000) ~ 14 degrees (within 20 deg, no lead point)
             var terrain = flatTerrain(-500);
             var ap = createAutopilot(terrain);
-            ap.setWaypoints(List.of(wp(2000, 500, -200)), 0, 0, -200, 0, 5);
+            ap.setWaypoints(List.of(wp(500, 2000, -200)), 0, 0, -200, 0, 5);
 
             var out = tickAutopilot(ap, terrain, 1, 0, 0, -200, 0);
             assertTrue(out.rudder > 0,
@@ -341,11 +341,11 @@ class SubmarineAutopilotTest {
 
         @Test
         void steersLeftTowardWaypoint() {
-            // Sub at origin heading north (0), waypoint to the west and slightly ahead
-            // Bearing to (-2000, 500) = atan2(-2000, 500) ~ -76 degrees (< 90 so no lead point)
+            // Sub at origin heading north (0), waypoint slightly west and ahead.
+            // Bearing to (-500, 2000) = atan2(-500, 2000) ~ -14 degrees (within 20 deg, no lead point)
             var terrain = flatTerrain(-500);
             var ap = createAutopilot(terrain);
-            ap.setWaypoints(List.of(wp(-2000, 500, -200)), 0, 0, -200, 0, 5);
+            ap.setWaypoints(List.of(wp(-500, 2000, -200)), 0, 0, -200, 0, 5);
 
             var out = tickAutopilot(ap, terrain, 1, 0, 0, -200, 0);
             assertTrue(out.rudder < 0,

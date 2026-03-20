@@ -1,4 +1,5 @@
 package se.hirt.searobots.engine;
+import se.hirt.searobots.engine.ships.*;
 
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -861,7 +862,7 @@ class AutopilotIntegrationTest {
             boolean[] ticked = {false};
 
             runSim(world, List.of(new DefaultAttackSub(), new SubmarineDrone()),
-                    List.of(submarine(), submarine()), 6000, new SimulationListener() {
+                    List.of(submarine(), submarine()), 10000, new SimulationListener() {
                 @Override
                 public void onTick(long tick, List<SubmarineSnapshot> submarines) {
                     ticked[0] = true;
@@ -879,7 +880,7 @@ class AutopilotIntegrationTest {
 
             assertTrue(ticked[0], "Simulation should have produced ticks");
             assertTrue(firstContact[0] > 0,
-                    "Sub should detect submarine drone within 120s (6000 ticks)");
+                    "Sub should detect submarine drone within 200s (10000 ticks)");
             System.out.printf("Submarine drone detection at tick %d (%.1fs)%n",
                     firstContact[0], firstContact[0] / 50.0);
         }

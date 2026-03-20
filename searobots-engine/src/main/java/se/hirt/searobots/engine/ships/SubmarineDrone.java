@@ -26,7 +26,9 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
-package se.hirt.searobots.engine;
+package se.hirt.searobots.engine.ships;
+
+import se.hirt.searobots.engine.*;
 
 import se.hirt.searobots.api.*;
 

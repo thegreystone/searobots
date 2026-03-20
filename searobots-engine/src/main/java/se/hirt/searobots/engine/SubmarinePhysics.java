@@ -167,6 +167,16 @@ public final class SubmarinePhysics {
                     * cfg.planesArea() * planesCl * cfg.planesArm();
             // Hydrostatic restoring moment (metacentric height ~1.0m)
             double restoringMoment = cfg.dryMass() * 9.81 * 1.0 * Math.sin(sub.pitch());
+
+            // Hydrodynamic hull restoring moment: a pitched hull moving through water
+            // generates a pressure distribution that resists the pitch angle (hull body
+            // lift / Munk moment). Proportional to speed² * sin(pitch), this is the
+            // dominant pitch-limiting force at speed, preventing unrealistic angles.
+            double lateralArea = 4.0 * cfg.hullHalfLength() * cfg.hullHalfBeam();
+            double hullPitchArm = cfg.hullHalfLength() / 3.0;
+            double hullPitchCl = 0.10;
+            restoringMoment += 0.5 * WATER_DENSITY * speed * Math.abs(speed)
+                    * lateralArea * hullPitchCl * hullPitchArm * Math.sin(sub.pitch());
             // Effective inertia with speed-dependent resistance
             double pitchBaseInertia = cfg.massHeave() * cfg.rotationalInertia();
             double pitchSpeedDamping = pitchBaseInertia * 0.05 * speed * Math.abs(speed);

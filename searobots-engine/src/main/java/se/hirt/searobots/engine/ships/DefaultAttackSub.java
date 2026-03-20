@@ -26,7 +26,9 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
-package se.hirt.searobots.engine;
+package se.hirt.searobots.engine.ships;
+
+import se.hirt.searobots.engine.*;
 
 import se.hirt.searobots.api.*;
 
@@ -39,13 +41,13 @@ public final class DefaultAttackSub implements SubmarineController {
     public String name() { return "Default Sub"; }
 
     // State machine
-    enum State { PATROL, TRACKING, CHASE, RAM, EVADE }
+    public enum State { PATROL, TRACKING, CHASE, RAM, EVADE }
 
     // Throttle constants
     static final double PATROL_THROTTLE = 0.4;
-    static final double TRACKING_THROTTLE = 0.25;
+    public static final double TRACKING_THROTTLE = 0.25;
     static final double CHASE_THROTTLE = 0.8;
-    static final double RAM_THROTTLE = 1.0;
+    public static final double RAM_THROTTLE = 1.0;
     static final double EVADE_THROTTLE = 0.15;
 
     // Terrain / depth constants
@@ -56,7 +58,7 @@ public final class DefaultAttackSub implements SubmarineController {
     private static final double SHALLOW_WATER_LIMIT = -90.0;
 
     // Contact tracking constants
-    static final int CONTACT_CONFIRM_TICKS = 3;
+    public static final int CONTACT_CONFIRM_TICKS = 3;
     static final double CHASE_RANGE = 3000.0;
     static final double RAM_RANGE = 500.0;
     static final double RAM_OVERSHOT_RANGE = 800.0;
@@ -66,10 +68,10 @@ public final class DefaultAttackSub implements SubmarineController {
     static final double CONFIDENCE_RAM_MIN = 0.05;
 
     // Baffle clearing constants (referenced by tests)
-    static final int BAFFLE_CLEAR_INTERVAL = 1500;
+    public static final int BAFFLE_CLEAR_INTERVAL = 1500;
 
     // Patrol ping constants
-    static final int PATROL_SILENCE_PING_TICKS = 3000;
+    public static final int PATROL_SILENCE_PING_TICKS = 3000;
     private static final double BEHIND_OFFSET = 500.0;
 
     // Stern tailing constants
@@ -133,6 +135,8 @@ public final class DefaultAttackSub implements SubmarineController {
     private List<StrategicWaypoint> strategicWaypoints = List.of();
     private double lastStrategicTargetX = Double.NaN;
     private double lastStrategicTargetY = Double.NaN;
+    private long lastReplanTick = -1000;
+    private static final int REPLAN_COOLDOWN_TICKS = 250; // 5 seconds
     private BattleArea battleArea;
     private PathPlanner pathPlanner;
 
@@ -149,15 +153,15 @@ public final class DefaultAttackSub implements SubmarineController {
         this.autopilot = new SubmarineAutopilot(context);
     }
 
-    State state() { return state; }
-    double estimatedRange() { return estimatedRange; }
-    boolean hasTrackedContact() { return hasTrackedContact; }
-    double trackedX() { return trackedX; }
-    double trackedY() { return trackedY; }
-    double contactAlive() { return contactAlive; }
+    public State state() { return state; }
+    public double estimatedRange() { return estimatedRange; }
+    public boolean hasTrackedContact() { return hasTrackedContact; }
+    public double trackedX() { return trackedX; }
+    public double trackedY() { return trackedY; }
+    public double contactAlive() { return contactAlive; }
     double uncertaintyRadius() { return uncertaintyRadius; }
-    double trackedHeading() { return trackedHeading; }
-    SubmarineAutopilot autopilot() { return autopilot; }
+    public double trackedHeading() { return trackedHeading; }
+    public SubmarineAutopilot autopilot() { return autopilot; }
 
     @Override
     public void onTick(SubmarineInput input, SubmarineOutput output) {
@@ -366,6 +370,15 @@ public final class DefaultAttackSub implements SubmarineController {
             }
         }
 
+        // Enforce replan cooldown to prevent thrashing when the sub is in
+        // a difficult situation (e.g., emergency surface near terrain). Each
+        // replan produces a new route that may conflict with the previous one,
+        // and replanning every tick makes it worse. State changes bypass the
+        // cooldown since they represent genuine strategic shifts.
+        if (needReplan && !stateChanged && (tick - lastReplanTick) < REPLAN_COOLDOWN_TICKS) {
+            needReplan = false;
+        }
+
         if (needReplan && state != State.RAM) {
             strategicWaypoints = switch (state) {
                 case PATROL -> generatePatrolWaypoints(pos.x(), pos.y(), heading, battleArea);
@@ -394,6 +407,7 @@ public final class DefaultAttackSub implements SubmarineController {
                 autopilot.setWaypoints(strategicWaypoints, pos.x(), pos.y(), depth, heading, lastSpeed);
                 lastStrategicTargetX = strategicWaypoints.getFirst().x();
                 lastStrategicTargetY = strategicWaypoints.getFirst().y();
+                lastReplanTick = tick;
             }
         }
 
@@ -616,7 +630,7 @@ public final class DefaultAttackSub implements SubmarineController {
 
     // ── Geometry ────────────────────────────────────────────────────
 
-    static double angleDiff(double a, double b) {
+    public static double angleDiff(double a, double b) {
         double diff = a - b;
         while (diff > Math.PI) diff -= 2 * Math.PI;
         while (diff < -Math.PI) diff += 2 * Math.PI;
@@ -631,8 +645,8 @@ public final class DefaultAttackSub implements SubmarineController {
 
     // ── Strategic waypoint generation ───────────────────────────────
 
-    List<StrategicWaypoint> generatePatrolWaypoints(double x, double y,
-                                                     double heading, BattleArea area) {
+    public List<StrategicWaypoint> generatePatrolWaypoints(double x, double y,
+                                                            double heading, BattleArea area) {
         var waypoints = new ArrayList<StrategicWaypoint>();
         int numPoints = 5;
         double arenaExtent = area.extent();
@@ -719,7 +733,7 @@ public final class DefaultAttackSub implements SubmarineController {
         return waypoints;
     }
 
-    List<StrategicWaypoint> generateTrackingWaypoints(double posX, double posY,
+    public List<StrategicWaypoint> generateTrackingWaypoints(double posX, double posY,
                                                        double heading, double contactBearing,
                                                        TrackedContact contact) {
         var waypoints = new ArrayList<StrategicWaypoint>();
@@ -751,7 +765,7 @@ public final class DefaultAttackSub implements SubmarineController {
         return waypoints;
     }
 
-    List<StrategicWaypoint> generateChaseWaypoints(double posX, double posY,
+    public List<StrategicWaypoint> generateChaseWaypoints(double posX, double posY,
                                                     double heading, TrackedContact contact,
                                                     boolean sonarCooldownReady) {
         var waypoints = new ArrayList<StrategicWaypoint>();
@@ -807,7 +821,7 @@ public final class DefaultAttackSub implements SubmarineController {
         return waypoints;
     }
 
-    List<StrategicWaypoint> generateEvadeWaypoints(double posX, double posY,
+    public List<StrategicWaypoint> generateEvadeWaypoints(double posX, double posY,
                                                     double threatBearing, TerrainMap terrain) {
         double perpBearing1 = normalizeBearing(threatBearing + Math.PI / 2);
         double perpBearing2 = normalizeBearing(threatBearing - Math.PI / 2);
