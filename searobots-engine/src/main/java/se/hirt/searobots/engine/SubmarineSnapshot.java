@@ -35,6 +35,7 @@ import java.util.List;
 
 public record SubmarineSnapshot(int id, String name, Pose pose, Velocity velocity, double speed,
                                  Color color, boolean forfeited, int hp, double noiseLevel,
+                                 double sourceLevelDb,
                                  double throttle, double rudder, double sternPlanes,
                                  String status, boolean pingRequested,
                                  List<ContactEstimate> contactEstimates,

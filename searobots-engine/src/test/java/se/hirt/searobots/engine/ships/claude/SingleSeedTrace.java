@@ -1,4 +1,5 @@
-package se.hirt.searobots.engine;
+package se.hirt.searobots.engine.ships.claude;
+import se.hirt.searobots.engine.*;
 import se.hirt.searobots.engine.ships.*;
 
 import org.junit.jupiter.api.Test;
@@ -18,7 +19,7 @@ class SingleSeedTrace {
         sim.setSpeedMultiplier(1_000_000);
         var planner = new PathPlanner(world.terrain(), -80, 200, 75);
 
-        List<SubmarineController> controllers = List.of(new DefaultAttackSub(), new SubmarineDrone());
+        List<SubmarineController> controllers = List.of(new ClaudeAttackSub(), new SubmarineDrone());
         List<VehicleConfig> configs = List.of(VehicleConfig.submarine(), VehicleConfig.submarine());
 
         System.out.printf("%n=== SEED %d TRACE [%d-%d] ===%n", seed, startTick, endTick);

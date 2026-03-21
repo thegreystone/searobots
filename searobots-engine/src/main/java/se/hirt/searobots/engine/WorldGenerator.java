@@ -216,7 +216,7 @@ public final class WorldGenerator {
      * {@link #SAFE_HEADING_DISTANCE} is deepest, or {@code NaN} if no
      * direction keeps the floor below {@link #SAFE_HEADING_MIN_FLOOR}.
      */
-    static double findSafeHeading(TerrainMap terrain, double x, double y) {
+    public static double findSafeHeading(TerrainMap terrain, double x, double y) {
         double bestHeading = Double.NaN;
         double bestWorstFloor = 0; // shallowest floor along best heading (most negative = deepest)
 

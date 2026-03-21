@@ -26,7 +26,8 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
-package se.hirt.searobots.engine;
+package se.hirt.searobots.engine.ships.claude;
+import se.hirt.searobots.engine.*;
 import se.hirt.searobots.engine.ships.*;
 
 import org.junit.jupiter.api.BeforeEach;
@@ -46,11 +47,11 @@ class StrategicWaypointGenerationTest {
     // crush depth = -700, safety margin = 50, depth limit = -650
     private static final double DEPTH_LIMIT = CONFIG.crushDepth() + 50;
 
-    private DefaultAttackSub controller;
+    private ClaudeAttackSub controller;
 
     @BeforeEach
     void setUp() {
-        controller = new DefaultAttackSub();
+        controller = new ClaudeAttackSub();
     }
 
     // ── helpers ──────────────────────────────────────────────────────
@@ -251,7 +252,7 @@ class StrategicWaypointGenerationTest {
             var first = wps.getFirst();
             // The cross waypoint should be offset sideways (in X), not straight ahead.
             double bearingToWp = Math.atan2(first.x(), first.y());
-            double angleToBearing = Math.abs(DefaultAttackSub.angleDiff(bearingToWp, contactBearing));
+            double angleToBearing = Math.abs(ClaudeAttackSub.angleDiff(bearingToWp, contactBearing));
             // Should be roughly PI/2 (perpendicular), allow some tolerance
             assertTrue(angleToBearing > Math.toRadians(30),
                     "First waypoint should be approximately perpendicular to contact bearing, "
@@ -496,7 +497,7 @@ class StrategicWaypointGenerationTest {
             assertFalse(wps.isEmpty());
             var wp = wps.getFirst();
             double bearingToWp = Math.atan2(wp.x(), wp.y());
-            double angleOffset = Math.abs(DefaultAttackSub.angleDiff(bearingToWp, threatBearing));
+            double angleOffset = Math.abs(ClaudeAttackSub.angleDiff(bearingToWp, threatBearing));
             // Should be roughly PI/2 (perpendicular)
             assertTrue(angleOffset > Math.toRadians(45),
                     "Evade waypoint should be roughly perpendicular to threat, "

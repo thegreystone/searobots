@@ -1,4 +1,5 @@
-package se.hirt.searobots.engine;
+package se.hirt.searobots.engine.ships.claude;
+import se.hirt.searobots.engine.*;
 import se.hirt.searobots.engine.ships.*;
 
 import org.junit.jupiter.api.Test;
@@ -21,7 +22,7 @@ class ShallowDeathInvestigation {
         var sim = new SimulationLoop();
         sim.setSpeedMultiplier(1_000_000);
 
-        List<SubmarineController> controllers = List.of(new DefaultAttackSub(), new SubmarineDrone());
+        List<SubmarineController> controllers = List.of(new ClaudeAttackSub(), new SubmarineDrone());
         List<VehicleConfig> configs = List.of(VehicleConfig.submarine(), VehicleConfig.submarine());
 
         long[] deathTick = {-1};

@@ -26,7 +26,8 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
-package se.hirt.searobots.engine;
+package se.hirt.searobots.engine.ships.claude;
+import se.hirt.searobots.engine.*;
 import se.hirt.searobots.engine.ships.*;
 
 import org.junit.jupiter.api.BeforeEach;
@@ -38,7 +39,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class DefaultAttackSubTest {
+class ClaudeAttackSubTest {
 
     // Controller constants (mirrored here for readable test comments)
     // FLOOR_CLEARANCE = 80, EMERGENCY_GAP = 60, MIN_DEPTH = -20
@@ -46,11 +47,11 @@ class DefaultAttackSubTest {
 
     private static final MatchConfig CONFIG = MatchConfig.withDefaults(42);
 
-    private DefaultAttackSub controller;
+    private ClaudeAttackSub controller;
 
     @BeforeEach
     void setUp() {
-        controller = new DefaultAttackSub();
+        controller = new ClaudeAttackSub();
     }
 
     // helpers
@@ -685,12 +686,12 @@ class DefaultAttackSubTest {
         @Test
         void transitionsToTrackingOnContact() {
             startMatch(DEEP_FLAT);
-            assertEquals(DefaultAttackSub.State.PATROL, controller.state());
+            assertEquals(ClaudeAttackSub.State.PATROL, controller.state());
 
-            feedContactTicks(DefaultAttackSub.CONTACT_CONFIRM_TICKS, 0,
+            feedContactTicks(ClaudeAttackSub.CONTACT_CONFIRM_TICKS, 0,
                     0, 0, -200, 0, CONTACT_NORTH);
 
-            assertEquals(DefaultAttackSub.State.TRACKING, controller.state());
+            assertEquals(ClaudeAttackSub.State.TRACKING, controller.state());
         }
 
         @Test
@@ -698,7 +699,7 @@ class DefaultAttackSubTest {
             startMatch(DEEP_FLAT);
             feedContactTicks(1, 0, 0, 0, -200, 0, CONTACT_NORTH);
 
-            assertEquals(DefaultAttackSub.State.PATROL, controller.state(),
+            assertEquals(ClaudeAttackSub.State.PATROL, controller.state(),
                     "Single tick contact should not trigger TRACKING");
         }
 
@@ -706,31 +707,31 @@ class DefaultAttackSubTest {
         void transitionsToPatrolOnContactLossViaConfidenceDecay() {
             startMatch(DEEP_FLAT);
             // Enter TRACKING
-            feedContactTicks(DefaultAttackSub.CONTACT_CONFIRM_TICKS, 0,
+            feedContactTicks(ClaudeAttackSub.CONTACT_CONFIRM_TICKS, 0,
                     0, 0, -200, 0, CONTACT_NORTH);
-            assertEquals(DefaultAttackSub.State.TRACKING, controller.state());
+            assertEquals(ClaudeAttackSub.State.TRACKING, controller.state());
 
             // TRACKING transitions to PATROL when !hasTrackedContact && ticksSinceContact > 500.
             // hasTrackedContact is cleared when uncertaintyRadius > 5000.
             // At maxSubSpeed=15 m/s and dt=0.02s, uncertainty grows by 0.3m/tick.
             // 5000/0.3 ~ 16667 ticks. Feed 17000 ticks to ensure the threshold is
             // crossed and ticksSinceContact > 500.
-            long startTick = DefaultAttackSub.CONTACT_CONFIRM_TICKS;
+            long startTick = ClaudeAttackSub.CONTACT_CONFIRM_TICKS;
             for (int i = 0; i < 17000; i++) {
                 tickFull(DEEP_FLAT, List.of(), startTick + i, 0, 0, -200, 0,
                         Vec3.ZERO, 1000, List.of(), List.of(), 0);
             }
 
-            assertEquals(DefaultAttackSub.State.PATROL, controller.state());
+            assertEquals(ClaudeAttackSub.State.PATROL, controller.state());
         }
 
         @Test
         void transitionsToChaseOnRangeEstimate() {
             startMatch(DEEP_FLAT);
             // Enter TRACKING
-            feedContactTicks(DefaultAttackSub.CONTACT_CONFIRM_TICKS, 0,
+            feedContactTicks(ClaudeAttackSub.CONTACT_CONFIRM_TICKS, 0,
                     0, 0, -200, 0, CONTACT_NORTH);
-            assertEquals(DefaultAttackSub.State.TRACKING, controller.state());
+            assertEquals(ClaudeAttackSub.State.TRACKING, controller.state());
 
             // Feed contacts from positions far enough apart for triangulation
             // Target at (0, 2000). From (0,0) bearing is 0 (north).
@@ -746,7 +747,7 @@ class DefaultAttackSubTest {
             tickFull(DEEP_FLAT, List.of(), 200, 300, 0, -200, 0,
                     Vec3.ZERO, 1000, List.of(contact2), List.of(), 0);
 
-            assertEquals(DefaultAttackSub.State.CHASE, controller.state(),
+            assertEquals(ClaudeAttackSub.State.CHASE, controller.state(),
                     "Should transition to CHASE with range estimate < 3000m");
         }
 
@@ -754,7 +755,7 @@ class DefaultAttackSubTest {
         void transitionsToRamOnCloseRange() {
             startMatch(DEEP_FLAT);
             // Enter TRACKING then CHASE via active sonar return with range
-            feedContactTicks(DefaultAttackSub.CONTACT_CONFIRM_TICKS, 0,
+            feedContactTicks(ClaudeAttackSub.CONTACT_CONFIRM_TICKS, 0,
                     0, 0, -200, 0, CONTACT_NORTH);
 
             // Give an active return with range 2000m, triggers CHASE
@@ -767,7 +768,7 @@ class DefaultAttackSubTest {
             tickFull(DEEP_FLAT, List.of(), 200, 0, 0, -200, 0,
                     Vec3.ZERO, 1000, List.of(), List.of(closeContact), 0);
 
-            assertEquals(DefaultAttackSub.State.RAM, controller.state(),
+            assertEquals(ClaudeAttackSub.State.RAM, controller.state(),
                     "Should transition to RAM with range < 500m");
         }
 
@@ -775,15 +776,15 @@ class DefaultAttackSubTest {
         void transitionsToEvadeOnDamage() {
             startMatch(DEEP_FLAT);
             // Enter TRACKING
-            feedContactTicks(DefaultAttackSub.CONTACT_CONFIRM_TICKS, 0,
+            feedContactTicks(ClaudeAttackSub.CONTACT_CONFIRM_TICKS, 0,
                     0, 0, -200, 0, CONTACT_NORTH);
-            assertEquals(DefaultAttackSub.State.TRACKING, controller.state());
+            assertEquals(ClaudeAttackSub.State.TRACKING, controller.state());
 
             // Take damage (hp drops from 1000 to 900)
             tickFull(DEEP_FLAT, List.of(), 100, 0, 0, -200, 0,
                     Vec3.ZERO, 900, List.of(CONTACT_NORTH), List.of(), 0);
 
-            assertEquals(DefaultAttackSub.State.EVADE, controller.state());
+            assertEquals(ClaudeAttackSub.State.EVADE, controller.state());
         }
     }
 
@@ -817,7 +818,7 @@ class DefaultAttackSubTest {
         void patrolPingsAfterLongSilence() {
             startMatch(DEEP_FLAT);
             CapturedOutput out = null;
-            for (long i = 0; i <= DefaultAttackSub.PATROL_SILENCE_PING_TICKS; i++) {
+            for (long i = 0; i <= ClaudeAttackSub.PATROL_SILENCE_PING_TICKS; i++) {
                 out = tickFull(DEEP_FLAT, List.of(), i, 0, 0, -200, 0,
                         Vec3.ZERO, 1000, List.of(), List.of(), 0);
             }
@@ -846,16 +847,16 @@ class DefaultAttackSubTest {
             // is ~100m (< CHASE_RANGE), causing an immediate TRACKING->CHASE
             // transition on the next tick after entering TRACKING.
             startMatch(DEEP_FLAT);
-            feedContactTicks(DefaultAttackSub.CONTACT_CONFIRM_TICKS, 0,
+            feedContactTicks(ClaudeAttackSub.CONTACT_CONFIRM_TICKS, 0,
                     0, 0, -200, 0, CONTACT_NORTH);
-            assertEquals(DefaultAttackSub.State.TRACKING, controller.state());
+            assertEquals(ClaudeAttackSub.State.TRACKING, controller.state());
 
             // Next tick: SE+SL range estimate (~100m) triggers CHASE
             var out = tickFull(DEEP_FLAT, List.of(),
-                    DefaultAttackSub.CONTACT_CONFIRM_TICKS, 0, 0, -200, 0,
+                    ClaudeAttackSub.CONTACT_CONFIRM_TICKS, 0, 0, -200, 0,
                     Vec3.ZERO, 1000, List.of(CONTACT_NORTH), List.of(), 0);
 
-            assertEquals(DefaultAttackSub.State.CHASE, controller.state(),
+            assertEquals(ClaudeAttackSub.State.CHASE, controller.state(),
                     "SE+SL range estimate should trigger CHASE transition");
             // Chase uses autopilot with NORMAL/SPRINT noise policy
             assertTrue(out.throttle > 0.10,
@@ -866,11 +867,11 @@ class DefaultAttackSubTest {
         void trackingManeuversPerpendicularToContact() {
             startMatch(DEEP_FLAT);
             // Contact at bearing 0 (north), sub heading north (0)
-            feedContactTicks(DefaultAttackSub.CONTACT_CONFIRM_TICKS, 0,
+            feedContactTicks(ClaudeAttackSub.CONTACT_CONFIRM_TICKS, 0,
                     0, 0, -200, 0, CONTACT_NORTH);
 
             var out = tickFull(DEEP_FLAT, List.of(),
-                    DefaultAttackSub.CONTACT_CONFIRM_TICKS, 0, 0, -200, 0,
+                    ClaudeAttackSub.CONTACT_CONFIRM_TICKS, 0, 0, -200, 0,
                     Vec3.ZERO, 1000, List.of(CONTACT_NORTH), List.of(), 0);
 
             // Should turn toward perpendicular (east or west = +/- pi/2)
@@ -881,7 +882,7 @@ class DefaultAttackSubTest {
         @Test
         void trackingAccumulatesBearingFixes() {
             startMatch(DEEP_FLAT);
-            feedContactTicks(DefaultAttackSub.CONTACT_CONFIRM_TICKS, 0,
+            feedContactTicks(ClaudeAttackSub.CONTACT_CONFIRM_TICKS, 0,
                     0, 0, -200, 0, CONTACT_NORTH);
 
             // Feed contacts from different positions with engine TMA range estimates.
@@ -910,16 +911,16 @@ class DefaultAttackSubTest {
             startMatch(DEEP_FLAT);
 
             // Enter TRACKING via passive contacts
-            feedContactTicks(DefaultAttackSub.CONTACT_CONFIRM_TICKS, 0,
+            feedContactTicks(ClaudeAttackSub.CONTACT_CONFIRM_TICKS, 0,
                     0, 0, -200, 0, CONTACT_NORTH);
-            assertEquals(DefaultAttackSub.State.TRACKING, controller.state());
+            assertEquals(ClaudeAttackSub.State.TRACKING, controller.state());
 
             // Give an active ping to establish tracked contact to the east
             var activeEast = new SonarContact(Math.PI / 2, 15.0, 5000, true, -1, 0, 0, 90.0, 0.95, Double.NaN);
             tickFull(DEEP_FLAT, List.of(), 100, 0, 0, -200, 0,
                     Vec3.ZERO, 1000, List.of(), List.of(activeEast), 0);
             // Now in CHASE with tracked contact to the east
-            assertEquals(DefaultAttackSub.State.CHASE, controller.state());
+            assertEquals(ClaudeAttackSub.State.CHASE, controller.state());
 
             // Let some ticks pass with no fresh contact (CHASE persists)
             for (int i = 0; i < 500; i++) {
@@ -928,7 +929,7 @@ class DefaultAttackSubTest {
             }
 
             // Should still be in CHASE (no longer drops to TRACKING)
-            assertEquals(DefaultAttackSub.State.CHASE, controller.state(),
+            assertEquals(ClaudeAttackSub.State.CHASE, controller.state(),
                     "CHASE persists while tracked contact exists");
 
             // Tracked contact should still exist
@@ -950,7 +951,7 @@ class DefaultAttackSubTest {
 
         private void enterChase() {
             startMatch(DEEP_FLAT);
-            feedContactTicks(DefaultAttackSub.CONTACT_CONFIRM_TICKS, 0,
+            feedContactTicks(ClaudeAttackSub.CONTACT_CONFIRM_TICKS, 0,
                     0, 0, -200, 0, CONTACT_NORTH);
             // Active return with range 2000m triggers CHASE
             var activeContact = new SonarContact(0, 15.0, 2000, true, -1, 0, 0, 90.0, 0.95, Double.NaN);
@@ -961,7 +962,7 @@ class DefaultAttackSubTest {
         @Test
         void chaseIncreasesSpeed() {
             enterChase();
-            assertEquals(DefaultAttackSub.State.CHASE, controller.state());
+            assertEquals(ClaudeAttackSub.State.CHASE, controller.state());
 
             // During sprint phase, throttle should be adaptive (faster than
             // TRACKING to close on target). With default tracked speed ~2 m/s,
@@ -980,12 +981,12 @@ class DefaultAttackSubTest {
             // Use range 3000m to trigger SPRINT_DRIFT pattern (dist > 2000)
             // with a faster target (speed=8 m/s) for meaningful throttle difference
             startMatch(DEEP_FLAT);
-            feedContactTicks(DefaultAttackSub.CONTACT_CONFIRM_TICKS, 0,
+            feedContactTicks(ClaudeAttackSub.CONTACT_CONFIRM_TICKS, 0,
                     0, 0, -200, 0, CONTACT_NORTH);
             var activeContact = new SonarContact(0, 15.0, 3000, true, 8.0, 0, 0, 90.0, 0.95, Double.NaN);
             tickFull(DEEP_FLAT, List.of(), 100, 0, 0, -200, 0,
                     Vec3.ZERO, 1000, List.of(), List.of(activeContact), 0);
-            assertEquals(DefaultAttackSub.State.CHASE, controller.state());
+            assertEquals(ClaudeAttackSub.State.CHASE, controller.state());
 
             // Sprint phase (tick 101, early in pattern cycle)
             var outSprint = tickFull(DEEP_FLAT, List.of(), 101, 0, 0, -200, 0,
@@ -1006,7 +1007,7 @@ class DefaultAttackSubTest {
         @Test
         void chasePersistsWithTrackedContact() {
             enterChase();
-            assertEquals(DefaultAttackSub.State.CHASE, controller.state());
+            assertEquals(ClaudeAttackSub.State.CHASE, controller.state());
             assertTrue(controller.hasTrackedContact(), "Should have tracked contact after ping");
 
             // After 500 ticks with no fresh contact, should still be CHASE
@@ -1016,14 +1017,14 @@ class DefaultAttackSubTest {
                 tickFull(DEEP_FLAT, List.of(), 101 + i, 0, 0, -200, 0,
                         Vec3.ZERO, 1000, List.of(), List.of(), 0);
             }
-            assertEquals(DefaultAttackSub.State.CHASE, controller.state(),
+            assertEquals(ClaudeAttackSub.State.CHASE, controller.state(),
                     "CHASE should persist while tracked contact confidence is above threshold");
         }
 
         @Test
         void chasePersistsUntilUncertaintyTooLarge() {
             enterChase();
-            assertEquals(DefaultAttackSub.State.CHASE, controller.state());
+            assertEquals(ClaudeAttackSub.State.CHASE, controller.state());
 
             // CHASE no longer drops to TRACKING on low confidence. Instead, it
             // stays in CHASE as long as hasTrackedContact is true. Verify CHASE
@@ -1032,7 +1033,7 @@ class DefaultAttackSubTest {
                 tickFull(DEEP_FLAT, List.of(), 101 + i, 0, 0, -200, 0,
                         Vec3.ZERO, 1000, List.of(), List.of(), 0);
             }
-            assertEquals(DefaultAttackSub.State.CHASE, controller.state(),
+            assertEquals(ClaudeAttackSub.State.CHASE, controller.state(),
                     "CHASE should persist while tracked contact exists (uncertaintyRadius still small)");
 
             // CHASE drops to PATROL when !hasTrackedContact && uncertaintyRadius > 3000.
@@ -1042,7 +1043,7 @@ class DefaultAttackSubTest {
                 tickFull(DEEP_FLAT, List.of(), 2501 + i, 0, 0, -200, 0,
                         Vec3.ZERO, 1000, List.of(), List.of(), 0);
             }
-            assertEquals(DefaultAttackSub.State.PATROL, controller.state(),
+            assertEquals(ClaudeAttackSub.State.PATROL, controller.state(),
                     "CHASE should drop to PATROL when uncertaintyRadius exceeds 5000");
         }
 
@@ -1052,13 +1053,13 @@ class DefaultAttackSubTest {
             // Target heading east (PI/2), at range 1200m (< 1500, > RAM*2).
             // Stern offset should push waypoint west of the target position.
             startMatch(DEEP_FLAT);
-            feedContactTicks(DefaultAttackSub.CONTACT_CONFIRM_TICKS, 0,
+            feedContactTicks(ClaudeAttackSub.CONTACT_CONFIRM_TICKS, 0,
                     0, 0, -200, 0, CONTACT_NORTH);
             // Enter CHASE
             var activeContact = new SonarContact(0, 15.0, 2000, true, -1, 0, 0, 90.0, 0.95, Double.NaN);
             tickFull(DEEP_FLAT, List.of(), 100, 0, 0, -200, 0,
                     Vec3.ZERO, 1000, List.of(), List.of(activeContact), 0);
-            assertEquals(DefaultAttackSub.State.CHASE, controller.state());
+            assertEquals(ClaudeAttackSub.State.CHASE, controller.state());
 
             // Test stern offset with a close target heading east
             double targetX = 500, targetY = 1000;
@@ -1093,7 +1094,7 @@ class DefaultAttackSubTest {
 
         private void enterEvade() {
             startMatch(DEEP_FLAT);
-            feedContactTicks(DefaultAttackSub.CONTACT_CONFIRM_TICKS, 0,
+            feedContactTicks(ClaudeAttackSub.CONTACT_CONFIRM_TICKS, 0,
                     0, 0, -200, 0, CONTACT_NORTH);
             // Take damage to trigger EVADE
             tickFull(DEEP_FLAT, List.of(), 100, 0, 0, -200, 0,
@@ -1103,7 +1104,7 @@ class DefaultAttackSubTest {
         @Test
         void evadeGoesQuiet() {
             enterEvade();
-            assertEquals(DefaultAttackSub.State.EVADE, controller.state());
+            assertEquals(ClaudeAttackSub.State.EVADE, controller.state());
 
             var out = tickFull(DEEP_FLAT, List.of(), 101, 0, 0, -200, 0,
                     Vec3.ZERO, 900, List.of(), List.of(), 0);
@@ -1141,18 +1142,18 @@ class DefaultAttackSubTest {
         @Test
         void evadeDoesNotClearBaffles() {
             enterEvade();
-            for (int i = 0; i < DefaultAttackSub.BAFFLE_CLEAR_INTERVAL + 100; i++) {
+            for (int i = 0; i < ClaudeAttackSub.BAFFLE_CLEAR_INTERVAL + 100; i++) {
                 tickFull(DEEP_FLAT, List.of(), 101 + i, 0, 0, -200, 0,
                         Vec3.ZERO, 900, List.of(CONTACT_NORTH), List.of(), 0);
             }
-            assertNotEquals(DefaultAttackSub.State.PATROL, controller.state(),
+            assertNotEquals(ClaudeAttackSub.State.PATROL, controller.state(),
                     "Should remain in EVADE with ongoing contact");
         }
 
         @Test
         void evadeTransitionsToPatrolWhenContactFullyLost() {
             enterEvade();
-            assertEquals(DefaultAttackSub.State.EVADE, controller.state());
+            assertEquals(ClaudeAttackSub.State.EVADE, controller.state());
             assertTrue(controller.hasTrackedContact(),
                     "Should have tracked contact from TRACKING phase");
 
@@ -1162,9 +1163,9 @@ class DefaultAttackSubTest {
             for (int i = 0; i < 17000; i++) {
                 tickFull(DEEP_FLAT, List.of(), 101 + i, 0, 0, -200, 0,
                         Vec3.ZERO, 900, List.of(), List.of(), 0);
-                if (controller.state() == DefaultAttackSub.State.PATROL) break;
+                if (controller.state() == ClaudeAttackSub.State.PATROL) break;
             }
-            assertEquals(DefaultAttackSub.State.PATROL, controller.state(),
+            assertEquals(ClaudeAttackSub.State.PATROL, controller.state(),
                     "EVADE should transition to PATROL when uncertaintyRadius exceeds 5000");
         }
     }
@@ -1177,7 +1178,7 @@ class DefaultAttackSubTest {
         @Test
         void ramUsesFullThrottle() {
             startMatch(DEEP_FLAT);
-            feedContactTicks(DefaultAttackSub.CONTACT_CONFIRM_TICKS, 0,
+            feedContactTicks(ClaudeAttackSub.CONTACT_CONFIRM_TICKS, 0,
                     0, 0, -200, 0, CONTACT_NORTH);
             // Active return at 2000m, CHASE
             var activeChase = new SonarContact(0, 15.0, 2000, true, -1, 0, 0, 90.0, 0.95, Double.NaN);
@@ -1187,20 +1188,20 @@ class DefaultAttackSubTest {
             var activeRam = new SonarContact(0, 25.0, 400, true, -1, 0, 0, 90.0, 0.95, Double.NaN);
             tickFull(DEEP_FLAT, List.of(), 200, 0, 0, -200, 0,
                     Vec3.ZERO, 1000, List.of(), List.of(activeRam), 0);
-            assertEquals(DefaultAttackSub.State.RAM, controller.state());
+            assertEquals(ClaudeAttackSub.State.RAM, controller.state());
 
             // Next tick in RAM
             var out = tickFull(DEEP_FLAT, List.of(), 201, 0, 0, -200, 0,
                     Vec3.ZERO, 1000, List.of(CONTACT_NORTH), List.of(), 0);
 
-            assertEquals(DefaultAttackSub.RAM_THROTTLE, out.throttle, 0.01,
+            assertEquals(ClaudeAttackSub.RAM_THROTTLE, out.throttle, 0.01,
                     "RAM throttle should be 1.0");
         }
 
         @Test
         void ramPingsOnContactLoss() {
             startMatch(DEEP_FLAT);
-            feedContactTicks(DefaultAttackSub.CONTACT_CONFIRM_TICKS, 0,
+            feedContactTicks(ClaudeAttackSub.CONTACT_CONFIRM_TICKS, 0,
                     0, 0, -200, 0, CONTACT_NORTH);
             var activeChase = new SonarContact(0, 15.0, 2000, true, -1, 0, 0, 90.0, 0.95, Double.NaN);
             tickFull(DEEP_FLAT, List.of(), 100, 0, 0, -200, 0,
@@ -1208,7 +1209,7 @@ class DefaultAttackSubTest {
             var activeRam = new SonarContact(0, 25.0, 400, true, -1, 0, 0, 90.0, 0.95, Double.NaN);
             tickFull(DEEP_FLAT, List.of(), 200, 0, 0, -200, 0,
                     Vec3.ZERO, 1000, List.of(), List.of(activeRam), 0);
-            assertEquals(DefaultAttackSub.State.RAM, controller.state());
+            assertEquals(ClaudeAttackSub.State.RAM, controller.state());
 
             // Lose contact for 101+ ticks, should ping
             var out = tickFull(DEEP_FLAT, List.of(), 301, 0, 0, -200, 0,
@@ -1220,7 +1221,7 @@ class DefaultAttackSubTest {
         @Test
         void ramOvershotTransitionsToChase() {
             startMatch(DEEP_FLAT);
-            feedContactTicks(DefaultAttackSub.CONTACT_CONFIRM_TICKS, 0,
+            feedContactTicks(ClaudeAttackSub.CONTACT_CONFIRM_TICKS, 0,
                     0, 0, -200, 0, CONTACT_NORTH);
             // Active return at 2000m, CHASE
             var activeChase = new SonarContact(0, 15.0, 2000, true, -1, 0, 0, 90.0, 0.95, Double.NaN);
@@ -1230,7 +1231,7 @@ class DefaultAttackSubTest {
             var activeRam = new SonarContact(0, 25.0, 400, true, -1, 0, 0, 90.0, 0.95, Double.NaN);
             tickFull(DEEP_FLAT, List.of(), 200, 0, 0, -200, 0,
                     Vec3.ZERO, 1000, List.of(), List.of(activeRam), 0);
-            assertEquals(DefaultAttackSub.State.RAM, controller.state());
+            assertEquals(ClaudeAttackSub.State.RAM, controller.state());
 
             // Give an active return at 900m (> RAM_OVERSHOT_RANGE) to update estimatedRange
             var activeOvershot = new SonarContact(0, 15.0, 900, true, -1, 0, 0, 90.0, 0.95, Double.NaN);
@@ -1239,7 +1240,7 @@ class DefaultAttackSubTest {
             // Now wait 51+ ticks with no contact so ticksSinceContact > 50
             tickFull(DEEP_FLAT, List.of(), 253, 0, 0, -200, 0,
                     Vec3.ZERO, 1000, List.of(), List.of(), 0);
-            assertEquals(DefaultAttackSub.State.CHASE, controller.state(),
+            assertEquals(ClaudeAttackSub.State.CHASE, controller.state(),
                     "RAM overshot should transition to CHASE (not PATROL)");
         }
     }
@@ -1273,23 +1274,23 @@ class DefaultAttackSubTest {
             tickFull(DEEP_FLAT, List.of(), 1, 0, 0, -200, 0,
                     Vec3.ZERO, 1000, List.of(), List.of(active), 0);
 
-            assertEquals(DefaultAttackSub.State.CHASE, controller.state(),
+            assertEquals(ClaudeAttackSub.State.CHASE, controller.state(),
                     "Active ping return should transition directly to CHASE from PATROL");
         }
 
         @Test
         void activePingInTrackingTransitionsToChase() {
             startMatch(DEEP_FLAT);
-            feedContactTicks(DefaultAttackSub.CONTACT_CONFIRM_TICKS, 0,
+            feedContactTicks(ClaudeAttackSub.CONTACT_CONFIRM_TICKS, 0,
                     0, 0, -200, 0, CONTACT_NORTH);
-            assertEquals(DefaultAttackSub.State.TRACKING, controller.state());
+            assertEquals(ClaudeAttackSub.State.TRACKING, controller.state());
 
             // Active return at long range should bypass CHASE_RANGE check
             var active = new SonarContact(0, 15.0, 10000, true, -1, 0, 0, 90.0, 0.95, Double.NaN);
             tickFull(DEEP_FLAT, List.of(), 100, 0, 0, -200, 0,
                     Vec3.ZERO, 1000, List.of(), List.of(active), 0);
 
-            assertEquals(DefaultAttackSub.State.CHASE, controller.state(),
+            assertEquals(ClaudeAttackSub.State.CHASE, controller.state(),
                     "Active return should transition TRACKING to CHASE regardless of range");
         }
 
@@ -1404,13 +1405,13 @@ class DefaultAttackSubTest {
             var active = new SonarContact(0, 15.0, 8000, true, -1, 0, 0, 90.0, 0.95, Double.NaN);
             tickFull(DEEP_FLAT, List.of(), 1, 0, 0, -200, 0,
                     Vec3.ZERO, 1000, List.of(), List.of(active), 0);
-            assertEquals(DefaultAttackSub.State.CHASE, controller.state());
+            assertEquals(ClaudeAttackSub.State.CHASE, controller.state());
 
             // Next tick with no contacts. Long range approach should use
             // adaptive throttle (at least fast enough to close on target)
             var out = tickFull(DEEP_FLAT, List.of(), 2, 0, 0, -200, 0,
                     Vec3.ZERO, 1000, List.of(), List.of(), 0);
-            assertTrue(out.throttle >= DefaultAttackSub.TRACKING_THROTTLE,
+            assertTrue(out.throttle >= ClaudeAttackSub.TRACKING_THROTTLE,
                     "Long-range approach throttle should be at least TRACKING level, got " + out.throttle);
         }
 

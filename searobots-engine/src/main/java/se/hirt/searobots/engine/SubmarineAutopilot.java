@@ -1217,14 +1217,14 @@ public final class SubmarineAutopilot {
 
     // ── Geometry ────────────────────────────────────────────────────
 
-    static double angleDiff(double a, double b) {
+    public static double angleDiff(double a, double b) {
         double diff = a - b;
         while (diff > Math.PI) diff -= 2 * Math.PI;
         while (diff < -Math.PI) diff += 2 * Math.PI;
         return diff;
     }
 
-    static double normalizeBearing(double bearing) {
+    public static double normalizeBearing(double bearing) {
         bearing = bearing % (2 * Math.PI);
         if (bearing < 0) bearing += 2 * Math.PI;
         return bearing;

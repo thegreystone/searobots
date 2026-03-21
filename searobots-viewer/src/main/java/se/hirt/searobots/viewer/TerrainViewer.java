@@ -28,6 +28,7 @@
  */
 package se.hirt.searobots.viewer;
 import se.hirt.searobots.engine.ships.*;
+import se.hirt.searobots.engine.ships.claude.ClaudeAttackSub;
 
 import se.hirt.searobots.api.MatchConfig;
 import se.hirt.searobots.api.SubmarineController;
@@ -170,6 +171,19 @@ public final class TerrainViewer {
                 }
             });
             simMenu.add(lIslandItem);
+
+            simMenu.addSeparator();
+
+            var configItem = new JMenuItem("Configure Simulation...");
+            configItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_F2, 0));
+            configItem.addActionListener(e -> {
+                var dialog = new SimConfigDialog(frame);
+                dialog.setVisible(true);
+                if (dialog.isConfirmed()) {
+                    restartWithCurrentSeed.run();
+                }
+            });
+            simMenu.add(configItem);
 
             simMenu.addSeparator();
 
@@ -432,8 +446,12 @@ public final class TerrainViewer {
             // Normal battle scenario: use procedural spawn points (face toward center)
             var simWorld = world;
 
-            List<SubmarineController> controllers = List.of(
-                    new DefaultAttackSub(), new SubmarineDrone());
+            List<SubmarineController> controllers = SimConfigDialog.currentControllers();
+            List<VehicleConfig> vehicleConfigs = SimConfigDialog.currentVehicleConfigs();
+            if (controllers.isEmpty()) {
+                System.out.println("No ships configured, skipping simulation.");
+                return;
+            }
 
             MatchRecorder recorder = null;
             try {
@@ -490,9 +508,8 @@ public final class TerrainViewer {
                 }
             };
 
-            List<VehicleConfig> configs = List.of(VehicleConfig.submarine(), VehicleConfig.submarine());
             var t = Thread.ofPlatform().daemon().name("sim-loop").start(() ->
-                    sim.run(simWorld, controllers, configs, headings, listener));
+                    sim.run(simWorld, controllers, vehicleConfigs, headings, listener));
             this.thread = t;
         }
 

@@ -1,4 +1,5 @@
-package se.hirt.searobots.engine;
+package se.hirt.searobots.engine.ships.claude;
+import se.hirt.searobots.engine.*;
 import se.hirt.searobots.engine.ships.*;
 
 import org.junit.jupiter.api.Test;
@@ -15,7 +16,7 @@ class TrackingAccuracyTest {
         var sim = new SimulationLoop();
         sim.setSpeedMultiplier(1_000_000);
 
-        List<SubmarineController> controllers = List.of(new DefaultAttackSub(), new TargetDrone());
+        List<SubmarineController> controllers = List.of(new ClaudeAttackSub(), new TargetDrone());
         List<VehicleConfig> configs = List.of(VehicleConfig.submarine(), VehicleConfig.surfaceShip());
 
         System.out.printf("%-8s %-8s %-8s %-8s %-8s %-8s %-10s%n",

@@ -1,4 +1,5 @@
-package se.hirt.searobots.engine;
+package se.hirt.searobots.engine.ships.claude;
+import se.hirt.searobots.engine.*;
 import se.hirt.searobots.engine.ships.*;
 
 import org.junit.jupiter.api.Test;
@@ -14,7 +15,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * Tests that the autopilot can plan and follow a route toward the first
- * strategic waypoint on real generated maps. Uses the full DefaultAttackSub
+ * strategic waypoint on real generated maps. Uses the full ClaudeAttackSub
  * controller with various seeds.
  */
 class StrategicRoutingTest {
@@ -35,7 +36,7 @@ class StrategicRoutingTest {
     ) {}
 
     /**
-     * Runs a full simulation with DefaultAttackSub on a generated map for the
+     * Runs a full simulation with ClaudeAttackSub on a generated map for the
      * given seed. Returns performance metrics.
      */
     RunResult runSeed(long seed, int durationTicks) {
@@ -43,7 +44,7 @@ class StrategicRoutingTest {
         var world = new WorldGenerator().generate(config);
         var terrain = world.terrain();
 
-        var ctrl = new DefaultAttackSub();
+        var ctrl = new ClaudeAttackSub();
         var sp = world.spawnPoints().get(0);
         double heading = WorldGenerator.findSafeHeading(terrain, sp.x(), sp.y());
         if (Double.isNaN(heading)) {
@@ -73,9 +74,9 @@ class StrategicRoutingTest {
                     Vec3.ZERO);
             var state = new SubmarineState(pose, vel, entity.hp(), 0);
             var env = new EnvironmentSnapshot(terrain, List.of(), world.currentField());
-            var input = new NavigationSimTest.TestInputFull(
+            var input = new TestHelpers.TestInput(
                     t, DT, state, env, List.of(), List.of(), 0);
-            var output = new NavigationSimTest.CapturedOutput();
+            var output = new TestHelpers.CapturedOutput();
             ctrl.onTick(input, output);
 
             entity.setThrottle(output.throttle);
@@ -207,7 +208,7 @@ class StrategicRoutingTest {
         var world = new WorldGenerator().generate(config);
         var terrain = world.terrain();
 
-        var ctrl = new DefaultAttackSub();
+        var ctrl = new ClaudeAttackSub();
         var sp = world.spawnPoints().get(0);
         double heading = WorldGenerator.findSafeHeading(terrain, sp.x(), sp.y());
         if (Double.isNaN(heading)) {
@@ -233,8 +234,8 @@ class StrategicRoutingTest {
             var vel0 = new Velocity(Vec3.ZERO, Vec3.ZERO);
             var state0 = new SubmarineState(pose0, vel0, 1000, 0);
             var env0 = new EnvironmentSnapshot(terrain, List.of(), world.currentField());
-            var input0 = new NavigationSimTest.TestInputFull(0, DT, state0, env0, List.of(), List.of(), 0);
-            ctrl.onTick(input0, new NavigationSimTest.CapturedOutput());
+            var input0 = new TestHelpers.TestInput(0, DT, state0, env0, List.of(), List.of(), 0);
+            ctrl.onTick(input0, new TestHelpers.CapturedOutput());
             var ap0 = ctrl.autopilot();
             System.out.println("Initial nav waypoints:");
             for (int i = 0; i < ap0.navWaypoints().size(); i++) {
@@ -262,9 +263,9 @@ class StrategicRoutingTest {
                     Vec3.ZERO);
             var state = new SubmarineState(pose, vel, entity.hp(), 0);
             var env = new EnvironmentSnapshot(terrain, List.of(), world.currentField());
-            var input = new NavigationSimTest.TestInputFull(
+            var input = new TestHelpers.TestInput(
                     t, DT, state, env, List.of(), List.of(), 0);
-            var output = new NavigationSimTest.CapturedOutput();
+            var output = new TestHelpers.CapturedOutput();
             ctrl.onTick(input, output);
 
             // Detect replanning (nav waypoint set changed or strategic index changed)

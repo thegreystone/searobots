@@ -1,4 +1,5 @@
-package se.hirt.searobots.engine;
+package se.hirt.searobots.engine.ships.claude;
+import se.hirt.searobots.engine.*;
 import se.hirt.searobots.engine.ships.*;
 
 import org.junit.jupiter.api.Test;
@@ -21,7 +22,7 @@ class SeedAnalysis {
 
         var context = new MatchContext(config, terrain, world.thermalLayers(), world.currentField());
         var autopilot = new SubmarineAutopilot(context);
-        var sub = new DefaultAttackSub();
+        var sub = new ClaudeAttackSub();
         sub.onMatchStart(context);
         var strategicWps = sub.generatePatrolWaypoints(sx, sy, heading, config.battleArea());
 
@@ -50,7 +51,7 @@ class SeedAnalysis {
         var sim = new SimulationLoop();
         sim.setSpeedMultiplier(1_000_000);
 
-        List<SubmarineController> controllers = List.of(new DefaultAttackSub(), new DefaultAttackSub());
+        List<SubmarineController> controllers = List.of(new ClaudeAttackSub(), new ClaudeAttackSub());
         List<VehicleConfig> configs = List.of(VehicleConfig.submarine(), VehicleConfig.submarine());
 
         var log = new ArrayList<String>();

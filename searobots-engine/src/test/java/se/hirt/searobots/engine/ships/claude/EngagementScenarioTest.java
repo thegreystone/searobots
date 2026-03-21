@@ -1,4 +1,5 @@
-package se.hirt.searobots.engine;
+package se.hirt.searobots.engine.ships.claude;
+import se.hirt.searobots.engine.*;
 import se.hirt.searobots.engine.ships.*;
 
 import org.junit.jupiter.api.Test;
@@ -8,7 +9,7 @@ import java.util.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Phase 4 engagement scenario tests. Verifies that DefaultAttackSub
+ * Phase 4 engagement scenario tests. Verifies that ClaudeAttackSub
  * can reliably detect, track, and achieve a firing solution against
  * various target types.
  */
@@ -29,7 +30,7 @@ class EngagementScenarioTest {
         var sim = new SimulationLoop();
         sim.setSpeedMultiplier(1_000_000);
 
-        List<SubmarineController> controllers = List.of(new DefaultAttackSub(), target);
+        List<SubmarineController> controllers = List.of(new ClaudeAttackSub(), target);
         List<VehicleConfig> configs = List.of(VehicleConfig.submarine(), targetConfig);
 
         long[] firstContact = {-1};

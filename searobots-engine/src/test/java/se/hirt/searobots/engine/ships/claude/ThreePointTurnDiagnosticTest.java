@@ -1,4 +1,5 @@
-package se.hirt.searobots.engine;
+package se.hirt.searobots.engine.ships.claude;
+import se.hirt.searobots.engine.*;
 import se.hirt.searobots.engine.ships.*;
 
 import org.junit.jupiter.api.Test;
@@ -154,7 +155,7 @@ class ThreePointTurnDiagnosticTest {
         var sim = new SimulationLoop();
         sim.setSpeedMultiplier(1_000_000);
 
-        List<SubmarineController> controllers = List.of(new DefaultAttackSub(), new DefaultAttackSub());
+        List<SubmarineController> controllers = List.of(new ClaudeAttackSub(), new ClaudeAttackSub());
         List<VehicleConfig> configs = List.of(submarine(), submarine());
         // Sub 0 heading = 0 (north), sub 1 far away
         var headings = List.of(0.0, 0.0);

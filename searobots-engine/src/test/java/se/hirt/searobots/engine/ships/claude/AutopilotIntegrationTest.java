@@ -1,4 +1,5 @@
-package se.hirt.searobots.engine;
+package se.hirt.searobots.engine.ships.claude;
+import se.hirt.searobots.engine.*;
 import se.hirt.searobots.engine.ships.*;
 
 import org.junit.jupiter.api.Nested;
@@ -15,7 +16,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * Integration tests for the autopilot + strategic layer working together
- * in DefaultAttackSub through the full SimulationLoop. Covers patrol
+ * in ClaudeAttackSub through the full SimulationLoop. Covers patrol
  * coverage, terrain navigation, depth transitions, movement patterns,
  * state transitions, and engagement regression.
  */
@@ -174,7 +175,7 @@ class AutopilotIntegrationTest {
 
         @Test
         void completesPatrolOnFlatTerrain() {
-            // Run 2 DefaultAttackSubs on flat -500m terrain for 60s (3000 ticks).
+            // Run 2 ClaudeAttackSubs on flat -500m terrain for 60s (3000 ticks).
             // Both survive, both move > 500m from spawn.
             var terrain = flatTerrain(-500);
             var spawnPoints = List.of(
@@ -190,7 +191,7 @@ class AutopilotIntegrationTest {
             int[] finalHp = {1000, 1000};
             boolean[] ticked = {false};
 
-            runSim(world, List.of(new DefaultAttackSub(), new DefaultAttackSub()),
+            runSim(world, List.of(new ClaudeAttackSub(), new ClaudeAttackSub()),
                     List.of(submarine(), submarine()), 3000, new SimulationListener() {
                 @Override
                 public void onTick(long tick, List<SubmarineSnapshot> submarines) {
@@ -233,7 +234,7 @@ class AutopilotIntegrationTest {
             int[] finalHp = {1000, 1000};
             boolean[] ticked = {false};
 
-            runSim(world, List.of(new DefaultAttackSub(), new DefaultAttackSub()),
+            runSim(world, List.of(new ClaudeAttackSub(), new ClaudeAttackSub()),
                     List.of(submarine(), submarine()), 3000, new SimulationListener() {
                 @Override
                 public void onTick(long tick, List<SubmarineSnapshot> submarines) {
@@ -266,7 +267,7 @@ class AutopilotIntegrationTest {
             // Record unique waypoint sets over time
             var waypointSnapshots = new ArrayList<List<Waypoint>>();
 
-            runSim(world, List.of(new DefaultAttackSub(), new DefaultAttackSub()),
+            runSim(world, List.of(new ClaudeAttackSub(), new ClaudeAttackSub()),
                     List.of(submarine(), submarine()), 6000, new SimulationListener() {
                 @Override
                 public void onTick(long tick, List<SubmarineSnapshot> submarines) {
@@ -313,7 +314,7 @@ class AutopilotIntegrationTest {
             int[] finalHp = {1000, 1000};
             boolean[] ticked = {false};
 
-            runSim(world, List.of(new DefaultAttackSub(), new DefaultAttackSub()),
+            runSim(world, List.of(new ClaudeAttackSub(), new ClaudeAttackSub()),
                     List.of(submarine(), submarine()), 2000, new SimulationListener() {
                 @Override
                 public void onTick(long tick, List<SubmarineSnapshot> submarines) {
@@ -347,7 +348,7 @@ class AutopilotIntegrationTest {
             boolean[] ticked = {false};
             double[] maxYDeviation = {0};
 
-            runSim(world, List.of(new DefaultAttackSub(), new DefaultAttackSub()),
+            runSim(world, List.of(new ClaudeAttackSub(), new ClaudeAttackSub()),
                     List.of(submarine(), submarine()), 2000, new SimulationListener() {
                 @Override
                 public void onTick(long tick, List<SubmarineSnapshot> submarines) {
@@ -384,7 +385,7 @@ class AutopilotIntegrationTest {
             int[] finalHp = {1000, 1000};
             boolean[] ticked = {false};
 
-            runSim(world, List.of(new DefaultAttackSub(), new DefaultAttackSub()),
+            runSim(world, List.of(new ClaudeAttackSub(), new ClaudeAttackSub()),
                     List.of(submarine(), submarine()), 1000, new SimulationListener() {
                 @Override
                 public void onTick(long tick, List<SubmarineSnapshot> submarines) {
@@ -433,7 +434,7 @@ class AutopilotIntegrationTest {
                 boolean[] ticked = {false};
                 double[] maxDist = {0};
 
-                runSim(world, List.of(new DefaultAttackSub(), new DefaultAttackSub()),
+                runSim(world, List.of(new ClaudeAttackSub(), new ClaudeAttackSub()),
                         List.of(submarine(), submarine()), headings, 5000, new SimulationListener() {
                     @Override
                     public void onTick(long tick, List<SubmarineSnapshot> submarines) {
@@ -481,7 +482,7 @@ class AutopilotIntegrationTest {
             double[] finalDepth = {-200};
             boolean[] ticked = {false};
 
-            runSim(world, List.of(new DefaultAttackSub(), new DefaultAttackSub()),
+            runSim(world, List.of(new ClaudeAttackSub(), new ClaudeAttackSub()),
                     List.of(submarine(), submarine()), 1000, new SimulationListener() {
                 @Override
                 public void onTick(long tick, List<SubmarineSnapshot> submarines) {
@@ -516,7 +517,7 @@ class AutopilotIntegrationTest {
             // Collect depth samples after initial settling (last 10s of a 30s sim)
             var depthSamples = new ArrayList<Double>();
 
-            runSim(world, List.of(new DefaultAttackSub(), new DefaultAttackSub()),
+            runSim(world, List.of(new ClaudeAttackSub(), new ClaudeAttackSub()),
                     List.of(submarine(), submarine()), 1500, new SimulationListener() {
                 @Override
                 public void onTick(long tick, List<SubmarineSnapshot> submarines) {
@@ -558,7 +559,7 @@ class AutopilotIntegrationTest {
             var distances = new ArrayList<Double>();
 
             // slow test: 120s engagement
-            runSim(world, List.of(new DefaultAttackSub(), new SubmarineDrone()),
+            runSim(world, List.of(new ClaudeAttackSub(), new SubmarineDrone()),
                     List.of(submarine(), submarine()), 6000, new SimulationListener() {
                 @Override
                 public void onTick(long tick, List<SubmarineSnapshot> submarines) {
@@ -604,7 +605,7 @@ class AutopilotIntegrationTest {
             var statusSnapshots = new ArrayList<String>();
             var throttleSnapshots = new ArrayList<Double>();
 
-            runSim(world, List.of(new DefaultAttackSub(), new SubmarineDrone()),
+            runSim(world, List.of(new ClaudeAttackSub(), new SubmarineDrone()),
                     List.of(submarine(), submarine()), 6000, new SimulationListener() {
                 @Override
                 public void onTick(long tick, List<SubmarineSnapshot> submarines) {
@@ -665,7 +666,7 @@ class AutopilotIntegrationTest {
             var waypointsAfterChase = new ArrayList<List<Waypoint>>();
             boolean[] sawChase = {false};
 
-            runSim(world, List.of(new DefaultAttackSub(), new SubmarineDrone()),
+            runSim(world, List.of(new ClaudeAttackSub(), new SubmarineDrone()),
                     List.of(submarine(), submarine()), 6000, new SimulationListener() {
                 @Override
                 public void onTick(long tick, List<SubmarineSnapshot> submarines) {
@@ -724,7 +725,7 @@ class AutopilotIntegrationTest {
         void transitionToEvade() {
             // Sub takes damage in TRACKING, transitions to EVADE.
             // We use a generated world where the two subs can meet and cause damage.
-            // On flat terrain two DefaultAttackSubs will detect each other and may collide.
+            // On flat terrain two ClaudeAttackSubs will detect each other and may collide.
             var terrain = flatTerrain(-500);
             // Place them close so they detect and potentially ram/collide
             var spawnPoints = List.of(
@@ -741,7 +742,7 @@ class AutopilotIntegrationTest {
                     Math.atan2(1000 - (-1000), 0.0),   // sub0 faces sub1 (east)
                     Math.atan2(-1000 - 1000, 0.0));     // sub1 faces sub0 (west)
 
-            runSim(world, List.of(new DefaultAttackSub(), new DefaultAttackSub()),
+            runSim(world, List.of(new ClaudeAttackSub(), new ClaudeAttackSub()),
                     List.of(submarine(), submarine()), headings, 6000, new SimulationListener() {
                 @Override
                 public void onTick(long tick, List<SubmarineSnapshot> submarines) {
@@ -774,7 +775,7 @@ class AutopilotIntegrationTest {
             boolean[] sawEvade = {false};
             boolean[] sawPatrolAfterEvade = {false};
 
-            runSim(world, List.of(new DefaultAttackSub(), new DefaultAttackSub()),
+            runSim(world, List.of(new ClaudeAttackSub(), new ClaudeAttackSub()),
                     List.of(submarine(), submarine()), 6000, new SimulationListener() {
                 @Override
                 public void onTick(long tick, List<SubmarineSnapshot> submarines) {
@@ -827,7 +828,7 @@ class AutopilotIntegrationTest {
             long[] firstContact = {-1};
             boolean[] ticked = {false};
 
-            runSim(world, List.of(new DefaultAttackSub(), new TargetDrone()),
+            runSim(world, List.of(new ClaudeAttackSub(), new TargetDrone()),
                     List.of(submarine(), VehicleConfig.surfaceShip()), 6000,
                     new SimulationListener() {
                 @Override
@@ -861,7 +862,7 @@ class AutopilotIntegrationTest {
             long[] firstContact = {-1};
             boolean[] ticked = {false};
 
-            runSim(world, List.of(new DefaultAttackSub(), new SubmarineDrone()),
+            runSim(world, List.of(new ClaudeAttackSub(), new SubmarineDrone()),
                     List.of(submarine(), submarine()), 10000, new SimulationListener() {
                 @Override
                 public void onTick(long tick, List<SubmarineSnapshot> submarines) {
