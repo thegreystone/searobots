@@ -38,4 +38,17 @@ public interface SubmarineController {
     default void onMatchStart(MatchContext context) {}
     void onTick(SubmarineInput input, SubmarineOutput output);
     default void onMatchEnd(MatchResult result) {}
+
+    /**
+     * Sets mandatory navigation objectives. When set, the controller MUST
+     * navigate to these waypoints in order before generating its own patrol
+     * waypoints. The objectives are not replanned or overridden until all
+     * have been reached.
+     *
+     * <p>Called after {@link #onMatchStart} but before the first tick.
+     * Used by the competition framework and test harnesses.
+     *
+     * @param objectives ordered list of waypoints to navigate to
+     */
+    default void setObjectives(java.util.List<StrategicWaypoint> objectives) {}
 }

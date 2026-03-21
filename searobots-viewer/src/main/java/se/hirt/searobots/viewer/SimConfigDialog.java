@@ -7,6 +7,7 @@ import se.hirt.searobots.api.SubmarineController;
 import se.hirt.searobots.api.VehicleConfig;
 import se.hirt.searobots.engine.ships.*;
 import se.hirt.searobots.engine.ships.claude.ClaudeAttackSub;
+import se.hirt.searobots.engine.ships.codex.CodexAttackSub;
 
 import javax.swing.*;
 import java.awt.*;
@@ -27,6 +28,7 @@ final class SimConfigDialog extends JDialog {
 
     private static final List<ShipOption> SHIP_OPTIONS = List.of(
             new ShipOption("(empty)", null, null),
+            new ShipOption("Codex Sub", CodexAttackSub::new, VehicleConfig.submarine()),
             new ShipOption("Claude Sub", ClaudeAttackSub::new, VehicleConfig.submarine()),
             new ShipOption("Default Sub", DefaultAttackSub::new, VehicleConfig.submarine()),
             new ShipOption("Sub Drone", SubmarineDrone::new, VehicleConfig.submarine()),

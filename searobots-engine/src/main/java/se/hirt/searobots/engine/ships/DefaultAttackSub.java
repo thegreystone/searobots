@@ -135,10 +135,20 @@ public final class DefaultAttackSub implements SubmarineController {
     private List<StrategicWaypoint> strategicWaypoints = List.of();
     private double lastStrategicTargetX = Double.NaN;
     private double lastStrategicTargetY = Double.NaN;
+
+    // Mandatory objectives
+    private List<StrategicWaypoint> objectives = List.of();
+    private int objectiveIndex = 0;
     private long lastReplanTick = -1000;
     private static final int REPLAN_COOLDOWN_TICKS = 250; // 5 seconds
     private BattleArea battleArea;
     private PathPlanner pathPlanner;
+
+    @Override
+    public void setObjectives(java.util.List<StrategicWaypoint> objectives) {
+        this.objectives = List.copyOf(objectives);
+        this.objectiveIndex = 0;
+    }
 
     @Override
     public void onMatchStart(MatchContext context) {
@@ -325,7 +335,25 @@ public final class DefaultAttackSub implements SubmarineController {
         // =================================================================
         // Step 3: Strategic waypoint generation (BEFORE autopilot tick)
         // =================================================================
-        boolean needReplan = stateChanged || strategicWaypoints.isEmpty();
+        // If objectives are set, navigate to them first
+        boolean hasObjective = !objectives.isEmpty() && objectiveIndex < objectives.size();
+        if (hasObjective) {
+            if (autopilot != null && autopilot.hasArrived()) {
+                objectiveIndex++;
+                hasObjective = objectiveIndex < objectives.size();
+            }
+            if (hasObjective) {
+                var obj = objectives.get(objectiveIndex);
+                if (strategicWaypoints.isEmpty() || autopilot.hasArrived()) {
+                    strategicWaypoints = List.of(obj);
+                    if (autopilot != null) {
+                        autopilot.setWaypoints(strategicWaypoints, pos.x(), pos.y(), depth, heading, lastSpeed);
+                    }
+                }
+            }
+        }
+
+        boolean needReplan = !hasObjective && (stateChanged || strategicWaypoints.isEmpty());
 
         // State-specific replan triggers
         if (!needReplan) {

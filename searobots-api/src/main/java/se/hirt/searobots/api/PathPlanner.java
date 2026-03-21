@@ -54,6 +54,8 @@ public final class PathPlanner {
     private final double minFloorDepth;
     private final double safetyMargin;
     private final double gridStep;
+    private final double depthComfort;
+    private final double depthPenalty;
 
     // Navigation grid: cost multiplier per cell (0 = blocked, 1 = clear, >1 = near danger)
     private final float[] costGrid;
@@ -72,10 +74,23 @@ public final class PathPlanner {
      * @param gridStep       navigation grid resolution in meters (e.g. 50-100)
      */
     public PathPlanner(TerrainMap terrain, double minFloorDepth, double safetyMargin, double gridStep) {
+        this(terrain, minFloorDepth, safetyMargin, gridStep, 300.0, 3.0);
+    }
+
+    /**
+     * Creates a path planner with configurable depth preference.
+     *
+     * @param depthComfort  cells deeper than this (absolute meters) get minimum cost
+     * @param depthPenalty  maximum cost multiplier for cells at the blocking threshold
+     */
+    public PathPlanner(TerrainMap terrain, double minFloorDepth, double safetyMargin,
+                       double gridStep, double depthComfort, double depthPenalty) {
         this.terrain = terrain;
         this.minFloorDepth = minFloorDepth;
         this.safetyMargin = safetyMargin;
         this.gridStep = gridStep;
+        this.depthComfort = depthComfort;
+        this.depthPenalty = depthPenalty;
 
         // Build coarse grid covering the terrain extent
         double totalW = terrain.worldWidth();
@@ -369,12 +384,9 @@ public final class PathPlanner {
         float[] grid = new float[total];
         int marginCells = Math.max(1, (int) Math.ceil(safetyMargin / gridStep));
 
-        // Depth preference: cells deeper than this threshold get minimum cost.
-        // Shallower navigable cells get progressively higher cost, so A*
-        // naturally routes through deep water (maximum stealth).
-        double comfortableDepth = 300.0; // absolute value
-
-        // Pass 1: base cost from floor depth (deeper = cheaper)
+        // Pass 1: base cost from floor depth (deeper = cheaper).
+        // Cells deeper than depthComfort get minimum cost (1.0).
+        // Shallower navigable cells ramp up to 1 + depthPenalty.
         for (int r = 0; r < gridRows; r++) {
             for (int c = 0; c < gridCols; c++) {
                 double wx = colToWorldX(c);
@@ -383,12 +395,9 @@ public final class PathPlanner {
                 if (floor > minFloorDepth) {
                     grid[r * gridCols + c] = 0; // blocked
                 } else {
-                    // Deeper water is cheaper to traverse. Cells at or below
-                    // comfortableDepth get cost 1. Shallower cells ramp up
-                    // quadratically, making the A* strongly prefer deep routes.
                     double absFloor = Math.abs(floor);
-                    double shallowFrac = Math.max(0, 1.0 - absFloor / comfortableDepth);
-                    grid[r * gridCols + c] = (float) (1.0 + 3.0 * shallowFrac * shallowFrac);
+                    double shallowFrac = Math.max(0, 1.0 - absFloor / depthComfort);
+                    grid[r * gridCols + c] = (float) (1.0 + depthPenalty * shallowFrac * shallowFrac);
                 }
             }
         }
