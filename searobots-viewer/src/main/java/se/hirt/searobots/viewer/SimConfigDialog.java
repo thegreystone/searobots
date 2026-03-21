@@ -36,13 +36,17 @@ final class SimConfigDialog extends JDialog {
     );
 
     // Persistent selections (static so they survive dialog close/reopen)
-    private static int selectedShip1Index = 1; // Claude Sub
-    private static int selectedShip2Index = 3; // Sub Drone
+    private static int selectedShip1Index = 2; // Claude Sub
+    private static int selectedShip2Index = 1; // Codex Sub
     private static int selectedSpeedMultiplier = 1;
+    private static int selectedSimType = 0; // 0=Free patrol, 1=Competition
+
+    static final String[] SIM_TYPES = {"Free patrol", "Competition (nav + combat)"};
 
     private final JComboBox<ShipOption> ship1Combo;
     private final JComboBox<ShipOption> ship2Combo;
     private final JComboBox<String> speedCombo;
+    private final JComboBox<String> simTypeCombo;
     private boolean confirmed = false;
 
     SimConfigDialog(JFrame parent) {
@@ -52,8 +56,16 @@ final class SimConfigDialog extends JDialog {
         gbc.insets = new Insets(6, 10, 6, 10);
         gbc.fill = GridBagConstraints.HORIZONTAL;
 
-        // Ship 1
+        // Simulation type
         gbc.gridx = 0; gbc.gridy = 0;
+        add(new JLabel("Mode:"), gbc);
+        gbc.gridx = 1; gbc.gridwidth = 2;
+        simTypeCombo = new JComboBox<>(SIM_TYPES);
+        simTypeCombo.setSelectedIndex(selectedSimType);
+        add(simTypeCombo, gbc);
+
+        // Ship 1
+        gbc.gridx = 0; gbc.gridy = 1; gbc.gridwidth = 1;
         add(new JLabel("Ship 1 (Blue):"), gbc);
         gbc.gridx = 1; gbc.gridwidth = 2;
         ship1Combo = new JComboBox<>(SHIP_OPTIONS.toArray(new ShipOption[0]));
@@ -61,7 +73,7 @@ final class SimConfigDialog extends JDialog {
         add(ship1Combo, gbc);
 
         // Ship 2
-        gbc.gridx = 0; gbc.gridy = 1; gbc.gridwidth = 1;
+        gbc.gridx = 0; gbc.gridy = 2; gbc.gridwidth = 1;
         add(new JLabel("Ship 2 (Red):"), gbc);
         gbc.gridx = 1; gbc.gridwidth = 2;
         ship2Combo = new JComboBox<>(SHIP_OPTIONS.toArray(new ShipOption[0]));
@@ -69,7 +81,7 @@ final class SimConfigDialog extends JDialog {
         add(ship2Combo, gbc);
 
         // Speed
-        gbc.gridx = 0; gbc.gridy = 2; gbc.gridwidth = 1;
+        gbc.gridx = 0; gbc.gridy = 3; gbc.gridwidth = 1;
         add(new JLabel("Initial speed:"), gbc);
         gbc.gridx = 1; gbc.gridwidth = 2;
         String[] speeds = {"1x", "2x", "4x", "8x", "16x"};
@@ -78,13 +90,14 @@ final class SimConfigDialog extends JDialog {
         add(speedCombo, gbc);
 
         // Buttons
-        gbc.gridx = 0; gbc.gridy = 3; gbc.gridwidth = 3;
+        gbc.gridx = 0; gbc.gridy = 4; gbc.gridwidth = 3;
         gbc.fill = GridBagConstraints.NONE;
         gbc.anchor = GridBagConstraints.CENTER;
         var buttonPanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 10, 0));
         var okButton = new JButton("Start");
         okButton.addActionListener(e -> {
             confirmed = true;
+            selectedSimType = simTypeCombo.getSelectedIndex();
             selectedShip1Index = ship1Combo.getSelectedIndex();
             selectedShip2Index = ship2Combo.getSelectedIndex();
             selectedSpeedMultiplier = speedCombo.getSelectedIndex();
@@ -126,6 +139,29 @@ final class SimConfigDialog extends JDialog {
 
     int getSpeedMultiplier() {
         return new int[]{1, 2, 4, 8, 16}[speedCombo.getSelectedIndex()];
+    }
+
+    /** Returns true if competition mode is selected. */
+    static boolean isCompetitionMode() { return selectedSimType == 1; }
+
+    /** Returns display names for the current persistent settings. */
+    static List<String> currentNames() {
+        var result = new ArrayList<String>();
+        var opt1 = SHIP_OPTIONS.get(selectedShip1Index);
+        var opt2 = SHIP_OPTIONS.get(selectedShip2Index);
+        if (opt1.factory() != null) result.add(opt1.displayName());
+        if (opt2.factory() != null) result.add(opt2.displayName());
+        return result;
+    }
+
+    /** Returns controller factories for the current persistent settings. */
+    static List<Supplier<SubmarineController>> currentFactories() {
+        var result = new ArrayList<Supplier<SubmarineController>>();
+        var opt1 = SHIP_OPTIONS.get(selectedShip1Index);
+        var opt2 = SHIP_OPTIONS.get(selectedShip2Index);
+        if (opt1.factory() != null) result.add(opt1.factory());
+        if (opt2.factory() != null) result.add(opt2.factory());
+        return result;
     }
 
     /** Creates controllers using the current persistent settings (no dialog). */

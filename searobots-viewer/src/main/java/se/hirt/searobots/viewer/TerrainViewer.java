@@ -178,7 +178,11 @@ public final class TerrainViewer {
                 var dialog = new SimConfigDialog(frame);
                 dialog.setVisible(true);
                 if (dialog.isConfirmed()) {
-                    restartWithCurrentSeed.run();
+                    if (SimConfigDialog.isCompetitionMode()) {
+                        runCompetitionInViewer(frame, simHolder, panel);
+                    } else {
+                        restartWithCurrentSeed.run();
+                    }
                 }
             });
             simMenu.add(configItem);
@@ -553,6 +557,78 @@ public final class TerrainViewer {
                 thread = null;
             }
         }
+    }
+
+    private static void runCompetitionInViewer(JFrame frame, SimulationHolder simHolder,
+                                                   MapPanel panel) {
+        simHolder.stop();
+        var names = SimConfigDialog.currentNames();
+        var factories = SimConfigDialog.currentFactories();
+        if (factories.size() < 2) {
+            JOptionPane.showMessageDialog(frame, "Need 2 ships for competition.", "Error",
+                    JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+
+        var competitors = new java.util.ArrayList<SubmarineCompetition.Competitor>();
+        for (int i = 0; i < factories.size(); i++) {
+            competitors.add(new SubmarineCompetition.Competitor(names.get(i), factories.get(i)));
+        }
+
+        // Run in background thread, show results in a dialog
+        var progressDialog = new JDialog(frame, "Competition Running...", false);
+        var outputArea = new javax.swing.JTextArea();
+        outputArea.setEditable(false);
+        outputArea.setFont(new java.awt.Font(java.awt.Font.MONOSPACED, java.awt.Font.PLAIN, 12));
+        progressDialog.add(new javax.swing.JScrollPane(outputArea));
+        progressDialog.setSize(950, 650);
+        progressDialog.setLocationRelativeTo(frame);
+        progressDialog.setVisible(true);
+
+        Thread.ofPlatform().daemon().name("competition").start(() -> {
+            var origOut = System.out;
+            var textStream = new java.io.PrintStream(new java.io.OutputStream() {
+                final StringBuilder buf = new StringBuilder();
+                @Override public void write(int b) {
+                    if (b == '\n') {
+                        String line = buf.toString();
+                        buf.setLength(0);
+                        javax.swing.SwingUtilities.invokeLater(() -> {
+                            outputArea.append(line + "\n");
+                            outputArea.setCaretPosition(outputArea.getDocument().getLength());
+                        });
+                    } else {
+                        buf.append((char) b);
+                    }
+                }
+            });
+
+            System.setOut(textStream);
+            try {
+                int numSeeds = 10;
+                int duration = SubmarineCompetition.DEFAULT_DURATION / SubmarineCompetition.TICKS_PER_SECOND;
+                long[] seeds = new long[numSeeds];
+                for (int i = 0; i < numSeeds; i++) {
+                    seeds[i] = java.util.concurrent.ThreadLocalRandom.current().nextLong();
+                }
+
+                System.out.printf("Competition: %d random seeds, %ds per seed%n", numSeeds, duration);
+                System.out.print("Seeds:");
+                for (long s : seeds) System.out.printf(" %d", s);
+                System.out.println("\n");
+
+                var navPoints = SubmarineCompetition.compete(
+                        competitors, seeds, SubmarineCompetition.DEFAULT_DURATION);
+                System.out.println();
+                SubmarineCompetition.runCombatScenario(
+                        competitors, seeds, SubmarineCompetition.TICKS_PER_SECOND * 600, navPoints);
+            } finally {
+                System.setOut(origOut);
+                javax.swing.SwingUtilities.invokeLater(() -> {
+                    progressDialog.setTitle("Competition Complete");
+                });
+            }
+        });
     }
 
     private static void loadIcons(JFrame frame) {

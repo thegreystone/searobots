@@ -773,6 +773,51 @@ public class MapPanel extends JPanel {
                             2 * outerR, 2 * outerR));
                 }
             }
+
+            // 3. Draw strategic waypoints (larger, distinct markers)
+            var strategicWps = sub.strategicWaypoints();
+            if (strategicWps != null) {
+                double sr = markerRadius * 2.5;
+                for (int i = 0; i < strategicWps.size(); i++) {
+                    var swp = strategicWps.get(i);
+                    var wp = swp.waypoint();
+                    boolean active = wp.active();
+
+                    // Crosshair marker for strategic waypoints
+                    Color color = active
+                            ? new Color(255, 220, 50, 220)
+                            : new Color(255, 200, 50, 140);
+                    g2.setColor(color);
+                    float sw = (float) ((active ? 3.0 : 2.0) / pixelsPerMeter);
+                    g2.setStroke(new BasicStroke(sw));
+
+                    // Draw crosshair
+                    g2.draw(new Line2D.Double(wp.x() - sr, wp.y(), wp.x() + sr, wp.y()));
+                    g2.draw(new Line2D.Double(wp.x(), wp.y() - sr, wp.x(), wp.y() + sr));
+                    // Circle around crosshair
+                    g2.draw(new Ellipse2D.Double(wp.x() - sr * 0.7, wp.y() - sr * 0.7,
+                            sr * 1.4, sr * 1.4));
+
+                    // Label with purpose
+                    var purpose = swp.purpose();
+                    String label = switch (purpose) {
+                        case PATROL -> "P";
+                        case INVESTIGATE -> "?";
+                        case PING_POSITION -> "S";
+                        case STEALTH_TRANSIT -> "T";
+                        case INTERCEPT -> "!";
+                        case EVADE -> "E";
+                        case RALLY -> "R";
+                    };
+                    // Flip Y for text (world transform has inverted Y)
+                    var origTransform = g2.getTransform();
+                    g2.translate(wp.x() + sr * 0.8, wp.y() - sr * 0.3);
+                    g2.scale(1, -1);
+                    g2.setFont(g2.getFont().deriveFont((float) (sr * 1.2)));
+                    g2.drawString(label, 0, 0);
+                    g2.setTransform(origTransform);
+                }
+            }
         }
     }
 

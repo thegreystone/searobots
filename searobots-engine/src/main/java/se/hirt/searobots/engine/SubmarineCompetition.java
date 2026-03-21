@@ -28,10 +28,10 @@ import java.util.function.Supplier;
  */
 public class SubmarineCompetition {
 
-    static final int TICKS_PER_SECOND = 50;
-    static final int DEFAULT_DURATION = TICKS_PER_SECOND * 2400; // 40 minutes
+    public static final int TICKS_PER_SECOND = 50;
+    public static final int DEFAULT_DURATION = TICKS_PER_SECOND * 2400; // 40 minutes
 
-    record Competitor(String name, Supplier<SubmarineController> factory) {}
+    public record Competitor(String name, Supplier<SubmarineController> factory) {}
 
     record Metrics(
             // Navigation
@@ -347,7 +347,7 @@ public class SubmarineCompetition {
     /**
      * Runs the competition and prints results.
      */
-    static Map<String, Integer> compete(List<Competitor> competitors, long[] seeds, int durationTicks) {
+    public static Map<String, Integer> compete(List<Competitor> competitors, long[] seeds, int durationTicks) {
         var allResults = new ArrayList<SeedResult>();
 
         for (long seed : seeds) {
@@ -679,8 +679,8 @@ public class SubmarineCompetition {
         return Math.abs(diff) < Math.toRadians(60);
     }
 
-    static void runCombatScenario(List<Competitor> competitors, long[] seeds,
-                                   int durationTicks, Map<String, Integer> navPoints) {
+    public static void runCombatScenario(List<Competitor> competitors, long[] seeds,
+                                          int durationTicks, Map<String, Integer> navPoints) {
         System.out.println("=".repeat(120));
         System.out.println("COMBAT SCENARIO - Head-to-head");
         System.out.println("=".repeat(120));
