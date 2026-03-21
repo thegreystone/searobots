@@ -60,18 +60,19 @@ public final class TerrainViewer {
             var panel = new MapPanel(world);
             frame.add(panel);
 
-            var simHolder = new SimulationHolder();
+            var simManager = new SimulationManager();
+            simManager.addListener(panel); // 2D view subscribes to tick events
             long[] currentSeed = {seed}; // mutable for lambda capture
 
             // Lazily created 3D scene (declared early so restartWith can reference it)
             final SubmarineScene3D[] scene3D = {null};
             final java.awt.Canvas[] canvas3D = {null};
-            final GeneratedWorld[] lastWorld3D = {null};
+            // lastWorld3D removed: SimulationManager.setWorld handles all viewers
 
             frame.addWindowListener(new java.awt.event.WindowAdapter() {
                 @Override
                 public void windowClosed(java.awt.event.WindowEvent e) {
-                    simHolder.stop();
+                    simManager.stop();
                     if (scene3D[0] != null) {
                         scene3D[0].stop();
                     }
@@ -82,15 +83,23 @@ public final class TerrainViewer {
             // Helper to start/restart with an arbitrary world
             java.util.function.Consumer<GeneratedWorld> restartWith = w -> {
                 try {
-                    simHolder.stop();
-                    panel.setWorld(w);
-                    panel.setSimPaused(false);
-                    simHolder.start(w, panel);
-                    frame.setTitle("SeaRobots: Simulation Viewer [seed: " + w.config().worldSeed() + "]");
-                    if (scene3D[0] != null) {
-                        scene3D[0].setWorld(w);
-                        lastWorld3D[0] = w;
+                    // Stop any active competition
+                    if (activeCompetition != null) {
+                        activeCompetition.stopAll();
+                        activeCompetition = null;
                     }
+                    panel.clearCompetitionResults();
+                    simManager.stop();
+                    simManager.setWorld(w);
+                    panel.setSimPaused(false);
+                    // Start sim with configured controllers
+                    var controllers = SimConfigDialog.currentControllers();
+                    var vehicleConfigs = SimConfigDialog.currentVehicleConfigs();
+                    if (!controllers.isEmpty()) {
+                        simManager.start(w, controllers, vehicleConfigs);
+                        simManager.play();
+                    }
+                    frame.setTitle("SeaRobots: Simulation Viewer [seed: " + Long.toHexString(w.config().worldSeed()) + "]");
                     panel.requestFocusInWindow();
                 } catch (Exception ex) {
                     ex.printStackTrace();
@@ -113,8 +122,12 @@ public final class TerrainViewer {
             var newMapItem = new JMenuItem("New map (random seed)");
             newMapItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_SPACE, 0));
             newMapItem.addActionListener(e -> {
-                currentSeed[0] = ThreadLocalRandom.current().nextLong();
-                restartWithCurrentSeed.run();
+                if (activeCompetition != null && activeCompetition.isRunning()) {
+                    activeCompetition.skipToNext();
+                } else {
+                    currentSeed[0] = ThreadLocalRandom.current().nextLong();
+                    restartWithCurrentSeed.run();
+                }
             });
             simMenu.add(newMapItem);
 
@@ -122,10 +135,17 @@ public final class TerrainViewer {
 
             var setSeedItem = new JMenuItem("Set seed...");
             setSeedItem.addActionListener(e -> {
-                var input = JOptionPane.showInputDialog(frame, "Enter seed:", currentSeed[0]);
+                var input = JOptionPane.showInputDialog(frame, "Enter seed (hex or decimal):",
+                        Long.toHexString(currentSeed[0]));
                 if (input != null && !input.isBlank()) {
                     try {
-                        currentSeed[0] = Long.parseLong(input.trim());
+                        String s = input.trim();
+                        // Try hex first (no prefix needed), fall back to decimal
+                        try {
+                            currentSeed[0] = Long.parseUnsignedLong(s, 16);
+                        } catch (NumberFormatException hex) {
+                            currentSeed[0] = Long.parseLong(s);
+                        }
                         restartWithCurrentSeed.run();
                     } catch (NumberFormatException ex) {
                         JOptionPane.showMessageDialog(frame, "Invalid seed: " + input,
@@ -140,7 +160,7 @@ public final class TerrainViewer {
             copySeedItem.addActionListener(e -> {
                 var clipboard = java.awt.Toolkit.getDefaultToolkit().getSystemClipboard();
                 clipboard.setContents(new java.awt.datatransfer.StringSelection(
-                        String.valueOf(currentSeed[0])), null);
+                        Long.toHexString(currentSeed[0])), null);
             });
             simMenu.add(copySeedItem);
 
@@ -154,15 +174,21 @@ public final class TerrainViewer {
             lIslandItem.addActionListener(e -> {
                 var lWorld = GeneratedWorld.lIslandRecovery();
                 try {
-                    simHolder.stop();
-                    panel.setWorld(lWorld);
-                    panel.setSimPaused(false);
-                    simHolder.startWithHeadings(lWorld, panel, List.of(0.0, 0.0));
-                    frame.setTitle("SeaRobots: L-Island Recovery Test");
-                    if (scene3D[0] != null) {
-                        scene3D[0].setWorld(lWorld);
-                        lastWorld3D[0] = lWorld;
+                    if (activeCompetition != null) {
+                        activeCompetition.stopAll();
+                        activeCompetition = null;
                     }
+                    panel.clearCompetitionResults();
+                    simManager.stop();
+                    simManager.setWorld(lWorld);
+                    panel.setSimPaused(false);
+                    var controllers = SimConfigDialog.currentControllers();
+                    var vehicleConfigs = SimConfigDialog.currentVehicleConfigs();
+                    if (!controllers.isEmpty()) {
+                        simManager.start(lWorld, controllers, vehicleConfigs, List.of(0.0, 0.0));
+                        simManager.play();
+                    }
+                    frame.setTitle("SeaRobots: L-Island Recovery Test");
                     panel.requestFocusInWindow();
                 } catch (Exception ex) {
                     ex.printStackTrace();
@@ -178,8 +204,10 @@ public final class TerrainViewer {
                 var dialog = new SimConfigDialog(frame);
                 dialog.setVisible(true);
                 if (dialog.isConfirmed()) {
+                    System.out.println("Dialog confirmed. Competition mode: " + SimConfigDialog.isCompetitionMode());
                     if (SimConfigDialog.isCompetitionMode()) {
-                        runCompetitionInViewer(frame, simHolder, panel);
+                        System.out.println(">>> Starting competition mode");
+                        runCompetitionInViewer(frame, simManager, panel, scene3D);
                     } else {
                         restartWithCurrentSeed.run();
                     }
@@ -191,7 +219,7 @@ public final class TerrainViewer {
 
             var objectivesItem = new JCheckBoxMenuItem("Inject competition objectives", false);
             objectivesItem.addActionListener(e -> {
-                simHolder.injectObjectives = objectivesItem.isSelected();
+                simManager.injectObjectives = objectivesItem.isSelected();
                 restartWithCurrentSeed.run();
             });
             simMenu.add(objectivesItem);
@@ -199,16 +227,16 @@ public final class TerrainViewer {
             simMenu.addSeparator();
 
             var pauseOnDeathItem = new JCheckBoxMenuItem("Pause on ship death", true);
-            simHolder.pauseOnDeath = true;
+            simManager.pauseOnDeath = true;
             pauseOnDeathItem.addActionListener(e -> {
-                simHolder.pauseOnDeath = pauseOnDeathItem.isSelected();
+                simManager.pauseOnDeath = pauseOnDeathItem.isSelected();
             });
             simMenu.add(pauseOnDeathItem);
 
             var pauseOnSolutionItem = new JCheckBoxMenuItem("Pause on torpedo solution", true);
-            simHolder.pauseOnTorpedoSolution = true;
+            simManager.pauseOnTorpedoSolution = true;
             pauseOnSolutionItem.addActionListener(e -> {
-                simHolder.pauseOnTorpedoSolution = pauseOnSolutionItem.isSelected();
+                simManager.pauseOnTorpedoSolution = pauseOnSolutionItem.isSelected();
             });
             simMenu.add(pauseOnSolutionItem);
 
@@ -234,7 +262,7 @@ public final class TerrainViewer {
                 boolean firstTime = scene3D[0] == null;
                 if (firstTime) {
                     scene3D[0] = SubmarineScene3D.create();
-                    simHolder.scene3DRef = scene3D[0];
+                    simManager.addListener(scene3D[0]); // 3D view subscribes to tick events
                     canvas3D[0] = scene3D[0].getCanvas();
                     canvas3D[0].setPreferredSize(new java.awt.Dimension(2560, 1080));
                     canvas3D[0].setFocusTraversalKeysEnabled(false);
@@ -247,10 +275,9 @@ public final class TerrainViewer {
                 canvas3D[0].requestFocusInWindow();
                 frame.revalidate();
                 frame.repaint();
-                // Set world if changed
+                // Sync world to 3D scene when switching views
                 var w3d = panel.getWorld();
-                if (w3d != lastWorld3D[0]) {
-                    lastWorld3D[0] = w3d;
+                if (w3d != null) {
                     var s = scene3D[0];
                     Timer timer = new Timer(firstTime ? 500 : 50, evt -> s.setWorld(w3d));
                     timer.setRepeats(false);
@@ -318,7 +345,7 @@ public final class TerrainViewer {
 
             menuBar.add(viewMenu);
             frame.setJMenuBar(menuBar);
-            frame.setTitle("SeaRobots: Simulation Viewer [seed: " + currentSeed[0] + "]");
+            frame.setTitle("SeaRobots: Simulation Viewer [seed: " + Long.toHexString(currentSeed[0]) + "]");
 
             // Global keybindings on root pane (work in both 2D and 3D views)
             var rootPane = frame.getRootPane();
@@ -338,14 +365,36 @@ public final class TerrainViewer {
 
             gim.put(KeyStroke.getKeyStroke(KeyEvent.VK_SPACE, 0), "newMap");
             gam.put("newMap", action(() -> {
-                currentSeed[0] = ThreadLocalRandom.current().nextLong();
-                restartWithCurrentSeed.run();
+                if (activeCompetition != null && activeCompetition.isRunning()) {
+                    activeCompetition.skipToNext();
+                } else {
+                    currentSeed[0] = ThreadLocalRandom.current().nextLong();
+                    restartWithCurrentSeed.run();
+                }
             }));
+
+            // Helper to get the active sim loop (competition or free patrol)
+            java.util.function.Supplier<SimulationLoop> activeSim = () -> {
+                if (activeCompetition != null && activeCompetition.isRunning()) {
+                    return activeCompetition.currentSim();
+                }
+                return simManager.currentLoop();
+            };
+
+            // Helper to set speed on the active sim and persist for competition
+            java.util.function.IntConsumer setSimSpeed = (int mult) -> {
+                var sim = activeSim.get();
+                if (sim != null) sim.setSpeedMultiplier(mult);
+                if (activeCompetition != null && activeCompetition.isRunning()) {
+                    activeCompetition.setSpeed(mult);
+                }
+                panel.setSimSpeed(mult);
+            };
 
             gim.put(KeyStroke.getKeyStroke('p'), "pause");
             gim.put(KeyStroke.getKeyStroke('P'), "pause");
             gam.put("pause", action(() -> {
-                var sim = simHolder.loop;
+                var sim = activeSim.get();
                 if (sim != null) {
                     boolean p = !sim.isPaused();
                     sim.setPaused(p);
@@ -356,35 +405,24 @@ public final class TerrainViewer {
             gim.put(KeyStroke.getKeyStroke('n'), "step");
             gim.put(KeyStroke.getKeyStroke('N'), "step");
             gam.put("step", action(() -> {
-                var sim = simHolder.loop;
+                var sim = activeSim.get();
                 if (sim != null) sim.stepOnce();
             }));
 
             gim.put(KeyStroke.getKeyStroke('1'), "speed1");
-            gam.put("speed1", action(() -> {
-                var sim = simHolder.loop;
-                if (sim != null) { sim.setSpeedMultiplier(1); panel.setSimSpeed(1); }
-            }));
+            gam.put("speed1", action(() -> setSimSpeed.accept(1)));
             gim.put(KeyStroke.getKeyStroke('2'), "speed2");
-            gam.put("speed2", action(() -> {
-                var sim = simHolder.loop;
-                if (sim != null) { sim.setSpeedMultiplier(2); panel.setSimSpeed(2); }
-            }));
+            gam.put("speed2", action(() -> setSimSpeed.accept(2)));
             gim.put(KeyStroke.getKeyStroke('3'), "speed4");
-            gam.put("speed4", action(() -> {
-                var sim = simHolder.loop;
-                if (sim != null) { sim.setSpeedMultiplier(4); panel.setSimSpeed(4); }
-            }));
+            gam.put("speed4", action(() -> setSimSpeed.accept(4)));
             gim.put(KeyStroke.getKeyStroke('4'), "speed8");
-            gam.put("speed8", action(() -> {
-                var sim = simHolder.loop;
-                if (sim != null) { sim.setSpeedMultiplier(8); panel.setSimSpeed(8); }
-            }));
+            gam.put("speed8", action(() -> setSimSpeed.accept(8)));
             gim.put(KeyStroke.getKeyStroke('5'), "speed16");
-            gam.put("speed16", action(() -> {
-                var sim = simHolder.loop;
-                if (sim != null) { sim.setSpeedMultiplier(16); panel.setSimSpeed(16); }
-            }));
+            gam.put("speed16", action(() -> setSimSpeed.accept(16)));
+            gim.put(KeyStroke.getKeyStroke('6'), "speed24");
+            gam.put("speed24", action(() -> setSimSpeed.accept(24)));
+            gim.put(KeyStroke.getKeyStroke('0'), "speedMax");
+            gam.put("speedMax", action(() -> setSimSpeed.accept(1_000_000)));
 
             // 2D-only keybindings on MapPanel
             var im = panel.getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW);
@@ -428,140 +466,31 @@ public final class TerrainViewer {
             frame.setVisible(true);
 
             // Auto-start simulation
-            simHolder.start(world, panel);
+            {
+                var controllers = SimConfigDialog.currentControllers();
+                var vehicleConfigs = SimConfigDialog.currentVehicleConfigs();
+                if (!controllers.isEmpty()) {
+                    simManager.start(world, controllers, vehicleConfigs);
+                }
+            }
         });
     }
 
-    private static class SimulationHolder {
-        volatile SimulationLoop loop;
-        volatile Thread thread;
-        volatile boolean pauseOnDeath;
-        volatile boolean pauseOnTorpedoSolution;
-        volatile boolean injectObjectives;
-        volatile SubmarineScene3D scene3DRef;
-        private boolean torpedoSolutionTriggered;
-        private final java.util.Set<Integer> deadEntities = java.util.Collections.synchronizedSet(new java.util.HashSet<>());
+    // SimulationHolder removed: SimulationManager handles all sim lifecycle.
 
-        void startWithHeadings(GeneratedWorld world, MapPanel panel, List<Double> headings) {
-            start(world, panel, headings);
+    private static CompetitionRunner activeCompetition;
+
+    private static void runCompetitionInViewer(JFrame frame, SimulationManager simManager,
+                                                   MapPanel panel, SubmarineScene3D[] scene3D) {
+        // Stop any existing simulation or competition completely
+        simManager.stop();
+        if (activeCompetition != null) {
+            activeCompetition.stopAll();
+            activeCompetition = null;
         }
+        // Brief pause for old threads to finish
+        try { Thread.sleep(150); } catch (InterruptedException ignored) {}
 
-        void start(GeneratedWorld world, MapPanel panel) {
-            start(world, panel, null);
-        }
-
-        private void start(GeneratedWorld world, MapPanel panel, List<Double> headings) {
-            stop();
-            var sim = new SimulationLoop();
-            this.loop = sim;
-
-            // Normal battle scenario: use procedural spawn points (face toward center)
-            var simWorld = world;
-
-            List<SubmarineController> controllers = SimConfigDialog.currentControllers();
-            List<VehicleConfig> vehicleConfigs = SimConfigDialog.currentVehicleConfigs();
-            if (controllers.isEmpty()) {
-                System.out.println("No ships configured, skipping simulation.");
-                return;
-            }
-
-            // Inject competition objectives if enabled
-            if (injectObjectives) {
-                var objectives = SubmarineCompetition.generateObjectives(
-                        simWorld.config().worldSeed(), simWorld);
-                var terrain = simWorld.terrain();
-                double depth1 = Math.max(-300, terrain.elevationAt(objectives.x1(), objectives.y1()) + 90);
-                double depth2 = Math.max(-300, terrain.elevationAt(objectives.x2(), objectives.y2()) + 90);
-                var objList = java.util.List.of(
-                        new StrategicWaypoint(objectives.x1(), objectives.y1(), depth1,
-                                Purpose.PATROL, NoisePolicy.NORMAL, MovementPattern.DIRECT, 300, -1),
-                        new StrategicWaypoint(objectives.x2(), objectives.y2(), depth2,
-                                Purpose.PATROL, NoisePolicy.NORMAL, MovementPattern.DIRECT, 300, -1)
-                );
-                for (var ctrl : controllers) {
-                    ctrl.setObjectives(objList);
-                }
-                System.out.printf("Injected objectives: WP1=(%.0f,%.0f) WP2=(%.0f,%.0f)%n",
-                        objectives.x1(), objectives.y1(), objectives.x2(), objectives.y2());
-            }
-
-            MatchRecorder recorder = null;
-            try {
-                var logDir = java.nio.file.Path.of("logs");
-                recorder = new MatchRecorder(simWorld.config(), simWorld.spawnPoints(), logDir);
-                System.out.println("Recording match to " + recorder.logFile());
-            } catch (java.io.IOException e) {
-                System.err.println("Failed to create match recorder: " + e.getMessage());
-            }
-            final var rec = recorder;
-
-            deadEntities.clear();
-            torpedoSolutionTriggered = false;
-
-            var listener = new SimulationListener() {
-                @Override
-                public void onTick(long tick, List<SubmarineSnapshot> submarines) {
-                    panel.updateSubmarines(tick, submarines);
-                    var s3d = scene3DRef;
-                    if (s3d != null) s3d.updateSubmarines(tick, submarines);
-                    if (rec != null) rec.onTick(tick, submarines);
-
-                    // Pause on death detection
-                    if (pauseOnDeath) {
-                        for (var sub : submarines) {
-                            if (sub.hp() <= 0 && !deadEntities.contains(sub.id())) {
-                                deadEntities.add(sub.id());
-                                sim.setPaused(true);
-                                panel.setSimPaused(true);
-                            }
-                        }
-                    }
-
-                    // Pause on first torpedo solution (crosshair drawn by MapPanel from snapshot)
-                    if (pauseOnTorpedoSolution && !torpedoSolutionTriggered) {
-                        for (var sub : submarines) {
-                            if (sub.firingSolution() != null) {
-                                torpedoSolutionTriggered = true;
-                                sim.setPaused(true);
-                                panel.setSimPaused(true);
-                                var sol = sub.firingSolution();
-                                System.out.printf("TORPEDO SOLUTION at tick %d: %s target=[%.0f,%.0f] hdg=%.0f spd=%.1f q=%.2f%n",
-                                        tick, sub.name(), sol.targetX(), sol.targetY(),
-                                        Math.toDegrees(sol.targetHeading()), sol.targetSpeed(), sol.quality());
-                                break;
-                            }
-                        }
-                    }
-                }
-
-                @Override
-                public void onMatchEnd() {
-                    if (rec != null) rec.onMatchEnd();
-                }
-            };
-
-            var t = Thread.ofPlatform().daemon().name("sim-loop").start(() ->
-                    sim.run(simWorld, controllers, vehicleConfigs, headings, listener));
-            this.thread = t;
-        }
-
-        void stop() {
-            var sim = loop;
-            if (sim != null) {
-                sim.stop();
-                loop = null;
-            }
-            var t = thread;
-            if (t != null) {
-                t.interrupt();
-                thread = null;
-            }
-        }
-    }
-
-    private static void runCompetitionInViewer(JFrame frame, SimulationHolder simHolder,
-                                                   MapPanel panel) {
-        simHolder.stop();
         var names = SimConfigDialog.currentNames();
         var factories = SimConfigDialog.currentFactories();
         if (factories.size() < 2) {
@@ -575,60 +504,9 @@ public final class TerrainViewer {
             competitors.add(new SubmarineCompetition.Competitor(names.get(i), factories.get(i)));
         }
 
-        // Run in background thread, show results in a dialog
-        var progressDialog = new JDialog(frame, "Competition Running...", false);
-        var outputArea = new javax.swing.JTextArea();
-        outputArea.setEditable(false);
-        outputArea.setFont(new java.awt.Font(java.awt.Font.MONOSPACED, java.awt.Font.PLAIN, 12));
-        progressDialog.add(new javax.swing.JScrollPane(outputArea));
-        progressDialog.setSize(950, 650);
-        progressDialog.setLocationRelativeTo(frame);
-        progressDialog.setVisible(true);
-
-        Thread.ofPlatform().daemon().name("competition").start(() -> {
-            var origOut = System.out;
-            var textStream = new java.io.PrintStream(new java.io.OutputStream() {
-                final StringBuilder buf = new StringBuilder();
-                @Override public void write(int b) {
-                    if (b == '\n') {
-                        String line = buf.toString();
-                        buf.setLength(0);
-                        javax.swing.SwingUtilities.invokeLater(() -> {
-                            outputArea.append(line + "\n");
-                            outputArea.setCaretPosition(outputArea.getDocument().getLength());
-                        });
-                    } else {
-                        buf.append((char) b);
-                    }
-                }
-            });
-
-            System.setOut(textStream);
-            try {
-                int numSeeds = 10;
-                int duration = SubmarineCompetition.DEFAULT_DURATION / SubmarineCompetition.TICKS_PER_SECOND;
-                long[] seeds = new long[numSeeds];
-                for (int i = 0; i < numSeeds; i++) {
-                    seeds[i] = java.util.concurrent.ThreadLocalRandom.current().nextLong();
-                }
-
-                System.out.printf("Competition: %d random seeds, %ds per seed%n", numSeeds, duration);
-                System.out.print("Seeds:");
-                for (long s : seeds) System.out.printf(" %d", s);
-                System.out.println("\n");
-
-                var navPoints = SubmarineCompetition.compete(
-                        competitors, seeds, SubmarineCompetition.DEFAULT_DURATION);
-                System.out.println();
-                SubmarineCompetition.runCombatScenario(
-                        competitors, seeds, SubmarineCompetition.TICKS_PER_SECOND * 600, navPoints);
-            } finally {
-                System.setOut(origOut);
-                javax.swing.SwingUtilities.invokeLater(() -> {
-                    progressDialog.setTitle("Competition Complete");
-                });
-            }
-        });
+        activeCompetition = new CompetitionRunner(frame, panel, simManager);
+        activeCompetition.start(competitors, 5,
+                SubmarineCompetition.DEFAULT_DURATION / SubmarineCompetition.TICKS_PER_SECOND);
     }
 
     private static void loadIcons(JFrame frame) {

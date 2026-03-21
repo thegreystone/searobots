@@ -62,7 +62,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
  * 3D submarine scene using jMonkeyEngine, embeddable in a Swing panel
  * via {@link #getCanvas()}.
  */
-public final class SubmarineScene3D extends SimpleApplication {
+public final class SubmarineScene3D extends SimpleApplication implements se.hirt.searobots.engine.SimulationListener {
 
     private Node modelNode; // template, loaded at init
     private Geometry terrainGeometry;
@@ -458,6 +458,16 @@ public final class SubmarineScene3D extends SimpleApplication {
         if (godRaysFilter != null) godRaysFilter.setEnabled(enabled);
     }
 
+    @Override
+    public void onTick(long tick, List<SubmarineSnapshot> submarines) {
+        updateSubmarines(tick, submarines);
+    }
+
+    @Override
+    public void onMatchEnd() {
+        // Nothing to do; the scene keeps displaying the last state
+    }
+
     /** Feed simulation snapshots. Safe to call from any thread. */
     public void updateSubmarines(long tick, List<SubmarineSnapshot> snapshots) {
         latestTick = tick;
@@ -835,6 +845,8 @@ public final class SubmarineScene3D extends SimpleApplication {
                 mat.setBoolean("VertexColor", true);
                 mat.getAdditionalRenderState().setBlendMode(RenderState.BlendMode.Additive);
                 mat.getAdditionalRenderState().setDepthWrite(false);
+                mat.getAdditionalRenderState().setDepthTest(false);
+                mat.getAdditionalRenderState().setFaceCullMode(RenderState.FaceCullMode.Off);
                 trailGeom.setMaterial(mat);
                 trailGeom.setQueueBucket(RenderQueue.Bucket.Transparent);
                 trailGeom.setCullHint(Spatial.CullHint.Never);

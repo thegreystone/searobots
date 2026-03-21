@@ -20,17 +20,17 @@ public final class ClaudeAttackSub implements SubmarineController {
     private static final long STUCK_TICKS = 1500;
     private static final double GOLDEN_ANGLE = 2.399963229728653;
 
-    // Combat
-    private static final int CONTACT_CONFIRM_TICKS = 3;
-    private static final double CONTACT_DECAY = 0.999;
+    // Combat: aggressive detection and pursuit
+    private static final int CONTACT_CONFIRM_TICKS = 2;   // faster confirmation
+    private static final double CONTACT_DECAY = 0.9985;    // hold contacts longer
     private static final double LOST_TRACK_RADIUS = 5000.0;
-    private static final double REPLAN_TARGET_MOVE = 300.0;
-    private static final long COMBAT_REPLAN_TICKS = 150;
-    private static final long PATROL_PING_INTERVAL = 800;
-    private static final long STALE_CONTACT_TICKS = 200;
-    private static final double CHASE_RANGE = 3000.0;
-    private static final double FIRING_RANGE = 1800.0;
-    private static final double STERN_OFFSET = 400.0;
+    private static final double REPLAN_TARGET_MOVE = 250.0; // replan more often
+    private static final long COMBAT_REPLAN_TICKS = 120;    // faster replanning
+    private static final long PATROL_PING_INTERVAL = 600;   // ping more often
+    private static final long STALE_CONTACT_TICKS = 150;    // refresh sooner
+    private static final double CHASE_RANGE = 3500.0;       // enter chase earlier
+    private static final double FIRING_RANGE = 2000.0;      // fire from further
+    private static final double STERN_OFFSET = 450.0;       // wider stern approach
 
     private enum Mode { PATROL, TRACK, CHASE }
 
@@ -354,7 +354,7 @@ public final class ClaudeAttackSub implements SubmarineController {
         if (!hasTrackedContact) {
             shouldPing = since >= PATROL_PING_INTERVAL;
         } else if (mode == Mode.CHASE) {
-            shouldPing = dist < 1800 || sinceFix > STALE_CONTACT_TICKS || uncertaintyRadius > 500;
+            shouldPing = dist < FIRING_RANGE + 200 || sinceFix > STALE_CONTACT_TICKS || uncertaintyRadius > 450;
         } else {
             shouldPing = since >= PATROL_PING_INTERVAL / 2;
         }
@@ -364,15 +364,17 @@ public final class ClaudeAttackSub implements SubmarineController {
     // ── Firing solution ─────────────────────────────────────────────
 
     private void publishFiringSolution(SubmarineOutput output, Vec3 pos, long tick) {
-        if (!hasTrackedContact || contactAlive < 0.35) return;
+        if (!hasTrackedContact || contactAlive < 0.30) return;
         double dist = ClaudeAutopilot.hdist(pos.x(), pos.y(), trackedX, trackedY);
         long sinceFix = tick - trackedLastFixTick;
-        boolean fresh = rangeConfirmedByActive && sinceFix < 300;
-        boolean precise = fresh ? uncertaintyRadius < 280 : uncertaintyRadius < 140;
-        if (!precise || dist < 150 || dist > FIRING_RANGE) return;
+        boolean fresh = rangeConfirmedByActive && sinceFix < 350;
+        boolean behind = isBehindTarget(pos.x(), pos.y());
+        // Relax precision when behind target (better geometry = more confident)
+        double precisionLimit = fresh ? (behind ? 320 : 280) : (behind ? 180 : 140);
+        if (uncertaintyRadius > precisionLimit || dist < 150 || dist > FIRING_RANGE) return;
 
-        double bonus = isBehindTarget(pos.x(), pos.y()) ? 0.15 : 0;
-        double quality = Math.clamp(contactAlive * (1 - uncertaintyRadius / 320 + bonus), 0.1, 1.0);
+        double bonus = behind ? 0.20 : 0;
+        double quality = Math.clamp(contactAlive * (1 - uncertaintyRadius / 350 + bonus), 0.1, 1.0);
         output.publishFiringSolution(new FiringSolution(
                 trackedX, trackedY, trackedHeading,
                 trackedSpeed > 0 ? trackedSpeed : -1, quality));
@@ -395,7 +397,7 @@ public final class ClaudeAttackSub implements SubmarineController {
         double depth = safeDepth(tx, ty, Math.min(cruiseDepth, -160));
         Purpose purpose = Purpose.INTERCEPT;
         NoisePolicy noise = dist > 3500 ? NoisePolicy.SPRINT : NoisePolicy.NORMAL;
-        double targetSpeed = dist > 3500 ? 10.5 : dist > 1800 ? 9.0 : 6.5;
+        double targetSpeed = dist > 3500 ? 11.0 : dist > 1800 ? 9.5 : 6.5;
         double arrival = dist > 2000 ? 260 : 180;
 
         if (mode == Mode.TRACK && !rangeConfirmedByActive) {
@@ -431,9 +433,16 @@ public final class ClaudeAttackSub implements SubmarineController {
             depth = safeDepth(tx, ty, Math.min(cruiseDepth, -170));
         }
 
-        if (battleArea.distanceToBoundary(tx, ty) < PATROL_MARGIN / 2
+        if (battleArea.distanceToBoundary(tx, ty) < PATROL_MARGIN
                 || !pathPlanner.isSafe(tx, ty)) {
+            // Don't chase into the boundary; pull back toward center
             tx = trackedX; ty = trackedY;
+            if (battleArea.distanceToBoundary(tx, ty) < PATROL_MARGIN) {
+                // Target is too close to edge; move toward center instead
+                double pullDist = 500;
+                tx = tx * (1.0 - pullDist / Math.max(Math.hypot(tx, ty), 1));
+                ty = ty * (1.0 - pullDist / Math.max(Math.hypot(tx, ty), 1));
+            }
             depth = safeDepth(tx, ty, Math.min(cruiseDepth, -150));
         }
 

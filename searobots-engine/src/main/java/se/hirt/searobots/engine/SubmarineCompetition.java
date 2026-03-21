@@ -187,7 +187,7 @@ public class SubmarineCompetition {
             physics.step(entity, 1.0 / TICKS_PER_SECOND, terrain, world.currentField(),
                     config.battleArea());
 
-            if (entity.hp() <= 0) {
+            if (entity.hp() <= 0 || entity.forfeited()) {
                 if (timeToDeath < 0) timeToDeath = t / (double) TICKS_PER_SECOND;
                 break;
             }
@@ -376,7 +376,7 @@ public class SubmarineCompetition {
         System.out.println("=".repeat(120));
 
         for (long seed : seeds) {
-            System.out.printf("%nSeed: %d%n", seed);
+            System.out.printf("%nSeed: %s%n", Long.toHexString(seed));
             System.out.printf("%-20s %4s %6s %5s %6s %7s %7s %6s %6s %5s %5s %5s %7s %7s%n",
                     "Competitor", "Obj", "HitAcc", "WpHit", "1stWP",
                     "AvgDep", "PeakDp", "AvgNs", "PeakN",
@@ -628,23 +628,25 @@ public class SubmarineCompetition {
                     sim.stop();
                 }
 
-                // Check death
-                if (s0.hp() <= 0 && s1.hp() > 0) {
+                // Check death or forfeit (left battle area)
+                boolean s0out = s0.hp() <= 0 || s0.forfeited();
+                boolean s1out = s1.hp() <= 0 || s1.forfeited();
+                if (s0out && !s1out) {
                     winner[0] = nameB;
                     loser[0] = nameA;
-                    reason[0] = nameA + " DIED";
+                    reason[0] = nameA + (s0.forfeited() ? " LEFT ARENA" : " DIED");
                     points[0] = 1;
                     endTick[0] = tick;
                     sim.stop();
-                } else if (s1.hp() <= 0 && s0.hp() > 0) {
+                } else if (s1out && !s0out) {
                     winner[0] = nameA;
                     loser[0] = nameB;
-                    reason[0] = nameB + " DIED";
+                    reason[0] = nameB + (s1.forfeited() ? " LEFT ARENA" : " DIED");
                     points[0] = 1;
                     endTick[0] = tick;
                     sim.stop();
-                } else if (s0.hp() <= 0 && s1.hp() <= 0) {
-                    reason[0] = "BOTH DIED";
+                } else if (s0out && s1out) {
+                    reason[0] = "BOTH OUT";
                     endTick[0] = tick;
                     sim.stop();
                 }
@@ -750,7 +752,7 @@ public class SubmarineCompetition {
 
         System.out.printf("Competition: %d random seeds, %ds per seed%n", numSeeds, durationSec);
         System.out.print("Seeds:");
-        for (long s : seeds) System.out.printf(" %d", s);
+        for (long s : seeds) System.out.printf(" %s", Long.toHexString(s));
         System.out.println("\n");
 
         // Navigation scenario

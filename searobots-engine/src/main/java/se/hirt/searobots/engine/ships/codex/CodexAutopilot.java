@@ -20,7 +20,7 @@ final class CodexAutopilot {
     private static final double FLOOR_CLEARANCE = 80.0;
     private static final double EMERGENCY_GAP = 40.0;
     private static final double WARNING_GAP = 70.0;
-    private static final double BOUNDARY_MARGIN = 950.0;
+    private static final double BOUNDARY_MARGIN = 900.0;
     private static final double FIRST_NAV_SPACING = 200.0;
     private static final double NAV_SPACING = 300.0;
     private static final double NAV_ACCEPTANCE = 115.0;
@@ -48,8 +48,6 @@ final class CodexAutopilot {
     private int strategicWaypointIndex;
     private final List<Vec3> route = new ArrayList<>();
     private int routeIndex;
-    private double routeStartX;
-    private double routeStartY;
     private boolean arrived;
     private boolean blocked;
     private String lastStatus = "";
@@ -69,8 +67,6 @@ final class CodexAutopilot {
         this.strategicWaypoints = List.copyOf(waypoints);
         this.strategicWaypointIndex = 0;
         this.routeIndex = 0;
-        this.routeStartX = posX;
-        this.routeStartY = posY;
         this.arrived = false;
         this.blocked = false;
         this.route.clear();
@@ -116,17 +112,28 @@ final class CodexAutopilot {
 
         double desiredSpeed = speedFor(current);
         desiredSpeed = Math.min(desiredSpeed, turnSpeedLimit(pos.x(), pos.y(), heading));
+        double floorAhead = worstFloorAhead(pos.x(), pos.y(), 400.0);
+        double gapAhead = depth - floorAhead;
+        if (gapAhead < 100.0) {
+            desiredSpeed = Math.min(desiredSpeed, 5.0 + (gapAhead / 100.0) * 3.0);
+        }
         double navDistance = route.isEmpty()
                 ? distToStrategic
                 : hdist(pos.x(), pos.y(), route.get(Math.min(routeIndex, route.size() - 1)).x(),
                 route.get(Math.min(routeIndex, route.size() - 1)).y());
         desiredSpeed = approachSpeedLimit(current, navDistance, distToStrategic, desiredSpeed);
 
-        if (battleArea.distanceToBoundary(pos.x(), pos.y()) < BOUNDARY_MARGIN) {
+        double distToBoundary = battleArea.distanceToBoundary(pos.x(), pos.y());
+        if (distToBoundary < BOUNDARY_MARGIN) {
             double centerBearing = norm(Math.atan2(-pos.x(), -pos.y()));
             double centerErr = adiff(centerBearing, heading);
-            rudder = Math.clamp(centerErr * 2.4, -MAX_RUDDER, MAX_RUDDER);
-            desiredSpeed = Math.min(desiredSpeed, 6.8);
+            double urgency = 1.0 - distToBoundary / BOUNDARY_MARGIN;
+            rudder = Math.clamp(centerErr * (2.0 + urgency * 3.0), -MAX_RUDDER, MAX_RUDDER);
+            desiredSpeed = Math.min(desiredSpeed, 4.0 + (1.0 - urgency) * 4.0);
+            if (distToBoundary < 200.0) {
+                desiredSpeed = -0.5;
+                rudder = Math.clamp(centerErr * 5.0, -1.0, 1.0);
+            }
             lastStatus = "BORDER";
         } else {
             lastStatus = "TRACK";
@@ -142,7 +149,7 @@ final class CodexAutopilot {
 
         double floorBelow = terrain.elevationAt(pos.x(), pos.y());
         double gap = depth - floorBelow;
-        if (gap < EMERGENCY_GAP || (gap < WARNING_GAP && verticalSpeed < -0.4)) {
+        if (gap < EMERGENCY_GAP || gap < WARNING_GAP) {
             sternPlanes = MAX_PLANES;
             ballast = 0.95;
             throttle = gap < EMERGENCY_GAP ? -0.3 : Math.min(throttle, 0.15);
@@ -189,8 +196,8 @@ final class CodexAutopilot {
         route.clear();
         routeIndex = 0;
 
-        double preferredDepth = clampDepth(target.preferredDepth());
         double expectedSpeed = speedFor(target);
+        double preferredDepth = clampDepth(target.preferredDepth());
         var raw = pathPlanner.findPath(
                 posX, posY, target.x(), target.y(),
                 preferredDepth,
@@ -203,57 +210,118 @@ final class CodexAutopilot {
             return;
         }
 
-        route.addAll(densify(raw, preferredDepth));
+        route.addAll(buildRoute(raw, preferredDepth, posZ, posX, posY, expectedSpeed));
         if (route.isEmpty()) {
             route.add(new Vec3(target.x(), target.y(), safeDepth(target.x(), target.y(), preferredDepth)));
         }
     }
 
-    private List<Vec3> densify(List<Vec3> raw, double preferredDepth) {
+    private List<Vec3> buildRoute(List<Vec3> raw, double preferredDepth,
+                                  double startZ, double startX, double startY,
+                                  double expectedSpeed) {
         var dense = new ArrayList<Vec3>();
-        double spacing = FIRST_NAV_SPACING;
         double carried = 0.0;
-
         for (int i = 1; i < raw.size(); i++) {
             Vec3 from = raw.get(i - 1);
             Vec3 to = raw.get(i);
             double segment = from.horizontalDistanceTo(to);
-            if (segment < 1.0) continue;
-
+            if (segment < 1.0) {
+                continue;
+            }
+            double spacing = dense.isEmpty() ? FIRST_NAV_SPACING : NAV_SPACING;
             double next = spacing - carried;
             while (next <= segment) {
                 double t = next / segment;
                 double x = lerp(from.x(), to.x(), t);
                 double y = lerp(from.y(), to.y(), t);
-                double z = lerp(from.z(), to.z(), t);
-                dense.add(new Vec3(x, y, safeDepth(x, y, Math.max(z, preferredDepth))));
-                spacing = NAV_SPACING;
+                dense.add(new Vec3(x, y, 0.0));
                 next += spacing;
             }
             carried = segment - (next - spacing);
-            if (carried >= spacing) carried = 0.0;
+            if (carried >= spacing) {
+                carried = 0.0;
+            }
         }
 
         Vec3 last = raw.getLast();
-        double safeFinalZ = safeDepth(last.x(), last.y(), Math.max(last.z(), preferredDepth));
-        if (dense.isEmpty() || dense.getLast().horizontalDistanceTo(last) > 90.0) {
-            dense.add(new Vec3(last.x(), last.y(), safeFinalZ));
-        } else {
-            dense.set(dense.size() - 1, new Vec3(last.x(), last.y(), safeFinalZ));
+        if (dense.isEmpty() || dense.getLast().horizontalDistanceTo(last) > 100.0) {
+            dense.add(new Vec3(last.x(), last.y(), 0.0));
         }
-        return dense;
+
+        if (dense.isEmpty()) {
+            return dense;
+        }
+
+        double[] worstFloor = new double[dense.size()];
+        for (int i = 0; i < dense.size(); i++) {
+            var wp = dense.get(i);
+            worstFloor[i] = terrain.elevationAt(wp.x(), wp.y());
+            if (i < dense.size() - 1) {
+                var nextWp = dense.get(i + 1);
+                double seg = wp.horizontalDistanceTo(nextWp);
+                for (double s = 50.0; s < seg; s += 50.0) {
+                    double t = s / seg;
+                    double floor = terrain.elevationAt(
+                            lerp(wp.x(), nextWp.x(), t),
+                            lerp(wp.y(), nextWp.y(), t));
+                    worstFloor[i] = Math.max(worstFloor[i], floor);
+                }
+            }
+        }
+
+        double[] depths = new double[dense.size()];
+        for (int i = 0; i < dense.size(); i++) {
+            depths[i] = clampDepth(Math.max(preferredDepth, worstFloor[i] + FLOOR_CLEARANCE));
+        }
+
+        double ratio = depthChangeRatio(expectedSpeed);
+        for (int i = dense.size() - 2; i >= 0; i--) {
+            double legDist = dense.get(i).horizontalDistanceTo(dense.get(i + 1));
+            double maxChange = legDist * ratio;
+            if (depths[i] < depths[i + 1] - maxChange) {
+                depths[i] = depths[i + 1] - maxChange;
+            }
+        }
+
+        double prevZ = startZ;
+        double prevX = startX;
+        double prevY = startY;
+        for (int i = 0; i < dense.size(); i++) {
+            var wp = dense.get(i);
+            double legDist = Math.max(1.0, hdist(prevX, prevY, wp.x(), wp.y()));
+            double maxChange = legDist * ratio;
+            depths[i] = Math.max(depths[i], prevZ - maxChange);
+            depths[i] = Math.min(depths[i], prevZ + maxChange);
+            prevZ = depths[i];
+            prevX = wp.x();
+            prevY = wp.y();
+        }
+
+        var result = new ArrayList<Vec3>(dense.size());
+        for (int i = 0; i < dense.size(); i++) {
+            var wp = dense.get(i);
+            result.add(new Vec3(wp.x(), wp.y(), depths[i]));
+        }
+        return result;
     }
 
     private void advanceRouteIndex(double x, double y) {
-        if (route.isEmpty()) return;
-        while (routeIndex < route.size() - 1) {
-            Vec3 current = route.get(routeIndex);
-            double dist = hdist(x, y, current.x(), current.y());
-            if (dist < NAV_ACCEPTANCE || hasPassedWaypoint(x, y, routeIndex)) {
-                routeIndex++;
-                continue;
+        if (route.isEmpty()) {
+            return;
+        }
+        int best = routeIndex;
+        double bestDist = hdist(x, y, route.get(routeIndex).x(), route.get(routeIndex).y());
+        for (int i = routeIndex + 1; i < Math.min(route.size(), routeIndex + 4); i++) {
+            double dist = hdist(x, y, route.get(i).x(), route.get(i).y());
+            if (dist + 20.0 < bestDist) {
+                bestDist = dist;
+                best = i;
             }
-            break;
+        }
+        routeIndex = best;
+        while (routeIndex < route.size() - 1
+                && hdist(x, y, route.get(routeIndex).x(), route.get(routeIndex).y()) < NAV_ACCEPTANCE) {
+            routeIndex++;
         }
     }
 
@@ -284,21 +352,21 @@ final class CodexAutopilot {
         Vec3 cur = route.get(Math.min(routeIndex, route.size() - 1));
         double curBearing = norm(Math.atan2(cur.x() - x, cur.y() - y));
         double err = Math.abs(adiff(curBearing, heading));
-        if (err > Math.toRadians(65.0)) limit = Math.min(limit, 4.6);
-        else if (err > Math.toRadians(35.0)) limit = Math.min(limit, 6.8);
+        if (err > Math.toRadians(70.0)) limit = Math.min(limit, 5.5);
+        else if (err > Math.toRadians(40.0)) limit = Math.min(limit, 7.0);
 
-        for (int i = routeIndex; i < route.size() - 1 && i < routeIndex + 3; i++) {
+        for (int i = routeIndex; i < route.size() - 1 && i < routeIndex + 2; i++) {
             Vec3 a = route.get(i);
             Vec3 b = route.get(i + 1);
             double bearingA = norm(Math.atan2(a.x() - x, a.y() - y));
             double bearingB = norm(Math.atan2(b.x() - a.x(), b.y() - a.y()));
             double turn = Math.abs(adiff(bearingB, bearingA));
             double dist = Math.max(1.0, a.horizontalDistanceTo(b));
-            if (turn > Math.toRadians(42.0)) {
+            if (turn > Math.toRadians(55.0)) {
                 limit = Math.min(limit, maxSpeedForTurn(turn, dist));
             }
         }
-        return Math.max(3.8, limit);
+        return Math.max(4.5, limit);
     }
 
     private double depthTarget(StrategicWaypoint current, Vec3 steeringTarget, double worstFloor) {
@@ -307,7 +375,7 @@ final class CodexAutopilot {
         if (steeringTarget != null && !Double.isNaN(steeringTarget.z())) {
             desired = Math.min(desired, steeringTarget.z());
         }
-        desired = Math.max(desired, worstFloor + FLOOR_CLEARANCE);
+        desired = Math.max(desired, worstFloor + FLOOR_CLEARANCE + 5.0);
         return clampDepth(desired);
     }
 
@@ -321,7 +389,7 @@ final class CodexAutopilot {
         for (int i = routeIndex; i < route.size() && walked <= limit; i++) {
             Vec3 wp = route.get(i);
             double seg = hdist(ax, ay, wp.x(), wp.y());
-            int samples = Math.max(1, (int) Math.ceil(seg / 75.0));
+            int samples = Math.max(1, (int) Math.ceil(seg / 50.0));
             for (int s = 1; s <= samples; s++) {
                 double t = (double) s / samples;
                 if (walked + seg * t > limit) break;
@@ -433,24 +501,6 @@ final class CodexAutopilot {
 
     static double normalizeBearing(double bearing) {
         return norm(bearing);
-    }
-
-    private boolean hasPassedWaypoint(double x, double y, int index) {
-        Vec3 current = route.get(index);
-        double fromX = index == 0 ? routeStartX : route.get(index - 1).x();
-        double fromY = index == 0 ? routeStartY : route.get(index - 1).y();
-        double segX = current.x() - fromX;
-        double segY = current.y() - fromY;
-        double segLen2 = segX * segX + segY * segY;
-        if (segLen2 < 1.0) {
-            return false;
-        }
-        double progress = ((x - fromX) * segX + (y - fromY) * segY) / segLen2;
-        if (progress < 1.02) {
-            return false;
-        }
-        double crossTrack = Math.abs((x - fromX) * segY - (y - fromY) * segX) / Math.sqrt(segLen2);
-        return crossTrack < 220.0;
     }
 
     private static double lerp(double a, double b, double t) {

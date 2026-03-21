@@ -100,76 +100,86 @@ public final class SimulationLoop {
             entities.add(entity);
         }
 
-        // Notify match start
-        for (var e : entities) {
-            e.controller().onMatchStart(matchContext);
-        }
+        // Main loop (try-finally ensures onMatchEnd always fires,
+        // even if the thread is interrupted during sleep)
+        boolean matchStarted = false;
+        try {
+            for (long tick = 0; tick < config.matchDurationTicks() && !stopped; tick++) {
+                // Handle pause (sim may start paused to let viewers register)
+                while (paused && !stepOnce && !stopped) {
+                    try { Thread.sleep(50); } catch (InterruptedException ex) { break; }
+                }
+                if (stopped) break;
+                stepOnce = false;
 
-        // Main loop
-        for (long tick = 0; tick < config.matchDurationTicks() && !stopped; tick++) {
-            // Handle pause
-            while (paused && !stepOnce && !stopped) {
-                try { Thread.sleep(50); } catch (InterruptedException ex) { return; }
+                // Notify controllers on first active tick, not during setup pause.
+                // This prevents controllers from gaining extra processing time
+                // while viewers are initializing.
+                if (!matchStarted) {
+                    for (var e : entities) {
+                        e.controller().onMatchStart(matchContext);
+                    }
+                    matchStarted = true;
+                }
+
+                final long currentTick = tick;
+
+                // Compute sonar contacts (based on current positions, before controller runs)
+                var sonarResults = sonar.computeContacts(
+                        currentTick, entities, world.terrain(), world.thermalLayers());
+
+                // Build input, call controller, advance physics
+                for (var entity : entities) {
+                    if (entity.forfeited() || entity.hp() <= 0) continue;
+
+                    var sr = sonarResults.getOrDefault(entity.id(),
+                            new SonarModel.SonarResult(List.of(), List.of(), 0));
+                    var input = new SubmarineInput() {
+                        @Override public long tick() { return currentTick; }
+                        @Override public double deltaTimeSeconds() { return dt; }
+                        @Override public SubmarineState self() { return entity.state(); }
+                        @Override public EnvironmentSnapshot environment() { return envSnapshot; }
+                        @Override public List<SonarContact> sonarContacts() { return sr.passiveContacts(); }
+                        @Override public List<SonarContact> activeSonarReturns() { return sr.activeReturns(); }
+                        @Override public int activeSonarCooldownTicks() { return sr.cooldownTicks(); }
+                    };
+
+                    entity.controller().onTick(input, entity);
+                    physics.step(entity, dt, world.terrain(), world.currentField(),
+                            config.battleArea());
+                }
+
+                // Sub-to-sub collision (ramming)
+                checkSubCollisions(entities);
+
+                // Snapshot before postTick clears pingRequested
+                var snapshots = entities.stream().map(SubmarineEntity::snapshot).toList();
+
+                // Clear per-tick published data after snapshot
+                entities.forEach(SubmarineEntity::clearContactEstimates);
+                entities.forEach(SubmarineEntity::clearWaypoints);
+                entities.forEach(SubmarineEntity::clearStrategicWaypoints);
+                entities.forEach(SubmarineEntity::clearFiringSolution);
+
+                // Post-tick: consume pings, tick cooldowns
+                sonar.postTick(entities);
+
+                // Notify listener
+                listener.onTick(tick, snapshots);
+
+                // Timing
+                long sleepMs = (long) (1000.0 / config.tickRateHz() / speedMultiplier);
+                if (sleepMs > 0 && !paused) {
+                    try { Thread.sleep(sleepMs); } catch (InterruptedException ex) { break; }
+                }
             }
-            stepOnce = false;
-
-            final long currentTick = tick;
-
-            // Compute sonar contacts (based on current positions, before controller runs)
-            var sonarResults = sonar.computeContacts(
-                    currentTick, entities, world.terrain(), world.thermalLayers());
-
-            // Build input, call controller, advance physics
-            for (var entity : entities) {
-                if (entity.forfeited() || entity.hp() <= 0) continue;
-
-                var sr = sonarResults.getOrDefault(entity.id(),
-                        new SonarModel.SonarResult(List.of(), List.of(), 0));
-                var input = new SubmarineInput() {
-                    @Override public long tick() { return currentTick; }
-                    @Override public double deltaTimeSeconds() { return dt; }
-                    @Override public SubmarineState self() { return entity.state(); }
-                    @Override public EnvironmentSnapshot environment() { return envSnapshot; }
-                    @Override public List<SonarContact> sonarContacts() { return sr.passiveContacts(); }
-                    @Override public List<SonarContact> activeSonarReturns() { return sr.activeReturns(); }
-                    @Override public int activeSonarCooldownTicks() { return sr.cooldownTicks(); }
-                };
-
-                entity.controller().onTick(input, entity);
-                physics.step(entity, dt, world.terrain(), world.currentField(),
-                        config.battleArea());
+        } finally {
+            // Match end: always called regardless of how the loop exits
+            for (var e : entities) {
+                e.controller().onMatchEnd(new MatchResult(e.forfeited()));
             }
-
-            // Sub-to-sub collision (ramming)
-            checkSubCollisions(entities);
-
-            // Snapshot before postTick clears pingRequested
-            var snapshots = entities.stream().map(SubmarineEntity::snapshot).toList();
-
-            // Clear per-tick published data after snapshot
-            entities.forEach(SubmarineEntity::clearContactEstimates);
-            entities.forEach(SubmarineEntity::clearWaypoints);
-            entities.forEach(SubmarineEntity::clearStrategicWaypoints);
-            entities.forEach(SubmarineEntity::clearFiringSolution);
-
-            // Post-tick: consume pings, tick cooldowns
-            sonar.postTick(entities);
-
-            // Notify listener
-            listener.onTick(tick, snapshots);
-
-            // Timing
-            long sleepMs = (long) (1000.0 / config.tickRateHz() / speedMultiplier);
-            if (sleepMs > 0 && !paused) {
-                try { Thread.sleep(sleepMs); } catch (InterruptedException ex) { return; }
-            }
+            listener.onMatchEnd();
         }
-
-        // Match end
-        for (var e : entities) {
-            e.controller().onMatchEnd(new MatchResult(e.forfeited()));
-        }
-        listener.onMatchEnd();
     }
 
     private static final double COLLISION_DAMAGE_FACTOR = 5.0;

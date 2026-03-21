@@ -49,7 +49,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 /**
  * Top-down 2D rendering of the underwater terrain and overlays.
  */
-public class MapPanel extends JPanel {
+public class MapPanel extends JPanel implements se.hirt.searobots.engine.SimulationListener {
 
     private GeneratedWorld world;
     private BufferedImage terrainImage;
@@ -85,9 +85,19 @@ public class MapPanel extends JPanel {
     private volatile boolean simPaused;
     private volatile double simSpeed = 1.0;
 
+    // Competition results overlay
+    private final java.util.concurrent.CopyOnWriteArrayList<String> competitionResults =
+            new java.util.concurrent.CopyOnWriteArrayList<>();
+    private volatile String competitionPhase = "";
+
+    public void setCompetitionPhase(String phase) { this.competitionPhase = phase; }
+    public void addCompetitionResult(String result) { competitionResults.add(result); }
+    public void clearCompetitionResults() { competitionResults.clear(); competitionPhase = ""; }
+
     // Ping animations
     private record PingAnimation(double x, double y, long startTick, Color color, int sourceId) {}
-    private final java.util.ArrayList<PingAnimation> pingAnimations = new java.util.ArrayList<>();
+    private final java.util.concurrent.CopyOnWriteArrayList<PingAnimation> pingAnimations =
+            new java.util.concurrent.CopyOnWriteArrayList<>();
     private static final double PING_VISUAL_SPEED = 1500.0; // m/s — realistic sound speed in water
     private static final double PING_MAX_RADIUS = 10000.0; // covers full battle area diameter
     private static final double PING_FLASH_DURATION = 1.2;  // seconds — bright origin burst
@@ -125,7 +135,18 @@ public class MapPanel extends JPanel {
         this.trails = new Deque[0];
         this.routes = new List[0];
         this.simTick = 0;
+        this.pingAnimations.clear();
         repaint();
+    }
+
+    @Override
+    public void onTick(long tick, List<se.hirt.searobots.engine.SubmarineSnapshot> submarines) {
+        updateSubmarines(tick, submarines);
+    }
+
+    @Override
+    public void onMatchEnd() {
+        // Nothing to do; the panel keeps displaying the last state
     }
 
     public void updateSubmarines(long tick, List<SubmarineSnapshot> subs) {
@@ -331,6 +352,7 @@ public class MapPanel extends JPanel {
         g2.setStroke(new BasicStroke(1.0f));
         drawInfoOverlay(g2);
         if (!submarines.isEmpty()) drawSubmarineHud(g2);
+        drawCompetitionOverlay(g2);
 
         g2.dispose();
     }
@@ -1084,6 +1106,60 @@ public class MapPanel extends JPanel {
         }
     }
 
+    private void drawCompetitionOverlay(Graphics2D g2) {
+        if (competitionResults.isEmpty() && competitionPhase.isEmpty()) return;
+
+        g2.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 11));
+        int lineH = 14;
+        int padding = 6;
+        int boxW = 340;
+
+        // Position below the sub info overlay on the right
+        var subs = submarines;
+        int subInfoH = subs.size() * 4 * 16 + padding * 2 + 10;
+        int boxX = getWidth() - boxW - padding;
+        int boxY = padding + subInfoH;
+        int maxBoxH = getHeight() - boxY - 20;
+
+        int headerLines = competitionPhase.isEmpty() ? 0 : 1;
+        int maxResultLines = (maxBoxH - padding * 2) / lineH - headerLines;
+        int visibleResults = Math.min(competitionResults.size(), Math.max(3, maxResultLines));
+        int boxH = (headerLines + visibleResults) * lineH + padding * 2;
+
+        g2.setColor(new Color(0, 0, 0, 150));
+        g2.fillRoundRect(boxX, boxY, boxW, boxH, 6, 6);
+
+        int x = boxX + padding;
+        int y = boxY + padding + 11;
+
+        if (!competitionPhase.isEmpty()) {
+            g2.setColor(new Color(255, 220, 80));
+            g2.setFont(g2.getFont().deriveFont(java.awt.Font.BOLD));
+            g2.drawString(competitionPhase, x, y);
+            g2.setFont(g2.getFont().deriveFont(java.awt.Font.PLAIN));
+            y += lineH;
+        }
+
+        // Show most recent results, auto-scroll
+        int startIdx = Math.max(0, competitionResults.size() - visibleResults);
+        for (int i = startIdx; i < competitionResults.size(); i++) {
+            String line = competitionResults.get(i);
+            if (line.contains("pt") || line.contains("TOTAL")) {
+                g2.setColor(new Color(100, 255, 120));
+            } else if (line.contains("TIMEOUT")) {
+                g2.setColor(new Color(160, 160, 110));
+            } else if (line.contains("DIED") || line.contains("LEFT") || line.contains("OUT")) {
+                g2.setColor(new Color(255, 120, 100));
+            } else if (line.contains("SOLUTION")) {
+                g2.setColor(new Color(255, 200, 60));
+            } else {
+                g2.setColor(new Color(190, 210, 230));
+            }
+            g2.drawString(line, x, y);
+            y += lineH;
+        }
+    }
+
     private void drawInfoOverlay(Graphics2D g2) {
         // g2 is in screen coordinates (base transform)
         g2.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 12));
@@ -1101,12 +1177,44 @@ public class MapPanel extends JPanel {
         int y = padding + padding + 12;
         int x = padding + padding;
 
-        g2.drawString("Seed: " + world.config().worldSeed(), x, y);
+        g2.drawString("Seed: " + Long.toHexString(world.config().worldSeed()), x, y);
         y += lineH;
 
         long tick = simTick;
-        String status = simPaused ? "PAUSED" : String.format("%.0fx", simSpeed);
-        g2.drawString(String.format("Tick: %d  [%s]", tick, status), x, y);
+        g2.drawString(String.format("Tick: %d", tick), x, y);
+
+        // Speed indicator: show all modes, highlight the active one
+        String[] speedLabels = {"1x", "2x", "4x", "8x", "16x", "24x", "MAX"};
+        int[] speedValues = {1, 2, 4, 8, 16, 24, 1_000_000};
+        int labelX = x + g2.getFontMetrics().stringWidth(String.format("Tick: %d  ", tick));
+        for (int si = 0; si < speedLabels.length; si++) {
+            boolean active = !simPaused && (int) simSpeed == speedValues[si];
+            boolean paused = simPaused && si == 0; // show PAUSED at the start
+            if (active) {
+                // White, underlined, bold
+                g2.setColor(Color.WHITE);
+                var boldFont = g2.getFont().deriveFont(java.awt.Font.BOLD);
+                g2.setFont(boldFont);
+                int labelW = g2.getFontMetrics().stringWidth(speedLabels[si]);
+                g2.drawString(speedLabels[si], labelX, y);
+                g2.drawLine(labelX, y + 2, labelX + labelW, y + 2); // underline
+                g2.setFont(boldFont.deriveFont(java.awt.Font.PLAIN));
+                labelX += labelW + 8;
+            } else {
+                g2.setColor(new Color(120, 140, 160));
+                int labelW = g2.getFontMetrics().stringWidth(speedLabels[si]);
+                g2.drawString(speedLabels[si], labelX, y);
+                labelX += labelW + 8;
+            }
+        }
+        if (simPaused) {
+            g2.setColor(new Color(255, 100, 100));
+            var boldFont = g2.getFont().deriveFont(java.awt.Font.BOLD);
+            g2.setFont(boldFont);
+            g2.drawString("PAUSED", labelX, y);
+            g2.setFont(boldFont.deriveFont(java.awt.Font.PLAIN));
+        }
+        g2.setColor(new Color(200, 220, 255));
         y += lineH;
 
         long totalSeconds = tick / world.config().tickRateHz();

@@ -216,12 +216,20 @@ final class ClaudeAutopilot {
             desiredSpeed = Math.min(desiredSpeed, 5.0 + (gapAhead / 100.0) * 3.0);
         }
 
-        // Border avoidance
-        if (battleArea.distanceToBoundary(pos.x(), pos.y()) < BOUNDARY_MARGIN) {
+        // Border avoidance: hard turn toward center when near boundary.
+        // Must prevent crossing at all costs (forfeit = instant loss).
+        double distToBoundary = battleArea.distanceToBoundary(pos.x(), pos.y());
+        if (distToBoundary < BOUNDARY_MARGIN) {
             double centerBearing = norm(Math.atan2(-pos.x(), -pos.y()));
             double centerErr = adiff(centerBearing, heading);
-            rudder = Math.clamp(centerErr * 2.5, -MAX_RUDDER, MAX_RUDDER);
-            desiredSpeed = Math.min(desiredSpeed, 7.0);
+            double urgency = 1.0 - distToBoundary / BOUNDARY_MARGIN;
+            rudder = Math.clamp(centerErr * (2.0 + urgency * 3.0), -MAX_RUDDER, MAX_RUDDER);
+            desiredSpeed = Math.min(desiredSpeed, 4.0 + (1.0 - urgency) * 4.0);
+            if (distToBoundary < 200) {
+                // Emergency: hard brake and turn
+                desiredSpeed = -0.5;
+                rudder = Math.clamp(centerErr * 5.0, -1.0, 1.0);
+            }
             lastStatus = "BORDER";
         } else {
             lastStatus = "TRACK";
@@ -504,7 +512,7 @@ final class ClaudeAutopilot {
         return switch (wp.noise()) {
             case SILENT -> 3.5;
             case QUIET -> 5.5;
-            case NORMAL -> 8.2;  // balance: deep + quiet + enough speed to reach waypoints
+            case NORMAL -> 7.5;  // stealth-optimized patrol: quieter wins noise metrics
             case SPRINT -> 12.0;
         };
     }
