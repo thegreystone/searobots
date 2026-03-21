@@ -90,8 +90,7 @@ the same set of seeded maps and compares navigation performance metrics.
 
 ```bash
 mvn exec:java -pl searobots-engine \
-  -Dexec.mainClass=se.hirt.searobots.engine.SubmarineCompetition \
-  -Dexec.classpathScope=test
+  -Dexec.mainClass=se.hirt.searobots.engine.SubmarineCompetition
 ```
 
 This produces a table comparing metrics across 10 seeds:
