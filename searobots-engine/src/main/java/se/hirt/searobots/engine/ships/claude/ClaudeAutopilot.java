@@ -34,6 +34,7 @@ final class ClaudeAutopilot {
     private final TerrainMap terrain;
     private final BattleArea battleArea;
     private final PathPlanner pathPlanner;
+    private final PathPlanner directPlanner; // less depth bias for speed-critical routes
     private final double depthLimit;
     private final double maxSubSpeed;
     private final List<ThermalLayer> thermalLayers;
@@ -52,6 +53,9 @@ final class ClaudeAutopilot {
         // Stronger depth preference: comfortable at -400m, 5x penalty for shallow cells.
         // This makes the A* more aggressively prefer deep routes for stealth.
         this.pathPlanner = new PathPlanner(context.terrain(), -90.0, 225, 75, 400.0, 5.0);
+        // Direct planner: moderate depth bias for speed-critical routing.
+        // Must be enough to avoid cliff edges but not so much that routes are winding.
+        this.directPlanner = new PathPlanner(context.terrain(), -90.0, 225, 75, 200.0, 2.0);
         this.depthLimit = context.config().crushDepth() + CRUSH_SAFETY_MARGIN;
         this.maxSubSpeed = context.config().maxSubSpeed();
         this.thermalLayers = context.thermalLayers();
@@ -60,6 +64,16 @@ final class ClaudeAutopilot {
     void setWaypoints(List<StrategicWaypoint> waypoints,
                       double posX, double posY, double posZ,
                       double heading, double speed) {
+        setWaypoints(waypoints, posX, posY, posZ, heading, speed, false);
+    }
+
+    /**
+     * Sets waypoints with optional direct routing (minimal depth bias).
+     * Use direct=true for speed-critical objectives.
+     */
+    void setWaypoints(List<StrategicWaypoint> waypoints,
+                      double posX, double posY, double posZ,
+                      double heading, double speed, boolean direct) {
         this.strategicWaypoints = List.copyOf(waypoints);
         this.strategicWaypointIndex = 0;
         this.routeIndex = 0;
@@ -67,7 +81,8 @@ final class ClaudeAutopilot {
         this.blocked = false;
         this.route.clear();
         if (!strategicWaypoints.isEmpty()) {
-            planRoute(posX, posY, posZ, heading, speed, strategicWaypoints.getFirst());
+            planRoute(posX, posY, posZ, heading, speed, strategicWaypoints.getFirst(),
+                    direct ? directPlanner : pathPlanner);
         }
     }
 
@@ -212,8 +227,12 @@ final class ClaudeAutopilot {
         // Adaptive: slow down when close to terrain for safety
         double floorAhead = worstFloorAhead(pos.x(), pos.y(), 400);
         double gapAhead = depth - floorAhead;
-        if (gapAhead < 100) {
-            desiredSpeed = Math.min(desiredSpeed, 5.0 + (gapAhead / 100.0) * 3.0);
+        boolean sprint = current.noise() == NoisePolicy.SPRINT;
+        double gapThreshold = sprint ? 60 : 100;
+        if (gapAhead < gapThreshold) {
+            double t = gapAhead / gapThreshold;
+            double minSpeed = sprint ? 7.0 : 5.0;
+            desiredSpeed = Math.min(desiredSpeed, minSpeed + t * 3.0);
         }
 
         // Border avoidance: hard turn toward center when near boundary.
@@ -244,8 +263,12 @@ final class ClaudeAutopilot {
         double ballast = Math.clamp(0.5 + depthErr * 0.004 - verticalSpeed * 0.07, 0.08, 0.92);
         double throttle = throttle(desiredSpeed);
 
-        // Emergency floor avoidance: last resort only
+        // Emergency floor avoidance: check center AND bow position (hull extends 37.5m ahead)
         double floorBelow = terrain.elevationAt(pos.x(), pos.y());
+        double bowX = pos.x() + Math.sin(heading) * 50; // check slightly beyond hull bow
+        double bowY = pos.y() + Math.cos(heading) * 50;
+        double floorBow = terrain.elevationAt(bowX, bowY);
+        floorBelow = Math.max(floorBelow, floorBow);
         double gap = depth - floorBelow;
         if (gap < EMERGENCY_GAP || (gap < WARNING_GAP && verticalSpeed < -0.4)) {
             sternPlanes = MAX_PLANES;
@@ -296,12 +319,18 @@ final class ClaudeAutopilot {
 
     private void planRoute(double posX, double posY, double posZ,
                            double heading, double speed, StrategicWaypoint target) {
+        planRoute(posX, posY, posZ, heading, speed, target, pathPlanner);
+    }
+
+    private void planRoute(double posX, double posY, double posZ,
+                           double heading, double speed, StrategicWaypoint target,
+                           PathPlanner planner) {
         route.clear();
         routeIndex = 0;
 
         double expectedSpeed = speedFor(target);
         double preferredDepth = clampDepth(target.preferredDepth());
-        var raw = pathPlanner.findPath(posX, posY, target.x(), target.y(),
+        var raw = planner.findPath(posX, posY, target.x(), target.y(),
                 preferredDepth, depthChangeRatio(expectedSpeed), turnRadiusAtSpeed(expectedSpeed));
 
         if (raw.isEmpty()) {

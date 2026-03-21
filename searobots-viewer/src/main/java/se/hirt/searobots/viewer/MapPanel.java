@@ -63,6 +63,7 @@ public class MapPanel extends JPanel implements se.hirt.searobots.engine.Simulat
     private boolean showRoute = false;
     private boolean showContactEstimates = true;
     private boolean showWaypoints = true;
+    private boolean showStrategicWaypoints = true;
 
     // mouse interaction
     private Point dragStart;
@@ -82,8 +83,27 @@ public class MapPanel extends JPanel implements se.hirt.searobots.engine.Simulat
     private List<Vec3>[] routes = new List[0];
     private static final int ROUTE_SAMPLE_INTERVAL = 25; // record route every N ticks
     private volatile long simTick;
-    private volatile boolean simPaused;
-    private volatile double simSpeed = 1.0;
+    private volatile java.util.function.BooleanSupplier simPausedSupplier = () -> false;
+    private volatile java.util.function.DoubleSupplier simSpeedSupplier = () -> 1.0;
+
+    // Loading spinner: reads state from sim loop via supplier
+    private volatile java.util.function.Supplier<se.hirt.searobots.engine.SimulationLoop.State> simStateSupplier = () -> se.hirt.searobots.engine.SimulationLoop.State.RUNNING;
+    private long loadingStartMs;
+    private javax.swing.Timer spinnerTimer;
+
+    public void setSimStateSupplier(java.util.function.Supplier<se.hirt.searobots.engine.SimulationLoop.State> supplier) {
+        this.simStateSupplier = supplier;
+        // Start spinner timer for smooth animation when initializing
+        if (spinnerTimer == null) {
+            spinnerTimer = new javax.swing.Timer(50, e -> {
+                var st = simStateSupplier.get();
+                if (st == se.hirt.searobots.engine.SimulationLoop.State.INITIALIZING || st == se.hirt.searobots.engine.SimulationLoop.State.CREATED) {
+                    repaint();
+                }
+            });
+            spinnerTimer.start();
+        }
+    }
 
     // Competition results overlay
     private final java.util.concurrent.CopyOnWriteArrayList<String> competitionResults =
@@ -255,8 +275,12 @@ public class MapPanel extends JPanel implements se.hirt.searobots.engine.Simulat
         repaint();
     }
 
-    public void setSimPaused(boolean p) { this.simPaused = p; }
-    public void setSimSpeed(double s) { this.simSpeed = s; }
+    public void setSimPausedSupplier(java.util.function.BooleanSupplier supplier) {
+        this.simPausedSupplier = supplier;
+    }
+    public void setSimSpeedSupplier(java.util.function.DoubleSupplier supplier) {
+        this.simSpeedSupplier = supplier;
+    }
 
     private void fitBattleArea() {
         int w = getWidth();
@@ -303,6 +327,11 @@ public class MapPanel extends JPanel implements se.hirt.searobots.engine.Simulat
 
     public void toggleWaypoints() {
         showWaypoints = !showWaypoints;
+        repaint();
+    }
+
+    public void toggleStrategicWaypoints() {
+        showStrategicWaypoints = !showStrategicWaypoints;
         repaint();
     }
 
@@ -353,6 +382,13 @@ public class MapPanel extends JPanel implements se.hirt.searobots.engine.Simulat
         drawInfoOverlay(g2);
         if (!submarines.isEmpty()) drawSubmarineHud(g2);
         drawCompetitionOverlay(g2);
+        var simState = simStateSupplier.get();
+        if (simState == se.hirt.searobots.engine.SimulationLoop.State.INITIALIZING || simState == se.hirt.searobots.engine.SimulationLoop.State.CREATED) {
+            if (loadingStartMs == 0) loadingStartMs = System.currentTimeMillis();
+            drawLoadingSpinner(g2);
+        } else {
+            loadingStartMs = 0;
+        }
 
         g2.dispose();
     }
@@ -797,6 +833,8 @@ public class MapPanel extends JPanel implements se.hirt.searobots.engine.Simulat
             }
 
             // 3. Draw strategic waypoints (larger, distinct markers)
+            if (!showStrategicWaypoints) { /* skip */ }
+            else {
             var strategicWps = sub.strategicWaypoints();
             if (strategicWps != null) {
                 double sr = markerRadius * 2.5;
@@ -822,7 +860,7 @@ public class MapPanel extends JPanel implements se.hirt.searobots.engine.Simulat
 
                     // Label with purpose
                     var purpose = swp.purpose();
-                    String label = switch (purpose) {
+                    String purposeLabel = switch (purpose) {
                         case PATROL -> "P";
                         case INVESTIGATE -> "?";
                         case PING_POSITION -> "S";
@@ -831,15 +869,17 @@ public class MapPanel extends JPanel implements se.hirt.searobots.engine.Simulat
                         case EVADE -> "E";
                         case RALLY -> "R";
                     };
+                    String label = (i + 1) + purposeLabel;
                     // Flip Y for text (world transform has inverted Y)
                     var origTransform = g2.getTransform();
                     g2.translate(wp.x() + sr * 0.8, wp.y() - sr * 0.3);
                     g2.scale(1, -1);
-                    g2.setFont(g2.getFont().deriveFont((float) (sr * 1.2)));
+                    g2.setFont(g2.getFont().deriveFont((float) (sr * 1.0)));
                     g2.drawString(label, 0, 0);
                     g2.setTransform(origTransform);
                 }
             }
+            } // end showStrategicWaypoints
         }
     }
 
@@ -1106,6 +1146,30 @@ public class MapPanel extends JPanel implements se.hirt.searobots.engine.Simulat
         }
     }
 
+    private void drawLoadingSpinner(Graphics2D g2) {
+        int cx = getWidth() / 2;
+        int cy = getHeight() / 2;
+        int radius = 30;
+
+        // Translucent backdrop
+        g2.setColor(new Color(0, 0, 0, 120));
+        g2.fillRoundRect(cx - 55, cy - 55, 110, 90, 12, 12);
+
+        // Spinning arc
+        double elapsed = (System.currentTimeMillis() - loadingStartMs) / 1000.0;
+        int startAngle = (int) (elapsed * 300) % 360;
+        g2.setStroke(new BasicStroke(4.0f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+        g2.setColor(new Color(100, 180, 255, 220));
+        g2.drawArc(cx - radius, cy - radius - 10, radius * 2, radius * 2, startAngle, 270);
+
+        // "INITIALIZING" text
+        g2.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 12));
+        g2.setColor(new Color(200, 220, 255));
+        var fm = g2.getFontMetrics();
+        String text = "INITIALIZING";
+        g2.drawString(text, cx - fm.stringWidth(text) / 2, cy + radius + 5);
+    }
+
     private void drawCompetitionOverlay(Graphics2D g2) {
         if (competitionResults.isEmpty() && competitionPhase.isEmpty()) return;
 
@@ -1188,8 +1252,10 @@ public class MapPanel extends JPanel implements se.hirt.searobots.engine.Simulat
         int[] speedValues = {1, 2, 4, 8, 16, 24, 1_000_000};
         int labelX = x + g2.getFontMetrics().stringWidth(String.format("Tick: %d  ", tick));
         for (int si = 0; si < speedLabels.length; si++) {
-            boolean active = !simPaused && (int) simSpeed == speedValues[si];
-            boolean paused = simPaused && si == 0; // show PAUSED at the start
+            double currentSpeed = simSpeedSupplier.getAsDouble();
+            boolean paused = simPausedSupplier.getAsBoolean();
+            boolean active = !paused && (int) currentSpeed == speedValues[si];
+            // (paused already computed above)
             if (active) {
                 // White, underlined, bold
                 g2.setColor(Color.WHITE);
@@ -1207,7 +1273,7 @@ public class MapPanel extends JPanel implements se.hirt.searobots.engine.Simulat
                 labelX += labelW + 8;
             }
         }
-        if (simPaused) {
+        if (simPausedSupplier.getAsBoolean()) {
             g2.setColor(new Color(255, 100, 100));
             var boldFont = g2.getFont().deriveFont(java.awt.Font.BOLD);
             g2.setFont(boldFont);
@@ -1251,7 +1317,8 @@ public class MapPanel extends JPanel implements se.hirt.searobots.engine.Simulat
                 "T      trails " + (showTrails ? "ON" : "OFF"),
                 "R      route " + (showRoute ? "ON" : "OFF"),
                 "E      contacts " + (showContactEstimates ? "ON" : "OFF"),
-                "W      waypoints " + (showWaypoints ? "ON" : "OFF"),
+                "W      nav waypoints " + (showWaypoints ? "ON" : "OFF"),
+                "G      strategic waypoints " + (showStrategicWaypoints ? "ON" : "OFF"),
                 "P      pause/resume",
                 "N      single step",
                 "1-5    speed 1x/2x/5x/10x/22x",

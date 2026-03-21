@@ -80,6 +80,8 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
     private BitmapText hudText;
     private BitmapText tacticalText;
     private BitmapText keysText;
+    private BitmapText loadingText;
+    private volatile java.util.function.Supplier<se.hirt.searobots.engine.SimulationLoop.State> simStateSupplier = () -> se.hirt.searobots.engine.SimulationLoop.State.RUNNING;
 
     // 3D overlays: trails, waypoints, routes
     private boolean showTrails = true;
@@ -304,6 +306,14 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
         // Position updated dynamically in updateHud() to track window resize
         guiNode.attachChild(tacticalText);
 
+        // HUD overlay - center: loading indicator
+        loadingText = new BitmapText(guiFont);
+        loadingText.setSize(guiFont.getCharSet().getRenderedSize() * 2);
+        loadingText.setColor(new ColorRGBA(0.5f, 0.8f, 1.0f, 0.9f));
+        loadingText.setText("INITIALIZING...");
+        loadingText.setCullHint(Spatial.CullHint.Always); // hidden by default
+        guiNode.attachChild(loadingText);
+
         // HUD overlay - bottom right: keybindings
         keysText = new BitmapText(guiFont);
         keysText.setSize(guiFont.getCharSet().getRenderedSize());
@@ -404,6 +414,17 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
             updateHud();
             updateCrosshair();
             updateOverlays();
+            // Loading indicator
+            if (loadingText != null) {
+                var simSt = simStateSupplier.get();
+                boolean showLoading = simSt == se.hirt.searobots.engine.SimulationLoop.State.INITIALIZING || simSt == se.hirt.searobots.engine.SimulationLoop.State.CREATED;
+                loadingText.setCullHint(showLoading ? Spatial.CullHint.Never : Spatial.CullHint.Always);
+                if (showLoading) {
+                    float cx = settings.getWidth() / 2f - loadingText.getLineWidth() / 2f;
+                    float cy = settings.getHeight() / 2f;
+                    loadingText.setLocalTranslation(cx, cy, 0);
+                }
+            }
             // Keep sun billboard centered on camera (infinitely far away)
             if (sunBillboard != null) {
                 Vector3f sunPos = cam.getLocation().add(sun.getDirection().mult(-900f));
@@ -456,6 +477,10 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 
     public void setGodRaysEnabled(boolean enabled) {
         if (godRaysFilter != null) godRaysFilter.setEnabled(enabled);
+    }
+
+    public void setSimStateSupplier(java.util.function.Supplier<se.hirt.searobots.engine.SimulationLoop.State> supplier) {
+        this.simStateSupplier = supplier;
     }
 
     @Override

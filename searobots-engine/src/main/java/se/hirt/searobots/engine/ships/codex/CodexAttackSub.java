@@ -26,17 +26,16 @@ public final class CodexAttackSub implements SubmarineController {
     private static final double PROGRESS_THRESHOLD = 30.0;
     private static final long STUCK_TICKS = 1_500;
     private static final double GOLDEN_ANGLE = 2.399963229728653;
-    private static final int CONTACT_CONFIRM_TICKS = 3;
+    private static final int CONTACT_CONFIRM_TICKS = 2;
     private static final double CONTACT_DECAY = 0.9985;
     private static final double LOST_TRACK_RADIUS = 5_000.0;
-    private static final double REPLAN_TARGET_MOVE_DIST = 350.0;
-    private static final long COMBAT_REPLAN_TICKS = 150L;
-    private static final long PATROL_PING_INTERVAL = 750L;
-    private static final long STALE_CONTACT_TICKS = 200L;
-    private static final double CHASE_RANGE = 3_200.0;
-    private static final double TRACKED_PING_RANGE = 1_800.0;
-    private static final double FIRING_RANGE = 1_800.0;
-    private static final double STERN_OFFSET = 420.0;
+    private static final double REPLAN_TARGET_MOVE_DIST = 250.0;
+    private static final long COMBAT_REPLAN_TICKS = 120L;
+    private static final long PATROL_PING_INTERVAL = 600L;
+    private static final long STALE_CONTACT_TICKS = 150L;
+    private static final double CHASE_RANGE = 3_500.0;
+    private static final double FIRING_RANGE = 2_100.0;
+    private static final double STERN_OFFSET = 450.0;
 
     private enum Mode {
         PATROL,
@@ -503,7 +502,7 @@ public final class CodexAttackSub implements SubmarineController {
         double targetDepth = safeDepth(targetX, targetY, Math.min(cruiseDepth, -160.0));
         Purpose purpose = Purpose.INTERCEPT;
         NoisePolicy noise = dist > 3_500.0 ? NoisePolicy.SPRINT : NoisePolicy.NORMAL;
-        double targetSpeed = dist > 3_500.0 ? 10.8 : dist > 1_800.0 ? 9.4 : 6.7;
+        double targetSpeed = dist > 3_500.0 ? 11.0 : dist > 1_800.0 ? 9.5 : 6.5;
         double arrivalRadius = dist > 2_000.0 ? 260.0 : 180.0;
 
         if (mode == Mode.TRACK && !rangeConfirmedByActive) {
@@ -521,7 +520,7 @@ public final class CodexAttackSub implements SubmarineController {
             targetDepth = safeDepth(targetX, targetY, Math.min(cruiseDepth, -180.0));
             purpose = Purpose.INVESTIGATE;
             noise = NoisePolicy.QUIET;
-            targetSpeed = 6.2;
+            targetSpeed = 6.0;
             arrivalRadius = 240.0;
         } else if (!Double.isNaN(trackedHeading) && trackedSpeed > 0.5) {
             double predictionSeconds = Math.clamp(dist / Math.max(speed, 4.5), 6.0, 35.0);
@@ -534,16 +533,25 @@ public final class CodexAttackSub implements SubmarineController {
                         && pathPlanner.isSafe(sternX, sternY)) {
                     targetX = sternX;
                     targetY = sternY;
-                    noise = dist < 1_100.0 ? NoisePolicy.QUIET : noise;
-                    targetSpeed = dist < 1_100.0 ? 6.0 : targetSpeed;
+                    if (dist < 1_100.0) {
+                        noise = NoisePolicy.QUIET;
+                        targetSpeed = 5.8;
+                    }
                 }
             }
             targetDepth = safeDepth(targetX, targetY, Math.min(cruiseDepth, -170.0));
         }
 
-        if (battleArea.distanceToBoundary(targetX, targetY) < PATROL_MARGIN / 2.0 || !pathPlanner.isSafe(targetX, targetY)) {
+        if (battleArea.distanceToBoundary(targetX, targetY) < PATROL_MARGIN
+                || !pathPlanner.isSafe(targetX, targetY)) {
             targetX = trackedX;
             targetY = trackedY;
+            if (battleArea.distanceToBoundary(targetX, targetY) < PATROL_MARGIN) {
+                double range = Math.max(Math.hypot(targetX, targetY), 1.0);
+                double pull = 500.0 / range;
+                targetX = targetX * (1.0 - pull);
+                targetY = targetY * (1.0 - pull);
+            }
             targetDepth = safeDepth(targetX, targetY, Math.min(cruiseDepth, -150.0));
         }
 
@@ -563,13 +571,13 @@ public final class CodexAttackSub implements SubmarineController {
                 ? CodexAutopilot.hdist(pos.x(), pos.y(), trackedX, trackedY)
                 : Double.POSITIVE_INFINITY;
 
-        boolean shouldPing = false;
+        boolean shouldPing;
         if (!hasTrackedContact) {
             shouldPing = sincePing >= PATROL_PING_INTERVAL;
         } else if (mode == Mode.CHASE) {
-            shouldPing = trackedDist < TRACKED_PING_RANGE
+            shouldPing = trackedDist < FIRING_RANGE + 200.0
                     || ticksSinceFix > STALE_CONTACT_TICKS
-                    || uncertaintyRadius > 550.0;
+                    || uncertaintyRadius > 450.0;
         } else {
             shouldPing = sincePing >= PATROL_PING_INTERVAL / 2;
         }
@@ -587,15 +595,18 @@ public final class CodexAttackSub implements SubmarineController {
 
         double trackedDist = CodexAutopilot.hdist(pos.x(), pos.y(), trackedX, trackedY);
         long ticksSinceFix = tick - trackedLastFixTick;
-        boolean freshRange = rangeConfirmedByActive && ticksSinceFix < 300;
-        boolean preciseEnough = freshRange ? uncertaintyRadius < 280.0 : uncertaintyRadius < 140.0;
-        if (!preciseEnough || trackedDist < 150.0 || trackedDist > FIRING_RANGE) {
+        boolean freshRange = rangeConfirmedByActive && ticksSinceFix < 350;
+        boolean behind = isBehindTargetEstimate(pos.x(), pos.y());
+        double precisionLimit = freshRange
+                ? (behind ? 320.0 : 280.0)
+                : (behind ? 180.0 : 140.0);
+        if (uncertaintyRadius > precisionLimit || trackedDist < 150.0 || trackedDist > FIRING_RANGE) {
             return;
         }
 
-        double geometryBonus = isBehindTargetEstimate(pos.x(), pos.y()) ? 0.15 : 0.0;
+        double geometryBonus = behind ? 0.20 : 0.0;
         double solutionSpeed = trackedSpeed > 0.0 ? trackedSpeed : -1.0;
-        double quality = Math.clamp(contactAlive * (1.0 - uncertaintyRadius / 320.0 + geometryBonus), 0.1, 1.0);
+        double quality = Math.clamp(contactAlive * (1.0 - uncertaintyRadius / 350.0 + geometryBonus), 0.1, 1.0);
         output.publishFiringSolution(new FiringSolution(
                 trackedX, trackedY, trackedHeading, solutionSpeed, quality));
     }

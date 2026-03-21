@@ -89,9 +89,10 @@ public final class TerrainViewer {
                         activeCompetition = null;
                     }
                     panel.clearCompetitionResults();
+                    // Loading state is read from sim loop via state supplier
                     simManager.stop();
                     simManager.setWorld(w);
-                    panel.setSimPaused(false);
+                    // Paused state is read from sim loop via supplier
                     // Start sim with configured controllers
                     var controllers = SimConfigDialog.currentControllers();
                     var vehicleConfigs = SimConfigDialog.currentVehicleConfigs();
@@ -99,6 +100,7 @@ public final class TerrainViewer {
                         simManager.start(w, controllers, vehicleConfigs);
                         simManager.play();
                     }
+                    // Loading state cleared automatically when sim starts running
                     frame.setTitle("SeaRobots: Simulation Viewer [seed: " + Long.toHexString(w.config().worldSeed()) + "]");
                     panel.requestFocusInWindow();
                 } catch (Exception ex) {
@@ -181,7 +183,7 @@ public final class TerrainViewer {
                     panel.clearCompetitionResults();
                     simManager.stop();
                     simManager.setWorld(lWorld);
-                    panel.setSimPaused(false);
+                    // Paused state is read from sim loop via supplier
                     var controllers = SimConfigDialog.currentControllers();
                     var vehicleConfigs = SimConfigDialog.currentVehicleConfigs();
                     if (!controllers.isEmpty()) {
@@ -381,6 +383,20 @@ public final class TerrainViewer {
                 return simManager.currentLoop();
             };
 
+            // Suppliers: MapPanel reads actual state from the active sim loop
+            panel.setSimSpeedSupplier(() -> {
+                var sim = activeSim.get();
+                return sim != null ? sim.getSpeedMultiplier() : 1.0;
+            });
+            panel.setSimPausedSupplier(() -> {
+                var sim = activeSim.get();
+                return sim != null && sim.isPaused();
+            });
+            panel.setSimStateSupplier(() -> {
+                var sim = activeSim.get();
+                return sim != null ? sim.getState() : SimulationLoop.State.STOPPED;
+            });
+
             // Helper to set speed on the active sim and persist for competition
             java.util.function.IntConsumer setSimSpeed = (int mult) -> {
                 var sim = activeSim.get();
@@ -388,7 +404,6 @@ public final class TerrainViewer {
                 if (activeCompetition != null && activeCompetition.isRunning()) {
                     activeCompetition.setSpeed(mult);
                 }
-                panel.setSimSpeed(mult);
             };
 
             gim.put(KeyStroke.getKeyStroke('p'), "pause");
@@ -396,9 +411,7 @@ public final class TerrainViewer {
             gam.put("pause", action(() -> {
                 var sim = activeSim.get();
                 if (sim != null) {
-                    boolean p = !sim.isPaused();
-                    sim.setPaused(p);
-                    panel.setSimPaused(p);
+                    sim.setPaused(!sim.isPaused());
                 }
             }));
 
@@ -460,6 +473,10 @@ public final class TerrainViewer {
             im.put(KeyStroke.getKeyStroke('w'), "waypoints");
             im.put(KeyStroke.getKeyStroke('W'), "waypoints");
             am.put("waypoints", action(panel::toggleWaypoints));
+
+            im.put(KeyStroke.getKeyStroke('g'), "strategicWaypoints");
+            im.put(KeyStroke.getKeyStroke('G'), "strategicWaypoints");
+            am.put("strategicWaypoints", action(panel::toggleStrategicWaypoints));
 
             frame.setSize(2560, 1080);
             frame.setLocationRelativeTo(null);

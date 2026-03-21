@@ -25,6 +25,7 @@ public final class TestHelpers {
         public boolean pinged;
         public String status;
         public final ArrayList<Waypoint> waypoints = new ArrayList<>();
+        public final ArrayList<Waypoint> strategicWaypoints = new ArrayList<>();
         public final ArrayList<ContactEstimate> contactEstimates = new ArrayList<>();
 
         @Override public void setRudder(double value) { rudder = value; }
@@ -34,6 +35,7 @@ public final class TestHelpers {
         @Override public void activeSonarPing() { pinged = true; }
         @Override public void setStatus(String s) { status = s; }
         @Override public void publishWaypoint(Waypoint wp) { waypoints.add(wp); }
+        @Override public void publishStrategicWaypoint(Waypoint wp, Purpose purpose) { strategicWaypoints.add(wp); }
         @Override public void publishContactEstimate(ContactEstimate e) { contactEstimates.add(e); }
     }
 

@@ -136,6 +136,7 @@ final class CompetitionRunner {
         System.out.println("[comp] Starting " + phaseLabel);
         frame.setTitle("SeaRobots Competition: " + phaseLabel);
         panel.setCompetitionPhase(phaseLabel);
+        // Loading state is read from sim loop via state supplier
 
         if (phase.type() == PhaseType.NAV) {
             runNavPhase(phase);
@@ -153,7 +154,8 @@ final class CompetitionRunner {
 
         var controller = phase.factoryA().get();
 
-        // Objectives will be injected on tick 0 (after SimulationLoop calls onMatchStart)
+        // Inject objectives immediately (before sim starts). The controller
+        // stores them and applies them after onMatchStart on the first tick.
         double depth1 = Math.max(-300, world.terrain().elevationAt(objectives.x1(), objectives.y1()) + 90);
         double depth2 = Math.max(-300, world.terrain().elevationAt(objectives.x2(), objectives.y2()) + 90);
         var objList = List.of(
@@ -161,6 +163,7 @@ final class CompetitionRunner {
                         Purpose.PATROL, NoisePolicy.NORMAL, MovementPattern.DIRECT, 300, -1),
                 new StrategicWaypoint(objectives.x2(), objectives.y2(), depth2,
                         Purpose.PATROL, NoisePolicy.NORMAL, MovementPattern.DIRECT, 300, -1));
+        controller.setObjectives(objList);
 
         var sim = new SimulationLoop();
         currentSim = sim;
@@ -175,25 +178,11 @@ final class CompetitionRunner {
         double[] closestObj2After1 = {Double.MAX_VALUE};
         boolean[] obj1Hit = {false};
 
-        boolean[] objectivesInjected = {false};
-        long[] phaseStartMs = {System.currentTimeMillis()};
-
         var listener = new SimulationListener() {
             @Override
             public void onTick(long tick, List<SubmarineSnapshot> submarines) {
                 if (cancelled) { sim.stop(); return; }
-                if (tick == 0) {
-                    System.out.printf("[comp] First tick after %dms%n",
-                            System.currentTimeMillis() - phaseStartMs[0]);
-                }
-                // Fan out to all registered viewers via SimulationManager
                 simManager.fanOutTick(tick, submarines);
-
-                // Inject objectives on first tick (after onMatchStart)
-                if (!objectivesInjected[0]) {
-                    controller.setObjectives(objList);
-                    objectivesInjected[0] = true;
-                }
 
                 if (submarines.isEmpty()) return;
                 var s = submarines.getFirst();
@@ -243,7 +232,7 @@ final class CompetitionRunner {
 
         long tSetWorld = System.currentTimeMillis();
         simManager.setWorld(world);
-        panel.setSimPaused(false);
+        // Paused state is read from sim loop via supplier
         System.out.printf("[comp] setWorld in %dms%n", System.currentTimeMillis() - tSetWorld);
         sim.setSpeedMultiplier(currentSpeedMultiplier);
         currentThread = Thread.ofPlatform().daemon().name("competition-nav").start(() ->
@@ -341,7 +330,7 @@ final class CompetitionRunner {
 
         long tSetWorld = System.currentTimeMillis();
         simManager.setWorld(world);
-        panel.setSimPaused(false);
+        // Paused state is read from sim loop via supplier
         System.out.printf("[comp] setWorld in %dms%n", System.currentTimeMillis() - tSetWorld);
         sim.setSpeedMultiplier(currentSpeedMultiplier);
         currentThread = Thread.ofPlatform().daemon().name("competition-combat").start(() ->

@@ -43,10 +43,13 @@ public final class SimulationLoop {
             new Color(200, 80, 220), new Color(80, 220, 220)
     };
 
+    public enum State { CREATED, INITIALIZING, RUNNING, PAUSED, STOPPED }
+
     private volatile double speedMultiplier = 1.0;
     private volatile boolean paused;
     private volatile boolean stepOnce;
     private volatile boolean stopped;
+    private volatile State state = State.CREATED;
 
     private final List<SubmarineEntity> entities = new ArrayList<>();
 
@@ -65,6 +68,7 @@ public final class SimulationLoop {
                     List<VehicleConfig> vehicleConfigs, List<Double> headings,
                     SimulationListener listener) {
         Objects.requireNonNull(vehicleConfigs, "vehicleConfigs must not be null");
+        state = State.INITIALIZING;
         var config = world.config();
         var physics = new SubmarinePhysics();
         var sonar = new SonarModel(config.worldSeed(), config.maxSubSpeed());
@@ -106,11 +110,13 @@ public final class SimulationLoop {
         try {
             for (long tick = 0; tick < config.matchDurationTicks() && !stopped; tick++) {
                 // Handle pause (sim may start paused to let viewers register)
+                if (paused) state = State.PAUSED;
                 while (paused && !stepOnce && !stopped) {
                     try { Thread.sleep(50); } catch (InterruptedException ex) { break; }
                 }
                 if (stopped) break;
                 stepOnce = false;
+                state = State.RUNNING;
 
                 // Notify controllers on first active tick, not during setup pause.
                 // This prevents controllers from gaining extra processing time
@@ -174,6 +180,7 @@ public final class SimulationLoop {
                 }
             }
         } finally {
+            state = State.STOPPED;
             // Match end: always called regardless of how the loop exits
             for (var e : entities) {
                 e.controller().onMatchEnd(new MatchResult(e.forfeited()));
@@ -237,7 +244,9 @@ public final class SimulationLoop {
         }
     }
 
+    public double getSpeedMultiplier() { return speedMultiplier; }
     public void setSpeedMultiplier(double m) { this.speedMultiplier = m; }
+    public State getState() { return state; }
     public void setPaused(boolean p) { this.paused = p; }
     public boolean isPaused() { return paused; }
     public void stepOnce() { this.stepOnce = true; }

@@ -82,6 +82,15 @@ public class SubmarineCompetition {
                 if (floor > -200) continue; // needs good depth for safe approach
                 float cost = pathPlanner.costAt(x, y);
                 if (cost > 1.5) continue; // avoid cells near shallow terrain
+                // Check neighborhood: ensure the surrounding area is also deep
+                // to prevent placing objectives on cliff edges
+                double worstNearby = floor;
+                for (int dx = -150; dx <= 150; dx += 75) {
+                    for (int dy = -150; dy <= 150; dy += 75) {
+                        worstNearby = Math.max(worstNearby, terrain.elevationAt(x + dx, y + dy));
+                    }
+                }
+                if (worstNearby > -150) continue; // neighborhood must be reasonably deep
                 // Ensure reasonable separation (not too close, not too far)
                 if (i == 1) {
                     double sep = Math.hypot(x - xs[0], y - ys[0]);
@@ -743,7 +752,7 @@ public class SubmarineCompetition {
         );
 
         int numSeeds = args.length > 0 ? Integer.parseInt(args[0]) : 10;
-        int durationSec = args.length > 1 ? Integer.parseInt(args[1]) : 300;
+        int durationSec = args.length > 1 ? Integer.parseInt(args[1]) : DEFAULT_DURATION / TICKS_PER_SECOND;
 
         long[] seeds = new long[numSeeds];
         for (int i = 0; i < numSeeds; i++) {

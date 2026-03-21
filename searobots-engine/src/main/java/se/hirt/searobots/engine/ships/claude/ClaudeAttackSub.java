@@ -140,18 +140,25 @@ public final class ClaudeAttackSub implements SubmarineController {
                 objectiveIndex++;
                 hasObj = objectiveIndex < objectives.size();
             }
-            if (hasObj && (strategicWaypoints.isEmpty() || autopilot.hasArrived())) {
-                // Override objectives with higher speed for faster completion
-                var remaining = new ArrayList<StrategicWaypoint>();
-                for (int oi = objectiveIndex; oi < objectives.size(); oi++) {
-                    var orig = objectives.get(oi);
-                    remaining.add(new StrategicWaypoint(orig.x(), orig.y(), orig.preferredDepth(),
-                            orig.purpose(), NoisePolicy.NORMAL, orig.pattern(), orig.arrivalRadius(), 8.5));
+            // Stuck detection for objectives (same as patrol)
+            boolean needPlan = strategicWaypoints.isEmpty() || autopilot.hasArrived()
+                    || autopilot.isBlocked();
+            if (!needPlan && !strategicWaypoints.isEmpty()) {
+                double dist = autopilot.distanceToStrategic(pos.x(), pos.y());
+                if (dist + PROGRESS_THRESHOLD < bestDistToGoal) {
+                    bestDistToGoal = dist;
+                    lastProgressTick = tick;
+                } else if (tick - lastProgressTick > STUCK_TICKS) {
+                    needPlan = true;
                 }
-                // Navigate to the next objective directly (faster than chaining)
-                strategicWaypoints = List.of(remaining.getFirst());
+            }
+            if (hasObj && needPlan) {
+                var orig = objectives.get(objectiveIndex);
+                var wp = new StrategicWaypoint(orig.x(), orig.y(), orig.preferredDepth(),
+                        orig.purpose(), NoisePolicy.SPRINT, orig.pattern(), orig.arrivalRadius(), 12.0);
+                strategicWaypoints = List.of(wp);
                 autopilot.setWaypoints(strategicWaypoints,
-                        pos.x(), pos.y(), pos.z(), heading, speed);
+                        pos.x(), pos.y(), pos.z(), heading, speed, true);
                 bestDistToGoal = autopilot.distanceToStrategic(pos.x(), pos.y());
                 lastProgressTick = tick;
             }
@@ -228,11 +235,23 @@ public final class ClaudeAttackSub implements SubmarineController {
                 hasObj ? "OBJ" : mode.name().substring(0, 1),
                 autopilot.lastStatus(), -floor, gap));
 
-        for (int i = 0; i < strategicWaypoints.size(); i++) {
-            var wp = strategicWaypoints.get(i);
+        // Publish all objectives (so the viewer shows all of them)
+        for (int i = 0; i < objectives.size(); i++) {
+            var obj = objectives.get(i);
+            boolean active = i == objectiveIndex;
+            boolean reached = i < objectiveIndex;
             output.publishStrategicWaypoint(
-                    new Waypoint(wp.x(), wp.y(), wp.preferredDepth(),
-                            i == autopilot.currentWaypointIndex()), wp.purpose());
+                    new Waypoint(obj.x(), obj.y(), obj.preferredDepth(), active),
+                    reached ? Purpose.RALLY : obj.purpose());
+        }
+        // Also publish current patrol/combat waypoint if not in objective mode
+        if (objectives.isEmpty() || objectiveIndex >= objectives.size()) {
+            for (int i = 0; i < strategicWaypoints.size(); i++) {
+                var wp = strategicWaypoints.get(i);
+                output.publishStrategicWaypoint(
+                        new Waypoint(wp.x(), wp.y(), wp.preferredDepth(),
+                                i == autopilot.currentWaypointIndex()), wp.purpose());
+            }
         }
         prevMode = mode;
     }
