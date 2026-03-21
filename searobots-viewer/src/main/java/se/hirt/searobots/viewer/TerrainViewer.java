@@ -30,9 +30,7 @@ package se.hirt.searobots.viewer;
 import se.hirt.searobots.engine.ships.*;
 import se.hirt.searobots.engine.ships.claude.ClaudeAttackSub;
 
-import se.hirt.searobots.api.MatchConfig;
-import se.hirt.searobots.api.SubmarineController;
-import se.hirt.searobots.api.VehicleConfig;
+import se.hirt.searobots.api.*;
 import se.hirt.searobots.engine.*;
 
 import javax.imageio.ImageIO;
@@ -184,6 +182,15 @@ public final class TerrainViewer {
                 }
             });
             simMenu.add(configItem);
+
+            simMenu.addSeparator();
+
+            var objectivesItem = new JCheckBoxMenuItem("Inject competition objectives", false);
+            objectivesItem.addActionListener(e -> {
+                simHolder.injectObjectives = objectivesItem.isSelected();
+                restartWithCurrentSeed.run();
+            });
+            simMenu.add(objectivesItem);
 
             simMenu.addSeparator();
 
@@ -426,6 +433,7 @@ public final class TerrainViewer {
         volatile Thread thread;
         volatile boolean pauseOnDeath;
         volatile boolean pauseOnTorpedoSolution;
+        volatile boolean injectObjectives;
         volatile SubmarineScene3D scene3DRef;
         private boolean torpedoSolutionTriggered;
         private final java.util.Set<Integer> deadEntities = java.util.Collections.synchronizedSet(new java.util.HashSet<>());
@@ -451,6 +459,26 @@ public final class TerrainViewer {
             if (controllers.isEmpty()) {
                 System.out.println("No ships configured, skipping simulation.");
                 return;
+            }
+
+            // Inject competition objectives if enabled
+            if (injectObjectives) {
+                var objectives = SubmarineCompetition.generateObjectives(
+                        simWorld.config().worldSeed(), simWorld);
+                var terrain = simWorld.terrain();
+                double depth1 = Math.max(-300, terrain.elevationAt(objectives.x1(), objectives.y1()) + 90);
+                double depth2 = Math.max(-300, terrain.elevationAt(objectives.x2(), objectives.y2()) + 90);
+                var objList = java.util.List.of(
+                        new StrategicWaypoint(objectives.x1(), objectives.y1(), depth1,
+                                Purpose.PATROL, NoisePolicy.NORMAL, MovementPattern.DIRECT, 300, -1),
+                        new StrategicWaypoint(objectives.x2(), objectives.y2(), depth2,
+                                Purpose.PATROL, NoisePolicy.NORMAL, MovementPattern.DIRECT, 300, -1)
+                );
+                for (var ctrl : controllers) {
+                    ctrl.setObjectives(objList);
+                }
+                System.out.printf("Injected objectives: WP1=(%.0f,%.0f) WP2=(%.0f,%.0f)%n",
+                        objectives.x1(), objectives.y1(), objectives.x2(), objectives.y2());
             }
 
             MatchRecorder recorder = null;

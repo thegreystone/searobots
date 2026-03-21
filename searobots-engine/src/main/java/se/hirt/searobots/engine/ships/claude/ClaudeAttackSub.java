@@ -141,9 +141,16 @@ public final class ClaudeAttackSub implements SubmarineController {
                 hasObj = objectiveIndex < objectives.size();
             }
             if (hasObj && (strategicWaypoints.isEmpty() || autopilot.hasArrived())) {
-                var remaining = objectives.subList(objectiveIndex, objectives.size());
-                strategicWaypoints = List.copyOf(remaining);
-                autopilot.setWaypointsChain(strategicWaypoints,
+                // Override objectives with higher speed for faster completion
+                var remaining = new ArrayList<StrategicWaypoint>();
+                for (int oi = objectiveIndex; oi < objectives.size(); oi++) {
+                    var orig = objectives.get(oi);
+                    remaining.add(new StrategicWaypoint(orig.x(), orig.y(), orig.preferredDepth(),
+                            orig.purpose(), NoisePolicy.NORMAL, orig.pattern(), orig.arrivalRadius(), 8.5));
+                }
+                // Navigate to the next objective directly (faster than chaining)
+                strategicWaypoints = List.of(remaining.getFirst());
+                autopilot.setWaypoints(strategicWaypoints,
                         pos.x(), pos.y(), pos.z(), heading, speed);
                 bestDistToGoal = autopilot.distanceToStrategic(pos.x(), pos.y());
                 lastProgressTick = tick;

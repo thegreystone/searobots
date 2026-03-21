@@ -61,9 +61,9 @@ public class SubmarineCompetition {
     record SeedResult(long seed, String competitorName, Metrics metrics) {}
 
     /** Two objective waypoints per seed in deep, safe water. */
-    record Objectives(double x1, double y1, double x2, double y2) {}
+    public record Objectives(double x1, double y1, double x2, double y2) {}
 
-    static Objectives generateObjectives(long seed, GeneratedWorld world) {
+    public static Objectives generateObjectives(long seed, GeneratedWorld world) {
         var terrain = world.terrain();
         var area = world.config().battleArea();
         var rng = new java.util.Random(seed * 31 + 7);
@@ -73,17 +73,19 @@ public class SubmarineCompetition {
         for (int i = 0; i < 2; i++) {
             for (int attempt = 0; attempt < 200; attempt++) {
                 double angle = rng.nextDouble() * 2 * Math.PI;
-                double radius = 1500 + rng.nextDouble() * 3000;
+                double radius = 1500 + rng.nextDouble() * 2500;
                 double x = radius * Math.sin(angle);
                 double y = radius * Math.cos(angle);
-                if (area.distanceToBoundary(x, y) < 800) continue;
+                if (area.distanceToBoundary(x, y) < 1000) continue;
                 if (!pathPlanner.isSafe(x, y)) continue;
                 double floor = terrain.elevationAt(x, y);
-                if (floor > -150) continue; // needs decent depth
-                // Ensure separation from the other objective
+                if (floor > -200) continue; // needs good depth for safe approach
+                float cost = pathPlanner.costAt(x, y);
+                if (cost > 1.5) continue; // avoid cells near shallow terrain
+                // Ensure reasonable separation (not too close, not too far)
                 if (i == 1) {
                     double sep = Math.hypot(x - xs[0], y - ys[0]);
-                    if (sep < 2000) continue;
+                    if (sep < 2000 || sep > 6000) continue;
                 }
                 xs[i] = x;
                 ys[i] = y;

@@ -123,7 +123,7 @@ final class ClaudeAutopilot {
         }
 
         // Densify the continuous route
-        var dense = densify(allRaw, deepestPreferred);
+        var dense = buildRoute(allRaw, deepestPreferred, posZ, posX, posY, expectedSpeed);
 
         // Backward depth pass: if a later waypoint needs to be shallow,
         // propagate the constraint backward so the sub starts rising earlier.
@@ -209,6 +209,12 @@ final class ClaudeAutopilot {
         // Speed: higher for better performance, limited by upcoming turns
         double desiredSpeed = speedFor(current);
         desiredSpeed = Math.min(desiredSpeed, turnSpeedLimit(pos.x(), pos.y(), heading));
+        // Adaptive: slow down when close to terrain for safety
+        double floorAhead = worstFloorAhead(pos.x(), pos.y(), 400);
+        double gapAhead = depth - floorAhead;
+        if (gapAhead < 100) {
+            desiredSpeed = Math.min(desiredSpeed, 5.0 + (gapAhead / 100.0) * 3.0);
+        }
 
         // Border avoidance
         if (battleArea.distanceToBoundary(pos.x(), pos.y()) < BOUNDARY_MARGIN) {
@@ -296,13 +302,21 @@ final class ClaudeAutopilot {
             return;
         }
 
-        route.addAll(densify(raw, preferredDepth));
+        route.addAll(buildRoute(raw, preferredDepth, posZ, posX, posY, expectedSpeed));
         if (route.isEmpty()) {
             route.add(new Vec3(target.x(), target.y(), safeDepth(target.x(), target.y(), preferredDepth)));
         }
     }
 
-    private List<Vec3> densify(List<Vec3> raw, double preferredDepth) {
+    /**
+     * Builds a densified route with full terrain profile scanning and
+     * bidirectional depth passes. This ensures the sub starts climbing
+     * before ridges and never dives faster than physics allows.
+     */
+    private List<Vec3> buildRoute(List<Vec3> raw, double preferredDepth,
+                                   double startZ, double startX, double startY,
+                                   double expectedSpeed) {
+        // Step 1: Densify into evenly-spaced waypoints
         var dense = new ArrayList<Vec3>();
         double carried = 0;
         for (int i = 1; i < raw.size(); i++) {
@@ -316,30 +330,74 @@ final class ClaudeAutopilot {
                 double t = next / seg;
                 double x = lerp(from.x(), to.x(), t);
                 double y = lerp(from.y(), to.y(), t);
-                double z = lerp(from.z(), to.z(), t);
-                // Scan ahead along this leg to find worst floor within NAV_SPACING
-                double worstFloor = terrain.elevationAt(x, y);
-                double scanEnd = Math.min(next + NAV_SPACING, seg);
-                for (double s = next; s <= scanEnd; s += 50) {
-                    double st = s / seg;
-                    worstFloor = Math.max(worstFloor,
-                            terrain.elevationAt(lerp(from.x(), to.x(), st), lerp(from.y(), to.y(), st)));
-                }
-                double safeZ = clampDepth(Math.max(Math.max(z, preferredDepth), worstFloor + FLOOR_CLEARANCE));
-                dense.add(new Vec3(x, y, safeZ));
+                dense.add(new Vec3(x, y, 0)); // depth assigned in step 2
                 next += NAV_SPACING;
             }
             carried = seg - (next - NAV_SPACING);
             if (carried >= NAV_SPACING) carried = 0;
         }
         Vec3 last = raw.getLast();
-        double safeFinalZ = safeDepth(last.x(), last.y(), Math.max(last.z(), preferredDepth));
         if (dense.isEmpty() || dense.getLast().horizontalDistanceTo(last) > 100) {
-            dense.add(new Vec3(last.x(), last.y(), safeFinalZ));
-        } else {
-            dense.set(dense.size() - 1, new Vec3(last.x(), last.y(), safeFinalZ));
+            dense.add(new Vec3(last.x(), last.y(), 0));
         }
-        return dense;
+
+        if (dense.isEmpty()) return dense;
+
+        // Step 2: Full terrain profile - scan floor at each waypoint AND between them
+        double[] worstFloor = new double[dense.size()];
+        for (int i = 0; i < dense.size(); i++) {
+            var wp = dense.get(i);
+            worstFloor[i] = terrain.elevationAt(wp.x(), wp.y());
+            // Scan between this and next waypoint
+            if (i < dense.size() - 1) {
+                var next2 = dense.get(i + 1);
+                double seg = wp.horizontalDistanceTo(next2);
+                for (double s = 50; s < seg; s += 50) {
+                    double t = s / seg;
+                    double f = terrain.elevationAt(lerp(wp.x(), next2.x(), t), lerp(wp.y(), next2.y(), t));
+                    worstFloor[i] = Math.max(worstFloor[i], f);
+                }
+            }
+        }
+
+        // Step 3: Compute ideal depth at each point (as deep as possible, clearing terrain)
+        double[] depths = new double[dense.size()];
+        for (int i = 0; i < dense.size(); i++) {
+            depths[i] = clampDepth(Math.max(preferredDepth, worstFloor[i] + FLOOR_CLEARANCE));
+        }
+
+        // Step 4: Backward pass - if a later waypoint needs to be shallow,
+        // propagate the rise requirement backward
+        double ratio = depthChangeRatio(expectedSpeed);
+        for (int i = dense.size() - 2; i >= 0; i--) {
+            double legDist = dense.get(i).horizontalDistanceTo(dense.get(i + 1));
+            double maxChange = legDist * ratio;
+            if (depths[i] < depths[i + 1] - maxChange) {
+                depths[i] = depths[i + 1] - maxChange;
+            }
+        }
+
+        // Step 5: Forward pass from sub's actual depth - can't dive faster than physics
+        double prevZ = startZ;
+        double prevX = startX, prevY = startY;
+        for (int i = 0; i < dense.size(); i++) {
+            var wp = dense.get(i);
+            double legDist = Math.max(1, hdist(prevX, prevY, wp.x(), wp.y()));
+            double maxChange = legDist * ratio;
+            depths[i] = Math.max(depths[i], prevZ - maxChange);
+            depths[i] = Math.min(depths[i], prevZ + maxChange);
+            prevZ = depths[i];
+            prevX = wp.x();
+            prevY = wp.y();
+        }
+
+        // Step 6: Assemble final waypoints with computed depths
+        var result = new ArrayList<Vec3>();
+        for (int i = 0; i < dense.size(); i++) {
+            var wp = dense.get(i);
+            result.add(new Vec3(wp.x(), wp.y(), depths[i]));
+        }
+        return result;
     }
 
     // ── Steering ────────────────────────────────────────────────────
@@ -446,7 +504,7 @@ final class ClaudeAutopilot {
         return switch (wp.noise()) {
             case SILENT -> 3.5;
             case QUIET -> 5.5;
-            case NORMAL -> 7.8;  // balance: deep + quiet + enough speed to reach waypoints
+            case NORMAL -> 8.2;  // balance: deep + quiet + enough speed to reach waypoints
             case SPRINT -> 12.0;
         };
     }
