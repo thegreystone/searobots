@@ -958,11 +958,23 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
         long tick = latestTick;
         var elapsed = java.time.Duration.ofMillis((long) (tick * 1000.0 / 50));
         var tod = startTime.plusSeconds((long) (tick / 50.0));
+        // Speed/pause indicator
+        String speedStr = "";
+        if (standaloneSimManager != null) {
+            var sim = standaloneSimManager.currentLoop();
+            if (sim != null && sim.isPaused()) {
+                speedStr = "  PAUSED";
+            } else if (sim != null && sim.getSpeedMultiplier() > 1) {
+                int mult = (int) sim.getSpeedMultiplier();
+                speedStr = mult >= 1_000_000 ? "  MAX SPEED" : "  " + mult + "x";
+            }
+        }
+
         hudText.setText(String.format(
-                "%s  |  Speed: %.1f kn  Depth: %.0f m  Throttle: %.0f%%  HP: %d\n" +
+                "%s  |  Speed: %.1f kn  Depth: %.0f m  Throttle: %.0f%%  HP: %d%s\n" +
                 "Heading: %03.0f\u00b0  Pitch: %+.1f\u00b0  Roll: %+.1f\u00b0  Rudder: %+.0f%%  Planes: %+.0f%%\n" +
                 "Tick: %d  Elapsed: %02d:%02d:%02d  ToD: %s  Cam: %s",
-                snap.name(), snap.speed(), -pos.z(), snap.throttle() * 100, snap.hp(),
+                snap.name(), snap.speed(), -pos.z(), snap.throttle() * 100, snap.hp(), speedStr,
                 hdgDeg, pitchDeg, rollDeg,
                 snap.rudder() * 100, snap.sternPlanes() * 100,
                 tick, elapsed.toHoursPart(), elapsed.toMinutesPart(), elapsed.toSecondsPart(),
@@ -1323,8 +1335,10 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
             rtNode.setCullHint(overlayConfig.route ? Spatial.CullHint.Never : Spatial.CullHint.Always);
 
             // Sample route history (less frequent than trails, full match history)
+            // Use interval-crossing check so high speed multipliers don't skip samples
             var route = routeBuffers.computeIfAbsent(id, k -> new java.util.ArrayList<>());
-            if (tick > lastTrailTick && tick % ROUTE_SAMPLE_INTERVAL == 0) {
+            if (tick > lastTrailTick
+                    && (lastTrailTick < 0 || tick / ROUTE_SAMPLE_INTERVAL > lastTrailTick / ROUTE_SAMPLE_INTERVAL)) {
                 route.add(jmePos.clone());
             }
 
