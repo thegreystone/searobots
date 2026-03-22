@@ -29,10 +29,29 @@
 package se.hirt.searobots.api;
 
 /**
- * A thermocline boundary at a specific depth.
+ * A thermocline layer: a gradient band where temperature (and hence sound speed)
+ * changes rapidly with depth. The layer extends from {@code top()} to {@code bottom()},
+ * with the strongest gradient at {@code depth} (the core).
  *
- * @param depth Z coordinate of the boundary (negative, e.g. -120.0)
- * @param temperatureAbove water temperature above the boundary (°C)
- * @param temperatureBelow water temperature below the boundary (°C)
+ * @param depth      Z coordinate of the gradient core (negative, e.g. -120.0)
+ * @param thickness  total thickness of the gradient band in metres (e.g. 50.0)
+ * @param temperatureAbove water temperature above the layer (C)
+ * @param temperatureBelow water temperature below the layer (C)
  */
-public record ThermalLayer(double depth, double temperatureAbove, double temperatureBelow) {}
+public record ThermalLayer(double depth, double thickness,
+                           double temperatureAbove, double temperatureBelow) {
+
+    /** Compact constructor for backwards compatibility (zero thickness = sharp boundary). */
+    public ThermalLayer(double depth, double temperatureAbove, double temperatureBelow) {
+        this(depth, 0.0, temperatureAbove, temperatureBelow);
+    }
+
+    /** Top of the gradient band (shallowest, closest to surface). */
+    public double top() { return depth + thickness / 2; }
+
+    /** Bottom of the gradient band (deepest). */
+    public double bottom() { return depth - thickness / 2; }
+
+    /** Temperature difference across the layer. */
+    public double gradient() { return Math.abs(temperatureAbove - temperatureBelow); }
+}

@@ -32,9 +32,7 @@ import se.hirt.searobots.api.*;
 import se.hirt.searobots.engine.GeneratedWorld;
 import se.hirt.searobots.engine.SubmarineSnapshot;
 
-import javax.swing.*;
 import java.awt.*;
-import java.awt.event.*;
 import java.awt.geom.AffineTransform;
 import java.awt.geom.Ellipse2D;
 import java.awt.geom.Line2D;
@@ -48,26 +46,24 @@ import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
  * Top-down 2D rendering of the underwater terrain and overlays.
+ * Pure Java2D renderer (no Swing dependency). Call {@link #render(int, int)}
+ * to get a BufferedImage suitable for uploading as a JME texture.
  */
-public class MapPanel extends JPanel implements se.hirt.searobots.engine.SimulationListener {
+final class MapRenderer implements se.hirt.searobots.engine.SimulationListener {
 
     private GeneratedWorld world;
     private BufferedImage terrainImage;
 
     // view state
-    private double viewX, viewY;           // world centre of the view
-    private double pixelsPerMeter = 0.3;   // zoom level
-    private boolean showContours = true;
-    private boolean showCurrents = false;
-    private boolean showTrails = true;
-    private boolean showRoute = false;
-    private boolean showContactEstimates = true;
-    private boolean showWaypoints = true;
-    private boolean showStrategicWaypoints = true;
+    double viewX, viewY;           // world centre of the view
+    double pixelsPerMeter = 0.3;   // zoom level
 
-    // mouse interaction
-    private Point dragStart;
-    private double dragViewX, dragViewY;
+    // Shared overlay config (read by both 2D and 3D views)
+    final OverlayConfig overlayConfig;
+
+    // render dimensions
+    private int width = 1920;
+    private int height = 1080;
 
     // status line
     private String statusText = "";
@@ -89,20 +85,9 @@ public class MapPanel extends JPanel implements se.hirt.searobots.engine.Simulat
     // Loading spinner: reads state from sim loop via supplier
     private volatile java.util.function.Supplier<se.hirt.searobots.engine.SimulationLoop.State> simStateSupplier = () -> se.hirt.searobots.engine.SimulationLoop.State.RUNNING;
     private long loadingStartMs;
-    private javax.swing.Timer spinnerTimer;
 
     public void setSimStateSupplier(java.util.function.Supplier<se.hirt.searobots.engine.SimulationLoop.State> supplier) {
         this.simStateSupplier = supplier;
-        // Start spinner timer for smooth animation when initializing
-        if (spinnerTimer == null) {
-            spinnerTimer = new javax.swing.Timer(50, e -> {
-                var st = simStateSupplier.get();
-                if (st == se.hirt.searobots.engine.SimulationLoop.State.INITIALIZING || st == se.hirt.searobots.engine.SimulationLoop.State.CREATED) {
-                    repaint();
-                }
-            });
-            spinnerTimer.start();
-        }
     }
 
     // Competition results overlay
@@ -134,11 +119,9 @@ public class MapPanel extends JPanel implements se.hirt.searobots.engine.Simulat
     private final java.util.ArrayList<PingFixRecord> pingFixRecords = new java.util.ArrayList<>();
     private static final long PING_FIX_EXPIRE_TICKS = 3000; // ~60 seconds at 50Hz
 
-    public MapPanel(GeneratedWorld world) {
-        setBackground(new Color(5, 10, 30));
-        setFocusable(true);
+    MapRenderer(GeneratedWorld world, OverlayConfig overlayConfig) {
+        this.overlayConfig = overlayConfig;
         setWorld(world);
-        setupInputHandlers();
     }
 
     public GeneratedWorld getWorld() {
@@ -156,7 +139,6 @@ public class MapPanel extends JPanel implements se.hirt.searobots.engine.Simulat
         this.routes = new List[0];
         this.simTick = 0;
         this.pingAnimations.clear();
-        repaint();
     }
 
     @Override
@@ -272,7 +254,7 @@ public class MapPanel extends JPanel implements se.hirt.searobots.engine.Simulat
         detectionHighlights.removeIf(h -> (tick - h.startTick) / 50.0 > DETECTION_HIGHLIGHT_DURATION);
         pingFixRecords.removeIf(r -> tick - r.tick > PING_FIX_EXPIRE_TICKS);
 
-        repaint();
+
     }
 
     public void setSimPausedSupplier(java.util.function.BooleanSupplier supplier) {
@@ -283,96 +265,60 @@ public class MapPanel extends JPanel implements se.hirt.searobots.engine.Simulat
     }
 
     private void fitBattleArea() {
-        int w = getWidth();
-        int h = getHeight();
-        if (w <= 0 || h <= 0) {
-            // Not yet laid out — use a reasonable default, will refit on first paint
+        if (width <= 0 || height <= 0) {
             pixelsPerMeter = 0.18;
             return;
         }
         double diameter = world.config().battleArea().extent() * 2;
-        pixelsPerMeter = Math.min(w, h) * 0.8 / diameter;
+        pixelsPerMeter = Math.min(width, height) * 0.8 / diameter;
     }
 
     public void zoom(double factor) {
         pixelsPerMeter *= factor;
         pixelsPerMeter = Math.max(0.01, Math.min(10.0, pixelsPerMeter));
-        repaint();
-    }
 
-    public void toggleContours() {
-        showContours = !showContours;
-        repaint();
-    }
-
-    public void toggleCurrents() {
-        showCurrents = !showCurrents;
-        repaint();
-    }
-
-    public void toggleTrails() {
-        showTrails = !showTrails;
-        repaint();
-    }
-
-    public void toggleRoute() {
-        showRoute = !showRoute;
-        repaint();
-    }
-
-    public void toggleContactEstimates() {
-        showContactEstimates = !showContactEstimates;
-        repaint();
-    }
-
-    public void toggleWaypoints() {
-        showWaypoints = !showWaypoints;
-        repaint();
-    }
-
-    public void toggleStrategicWaypoints() {
-        showStrategicWaypoints = !showStrategicWaypoints;
-        repaint();
     }
 
     // ── rendering ──────────────────────────────────────────────────────
 
-    @Override
-    protected void paintComponent(Graphics g) {
-        super.paintComponent(g);
-        if (world == null) return;
+    /**
+     * Renders the 2D map to a new BufferedImage of the given dimensions.
+     */
+    BufferedImage render(int w, int h) {
+        this.width = w;
+        this.height = h;
+        if (world == null) return null;
 
         if (needsInitialFit) {
             needsInitialFit = false;
             fitBattleArea();
         }
 
-        var g2 = (Graphics2D) g.create();
+        var image = new BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB);
+        var g2 = image.createGraphics();
         g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
 
-        // Save the system's base transform (includes DPI scaling on Windows)
+        // Fill background
+        g2.setColor(new Color(5, 10, 30));
+        g2.fillRect(0, 0, w, h);
+
         var baseTransform = g2.getTransform();
 
-        // Compose world-to-screen on top of the base transform
         var worldTransform = new AffineTransform(baseTransform);
-        worldTransform.translate(getWidth() / 2.0, getHeight() / 2.0);
+        worldTransform.translate(w / 2.0, h / 2.0);
         worldTransform.scale(pixelsPerMeter, -pixelsPerMeter);
         worldTransform.translate(-viewX, -viewY);
-
-        // Set world-coordinate transform for all world-space drawing.
-        // drawImage composes its AffineTransform arg with g2's current
-        // transform, so every draw method sees the same pipeline.
         g2.setTransform(worldTransform);
 
         drawTerrain(g2);
         drawBattleArea(g2);
         if (submarines.isEmpty()) drawSpawnPoints(g2);
-        if (showCurrents) drawCurrentArrows(g2);
-        if (showRoute) drawSubmarineRoutes(g2);
-        if (showTrails) drawSubmarineTrails(g2);
+        if (overlayConfig.currents) drawCurrentArrows(g2);
+        if (overlayConfig.route) drawSubmarineRoutes(g2);
+        if (overlayConfig.trails) drawSubmarineTrails(g2);
         drawSubmarines(g2);
-        if (showContactEstimates) drawContactEstimates(g2);
-        if (showWaypoints) drawWaypoints(g2);
+        if (overlayConfig.contactEstimates) drawContactEstimates(g2);
+        if (overlayConfig.waypoints) drawWaypoints(g2);
         drawPingAnimations(g2);
         drawDetectionHighlights(g2);
         drawFiringSolution(g2);
@@ -391,6 +337,7 @@ public class MapPanel extends JPanel implements se.hirt.searobots.engine.Simulat
         }
 
         g2.dispose();
+        return image;
     }
 
     private void drawTerrain(Graphics2D g2) {
@@ -410,7 +357,7 @@ public class MapPanel extends JPanel implements se.hirt.searobots.engine.Simulat
         g2.setRenderingHint(RenderingHints.KEY_INTERPOLATION,
                 RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
 
-        if (showContours) drawContourLines(g2);
+        if (overlayConfig.contours) drawContourLines(g2);
     }
 
     private static final double BASE_CONTOUR_INTERVAL = 25.0;
@@ -833,7 +780,7 @@ public class MapPanel extends JPanel implements se.hirt.searobots.engine.Simulat
             }
 
             // 3. Draw strategic waypoints (larger, distinct markers)
-            if (!showStrategicWaypoints) { /* skip */ }
+            if (!overlayConfig.strategicWaypoints) { /* skip */ }
             else {
             var strategicWps = sub.strategicWaypoints();
             if (strategicWps != null) {
@@ -879,7 +826,7 @@ public class MapPanel extends JPanel implements se.hirt.searobots.engine.Simulat
                     g2.setTransform(origTransform);
                 }
             }
-            } // end showStrategicWaypoints
+            } // end overlayConfig.strategicWaypoints
         }
     }
 
@@ -1097,7 +1044,7 @@ public class MapPanel extends JPanel implements se.hirt.searobots.engine.Simulat
         var subs = submarines;
         int boxH = subs.size() * 4 * lineH + padding * 2;
 
-        int boxX = getWidth() - boxW - padding;
+        int boxX = width - boxW - padding;
         int boxY = padding;
 
         // Backdrop
@@ -1147,8 +1094,8 @@ public class MapPanel extends JPanel implements se.hirt.searobots.engine.Simulat
     }
 
     private void drawLoadingSpinner(Graphics2D g2) {
-        int cx = getWidth() / 2;
-        int cy = getHeight() / 2;
+        int cx = width / 2;
+        int cy = height / 2;
         int radius = 30;
 
         // Translucent backdrop
@@ -1181,9 +1128,9 @@ public class MapPanel extends JPanel implements se.hirt.searobots.engine.Simulat
         // Position below the sub info overlay on the right
         var subs = submarines;
         int subInfoH = subs.size() * 4 * 16 + padding * 2 + 10;
-        int boxX = getWidth() - boxW - padding;
+        int boxX = width - boxW - padding;
         int boxY = padding + subInfoH;
-        int maxBoxH = getHeight() - boxY - 20;
+        int maxBoxH = height - boxY - 20;
 
         int headerLines = competitionPhase.isEmpty() ? 0 : 1;
         int maxResultLines = (maxBoxH - padding * 2) / lineH - headerLines;
@@ -1305,20 +1252,20 @@ public class MapPanel extends JPanel implements se.hirt.searobots.engine.Simulat
 
         if (!statusText.isEmpty()) {
             g2.setColor(new Color(200, 220, 255));
-            g2.drawString(statusText, padding + padding, getHeight() - 10);
+            g2.drawString(statusText, padding + padding, height - 10);
         }
 
         // Bottom-right help panel
         String[] help = {
                 "SPACE  new map",
                 "+/-    zoom",
-                "C      contours " + (showContours ? "ON" : "OFF"),
-                "F      currents " + (showCurrents ? "ON" : "OFF"),
-                "T      trails " + (showTrails ? "ON" : "OFF"),
-                "R      route " + (showRoute ? "ON" : "OFF"),
-                "E      contacts " + (showContactEstimates ? "ON" : "OFF"),
-                "W      nav waypoints " + (showWaypoints ? "ON" : "OFF"),
-                "G      strategic waypoints " + (showStrategicWaypoints ? "ON" : "OFF"),
+                "C      contours " + (overlayConfig.contours ? "ON" : "OFF"),
+                "F      currents " + (overlayConfig.currents ? "ON" : "OFF"),
+                "T      trails " + (overlayConfig.trails ? "ON" : "OFF"),
+                "R      route " + (overlayConfig.route ? "ON" : "OFF"),
+                "E      contacts " + (overlayConfig.contactEstimates ? "ON" : "OFF"),
+                "W      nav waypoints " + (overlayConfig.waypoints ? "ON" : "OFF"),
+                "G      strategic waypoints " + (overlayConfig.strategicWaypoints ? "ON" : "OFF"),
                 "P      pause/resume",
                 "N      single step",
                 "1-5    speed 1x/2x/5x/10x/22x",
@@ -1326,8 +1273,8 @@ public class MapPanel extends JPanel implements se.hirt.searobots.engine.Simulat
         };
         int helpW = 220;
         int helpH = help.length * lineH + padding * 2;
-        int helpX = getWidth() - helpW - padding;
-        int helpY = getHeight() - helpH - padding;
+        int helpX = width - helpW - padding;
+        int helpY = height - helpH - padding;
         g2.setColor(new Color(0, 0, 0, 128));
         g2.fillRoundRect(helpX, helpY, helpW, helpH, 8, 8);
 
@@ -1341,7 +1288,7 @@ public class MapPanel extends JPanel implements se.hirt.searobots.engine.Simulat
 
     private void drawScaleBar(Graphics2D g2) {
         // pick a nice round distance that fits roughly 1/4 of the panel width
-        double targetPixels = getWidth() * 0.25;
+        double targetPixels = width * 0.25;
         double targetMeters = targetPixels / pixelsPerMeter;
 
         // snap to a nice round number
@@ -1355,8 +1302,8 @@ public class MapPanel extends JPanel implements se.hirt.searobots.engine.Simulat
         }
 
         int barPx = (int) (scaleMeters * pixelsPerMeter);
-        int bx = (getWidth() - barPx) / 2;
-        int by = getHeight() - 30;
+        int bx = (width - barPx) / 2;
+        int by = height - 30;
         int barH = 6;
 
         // backdrop
@@ -1398,7 +1345,7 @@ public class MapPanel extends JPanel implements se.hirt.searobots.engine.Simulat
         int backdropX = COLOR_KEY_MARGIN_LEFT;
         int barX = backdropX + COLOR_KEY_BORDER;
         int barTop = COLOR_KEY_MARGIN_TOP + COLOR_KEY_BORDER;
-        int barBot = getHeight() - COLOR_KEY_MARGIN_BOTTOM - COLOR_KEY_BORDER;
+        int barBot = height - COLOR_KEY_MARGIN_BOTTOM - COLOR_KEY_BORDER;
         int barH = barBot - barTop;
         if (barH < 100) return;
 
@@ -1501,64 +1448,6 @@ public class MapPanel extends JPanel implements se.hirt.searobots.engine.Simulat
         long la = (long) Math.floor(a / interval);
         long lb = (long) Math.floor(b / interval);
         return la != lb;
-    }
-
-    // ── input handling ─────────────────────────────────────────────────
-
-    private void setupInputHandlers() {
-        setFocusable(true);
-
-        addMouseWheelListener(e -> {
-            double rotation = e.getPreciseWheelRotation();
-            if (rotation == 0) return;
-            double factor = Math.pow(1.15, -rotation);
-            zoom(factor);
-        });
-
-        addMouseMotionListener(new MouseMotionAdapter() {
-            @Override
-            public void mouseDragged(MouseEvent e) {
-                if (dragStart != null) {
-                    double dx = (e.getX() - dragStart.x) / pixelsPerMeter;
-                    double dy = -(e.getY() - dragStart.y) / pixelsPerMeter;
-                    viewX = dragViewX - dx;
-                    viewY = dragViewY - dy;
-                    repaint();
-                }
-            }
-
-            @Override
-            public void mouseMoved(MouseEvent e) {
-                double wx = screenToWorldX(e.getX());
-                double wy = screenToWorldY(e.getY());
-                double elev = world.terrain().elevationAt(wx, wy);
-                statusText = String.format("(%.0f, %.0f)  depth: %.0fm", wx, wy, -elev);
-                repaint();
-            }
-        });
-
-        addMouseListener(new MouseAdapter() {
-            @Override
-            public void mousePressed(MouseEvent e) {
-                requestFocusInWindow();
-                dragStart = e.getPoint();
-                dragViewX = viewX;
-                dragViewY = viewY;
-            }
-
-            @Override
-            public void mouseReleased(MouseEvent e) {
-                dragStart = null;
-            }
-        });
-    }
-
-    private double screenToWorldX(int sx) {
-        return (sx - getWidth() / 2.0) / pixelsPerMeter + viewX;
-    }
-
-    private double screenToWorldY(int sy) {
-        return -(sy - getHeight() / 2.0) / pixelsPerMeter + viewY;
     }
 
     /**

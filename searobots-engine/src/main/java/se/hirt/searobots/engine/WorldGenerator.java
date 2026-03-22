@@ -117,20 +117,68 @@ public final class WorldGenerator {
     }
 
     private List<ThermalLayer> generateThermals(MatchConfig config, Random rng) {
-        double shallowZ = config.minSeaFloorZ(); // e.g. -30
-        double deepZ = config.maxSeaFloorZ();     // e.g. -500
-        int layerCount = 1 + rng.nextInt(3);
-        double surfaceTemp = 18.0;
+        // Oceanographic thermocline model based on real-world depth profiles.
+        // Layers are placed at realistic ocean depths independent of sea floor.
+        //
+        // Presets weighted by probability:
+        //   40% temperate open ocean (primary layer 80-160m)
+        //   25% tropical (primary layer 100-220m)
+        //   20% coastal/summer (shallow layer 30-70m + deeper layer)
+        //   15% high-latitude/winter (weak or absent, deep if present)
 
+        double surfaceTemp = 16.0 + rng.nextDouble() * 6.0; // 16-22C surface
+        double roll = rng.nextDouble();
         var layers = new ArrayList<ThermalLayer>();
-        for (int i = 0; i < layerCount; i++) {
-            double fraction = (i + 1.0) / (layerCount + 1.0);
-            double layerZ = shallowZ + (deepZ - shallowZ) * fraction;
-            layerZ += (rng.nextDouble() - 0.5) * 30;
-            double tempAbove = surfaceTemp - i * 4.0;
-            double tempBelow = tempAbove - 3.0 - rng.nextDouble() * 3.0;
-            layers.add(new ThermalLayer(layerZ, tempAbove, tempBelow));
+
+        if (roll < 0.40) {
+            // Temperate open ocean: main thermocline 80-160m, sometimes a seasonal layer above
+            double mainDepth = -(80 + rng.nextDouble() * 80);   // -80 to -160m
+            double mainThickness = 40 + rng.nextDouble() * 40;  // 40-80m band
+            double gradient = 4.0 + rng.nextDouble() * 4.0;     // 4-8C drop
+            layers.add(new ThermalLayer(mainDepth, mainThickness,
+                    surfaceTemp, surfaceTemp - gradient));
+            // 40% chance of a weak seasonal layer above
+            if (rng.nextDouble() < 0.4) {
+                double seasonalDepth = -(25 + rng.nextDouble() * 30); // -25 to -55m
+                double seasonalGradient = 1.5 + rng.nextDouble() * 2.0;
+                layers.add(new ThermalLayer(seasonalDepth, 20 + rng.nextDouble() * 15,
+                        surfaceTemp, surfaceTemp - seasonalGradient));
+            }
+        } else if (roll < 0.65) {
+            // Tropical: strong layer 100-220m, pronounced stratification
+            double mainDepth = -(100 + rng.nextDouble() * 120);
+            double mainThickness = 50 + rng.nextDouble() * 50; // 50-100m band
+            double gradient = 6.0 + rng.nextDouble() * 6.0;    // 6-12C drop
+            layers.add(new ThermalLayer(mainDepth, mainThickness,
+                    surfaceTemp, surfaceTemp - gradient));
+        } else if (roll < 0.85) {
+            // Coastal/summer: shallow seasonal thermocline 30-70m + deeper permanent layer
+            double shallowDepth = -(30 + rng.nextDouble() * 40);
+            double shallowThickness = 15 + rng.nextDouble() * 25;
+            double shallowGradient = 3.0 + rng.nextDouble() * 4.0;
+            double midTemp = surfaceTemp - shallowGradient;
+            layers.add(new ThermalLayer(shallowDepth, shallowThickness,
+                    surfaceTemp, midTemp));
+            // Deeper permanent layer
+            double deepDepth = -(120 + rng.nextDouble() * 80);
+            double deepThickness = 40 + rng.nextDouble() * 40;
+            double deepGradient = 3.0 + rng.nextDouble() * 3.0;
+            layers.add(new ThermalLayer(deepDepth, deepThickness,
+                    midTemp, midTemp - deepGradient));
+        } else {
+            // High-latitude/winter: weak or absent. 50% chance of a single weak deep layer
+            if (rng.nextDouble() < 0.5) {
+                double depth = -(150 + rng.nextDouble() * 100); // 150-250m
+                double thickness = 30 + rng.nextDouble() * 40;
+                double gradient = 1.5 + rng.nextDouble() * 2.5; // weak: 1.5-4C
+                layers.add(new ThermalLayer(depth, thickness,
+                        surfaceTemp, surfaceTemp - gradient));
+            }
+            // else: no thermocline (fully mixed water column)
         }
+
+        // Sort by depth (shallowest first, highest Z value)
+        layers.sort((a, b) -> Double.compare(b.depth(), a.depth()));
         return List.copyOf(layers);
     }
 

@@ -267,15 +267,38 @@ public final class SonarModel {
     static double thermoclineDb(double srcZ, double dstZ, List<ThermalLayer> layers) {
         double totalDb = 0;
         for (var layer : layers) {
-            double boundary = layer.depth();
-            boolean srcAbove = srcZ > boundary;
-            boolean dstAbove = dstZ > boundary;
-            if (srcAbove == dstAbove) {
-                totalDb -= 2.0; // same-layer waveguide bonus
+            double top = layer.top();
+            double bottom = layer.bottom();
+            // Classify each sub's position relative to the gradient band.
+            // "Above" = clearly above the layer, "below" = clearly below it,
+            // "inside" = within the gradient band.
+            boolean srcAbove = srcZ > top;
+            boolean srcBelow = srcZ < bottom;
+            boolean dstAbove = dstZ > top;
+            boolean dstBelow = dstZ < bottom;
+
+            // Same clear side: waveguide bonus
+            if ((srcAbove && dstAbove) || (srcBelow && dstBelow)) {
+                totalDb -= 2.0;
+            } else if (srcAbove != dstAbove && srcBelow != dstBelow) {
+                // One is clearly above and the other clearly below: full crossing.
+                double tempDiff = layer.gradient();
+                double maxPenalty = Math.clamp(3.0 + 0.5 * tempDiff, 5.0, 12.0);
+                totalDb += maxPenalty;
             } else {
-                double tempDiff = Math.abs(layer.temperatureAbove() - layer.temperatureBelow());
-                double penalty = Math.clamp(3.0 + 0.5 * tempDiff, 5.0, 10.0);
-                totalDb += penalty;
+                // One is inside the band, the other is outside on one side.
+                // Partial crossing penalty proportional to fraction traversed.
+                double tempDiff = layer.gradient();
+                double maxPenalty = Math.clamp(3.0 + 0.5 * tempDiff, 5.0, 12.0);
+
+                if (layer.thickness() < 1.0) {
+                    totalDb += maxPenalty;
+                } else {
+                    double srcClamped = Math.clamp(srcZ, bottom, top);
+                    double dstClamped = Math.clamp(dstZ, bottom, top);
+                    double crossedFraction = Math.abs(srcClamped - dstClamped) / layer.thickness();
+                    totalDb += maxPenalty * crossedFraction;
+                }
             }
         }
         return totalDb;

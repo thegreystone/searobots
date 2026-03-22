@@ -35,7 +35,6 @@ import com.jme3.scene.control.BillboardControl;
 import com.jme3.scene.shape.Box;
 import com.jme3.scene.shape.Quad;
 import com.jme3.system.AppSettings;
-import com.jme3.system.JmeCanvasContext;
 import com.jme3.texture.Image;
 import com.jme3.texture.Texture2D;
 import com.jme3.texture.TextureCubeMap;
@@ -51,7 +50,6 @@ import com.jme3.input.KeyInput;
 import com.jme3.input.controls.KeyTrigger;
 import se.hirt.searobots.engine.SubmarineSnapshot;
 
-import java.awt.*;
 import java.nio.ByteBuffer;
 import java.util.HashMap;
 import java.util.List;
@@ -59,8 +57,8 @@ import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
- * 3D submarine scene using jMonkeyEngine, embeddable in a Swing panel
- * via {@link #getCanvas()}.
+ * 3D submarine scene using jMonkeyEngine. Standalone application with
+ * Lemur GUI, 2D map overlay, and full keyboard/mouse controls.
  */
 public final class SubmarineScene3D extends SimpleApplication implements se.hirt.searobots.engine.SimulationListener {
 
@@ -83,11 +81,8 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
     private BitmapText loadingText;
     private volatile java.util.function.Supplier<se.hirt.searobots.engine.SimulationLoop.State> simStateSupplier = () -> se.hirt.searobots.engine.SimulationLoop.State.RUNNING;
 
-    // 3D overlays: trails, waypoints, routes
-    private boolean showTrails = true;
-    private boolean showWaypoints = true;      // [W] strategic waypoints
-    private boolean showAutopilotRoute = true;  // [A] autopilot A* route
-    private boolean showRoute = true;
+    // 3D overlays: shared config so 2D and 3D views stay in sync
+    private final OverlayConfig overlayConfig = new OverlayConfig();
     private final Map<Integer, java.util.Deque<Vector3f>> trailBuffers = new HashMap<>();
     private final Map<Integer, Node> trailNodes = new HashMap<>();
     private final Map<Integer, Node> waypointNodes = new HashMap<>();  // A* nav waypoints
@@ -114,7 +109,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
     private WaterFilter waterFilter;
     private LightScatteringFilter godRaysFilter;
     private FilterPostProcessor fpp;
-    private volatile boolean atmosphereEnabled = true;
+    private volatile boolean atmosphereEnabled = false;
     private volatile boolean debugMode = false;
 
     // Sun simulation: time of day = config.startTime + elapsed tick time
@@ -166,25 +161,46 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
     private float modeTransTimer = 0f;
     private static final float MODE_TRANS_DURATION = 0.5f;
 
-    /** Create the app and its canvas. Call from EDT. */
-    public static SubmarineScene3D create() {
+    /**
+     * Standalone entry point: launches a full JME window (no Swing).
+     * Works on macOS with -XstartOnFirstThread.
+     */
+    public static void main(String[] args) {
+        long seed = args.length > 0
+                ? Long.parseLong(args[0])
+                : java.util.concurrent.ThreadLocalRandom.current().nextLong();
+
         var app = new SubmarineScene3D();
+        app.standalone = true;
+
         var settings = new AppSettings(true);
-        settings.setWidth(1280);
-        settings.setHeight(800);
-        settings.setTitle("SeaRobots 3D");
+        settings.setWidth(1920);
+        settings.setHeight(1080);
+        settings.setTitle("SeaRobots [seed: " + Long.toHexString(seed) + "]");
         settings.setFrameRate(60);
+        settings.setVSync(true);
+        settings.setResizable(true);
+        loadIcons(settings);
         app.setSettings(settings);
         app.setShowSettings(false);
         app.setPauseOnLostFocus(false);
-        app.createCanvas();
-        return app;
+
+        // Wire up simulation
+        var generator = new se.hirt.searobots.engine.WorldGenerator();
+        var world = generator.generate(se.hirt.searobots.api.MatchConfig.withDefaults(seed));
+        app.standaloneSeed = seed;
+        app.standaloneGenerator = generator;
+        app.standaloneWorld = world;
+
+        app.start();
     }
 
-    /** Return the AWT canvas for embedding in Swing. */
-    public Canvas getCanvas() {
-        return ((JmeCanvasContext) getContext()).getCanvas();
-    }
+    // Standalone mode state (null/false when embedded in Swing)
+    private boolean standalone;
+    private long standaloneSeed;
+    private se.hirt.searobots.engine.WorldGenerator standaloneGenerator;
+    private volatile GeneratedWorld standaloneWorld;
+    private SimulationManager standaloneSimManager;
 
     @Override
     public void simpleInitApp() {
@@ -194,6 +210,13 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
         flyCam.setEnabled(false);
         viewPort.setBackgroundColor(new ColorRGBA(0.02f, 0.04f, 0.12f, 1f));
         setupInput();
+
+        // Initialize Lemur GUI (must happen before any Lemur widget creation)
+        // Note: Glass style requires Groovy which doesn't support Java 25 yet,
+        // so we use Lemur's default style instead.
+        if (standalone) {
+            com.simsilica.lemur.GuiGlobals.initialize(this);
+        }
 
         // Lighting
         sun = new DirectionalLight();
@@ -239,7 +262,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
         waterFilter.setMaxAmplitude(1.5f);
         waterFilter.setWaterColor(new ColorRGBA(0.0f, 0.18f, 0.60f, 1f));
         waterFilter.setDeepWaterColor(new ColorRGBA(0.0f, 0.14f, 0.42f, 1f));
-        waterFilter.setWaterTransparency(0.1f);
+        waterFilter.setWaterTransparency(0.09f);
         waterFilter.setColorExtinction(new Vector3f(10f, 30f, 60f));
         waterFilter.setSunScale(3f);
         waterFilter.setLightDirection(sun.getDirection());
@@ -319,9 +342,10 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
         keysText.setSize(guiFont.getCharSet().getRenderedSize());
         keysText.setColor(new ColorRGBA(0.7f, 0.7f, 0.7f, 1f));
         keysText.setText(
-                "[1] 1x  [2] 2x  [3] 5x  [4] 10x  [5] 22x\n" +
-                "[P] Pause  [N] Step  [Tab] Cycle sub  [V] Camera\n" +
-                "[T] Trails  [W] Strategic  [A] Autopilot  [R] Route  [Space] New map");
+                "[1-6] Speed  [0] Max  [P] Pause  [N] Step  [F11] Fullscreen\n" +
+                "[Tab] Cycle sub  [V] Camera  [Space] New map  [Esc] Menu\n" +
+                "[T] Trails  [R] Route  [E] Contacts  [W] Waypoints  [G] Strategic\n" +
+                "[F2] Config  [F3] Water settings");
         float keysWidth = keysText.getLineWidth();
         float keysHeight = keysText.getHeight();
         keysText.setLocalTranslation(settings.getWidth() - keysWidth - 10, keysHeight + 10, 0);
@@ -386,6 +410,251 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
         cam.setLocation(new Vector3f(0, 15, 60));
         cam.lookAt(Vector3f.ZERO, Vector3f.UNIT_Y);
         System.out.println("simpleInitApp: PHASE 1 DONE");
+
+        // Standalone mode: auto-start simulation and register Lemur AppStates
+        if (standalone && standaloneWorld != null) {
+            setWorld(standaloneWorld);
+            standaloneSimManager = new SimulationManager();
+            standaloneSimManager.addListener(this);
+            var controllers = SimConfigState.currentControllers();
+            var vehicleConfigs = SimConfigState.currentVehicleConfigs();
+            if (!controllers.isEmpty()) {
+                standaloneSimManager.start(standaloneWorld, controllers, vehicleConfigs);
+                standaloneSimManager.play();
+            }
+
+            // Register 2D map view with speed/pause suppliers
+            var mapRenderer = new MapRenderer(standaloneWorld, overlayConfig);
+            mapRenderer.setSimSpeedSupplier(() -> {
+                var sim = standaloneSimManager.currentLoop();
+                return sim != null ? sim.getSpeedMultiplier() : 1.0;
+            });
+            mapRenderer.setSimPausedSupplier(() -> {
+                var sim = standaloneSimManager.currentLoop();
+                return sim != null && sim.isPaused();
+            });
+            mapRenderer.setSimStateSupplier(() -> {
+                var sim = standaloneSimManager.currentLoop();
+                return sim != null ? sim.getState() : se.hirt.searobots.engine.SimulationLoop.State.STOPPED;
+            });
+            standaloneSimManager.addListener(mapRenderer);
+            var mapViewState = new MapViewState(mapRenderer);
+            stateManager.attach(mapViewState);
+
+            // Register Lemur GUI AppStates (disabled by default, toggled by keys)
+            var simConfigState = new SimConfigState(this::restartSim);
+            stateManager.attach(simConfigState);
+            simConfigState.setEnabled(false);
+
+            var waterState = new WaterSettingsState();
+            stateManager.attach(waterState);
+            waterState.setEnabled(false);
+
+            var palette = new CommandPaletteState();
+            palette.simManager = standaloneSimManager;
+            palette.onNewMap = () -> {
+                standaloneSeed = java.util.concurrent.ThreadLocalRandom.current().nextLong();
+                restartSim();
+            };
+            palette.onRerun = this::restartSim;
+            palette.onConfigure = () -> simConfigState.setEnabled(true);
+            palette.onFlatOcean = () -> {
+                standaloneWorld = se.hirt.searobots.engine.GeneratedWorld.deepFlat();
+                enqueue(() -> { setWorld(standaloneWorld); return null; });
+                standaloneSimManager.stop();
+                standaloneSimManager.setWorld(standaloneWorld);
+                var c = SimConfigState.currentControllers();
+                var v = SimConfigState.currentVehicleConfigs();
+                if (!c.isEmpty()) {
+                    standaloneSimManager.start(standaloneWorld, c, v);
+                    standaloneSimManager.play();
+                }
+            };
+            palette.onLIsland = () -> {
+                standaloneWorld = se.hirt.searobots.engine.GeneratedWorld.lIslandRecovery();
+                enqueue(() -> { setWorld(standaloneWorld); return null; });
+                standaloneSimManager.stop();
+                standaloneSimManager.setWorld(standaloneWorld);
+                var c = SimConfigState.currentControllers();
+                var v = SimConfigState.currentVehicleConfigs();
+                if (!c.isEmpty()) {
+                    standaloneSimManager.start(standaloneWorld, c, v);
+                    standaloneSimManager.play();
+                }
+            };
+            palette.onSeedInput = () -> {
+                // TODO: Lemur text input popup for seed entry
+                System.out.println("Seed input not yet implemented in standalone mode");
+            };
+            stateManager.attach(palette);
+            palette.setEnabled(false);
+
+            setupStandaloneInput();
+        }
+    }
+
+    /** Extra keybindings for standalone mode (sim control, fullscreen). */
+    private void setupStandaloneInput() {
+        // Space: new random map
+        inputManager.addMapping("NewMap", new KeyTrigger(KeyInput.KEY_SPACE));
+        inputManager.addListener((ActionListener) (name, isPressed, tpf) -> {
+            if (!isPressed) return;
+            standaloneSeed = java.util.concurrent.ThreadLocalRandom.current().nextLong();
+            restartSim();
+        }, "NewMap");
+
+        // P: pause/unpause
+        inputManager.addMapping("Pause", new KeyTrigger(KeyInput.KEY_P));
+        inputManager.addListener((ActionListener) (name, isPressed, tpf) -> {
+            if (!isPressed) return;
+            var sim = standaloneSimManager.currentLoop();
+            if (sim != null) sim.setPaused(!sim.isPaused());
+        }, "Pause");
+
+        // N: step once
+        inputManager.addMapping("StepOnce", new KeyTrigger(KeyInput.KEY_N));
+        inputManager.addListener((ActionListener) (name, isPressed, tpf) -> {
+            if (!isPressed) return;
+            var sim = standaloneSimManager.currentLoop();
+            if (sim != null) sim.stepOnce();
+        }, "StepOnce");
+
+        // 1-6, 0: speed multipliers
+        inputManager.addMapping("Speed1", new KeyTrigger(KeyInput.KEY_1));
+        inputManager.addMapping("Speed2", new KeyTrigger(KeyInput.KEY_2));
+        inputManager.addMapping("Speed4", new KeyTrigger(KeyInput.KEY_3));
+        inputManager.addMapping("Speed8", new KeyTrigger(KeyInput.KEY_4));
+        inputManager.addMapping("Speed16", new KeyTrigger(KeyInput.KEY_5));
+        inputManager.addMapping("Speed24", new KeyTrigger(KeyInput.KEY_6));
+        inputManager.addMapping("SpeedMax", new KeyTrigger(KeyInput.KEY_0));
+        inputManager.addListener((ActionListener) (name, isPressed, tpf) -> {
+            if (!isPressed) return;
+            var sim = standaloneSimManager.currentLoop();
+            if (sim == null) return;
+            switch (name) {
+                case "Speed1" -> sim.setSpeedMultiplier(1);
+                case "Speed2" -> sim.setSpeedMultiplier(2);
+                case "Speed4" -> sim.setSpeedMultiplier(4);
+                case "Speed8" -> sim.setSpeedMultiplier(8);
+                case "Speed16" -> sim.setSpeedMultiplier(16);
+                case "Speed24" -> sim.setSpeedMultiplier(24);
+                case "SpeedMax" -> sim.setSpeedMultiplier(1_000_000);
+            }
+        }, "Speed1", "Speed2", "Speed4", "Speed8", "Speed16", "Speed24", "SpeedMax");
+
+        // F11: toggle fullscreen
+        inputManager.addMapping("Fullscreen", new KeyTrigger(KeyInput.KEY_F11));
+        inputManager.addListener((ActionListener) (name, isPressed, tpf) -> {
+            if (!isPressed) return;
+            enqueue(() -> {
+                var s = getContext().getSettings();
+                boolean goFull = !s.isFullscreen();
+                s.setFullscreen(goFull);
+                if (goFull) {
+                    // Use GLFW to get monitor resolution (works on Mac, no AWT)
+                    long monitor = org.lwjgl.glfw.GLFW.glfwGetPrimaryMonitor();
+                    var vidMode = org.lwjgl.glfw.GLFW.glfwGetVideoMode(monitor);
+                    if (vidMode != null) {
+                        s.setWidth(vidMode.width());
+                        s.setHeight(vidMode.height());
+                    }
+                } else {
+                    s.setWidth(1920);
+                    s.setHeight(1080);
+                }
+                getContext().restart();
+                return null;
+            });
+        }, "Fullscreen");
+
+        // M: toggle 2D map view with cross-fade
+        inputManager.addMapping("ToggleMap", new KeyTrigger(KeyInput.KEY_M));
+        inputManager.addListener((ActionListener) (name, isPressed, tpf) -> {
+            if (!isPressed) return;
+            var mapState = stateManager.getState(MapViewState.class);
+            if (mapState != null) mapState.toggle();
+        }, "ToggleMap");
+
+        // +/- or =/- : zoom map (when map is visible)
+        inputManager.addMapping("MapZoomIn", new KeyTrigger(KeyInput.KEY_EQUALS));
+        inputManager.addMapping("MapZoomOut", new KeyTrigger(KeyInput.KEY_MINUS));
+        inputManager.addListener((ActionListener) (name, isPressed, tpf) -> {
+            if (!isPressed) return;
+            var mapState = stateManager.getState(MapViewState.class);
+            if (mapState != null && mapState.isMapVisible()) {
+                var c = inputManager.getCursorPosition();
+                mapState.zoomAt(name.equals("MapZoomIn") ? 1.3 : 1 / 1.3, c.x, c.y);
+            }
+        }, "MapZoomIn", "MapZoomOut");
+
+        // Escape: toggle command palette (remove JME's default exit-on-escape first)
+        inputManager.deleteMapping("SIMPLEAPP_Exit");
+        inputManager.addMapping("CommandPalette", new KeyTrigger(KeyInput.KEY_ESCAPE));
+        inputManager.addListener((ActionListener) (name, isPressed, tpf) -> {
+            if (!isPressed) return;
+            var palette = stateManager.getState(CommandPaletteState.class);
+            if (palette != null) palette.setEnabled(!palette.isEnabled());
+        }, "CommandPalette");
+
+        // F2: open sim config
+        inputManager.addMapping("SimConfig", new KeyTrigger(KeyInput.KEY_F2));
+        inputManager.addListener((ActionListener) (name, isPressed, tpf) -> {
+            if (!isPressed) return;
+            var cfg = stateManager.getState(SimConfigState.class);
+            if (cfg != null) cfg.setEnabled(!cfg.isEnabled());
+        }, "SimConfig");
+
+        // F3: toggle water settings
+        inputManager.addMapping("WaterSettings", new KeyTrigger(KeyInput.KEY_F3));
+        inputManager.addListener((ActionListener) (name, isPressed, tpf) -> {
+            if (!isPressed) return;
+            var ws = stateManager.getState(WaterSettingsState.class);
+            if (ws != null) {
+                if (!ws.isEnabled()) {
+                    ws.setWaterFilter(waterFilter);
+                    ws.setScene(SubmarineScene3D.this);
+                }
+                ws.setEnabled(!ws.isEnabled());
+            }
+        }, "WaterSettings");
+    }
+
+    private static void loadIcons(AppSettings settings) {
+        String[] sizes = {"16", "24", "32", "48", "64", "128", "256", "512", "1024"};
+        var icons = new java.util.ArrayList<java.awt.image.BufferedImage>();
+        for (String size : sizes) {
+            var url = SubmarineScene3D.class.getResource("/icons/searobots-" + size + ".png");
+            if (url != null) {
+                try {
+                    icons.add(javax.imageio.ImageIO.read(url));
+                } catch (java.io.IOException e) {
+                    // skip missing sizes
+                }
+            }
+        }
+        if (!icons.isEmpty()) {
+            settings.setIcons(icons.toArray(new java.awt.image.BufferedImage[0]));
+        }
+    }
+
+    private void restartSim() {
+        var world = standaloneGenerator.generate(
+                se.hirt.searobots.api.MatchConfig.withDefaults(standaloneSeed));
+        standaloneWorld = world;
+        enqueue(() -> {
+            setWorld(world);
+            settings.setTitle("SeaRobots [seed: " + Long.toHexString(standaloneSeed) + "]");
+            getContext().restart();
+            return null;
+        });
+        standaloneSimManager.stop();
+        standaloneSimManager.setWorld(world);
+        var controllers = SimConfigState.currentControllers();
+        var vehicleConfigs = SimConfigState.currentVehicleConfigs();
+        if (!controllers.isEmpty()) {
+            standaloneSimManager.start(world, controllers, vehicleConfigs);
+            standaloneSimManager.play();
+        }
     }
 
     private long frameCount = 0;
@@ -474,6 +743,12 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
     public WaterFilter getWaterFilter() {
         return waterFilter;
     }
+
+    public boolean isAtmosphereEnabled() { return atmosphereEnabled; }
+
+    public boolean isDebugMode() { return debugMode; }
+
+    public boolean isGodRaysEnabled() { return godRaysFilter != null && godRaysFilter.isEnabled(); }
 
     public void setGodRaysEnabled(boolean enabled) {
         if (godRaysFilter != null) godRaysFilter.setEnabled(enabled);
@@ -840,9 +1115,9 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
                 trailNodes.put(id, trailNode);
                 rootNode.attachChild(trailNode);
             }
-            trailNode.setCullHint(showTrails ? Spatial.CullHint.Never : Spatial.CullHint.Always);
+            trailNode.setCullHint(overlayConfig.trails ? Spatial.CullHint.Never : Spatial.CullHint.Always);
 
-            if (showTrails && trail.size() >= 2 && tick % 10 == 0) {
+            if (overlayConfig.trails && trail.size() >= 2 && tick % 10 == 0) {
                 trailNode.detachAllChildren();
                 float[] positions = new float[trail.size() * 3];
                 float[] colors = new float[trail.size() * 4];
@@ -885,9 +1160,9 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
                 waypointNodes.put(id, wpNode);
                 rootNode.attachChild(wpNode);
             }
-            wpNode.setCullHint(showAutopilotRoute ? Spatial.CullHint.Never : Spatial.CullHint.Always);
+            wpNode.setCullHint(overlayConfig.waypoints ? Spatial.CullHint.Never : Spatial.CullHint.Always);
 
-            if (showAutopilotRoute) {
+            if (overlayConfig.waypoints) {
                 wpNode.detachAllChildren();
                 var waypoints = snap.waypoints();
                 if (!waypoints.isEmpty()) {
@@ -983,9 +1258,9 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
                 strategicNodes.put(id, stNode);
                 rootNode.attachChild(stNode);
             }
-            stNode.setCullHint(showWaypoints ? Spatial.CullHint.Never : Spatial.CullHint.Always);
+            stNode.setCullHint(overlayConfig.strategicWaypoints ? Spatial.CullHint.Never : Spatial.CullHint.Always);
 
-            if (showWaypoints) {
+            if (overlayConfig.strategicWaypoints) {
                 stNode.detachAllChildren();
                 var stratWps = snap.strategicWaypoints();
                 if (stratWps != null && !stratWps.isEmpty()) {
@@ -1045,7 +1320,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
                 routeNodes.put(id, rtNode);
                 rootNode.attachChild(rtNode);
             }
-            rtNode.setCullHint(showRoute ? Spatial.CullHint.Never : Spatial.CullHint.Always);
+            rtNode.setCullHint(overlayConfig.route ? Spatial.CullHint.Never : Spatial.CullHint.Always);
 
             // Sample route history (less frequent than trails, full match history)
             var route = routeBuffers.computeIfAbsent(id, k -> new java.util.ArrayList<>());
@@ -1053,7 +1328,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
                 route.add(jmePos.clone());
             }
 
-            if (showRoute && route.size() >= 2 && tick % 10 == 0) {
+            if (overlayConfig.route && route.size() >= 2 && tick % 10 == 0) {
                 rtNode.detachAllChildren();
                 int n = route.size();
                 float w = 2f; // half-width of the route duct
@@ -1280,20 +1555,22 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
             }
         }, "CycleCamera");
 
-        // T/W/A/R to toggle overlays
+        // T/R/E/W/G to toggle overlays (unified across 2D and 3D)
         inputManager.addMapping("ToggleTrails", new KeyTrigger(KeyInput.KEY_T));
-        inputManager.addMapping("ToggleWaypoints", new KeyTrigger(KeyInput.KEY_W));
-        inputManager.addMapping("ToggleAutopilotRoute", new KeyTrigger(KeyInput.KEY_A));
         inputManager.addMapping("ToggleRoute", new KeyTrigger(KeyInput.KEY_R));
+        inputManager.addMapping("ToggleContacts", new KeyTrigger(KeyInput.KEY_E));
+        inputManager.addMapping("ToggleWaypoints", new KeyTrigger(KeyInput.KEY_W));
+        inputManager.addMapping("ToggleStrategic", new KeyTrigger(KeyInput.KEY_G));
         inputManager.addListener((ActionListener) (name, isPressed, tpf) -> {
             if (!isPressed) return;
             switch (name) {
-                case "ToggleTrails" -> showTrails = !showTrails;
-                case "ToggleWaypoints" -> showWaypoints = !showWaypoints;
-                case "ToggleAutopilotRoute" -> showAutopilotRoute = !showAutopilotRoute;
-                case "ToggleRoute" -> showRoute = !showRoute;
+                case "ToggleTrails" -> overlayConfig.trails = !overlayConfig.trails;
+                case "ToggleRoute" -> overlayConfig.route = !overlayConfig.route;
+                case "ToggleContacts" -> overlayConfig.contactEstimates = !overlayConfig.contactEstimates;
+                case "ToggleWaypoints" -> overlayConfig.waypoints = !overlayConfig.waypoints;
+                case "ToggleStrategic" -> overlayConfig.strategicWaypoints = !overlayConfig.strategicWaypoints;
             }
-        }, "ToggleTrails", "ToggleWaypoints", "ToggleAutopilotRoute", "ToggleRoute");
+        }, "ToggleTrails", "ToggleRoute", "ToggleContacts", "ToggleWaypoints", "ToggleStrategic");
 
         // Mouse orbit/zoom (Orbit and Free Look modes)
         inputManager.addMapping("OrbitLeft", new MouseAxisTrigger(MouseInput.AXIS_X, true));
@@ -1308,6 +1585,21 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
                 dragging = isPressed, "DragStart");
 
         inputManager.addListener((AnalogListener) (name, value, tpf) -> {
+            // When 2D map is visible, redirect mouse events to map
+            var mapState = standalone ? stateManager.getState(MapViewState.class) : null;
+            if (mapState != null && mapState.isMapVisible()) {
+                var cursor = inputManager.getCursorPosition();
+                switch (name) {
+                    case "ZoomIn" -> mapState.zoomAt(1.20, cursor.x, cursor.y);
+                    case "ZoomOut" -> mapState.zoomAt(1.0 / 1.20, cursor.x, cursor.y);
+                    case "OrbitLeft" -> { if (dragging) mapState.pan(value * cam.getWidth(), 0); }
+                    case "OrbitRight" -> { if (dragging) mapState.pan(-value * cam.getWidth(), 0); }
+                    case "OrbitUp" -> { if (dragging) mapState.pan(0, value * cam.getHeight()); }
+                    case "OrbitDown" -> { if (dragging) mapState.pan(0, -value * cam.getHeight()); }
+                }
+                return;
+            }
+
             if (cameraMode != CameraMode.ORBIT && cameraMode != CameraMode.FREE_LOOK) return;
             boolean fl = cameraMode == CameraMode.FREE_LOOK;
             if (dragging) {

@@ -169,7 +169,7 @@ final class SimulationManager {
      */
     void setWorld(GeneratedWorld world) {
         for (var l : listeners) {
-            if (l instanceof MapPanel mp) mp.setWorld(world);
+            if (l instanceof MapRenderer mr) mr.setWorld(world);
             else if (l instanceof SubmarineScene3D s3d) s3d.setWorld(world);
         }
     }
@@ -177,8 +177,7 @@ final class SimulationManager {
     /** Set up sim state supplier on all viewers that support it. */
     void configureStateSupplier(java.util.function.Supplier<SimulationLoop.State> supplier) {
         for (var l : listeners) {
-            if (l instanceof MapPanel mp) mp.setSimStateSupplier(supplier);
-            else if (l instanceof SubmarineScene3D s3d) s3d.setSimStateSupplier(supplier);
+            if (l instanceof SubmarineScene3D s3d) s3d.setSimStateSupplier(supplier);
         }
     }
 

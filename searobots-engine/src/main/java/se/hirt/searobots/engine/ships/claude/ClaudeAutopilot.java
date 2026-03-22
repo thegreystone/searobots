@@ -528,10 +528,20 @@ final class ClaudeAutopilot {
     }
 
     double cruiseDepth() {
-        if (thermalLayers.isEmpty()) return -400.0;
-        double shallowest = thermalLayers.getFirst().depth();
-        for (var l : thermalLayers) if (l.depth() > shallowest) shallowest = l.depth();
-        return shallowest - 40.0;
+        // Go as deep as practical for maximum stealth. Deeper = harder to detect
+        // (more spreading loss) AND below any thermocline layers (cross-layer attenuation).
+        // Always prefer -400m+ regardless of thermocline placement.
+        double target = -400.0;
+        if (!thermalLayers.isEmpty()) {
+            double deepestBottom = thermalLayers.getFirst().bottom();
+            for (var l : thermalLayers) {
+                double b = l.bottom();
+                if (b < deepestBottom) deepestBottom = b;
+            }
+            // If a thermocline extends deeper than -400m, go below it
+            target = Math.min(target, deepestBottom - 50);
+        }
+        return Math.max(target, depthLimit);
     }
 
     // ── Utilities ───────────────────────────────────────────────────

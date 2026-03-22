@@ -8,8 +8,6 @@ import se.hirt.searobots.engine.*;
 import se.hirt.searobots.engine.SubmarineCompetition.Competitor;
 import se.hirt.searobots.engine.SubmarineCompetition.Objectives;
 
-import javax.swing.*;
-import java.awt.*;
 import java.util.*;
 import java.util.List;
 import java.util.function.Supplier;
@@ -21,8 +19,17 @@ import java.util.function.Supplier;
  */
 final class CompetitionRunner {
 
-    private final JFrame frame;
-    private final MapPanel panel;
+    /** Callback interface so CompetitionRunner works without Swing. */
+    interface ViewerCallbacks {
+        void setTitle(String title);
+        void setCompetitionPhase(String phase);
+        void addCompetitionResult(String result);
+        void clearCompetitionResults();
+        void showResultsDialog(String text);
+        void scheduleDelayed(long delayMs, Runnable action);
+    }
+
+    private final ViewerCallbacks viewer;
     private final SimulationManager simManager;
     private final WorldGenerator generator = new WorldGenerator();
 
@@ -54,9 +61,8 @@ final class CompetitionRunner {
     // Persist speed across phases so the user doesn't have to press 0 every time
     private int currentSpeedMultiplier = 8;
 
-    CompetitionRunner(JFrame frame, MapPanel panel, SimulationManager simManager) {
-        this.frame = frame;
-        this.panel = panel;
+    CompetitionRunner(ViewerCallbacks viewer, SimulationManager simManager) {
+        this.viewer = viewer;
         this.simManager = simManager;
     }
 
@@ -68,7 +74,7 @@ final class CompetitionRunner {
         for (int i = 0; i < numSeeds; i++) {
             seeds[i] = java.util.concurrent.ThreadLocalRandom.current().nextLong();
         }
-        panel.clearCompetitionResults();
+        viewer.clearCompetitionResults();
 
         for (var c : competitors) {
             navPoints.put(c.name(), 0);
@@ -134,8 +140,8 @@ final class CompetitionRunner {
         String phaseLabel = String.format("[%d/%d] %s", currentPhase + 1, phases.size(), phase.description());
         long t0 = System.currentTimeMillis();
         System.out.println("[comp] Starting " + phaseLabel);
-        frame.setTitle("SeaRobots Competition: " + phaseLabel);
-        panel.setCompetitionPhase(phaseLabel);
+        viewer.setTitle("SeaRobots Competition: " + phaseLabel);
+        viewer.setCompetitionPhase(phaseLabel);
         // Loading state is read from sim loop via state supplier
 
         if (phase.type() == PhaseType.NAV) {
@@ -214,18 +220,13 @@ final class CompetitionRunner {
                 String result = String.format("%s: %d/2 obj (%+dpts)", phase.nameA(), hits, pts);
                 log.add(result);
                 matchResult = result;
-                panel.addCompetitionResult(result);
+                viewer.addCompetitionResult(result);
                 matchDone = true;
 
                 if (!cancelled) {
                     System.out.printf("[comp] Phase done, advancing in 1.5s%n");
-                    SwingUtilities.invokeLater(() -> {
-                        if (cancelled) return;
-                        currentPhase++;
-                        var timer = new javax.swing.Timer(1500, evt -> runNextPhase());
-                        timer.setRepeats(false);
-                        timer.start();
-                    });
+                    currentPhase++;
+                    viewer.scheduleDelayed(1500, () -> { if (!cancelled) runNextPhase(); });
                 }
             }
         };
@@ -312,18 +313,13 @@ final class CompetitionRunner {
                 if (matchResult == null) matchResult = "TIMEOUT";
                 String combatLog = shortName(phase.nameA()) + " vs " + shortName(phase.nameB()) + ": " + matchResult;
                 log.add(combatLog);
-                panel.addCompetitionResult(combatLog);
+                viewer.addCompetitionResult(combatLog);
                 matchDone = true;
 
                 if (!cancelled) {
                     System.out.printf("[comp] Phase done, advancing in 1.5s%n");
-                    SwingUtilities.invokeLater(() -> {
-                        if (cancelled) return;
-                        currentPhase++;
-                        var timer = new javax.swing.Timer(1500, evt -> runNextPhase());
-                        timer.setRepeats(false);
-                        timer.start();
-                    });
+                    currentPhase++;
+                    viewer.scheduleDelayed(1500, () -> { if (!cancelled) runNextPhase(); });
                 }
             }
         };
@@ -378,22 +374,15 @@ final class CompetitionRunner {
             sb.append("  ").append(entry).append("\n");
         }
 
-        frame.setTitle("SeaRobots Competition: COMPLETE");
-        panel.setCompetitionPhase("FINAL STANDINGS");
+        viewer.setTitle("SeaRobots Competition: COMPLETE");
+        viewer.setCompetitionPhase("FINAL STANDINGS");
         for (var c : competitors) {
             int nav = navPoints.getOrDefault(c.name(), 0);
             int combat = combatPoints.getOrDefault(c.name(), 0);
-            panel.addCompetitionResult(String.format("%-12s Nav:%dpt Combat:%dpt TOTAL:%dpt",
+            viewer.addCompetitionResult(String.format("%-12s Nav:%dpt Combat:%dpt TOTAL:%dpt",
                     shortName(c.name()), nav, combat, nav + combat));
         }
 
-        var textArea = new JTextArea(sb.toString());
-        textArea.setEditable(false);
-        textArea.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 13));
-        var dialog = new JDialog(frame, "Competition Results", false);
-        dialog.add(new JScrollPane(textArea));
-        dialog.setSize(700, 500);
-        dialog.setLocationRelativeTo(frame);
-        dialog.setVisible(true);
+        viewer.showResultsDialog(sb.toString());
     }
 }
