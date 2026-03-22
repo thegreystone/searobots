@@ -7,6 +7,9 @@ package se.hirt.searobots.viewer;
 import com.jme3.app.Application;
 import com.jme3.app.SimpleApplication;
 import com.jme3.app.state.BaseAppState;
+import com.jme3.input.KeyInput;
+import com.jme3.input.controls.ActionListener;
+import com.jme3.input.controls.KeyTrigger;
 import com.simsilica.lemur.*;
 import com.simsilica.lemur.component.SpringGridLayout;
 import com.simsilica.lemur.style.ElementId;
@@ -55,6 +58,14 @@ final class SimConfigState extends BaseAppState {
     private int speedIndex;
     private int simTypeIndex;
     private Runnable onConfirm;
+    private TextField seedField;
+
+    // Seed: null means "use current seed", non-null means "use this seed"
+    private Long pendingSeed;
+    // Callback to set the seed externally
+    java.util.function.LongConsumer onSeedChanged;
+    java.util.function.LongSupplier seedSupplier;
+    SimulationManager simManager;
 
     SimConfigState(Runnable onConfirm) {
         this.onConfirm = onConfirm;
@@ -90,6 +101,28 @@ final class SimConfigState extends BaseAppState {
 
         window.addChild(new Label("")); // spacer
 
+        // Seed field
+        var seedRow = window.addChild(new Container(new SpringGridLayout(Axis.X, Axis.Y, FillMode.None, FillMode.Last)));
+        seedRow.addChild(new Label("Seed (hex):"));
+        seedField = seedRow.addChild(new TextField(
+                seedSupplier != null ? Long.toHexString(seedSupplier.getAsLong()) : ""));
+        pendingSeed = null;
+
+        window.addChild(new Label("")); // spacer
+
+        // Simulation options
+        if (simManager != null) {
+            window.addChild(new Label("-- Options --"));
+            addToggle(window, "Pause on ship death", simManager.pauseOnDeath,
+                    v -> simManager.pauseOnDeath = v);
+            addToggle(window, "Pause on torpedo solution", simManager.pauseOnTorpedoSolution,
+                    v -> simManager.pauseOnTorpedoSolution = v);
+            addToggle(window, "Inject competition objectives", simManager.injectObjectives,
+                    v -> simManager.injectObjectives = v);
+        }
+
+        window.addChild(new Label("")); // spacer
+
         // Buttons
         var buttonRow = window.addChild(new Container(new SpringGridLayout(Axis.X, Axis.Y)));
         var startBtn = buttonRow.addChild(new Button("Start"));
@@ -104,6 +137,32 @@ final class SimConfigState extends BaseAppState {
                 10);
 
         app.getGuiNode().attachChild(window);
+
+        // Ctrl+V paste into seed field (use GLFW to check Ctrl modifier)
+        var im = app.getInputManager();
+        im.addMapping("PasteSeed", new KeyTrigger(KeyInput.KEY_V));
+        im.addListener((ActionListener) (name, isPressed, tpf) -> {
+            if (!isPressed || seedField == null) return;
+            long win = org.lwjgl.glfw.GLFW.glfwGetCurrentContext();
+            int lctrl = org.lwjgl.glfw.GLFW.glfwGetKey(win, org.lwjgl.glfw.GLFW.GLFW_KEY_LEFT_CONTROL);
+            int rctrl = org.lwjgl.glfw.GLFW.glfwGetKey(win, org.lwjgl.glfw.GLFW.GLFW_KEY_RIGHT_CONTROL);
+            if (lctrl != org.lwjgl.glfw.GLFW.GLFW_PRESS && rctrl != org.lwjgl.glfw.GLFW.GLFW_PRESS) return;
+            String clip = org.lwjgl.glfw.GLFW.glfwGetClipboardString(win);
+            if (clip != null && !clip.isBlank()) {
+                seedField.setText(clip.trim());
+            }
+        }, "PasteSeed");
+    }
+
+    private void addToggle(Container parent, String label, boolean initial,
+                           java.util.function.Consumer<Boolean> onChange) {
+        var btn = parent.addChild(new Button((initial ? "[x] " : "[ ] ") + label));
+        final boolean[] state = {initial};
+        btn.addClickCommands(b -> {
+            state[0] = !state[0];
+            btn.setText((state[0] ? "[x] " : "[ ] ") + label);
+            onChange.accept(state[0]);
+        });
     }
 
     private void addSelector(Container parent, String label, String[] options,
@@ -126,6 +185,25 @@ final class SimConfigState extends BaseAppState {
         selectedShip1Index = ship1Index;
         selectedShip2Index = ship2Index;
         selectedSpeedMultiplier = speedIndex;
+
+        // Parse seed if changed
+        if (seedField != null && onSeedChanged != null) {
+            String text = seedField.getText().trim();
+            if (!text.isEmpty()) {
+                try {
+                    long seed = Long.parseUnsignedLong(text, 16);
+                    onSeedChanged.accept(seed);
+                } catch (NumberFormatException e) {
+                    try {
+                        long seed = Long.parseLong(text);
+                        onSeedChanged.accept(seed);
+                    } catch (NumberFormatException e2) {
+                        System.out.println("Invalid seed: " + text);
+                    }
+                }
+            }
+        }
+
         close();
         if (onConfirm != null) onConfirm.run();
     }
@@ -143,6 +221,10 @@ final class SimConfigState extends BaseAppState {
         if (window != null) {
             window.removeFromParent();
             window = null;
+        }
+        var im = getApplication().getInputManager();
+        if (im.hasMapping("PasteSeed")) {
+            im.deleteMapping("PasteSeed");
         }
     }
 

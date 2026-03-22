@@ -68,7 +68,7 @@ final class CommandPaletteState extends BaseAppState {
         window.addChild(new Label("")); // spacer
 
         // Seed display/copy
-        addAction(window, "Enter seed...", onSeedInput);
+        addAction(window, "Copy seed to clipboard", onSeedInput);
 
         window.addChild(new Label("")); // spacer
         var closeBtn = window.addChild(new Button("Close [Esc]"));

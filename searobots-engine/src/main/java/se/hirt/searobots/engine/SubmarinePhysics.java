@@ -256,37 +256,58 @@ public final class SubmarinePhysics {
             sub.setVerticalSpeed(0);
         }
 
-        // 7. Terrain collision: check hull cylinder (bow, stern, port, starboard, center)
+        // 7. Terrain collision: check 7 hull points (pitch-aware)
+        //    center, bow, stern, port, starboard, tower top, keel
         double sinH = Math.sin(heading);
         double cosH = Math.cos(heading);
-        // perpendicular (port direction): rotate heading 90 deg left
-        double sinP = -cosH;
-        double cosP = sinH;
+        double sinPt = Math.sin(pitch);
+        double cosPt = Math.cos(pitch);
 
-        double floorCenter = terrain.elevationAt(newX, newY);
-        double floorBow    = terrain.elevationAt(newX + sinH * cfg.hullHalfLength(),
-                                                  newY + cosH * cfg.hullHalfLength());
-        double floorStern  = terrain.elevationAt(newX - sinH * cfg.hullHalfLength(),
-                                                  newY - cosH * cfg.hullHalfLength());
-        double floorPort   = terrain.elevationAt(newX + sinP * cfg.hullHalfBeam(),
-                                                  newY + cosP * cfg.hullHalfBeam());
-        double floorStbd   = terrain.elevationAt(newX - sinP * cfg.hullHalfBeam(),
-                                                  newY - cosP * cfg.hullHalfBeam());
-        double floorZ = Math.max(floorCenter,
-                         Math.max(Math.max(floorBow, floorStern),
-                                  Math.max(floorPort, floorStbd)));
+        // Local frame vectors
+        double fwdX = sinH * cosPt, fwdY = cosH * cosPt, fwdZ = sinPt;
+        double rightX = cosH, rightY = -sinH;
+        double upX = -sinH * sinPt, upY = -cosH * sinPt, upZ = cosPt;
 
-        double minZ = floorZ + cfg.terrainClearance();
+        // Hull distances (tuned to match visual debug overlay)
+        double bowDist = 33.5;
+        double sternDist = 40.0;
+        double beamDist = cfg.hullHalfBeam();
+        double towerUp = 6.5;
+        double keelDown = 5.0;
+
+        // Sample terrain at each point; for each point also compute its Z offset
+        // from center so we can check clearance at the actual hull extremity
+        double[][] points = {
+            {newX,                          newY,                           0},           // center
+            {newX + fwdX * bowDist,         newY + fwdY * bowDist,          fwdZ * bowDist},    // bow
+            {newX - fwdX * sternDist,       newY - fwdY * sternDist,        -fwdZ * sternDist}, // stern
+            {newX + rightX * beamDist,      newY + rightY * beamDist,       0},           // port
+            {newX - rightX * beamDist,      newY - rightY * beamDist,       0},           // starboard
+            {newX + upX * towerUp,          newY + upY * towerUp,           upZ * towerUp},     // tower
+            {newX - upX * keelDown,         newY - upY * keelDown,          -upZ * keelDown},   // keel
+        };
+
+        double worstPenetration = Double.NEGATIVE_INFINITY;
+        for (var pt : points) {
+            double floorElev = terrain.elevationAt(pt[0], pt[1]);
+            // The point's actual Z = newZ + pt[2] (offset from center)
+            // It collides when: newZ + pt[2] < floorElev + terrainClearance
+            double penetration = (floorElev + cfg.terrainClearance()) - (newZ + pt[2]);
+            if (penetration > worstPenetration) {
+                worstPenetration = penetration;
+            }
+        }
+
+        double minZ = newZ + worstPenetration;
         boolean scraping = false;
-        if (newZ < minZ) {
+        if (worstPenetration > 0) {
             scraping = true;
-            double penetration = minZ - newZ;
-            double closingSpeed = penetration / dt;
+            double closingSpeed = worstPenetration / dt;
 
             int damage = Math.max(1, (int) (cfg.collisionDamageFactor() * closingSpeed * closingSpeed));
             sub.setHp(Math.max(0, sub.hp() - damage));
 
-            newZ = minZ;
+            newZ = newZ + worstPenetration;
             sub.setVerticalSpeed(cfg.bounceSpeed());
             sub.setPitch(Math.max(sub.pitch(), 0));
 

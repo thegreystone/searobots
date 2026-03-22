@@ -199,49 +199,116 @@ public final class SimulationLoop {
                 var b = entities.get(j);
                 if (b.forfeited() || b.hp() <= 0) continue;
 
-                double radiusA = a.vehicleConfig().hullHalfLength();
-                double radiusB = b.vehicleConfig().hullHalfLength();
-                double collisionDist = radiusA + radiusB;
+                if (!ellipsoidsOverlap(a, b)) continue;
 
                 var posA = new Vec3(a.x(), a.y(), a.z());
                 var posB = new Vec3(b.x(), b.y(), b.z());
                 double dist = posA.distanceTo(posB);
 
-                if (dist < collisionDist) {
-                    // Collision line: from A to B
-                    Vec3 line = (dist > 0.01)
-                            ? posB.subtract(posA).normalize()
-                            : new Vec3(1, 0, 0); // degenerate: pick arbitrary
+                // Collision line: from A to B
+                Vec3 line = (dist > 0.01)
+                        ? posB.subtract(posA).normalize()
+                        : new Vec3(1, 0, 0); // degenerate: pick arbitrary
 
-                    Vec3 velA = a.velocity().linear();
-                    Vec3 velB = b.velocity().linear();
-                    double vAlong = velA.dot(line);
-                    double vBlong = velB.dot(line);
-                    double closingSpeed = vAlong - vBlong;
+                Vec3 velA = a.velocity().linear();
+                Vec3 velB = b.velocity().linear();
+                double vAlong = velA.dot(line);
+                double vBlong = velB.dot(line);
+                double closingSpeed = vAlong - vBlong;
 
-                    if (closingSpeed > 0) {
-                        int damage = Math.max(1,
-                                (int) (COLLISION_DAMAGE_FACTOR * closingSpeed * closingSpeed));
-                        a.setHp(Math.max(0, a.hp() - damage));
-                        b.setHp(Math.max(0, b.hp() - damage));
+                if (closingSpeed > 0) {
+                    int damage = Math.max(1,
+                            (int) (COLLISION_DAMAGE_FACTOR * closingSpeed * closingSpeed));
+                    a.setHp(Math.max(0, a.hp() - damage));
+                    b.setHp(Math.max(0, b.hp() - damage));
 
-                        // Bounce apart: push each sub along collision line
-                        double separation = collisionDist - dist;
-                        double halfSep = separation / 2.0 + 0.5;
-                        a.setX(a.x() - line.x() * halfSep);
-                        a.setY(a.y() - line.y() * halfSep);
-                        a.setZ(a.z() - line.z() * halfSep);
-                        b.setX(b.x() + line.x() * halfSep);
-                        b.setY(b.y() + line.y() * halfSep);
-                        b.setZ(b.z() + line.z() * halfSep);
+                    // Bounce apart: push each sub along collision line
+                    double halfSep = dist > 0.01 ? 1.0 : 0.5;
+                    a.setX(a.x() - line.x() * halfSep);
+                    a.setY(a.y() - line.y() * halfSep);
+                    a.setZ(a.z() - line.z() * halfSep);
+                    b.setX(b.x() + line.x() * halfSep);
+                    b.setY(b.y() + line.y() * halfSep);
+                    b.setZ(b.z() + line.z() * halfSep);
 
-                        // Reduce speeds
-                        a.setSpeed(a.speed() * 0.3);
-                        b.setSpeed(b.speed() * 0.3);
-                    }
+                    // Reduce speeds
+                    a.setSpeed(a.speed() * 0.3);
+                    b.setSpeed(b.speed() * 0.3);
                 }
             }
         }
+    }
+
+    /**
+     * Check whether two oriented ellipsoids overlap by testing sample points
+     * (center, bow, stern) of each sub against the other's ellipsoid.
+     * No Minkowski expansion needed: direct point-in-ellipsoid checks.
+     */
+    // Collision ellipsoid tuned to match visual (B key debug overlay):
+    // semiLength=38m, semiBeam=5.5m, semiHeight=4.5m, center 2m aft
+    private static final double COLLISION_SEMI_LENGTH = 38.0;
+    private static final double COLLISION_SEMI_BEAM = 5.5;
+    private static final double COLLISION_SEMI_HEIGHT = 4.5;
+    private static final double COLLISION_AFT_OFFSET = -2.0;
+
+    static boolean ellipsoidsOverlap(SubmarineEntity a, SubmarineEntity b) {
+        // Sample 3 points on each sub: bow tip, center, stern tip
+        double[][] pointsA = hullSamplePoints(a);
+        double[][] pointsB = hullSamplePoints(b);
+
+        // Check if any point on A is inside B's ellipsoid
+        for (var pt : pointsA) {
+            if (pointInEllipsoid(pt, b)) return true;
+        }
+        // Check if any point on B is inside A's ellipsoid
+        for (var pt : pointsB) {
+            if (pointInEllipsoid(pt, a)) return true;
+        }
+        return false;
+    }
+
+    /** Returns 3 sample points on the sub's hull: center, bow tip, stern tip. */
+    private static double[][] hullSamplePoints(SubmarineEntity sub) {
+        double cosH = Math.cos(sub.heading()), sinH = Math.sin(sub.heading());
+        double cosP = Math.cos(sub.pitch()), sinP = Math.sin(sub.pitch());
+        double fwdX = sinH * cosP, fwdY = cosH * cosP, fwdZ = sinP;
+
+        // Center (with aft offset)
+        double cx = sub.x() + fwdX * COLLISION_AFT_OFFSET;
+        double cy = sub.y() + fwdY * COLLISION_AFT_OFFSET;
+        double cz = sub.z() + fwdZ * COLLISION_AFT_OFFSET;
+
+        return new double[][] {
+            {cx, cy, cz},                                                                     // center
+            {cx + fwdX * COLLISION_SEMI_LENGTH, cy + fwdY * COLLISION_SEMI_LENGTH, cz + fwdZ * COLLISION_SEMI_LENGTH},  // bow
+            {cx - fwdX * COLLISION_SEMI_LENGTH, cy - fwdY * COLLISION_SEMI_LENGTH, cz - fwdZ * COLLISION_SEMI_LENGTH},  // stern
+        };
+    }
+
+    /** Check if a world-space point lies inside a sub's collision ellipsoid. */
+    private static boolean pointInEllipsoid(double[] pt, SubmarineEntity sub) {
+        double cosH = Math.cos(sub.heading()), sinH = Math.sin(sub.heading());
+        double cosP = Math.cos(sub.pitch()), sinP = Math.sin(sub.pitch());
+
+        double fwdX = sinH * cosP, fwdY = cosP * cosH, fwdZ = sinP;
+        double rightX = cosH, rightY = -sinH, rightZ = 0;
+        double upX = -sinH * sinP, upY = -cosH * sinP, upZ = cosP;
+
+        // Ellipsoid center (with aft offset)
+        double cx = sub.x() + fwdX * COLLISION_AFT_OFFSET;
+        double cy = sub.y() + fwdY * COLLISION_AFT_OFFSET;
+        double cz = sub.z() + fwdZ * COLLISION_AFT_OFFSET;
+
+        double dx = pt[0] - cx, dy = pt[1] - cy, dz = pt[2] - cz;
+
+        double localFwd = dx * fwdX + dy * fwdY + dz * fwdZ;
+        double localRight = dx * rightX + dy * rightY + dz * rightZ;
+        double localUp = dx * upX + dy * upY + dz * upZ;
+
+        double norm = (localFwd * localFwd) / (COLLISION_SEMI_LENGTH * COLLISION_SEMI_LENGTH)
+                + (localRight * localRight) / (COLLISION_SEMI_BEAM * COLLISION_SEMI_BEAM)
+                + (localUp * localUp) / (COLLISION_SEMI_HEIGHT * COLLISION_SEMI_HEIGHT);
+        return norm <= 1.0;
     }
 
     public double getSpeedMultiplier() { return speedMultiplier; }

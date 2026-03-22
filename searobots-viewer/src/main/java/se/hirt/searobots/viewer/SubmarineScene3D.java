@@ -80,6 +80,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
     private BitmapText keysText;
     private BitmapText loadingText;
     private BitmapText speedText;
+    private BitmapText toggleStatusText;
     private volatile java.util.function.Supplier<se.hirt.searobots.engine.SimulationLoop.State> simStateSupplier = () -> se.hirt.searobots.engine.SimulationLoop.State.RUNNING;
 
     // 3D overlays: shared config so 2D and 3D views stay in sync
@@ -93,6 +94,11 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
     private static final int TRAIL_SAMPLE_INTERVAL = 2; // every 2 ticks (25 Hz)
     private final Map<Integer, java.util.List<Vector3f>> routeBuffers = new HashMap<>();
     private static final int ROUTE_SAMPLE_INTERVAL = 100; // ~2 seconds between samples
+
+    // Debug collision ellipsoid + terrain collision points
+    private boolean showCollisionEllipsoids = false;
+    private final Map<Integer, Geometry> ellipsoidGeoms = new HashMap<>();
+    private final Map<Integer, Geometry[]> terrainPointGeoms = new HashMap<>();
     private long lastTrailTick = -1;
 
     // Bubble emitters (cavitation noise visualization)
@@ -353,11 +359,18 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
                 "[1-6] Speed  [0] Max  [P] Pause  [N] Step  [F11] Fullscreen\n" +
                 "[Tab] Cycle sub  [V] Camera  [Space] New map  [Esc] Menu\n" +
                 "[T] Trails  [R] Route  [E] Contacts  [W] Waypoints  [G] Strategic\n" +
-                "[F2] Config  [F3] Water settings");
+                "[B] Collision  [D] Pause on death  [F] Pause on solution\n" +
+                "[F2] Config  [F3] Render settings  [Ctrl+C] Copy seed");
         float keysWidth = keysText.getLineWidth();
         float keysHeight = keysText.getHeight();
         keysText.setLocalTranslation(settings.getWidth() - keysWidth - 10, keysHeight + 10, 0);
         guiNode.attachChild(keysText);
+
+        // Toggle status indicators (above keybindings, updated each frame)
+        toggleStatusText = new BitmapText(guiFont);
+        toggleStatusText.setSize(guiFont.getCharSet().getRenderedSize());
+        toggleStatusText.setText("");
+        guiNode.attachChild(toggleStatusText);
 
         // Firing solution crosshair (solid circle + cross, built from triangle strips)
         crosshairNode = new Node("crosshair");
@@ -451,6 +464,9 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 
             // Register Lemur GUI AppStates (disabled by default, toggled by keys)
             var simConfigState = new SimConfigState(this::restartSim);
+            simConfigState.seedSupplier = () -> standaloneSeed;
+            simConfigState.onSeedChanged = seed -> standaloneSeed = seed;
+            simConfigState.simManager = standaloneSimManager;
             stateManager.attach(simConfigState);
             simConfigState.setEnabled(false);
 
@@ -491,8 +507,10 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
                 }
             };
             palette.onSeedInput = () -> {
-                // TODO: Lemur text input popup for seed entry
-                System.out.println("Seed input not yet implemented in standalone mode");
+                String hex = Long.toHexString(standaloneSeed);
+                long window = org.lwjgl.glfw.GLFW.glfwGetCurrentContext();
+                org.lwjgl.glfw.GLFW.glfwSetClipboardString(window, hex);
+                System.out.println("Seed copied to clipboard: " + hex);
             };
             stateManager.attach(palette);
             palette.setEnabled(false);
@@ -503,6 +521,19 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 
     /** Extra keybindings for standalone mode (sim control, fullscreen). */
     private void setupStandaloneInput() {
+        // Ctrl+C: copy seed to clipboard
+        inputManager.addMapping("CopySeed", new KeyTrigger(KeyInput.KEY_C));
+        inputManager.addListener((ActionListener) (name, isPressed, tpf) -> {
+            if (!isPressed) return;
+            long win = org.lwjgl.glfw.GLFW.glfwGetCurrentContext();
+            if (org.lwjgl.glfw.GLFW.glfwGetKey(win, org.lwjgl.glfw.GLFW.GLFW_KEY_LEFT_CONTROL) != org.lwjgl.glfw.GLFW.GLFW_PRESS
+                    && org.lwjgl.glfw.GLFW.glfwGetKey(win, org.lwjgl.glfw.GLFW.GLFW_KEY_RIGHT_CONTROL) != org.lwjgl.glfw.GLFW.GLFW_PRESS)
+                return;
+            String hex = Long.toHexString(standaloneSeed);
+            org.lwjgl.glfw.GLFW.glfwSetClipboardString(win, hex);
+            System.out.println("Seed copied: " + hex);
+        }, "CopySeed");
+
         // Space: new random map
         inputManager.addMapping("NewMap", new KeyTrigger(KeyInput.KEY_SPACE));
         inputManager.addListener((ActionListener) (name, isPressed, tpf) -> {
@@ -526,6 +557,23 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
             var sim = standaloneSimManager.currentLoop();
             if (sim != null) sim.stepOnce();
         }, "StepOnce");
+
+        // D: toggle pause on death, F: toggle pause on firing solution
+        inputManager.addMapping("TogglePauseOnDeath", new KeyTrigger(KeyInput.KEY_D));
+        inputManager.addMapping("TogglePauseOnSolution", new KeyTrigger(KeyInput.KEY_F));
+        inputManager.addListener((ActionListener) (name, isPressed, tpf) -> {
+            if (!isPressed) return;
+            switch (name) {
+                case "TogglePauseOnDeath" -> {
+                    standaloneSimManager.pauseOnDeath = !standaloneSimManager.pauseOnDeath;
+                    System.out.println("Pause on death: " + (standaloneSimManager.pauseOnDeath ? "ON" : "OFF"));
+                }
+                case "TogglePauseOnSolution" -> {
+                    standaloneSimManager.pauseOnTorpedoSolution = !standaloneSimManager.pauseOnTorpedoSolution;
+                    System.out.println("Pause on torpedo solution: " + (standaloneSimManager.pauseOnTorpedoSolution ? "ON" : "OFF"));
+                }
+            }
+        }, "TogglePauseOnDeath", "TogglePauseOnSolution");
 
         // 1-6, 0: speed multipliers
         inputManager.addMapping("Speed1", new KeyTrigger(KeyInput.KEY_1));
@@ -712,6 +760,24 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
             keysText.setLocalTranslation(
                     cam.getWidth() - keysText.getLineWidth() - 10,
                     keysText.getHeight() + 10, 0);
+
+            // Update toggle status indicators (all active toggles shown in green)
+            {
+                var sb = new StringBuilder();
+                if (overlayConfig.trails) sb.append("[T] Trails  ");
+                if (overlayConfig.route) sb.append("[R] Route  ");
+                if (overlayConfig.contactEstimates) sb.append("[E] Contacts  ");
+                if (overlayConfig.waypoints) sb.append("[W] Waypoints  ");
+                if (overlayConfig.strategicWaypoints) sb.append("[G] Strategic  ");
+                if (showCollisionEllipsoids) sb.append("[B] Collision  ");
+                if (standaloneSimManager != null && standaloneSimManager.pauseOnDeath) sb.append("[D] Death  ");
+                if (standaloneSimManager != null && standaloneSimManager.pauseOnTorpedoSolution) sb.append("[F] Solution  ");
+                toggleStatusText.setText(sb.toString());
+                toggleStatusText.setColor(new ColorRGBA(0.3f, 1f, 0.4f, 0.9f));
+                toggleStatusText.setLocalTranslation(
+                        cam.getWidth() - toggleStatusText.getLineWidth() - 10,
+                        keysText.getHeight() + keysText.getLineHeight() + 14, 0);
+            }
             sunHour = (startTime.toSecondOfDay() / 3600f + latestTick / 50f / 3600f) % 24f;
             updateAtmosphere();
         } catch (Throwable t) {
@@ -1506,6 +1572,98 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
             float noise = (float) snap.noiseLevel();
             float emitRate = Math.max(0, (noise - 1.5f) * 30f); // no bubbles below noise 1.5
             bubbles.setParticlesPerSec(emitRate);
+
+            // Debug collision ellipsoid
+            Geometry ellGeom = ellipsoidGeoms.get(snap.id());
+            if (ellGeom == null) {
+                var sphere = new com.jme3.scene.shape.Sphere(24, 24, 1f);
+                ellGeom = new Geometry("ellipsoid-" + snap.id(), sphere);
+                Material ellMat = new Material(assetManager, "Common/MatDefs/Misc/Unshaded.j3md");
+                var ec = snap.color();
+                ellMat.setColor("Color", new ColorRGBA(ec.getRed() / 255f, ec.getGreen() / 255f, ec.getBlue() / 255f, 0.15f));
+                ellMat.getAdditionalRenderState().setBlendMode(RenderState.BlendMode.Alpha);
+                ellMat.getAdditionalRenderState().setWireframe(true);
+                ellGeom.setMaterial(ellMat);
+                ellGeom.setQueueBucket(RenderQueue.Bucket.Transparent);
+                rootNode.attachChild(ellGeom);
+                ellipsoidGeoms.put(snap.id(), ellGeom);
+            }
+            ellGeom.setCullHint(showCollisionEllipsoids ? Spatial.CullHint.Never : Spatial.CullHint.Always);
+            if (showCollisionEllipsoids) {
+                // Ellipsoid for hull body (excluding tower):
+                // tighter vertical, offset aft since bow is longer than stern
+                float semiLength = 38f;   // covers bow to stern body
+                float semiBeam = 5.5f;    // slightly tighter than hullHalfBeam
+                float semiHeight = 4.5f;  // hull body only, tower excluded
+                float aftOffset = 2f;     // shift center slightly aft (sub local Y)
+
+                ellGeom.setLocalRotation(targetRot);
+                // Offset in sub's local frame then transform to world
+                Vector3f offset = targetRot.mult(new Vector3f(0, aftOffset, 0));
+                ellGeom.setLocalTranslation(targetPos.add(offset));
+                // In sub's local frame: X = beam, Y = forward (length), Z = up (height)
+                ellGeom.setLocalScale(semiBeam, semiLength, semiHeight);
+            }
+
+            // Terrain collision points: 7 purple spheres
+            // center, bow, stern, port, starboard, tower top, keel
+            Geometry[] tpGeoms = terrainPointGeoms.get(snap.id());
+            if (tpGeoms == null) {
+                tpGeoms = new Geometry[7];
+                var tpSphere = new com.jme3.scene.shape.Sphere(8, 8, 0.75f);
+                Material tpMat = new Material(assetManager, "Common/MatDefs/Misc/Unshaded.j3md");
+                tpMat.setColor("Color", new ColorRGBA(0.7f, 0.2f, 0.9f, 0.8f));
+                tpMat.getAdditionalRenderState().setBlendMode(RenderState.BlendMode.Alpha);
+                for (int tp = 0; tp < 7; tp++) {
+                    tpGeoms[tp] = new Geometry("tp-" + snap.id() + "-" + tp, tpSphere);
+                    tpGeoms[tp].setMaterial(tpMat);
+                    tpGeoms[tp].setQueueBucket(RenderQueue.Bucket.Transparent);
+                    rootNode.attachChild(tpGeoms[tp]);
+                }
+                terrainPointGeoms.put(snap.id(), tpGeoms);
+            }
+            for (var tpg : tpGeoms) {
+                tpg.setCullHint(showCollisionEllipsoids ? Spatial.CullHint.Never : Spatial.CullHint.Always);
+            }
+            if (showCollisionEllipsoids) {
+                double simX = snap.pose().position().x();
+                double simY = snap.pose().position().y();
+                double simZ = snap.pose().position().z();
+                double hdg = snap.pose().heading();
+                double pit = snap.pose().pitch();
+                double cosH = Math.cos(hdg), sinH = Math.sin(hdg);
+                double cosP = Math.cos(pit), sinP = Math.sin(pit);
+
+                // Local frame vectors (sim coords: X=east, Y=north, Z=up)
+                // Forward: heading=0 -> +Y (north), so fwd = (sinH, cosH, 0) * cosP + (0,0,sinP)
+                double fwdX = sinH * cosP, fwdY = cosH * cosP, fwdZ = sinP;
+                // Right: perpendicular in horizontal plane
+                double rightX = cosH, rightY = -sinH, rightZ = 0;
+                // Up: cross(fwd, right)
+                double upX = -sinH * sinP, upY = -cosH * sinP, upZ = cosP;
+
+                double bowDist = 33.5;
+                double sternDist = 40.0;
+                double beamDist = 6.0;
+                double towerHeight = 6.5;
+                double keelDepth = 5.0;
+
+                // Offsets in local frame -> world coords
+                double[][] pts = {
+                    {simX, simY, simZ},                                                                     // center
+                    {simX + fwdX * bowDist, simY + fwdY * bowDist, simZ + fwdZ * bowDist},                  // bow
+                    {simX - fwdX * sternDist, simY - fwdY * sternDist, simZ - fwdZ * sternDist},            // stern
+                    {simX + rightX * beamDist, simY + rightY * beamDist, simZ + rightZ * beamDist},          // port (actually starboard, sign doesn't matter for collision)
+                    {simX - rightX * beamDist, simY - rightY * beamDist, simZ - rightZ * beamDist},          // starboard
+                    {simX + upX * towerHeight, simY + upY * towerHeight, simZ + upZ * towerHeight},          // tower top
+                    {simX - upX * keelDepth, simY - upY * keelDepth, simZ - upZ * keelDepth},                // keel
+                };
+                for (int tp = 0; tp < 7; tp++) {
+                    // sim (X,Y,Z) -> JME (X, Z, -Y)
+                    tpGeoms[tp].setLocalTranslation(
+                            (float) pts[tp][0], (float) pts[tp][2], (float) -pts[tp][1]);
+                }
+            }
         }
 
         // Update orbit center tracking (used by Orbit mode and as fallback)
@@ -1568,6 +1726,11 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
         inputManager.addMapping("CycleCamera", new KeyTrigger(KeyInput.KEY_V));
         inputManager.addListener((ActionListener) (name, isPressed, tpf) -> {
             if (isPressed) {
+                // Ignore V when Ctrl is held (Ctrl+V = paste in dialogs)
+                long win = org.lwjgl.glfw.GLFW.glfwGetCurrentContext();
+                if (org.lwjgl.glfw.GLFW.glfwGetKey(win, org.lwjgl.glfw.GLFW.GLFW_KEY_LEFT_CONTROL) == org.lwjgl.glfw.GLFW.GLFW_PRESS
+                        || org.lwjgl.glfw.GLFW.glfwGetKey(win, org.lwjgl.glfw.GLFW.GLFW_KEY_RIGHT_CONTROL) == org.lwjgl.glfw.GLFW.GLFW_PRESS)
+                    return;
                 modeTransFromPos.set(cam.getLocation());
                 modeTransFromLookAt.set(orbitCenter);
                 cameraMode = cameraMode.next();
@@ -1586,12 +1749,13 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
             }
         }, "CycleCamera");
 
-        // T/R/E/W/G to toggle overlays (unified across 2D and 3D)
+        // T/R/E/W/G/B to toggle overlays (unified across 2D and 3D)
         inputManager.addMapping("ToggleTrails", new KeyTrigger(KeyInput.KEY_T));
         inputManager.addMapping("ToggleRoute", new KeyTrigger(KeyInput.KEY_R));
         inputManager.addMapping("ToggleContacts", new KeyTrigger(KeyInput.KEY_E));
         inputManager.addMapping("ToggleWaypoints", new KeyTrigger(KeyInput.KEY_W));
         inputManager.addMapping("ToggleStrategic", new KeyTrigger(KeyInput.KEY_G));
+        inputManager.addMapping("ToggleEllipsoids", new KeyTrigger(KeyInput.KEY_B));
         inputManager.addListener((ActionListener) (name, isPressed, tpf) -> {
             if (!isPressed) return;
             switch (name) {
@@ -1600,8 +1764,9 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
                 case "ToggleContacts" -> overlayConfig.contactEstimates = !overlayConfig.contactEstimates;
                 case "ToggleWaypoints" -> overlayConfig.waypoints = !overlayConfig.waypoints;
                 case "ToggleStrategic" -> overlayConfig.strategicWaypoints = !overlayConfig.strategicWaypoints;
+                case "ToggleEllipsoids" -> showCollisionEllipsoids = !showCollisionEllipsoids;
             }
-        }, "ToggleTrails", "ToggleRoute", "ToggleContacts", "ToggleWaypoints", "ToggleStrategic");
+        }, "ToggleTrails", "ToggleRoute", "ToggleContacts", "ToggleWaypoints", "ToggleStrategic", "ToggleEllipsoids");
 
         // Mouse orbit/zoom (Orbit and Free Look modes)
         inputManager.addMapping("OrbitLeft", new MouseAxisTrigger(MouseInput.AXIS_X, true));
