@@ -71,7 +71,7 @@ final class MapRenderer implements se.hirt.searobots.engine.SimulationListener {
     private boolean needsInitialFit = true;
 
     // submarine rendering
-    private static final int MAX_TRAIL_LENGTH = 500;
+    private static final int MAX_TRAIL_LENGTH = 300; // ~30 seconds at 10 samples/sec
     private volatile List<SubmarineSnapshot> submarines = List.of();
     @SuppressWarnings("unchecked")
     private Deque<Vec3>[] trails = new Deque[0];

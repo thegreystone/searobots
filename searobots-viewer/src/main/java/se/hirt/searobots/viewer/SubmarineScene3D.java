@@ -79,6 +79,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
     private BitmapText tacticalText;
     private BitmapText keysText;
     private BitmapText loadingText;
+    private BitmapText speedText;
     private volatile java.util.function.Supplier<se.hirt.searobots.engine.SimulationLoop.State> simStateSupplier = () -> se.hirt.searobots.engine.SimulationLoop.State.RUNNING;
 
     // 3D overlays: shared config so 2D and 3D views stay in sync
@@ -88,8 +89,8 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
     private final Map<Integer, Node> waypointNodes = new HashMap<>();  // A* nav waypoints
     private final Map<Integer, Node> strategicNodes = new HashMap<>(); // strategic waypoints
     private final Map<Integer, Node> routeNodes = new HashMap<>();
-    private static final int MAX_TRAIL_POINTS = 2000; // longer trail for larger sub
-    private static final int TRAIL_SAMPLE_INTERVAL = 1; // every tick, like 2D
+    private static final int MAX_TRAIL_POINTS = 750; // ~30 seconds at 25 samples/sec
+    private static final int TRAIL_SAMPLE_INTERVAL = 2; // every 2 ticks (25 Hz)
     private final Map<Integer, java.util.List<Vector3f>> routeBuffers = new HashMap<>();
     private static final int ROUTE_SAMPLE_INTERVAL = 100; // ~2 seconds between samples
     private long lastTrailTick = -1;
@@ -336,6 +337,13 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
         loadingText.setText("INITIALIZING...");
         loadingText.setCullHint(Spatial.CullHint.Always); // hidden by default
         guiNode.attachChild(loadingText);
+
+        // HUD overlay - top center: speed indicator
+        speedText = new BitmapText(guiFont);
+        speedText.setSize(guiFont.getCharSet().getRenderedSize() * 1.5f);
+        speedText.setColor(new ColorRGBA(1f, 1f, 1f, 0.9f));
+        speedText.setText("");
+        guiNode.attachChild(speedText);
 
         // HUD overlay - bottom right: keybindings
         keysText = new BitmapText(guiFont);
@@ -958,27 +966,35 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
         long tick = latestTick;
         var elapsed = java.time.Duration.ofMillis((long) (tick * 1000.0 / 50));
         var tod = startTime.plusSeconds((long) (tick / 50.0));
-        // Speed/pause indicator
-        String speedStr = "";
-        if (standaloneSimManager != null) {
-            var sim = standaloneSimManager.currentLoop();
-            if (sim != null && sim.isPaused()) {
-                speedStr = "  PAUSED";
-            } else if (sim != null && sim.getSpeedMultiplier() > 1) {
-                int mult = (int) sim.getSpeedMultiplier();
-                speedStr = mult >= 1_000_000 ? "  MAX SPEED" : "  " + mult + "x";
-            }
-        }
-
         hudText.setText(String.format(
-                "%s  |  Speed: %.1f kn  Depth: %.0f m  Throttle: %.0f%%  HP: %d%s\n" +
+                "%s  |  Speed: %.1f kn  Depth: %.0f m  Throttle: %.0f%%  HP: %d\n" +
                 "Heading: %03.0f\u00b0  Pitch: %+.1f\u00b0  Roll: %+.1f\u00b0  Rudder: %+.0f%%  Planes: %+.0f%%\n" +
                 "Tick: %d  Elapsed: %02d:%02d:%02d  ToD: %s  Cam: %s",
-                snap.name(), snap.speed(), -pos.z(), snap.throttle() * 100, snap.hp(), speedStr,
+                snap.name(), snap.speed(), -pos.z(), snap.throttle() * 100, snap.hp(),
                 hdgDeg, pitchDeg, rollDeg,
                 snap.rudder() * 100, snap.sternPlanes() * 100,
                 tick, elapsed.toHoursPart(), elapsed.toMinutesPart(), elapsed.toSecondsPart(),
                 tod.toString(), cameraMode.label()));
+
+        // Speed/pause indicator (separate text, top center, colored)
+        if (standaloneSimManager != null) {
+            var sim = standaloneSimManager.currentLoop();
+            if (sim != null && sim.isPaused()) {
+                speedText.setText("PAUSED");
+                speedText.setColor(new ColorRGBA(1f, 0.3f, 0.3f, 0.95f));
+            } else if (sim != null && sim.getSpeedMultiplier() > 1) {
+                int mult = (int) sim.getSpeedMultiplier();
+                speedText.setText(mult >= 1_000_000 ? "MAX SPEED" : mult + "x");
+                speedText.setColor(new ColorRGBA(1f, 0.9f, 0.3f, 0.9f));
+            } else {
+                speedText.setText("");
+            }
+            // Position top center
+            float sw = speedText.getLineWidth();
+            speedText.setLocalTranslation(
+                    (cam.getWidth() - sw) / 2f,
+                    cam.getHeight() - 10, 0);
+        }
 
         // Tactical info panel (top right)
         updateTacticalHud(snap, pos);
@@ -1116,7 +1132,8 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 
             // --- Trails ---
             var trail = trailBuffers.computeIfAbsent(id, k -> new java.util.ArrayDeque<>());
-            if (tick > lastTrailTick && tick % TRAIL_SAMPLE_INTERVAL == 0) {
+            if (tick > lastTrailTick
+                    && (lastTrailTick < 0 || tick / TRAIL_SAMPLE_INTERVAL > lastTrailTick / TRAIL_SAMPLE_INTERVAL)) {
                 trail.addLast(jmePos.clone());
                 if (trail.size() > MAX_TRAIL_POINTS) trail.removeFirst();
             }
