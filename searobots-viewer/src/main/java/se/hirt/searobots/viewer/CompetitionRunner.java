@@ -27,6 +27,8 @@ final class CompetitionRunner {
         void clearCompetitionResults();
         void showResultsDialog(String text);
         void scheduleDelayed(long delayMs, Runnable action);
+        /** Called with the nav objectives for the current phase (null to clear). */
+        default void setObjectives(List<StrategicWaypoint> objectives) {}
     }
 
     private final ViewerCallbacks viewer;
@@ -130,6 +132,18 @@ final class CompetitionRunner {
 
     private void runNextPhase() {
         if (cancelled) return;
+
+        // Check if we just completed a seed round (all phases for that seed/type)
+        if (currentPhase > 0) {
+            var prev = phases.get(currentPhase - 1);
+            boolean seedDone = currentPhase >= phases.size()
+                    || phases.get(currentPhase).seed() != prev.seed()
+                    || phases.get(currentPhase).type() != prev.type();
+            if (seedDone) {
+                printSeedSummary(prev.seed(), prev.type());
+            }
+        }
+
         if (currentPhase >= phases.size()) {
             System.out.println("Competition complete!");
             showResults();
@@ -170,6 +184,7 @@ final class CompetitionRunner {
                 new StrategicWaypoint(objectives.x2(), objectives.y2(), depth2,
                         Purpose.PATROL, NoisePolicy.NORMAL, MovementPattern.DIRECT, 300, -1));
         controller.setObjectives(objList);
+        viewer.setObjectives(objList);
 
         var sim = new SimulationLoop();
         currentSim = sim;
@@ -252,6 +267,7 @@ final class CompetitionRunner {
         var config = MatchConfig.withDefaults(phase.seed());
         var world = generator.generate(config);
         System.out.printf("[comp] Combat world generated in %dms%n", System.currentTimeMillis() - t0);
+        viewer.setObjectives(null); // no objectives in combat phase
 
         var ctrlA = phase.factoryA().get();
         var ctrlB = phase.factoryB().get();
@@ -354,6 +370,37 @@ final class CompetitionRunner {
         while (diff > Math.PI) diff -= 2 * Math.PI;
         while (diff < -Math.PI) diff += 2 * Math.PI;
         return Math.abs(diff) < Math.toRadians(60);
+    }
+
+    private void printSeedSummary(long seed, PhaseType type) {
+        var sb = new StringBuilder();
+        String seedHex = hexSeed(seed);
+        sb.append(String.format("--- %s results for seed #%s ---", type, seedHex));
+
+        // Collect results for this seed
+        for (var entry : log) {
+            if (entry.contains("#" + seedHex) || entry.contains(seedHex)) {
+                // This is a rough match; log entries for this seed's phases
+            }
+        }
+
+        // Show current standings
+        sb.append(String.format("%n  %-20s %8s %8s %8s", "Competitor", "Nav", "Combat", "TOTAL"));
+        for (var c : competitors) {
+            int nav = navPoints.getOrDefault(c.name(), 0);
+            int combat = combatPoints.getOrDefault(c.name(), 0);
+            sb.append(String.format("%n  %-20s %7dpt %7dpt %7dpt", c.name(), nav, combat, nav + combat));
+        }
+
+        String summary = sb.toString();
+        System.out.println(summary);
+        viewer.addCompetitionResult("--- Standings after seed #" + seedHex + " " + type + " ---");
+        for (var c : competitors) {
+            int nav = navPoints.getOrDefault(c.name(), 0);
+            int combat = combatPoints.getOrDefault(c.name(), 0);
+            viewer.addCompetitionResult(String.format("  %-12s Nav:%dpt Combat:%dpt TOTAL:%dpt",
+                    shortName(c.name()), nav, combat, nav + combat));
+        }
     }
 
     private void showResults() {

@@ -99,6 +99,12 @@ final class MapRenderer implements se.hirt.searobots.engine.SimulationListener {
     public void addCompetitionResult(String result) { competitionResults.add(result); }
     public void clearCompetitionResults() { competitionResults.clear(); competitionPhase = ""; }
 
+    // Competition objectives (nav waypoint targets)
+    private volatile java.util.List<se.hirt.searobots.api.StrategicWaypoint> competitionObjectives;
+    public void setCompetitionObjectives(java.util.List<se.hirt.searobots.api.StrategicWaypoint> obj) {
+        this.competitionObjectives = obj;
+    }
+
     // Ping animations
     private record PingAnimation(double x, double y, long startTick, Color color, int sourceId) {}
     private final java.util.concurrent.CopyOnWriteArrayList<PingAnimation> pingAnimations =
@@ -322,6 +328,7 @@ final class MapRenderer implements se.hirt.searobots.engine.SimulationListener {
         drawPingAnimations(g2);
         drawDetectionHighlights(g2);
         drawFiringSolution(g2);
+        drawCompetitionObjectives(g2);
 
         g2.setTransform(baseTransform);
         g2.setStroke(new BasicStroke(1.0f));
@@ -877,6 +884,43 @@ final class MapRenderer implements se.hirt.searobots.engine.SimulationListener {
             g2.draw(new Ellipse2D.Double(sol.targetX() - r2, sol.targetY() - r2, r2 * 2, r2 * 2));
             double dot = 4 / pixelsPerMeter;
             g2.fill(new Ellipse2D.Double(sol.targetX() - dot, sol.targetY() - dot, dot * 2, dot * 2));
+        }
+    }
+
+    private void drawCompetitionObjectives(Graphics2D g2) {
+        var obj = competitionObjectives;
+        if (obj == null || obj.isEmpty()) return;
+
+        double markerR = 400; // 400m radius circle (matches the 400m arrival threshold)
+        float sw = (float) (3.0 / pixelsPerMeter);
+
+        for (int i = 0; i < obj.size(); i++) {
+            var wp = obj.get(i);
+            double x = wp.x();
+            double y = wp.y();
+
+            // Outer ring (arrival zone)
+            g2.setColor(new Color(255, 200, 50, 120));
+            g2.setStroke(new BasicStroke(sw, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND,
+                    0, new float[]{(float)(20 / pixelsPerMeter), (float)(10 / pixelsPerMeter)}, 0));
+            g2.draw(new Ellipse2D.Double(x - markerR, y - markerR, markerR * 2, markerR * 2));
+
+            // Center marker (crosshair)
+            double cr = 80;
+            g2.setColor(new Color(255, 220, 50, 200));
+            g2.setStroke(new BasicStroke(sw));
+            g2.draw(new Line2D.Double(x - cr, y, x + cr, y));
+            g2.draw(new Line2D.Double(x, y - cr, x, y + cr));
+            g2.draw(new Ellipse2D.Double(x - cr * 0.5, y - cr * 0.5, cr, cr));
+
+            // Label
+            var origTransform = g2.getTransform();
+            g2.translate(x, y - markerR - 30 / pixelsPerMeter);
+            g2.scale(1 / pixelsPerMeter, -1 / pixelsPerMeter);
+            g2.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 14));
+            g2.setColor(new Color(255, 220, 50));
+            g2.drawString("OBJ " + (i + 1), 0, 0);
+            g2.setTransform(origTransform);
         }
     }
 

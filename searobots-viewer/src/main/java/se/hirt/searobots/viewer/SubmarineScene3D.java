@@ -81,6 +81,9 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
     private BitmapText loadingText;
     private BitmapText speedText;
     private BitmapText toggleStatusText;
+    private BitmapText competitionText;
+    private CompetitionRunner activeCompetition;
+    private MapRenderer standaloneMapRenderer;
     private volatile java.util.function.Supplier<se.hirt.searobots.engine.SimulationLoop.State> simStateSupplier = () -> se.hirt.searobots.engine.SimulationLoop.State.RUNNING;
 
     // 3D overlays: shared config so 2D and 3D views stay in sync
@@ -372,6 +375,14 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
         toggleStatusText.setText("");
         guiNode.attachChild(toggleStatusText);
 
+        // Competition overlay (left side, below HUD)
+        competitionText = new BitmapText(guiFont);
+        competitionText.setSize(guiFont.getCharSet().getRenderedSize());
+        competitionText.setColor(new ColorRGBA(1f, 0.9f, 0.3f, 0.9f));
+        competitionText.setText("");
+        competitionText.setLocalTranslation(10, 0, 0);
+        guiNode.attachChild(competitionText);
+
         // Firing solution crosshair (solid circle + cross, built from triangle strips)
         crosshairNode = new Node("crosshair");
         crosshairNode.setCullHint(Spatial.CullHint.Always);
@@ -445,7 +456,8 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
             }
 
             // Register 2D map view with speed/pause suppliers
-            var mapRenderer = new MapRenderer(standaloneWorld, overlayConfig);
+            standaloneMapRenderer = new MapRenderer(standaloneWorld, overlayConfig);
+            var mapRenderer = standaloneMapRenderer;
             mapRenderer.setSimSpeedSupplier(() -> {
                 var sim = standaloneSimManager.currentLoop();
                 return sim != null ? sim.getSpeedMultiplier() : 1.0;
@@ -534,19 +546,23 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
             System.out.println("Seed copied: " + hex);
         }, "CopySeed");
 
-        // Space: new random map
+        // Space: new random map (or skip to next match during competition)
         inputManager.addMapping("NewMap", new KeyTrigger(KeyInput.KEY_SPACE));
         inputManager.addListener((ActionListener) (name, isPressed, tpf) -> {
             if (!isPressed) return;
-            standaloneSeed = java.util.concurrent.ThreadLocalRandom.current().nextLong();
-            restartSim();
+            if (activeCompetition != null && activeCompetition.isRunning()) {
+                activeCompetition.skipToNext();
+            } else {
+                standaloneSeed = java.util.concurrent.ThreadLocalRandom.current().nextLong();
+                restartSim();
+            }
         }, "NewMap");
 
         // P: pause/unpause
         inputManager.addMapping("Pause", new KeyTrigger(KeyInput.KEY_P));
         inputManager.addListener((ActionListener) (name, isPressed, tpf) -> {
             if (!isPressed) return;
-            var sim = standaloneSimManager.currentLoop();
+            var sim = getActiveSim();
             if (sim != null) sim.setPaused(!sim.isPaused());
         }, "Pause");
 
@@ -554,7 +570,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
         inputManager.addMapping("StepOnce", new KeyTrigger(KeyInput.KEY_N));
         inputManager.addListener((ActionListener) (name, isPressed, tpf) -> {
             if (!isPressed) return;
-            var sim = standaloneSimManager.currentLoop();
+            var sim = getActiveSim();
             if (sim != null) sim.stepOnce();
         }, "StepOnce");
 
@@ -585,16 +601,25 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
         inputManager.addMapping("SpeedMax", new KeyTrigger(KeyInput.KEY_0));
         inputManager.addListener((ActionListener) (name, isPressed, tpf) -> {
             if (!isPressed) return;
-            var sim = standaloneSimManager.currentLoop();
+            // Use competition sim if running, otherwise standalone sim
+            var sim = (activeCompetition != null && activeCompetition.isRunning())
+                    ? activeCompetition.currentSim()
+                    : standaloneSimManager.currentLoop();
             if (sim == null) return;
-            switch (name) {
-                case "Speed1" -> sim.setSpeedMultiplier(1);
-                case "Speed2" -> sim.setSpeedMultiplier(2);
-                case "Speed4" -> sim.setSpeedMultiplier(4);
-                case "Speed8" -> sim.setSpeedMultiplier(8);
-                case "Speed16" -> sim.setSpeedMultiplier(16);
-                case "Speed24" -> sim.setSpeedMultiplier(24);
-                case "SpeedMax" -> sim.setSpeedMultiplier(1_000_000);
+            int mult = switch (name) {
+                case "Speed1" -> 1;
+                case "Speed2" -> 2;
+                case "Speed4" -> 4;
+                case "Speed8" -> 8;
+                case "Speed16" -> 16;
+                case "Speed24" -> 24;
+                case "SpeedMax" -> 1_000_000;
+                default -> -1;
+            };
+            if (mult > 0) {
+                sim.setSpeedMultiplier(mult);
+                // Persist speed across competition phases
+                if (activeCompetition != null) activeCompetition.setSpeed(mult);
             }
         }, "Speed1", "Speed2", "Speed4", "Speed8", "Speed16", "Speed24", "SpeedMax");
 
@@ -694,11 +719,26 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
     }
 
     private void restartSim() {
+        // Stop any active competition
+        if (activeCompetition != null) {
+            activeCompetition.stopAll();
+            activeCompetition = null;
+        }
+
+        if (SimConfigState.isCompetitionMode()) {
+            runCompetition();
+        } else {
+            runFreePatrol();
+        }
+    }
+
+    private void runFreePatrol() {
         var world = standaloneGenerator.generate(
                 se.hirt.searobots.api.MatchConfig.withDefaults(standaloneSeed));
         standaloneWorld = world;
         enqueue(() -> {
             setWorld(world);
+            competitionText.setText("");
             settings.setTitle("SeaRobots [seed: " + Long.toHexString(standaloneSeed) + "]");
             getContext().restart();
             return null;
@@ -711,6 +751,93 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
             standaloneSimManager.start(world, controllers, vehicleConfigs);
             standaloneSimManager.play();
         }
+    }
+
+    private void runCompetition() {
+        var names = SimConfigState.currentNames();
+        var factories = SimConfigState.currentFactories();
+        if (factories.size() < 2) {
+            System.out.println("Need 2 ships for competition.");
+            return;
+        }
+
+        standaloneSimManager.stop();
+
+        var competitors = new java.util.ArrayList<se.hirt.searobots.engine.SubmarineCompetition.Competitor>();
+        for (int i = 0; i < factories.size(); i++) {
+            competitors.add(new se.hirt.searobots.engine.SubmarineCompetition.Competitor(
+                    names.get(i), factories.get(i)));
+        }
+
+        // Competition results list (shared between 2D and 3D)
+        var competitionResults = new java.util.concurrent.CopyOnWriteArrayList<String>();
+        final String[] currentPhase = {""};
+
+        var callbacks = new CompetitionRunner.ViewerCallbacks() {
+            @Override public void setTitle(String title) {
+                enqueue(() -> {
+                    settings.setTitle(title);
+                    getContext().restart();
+                    return null;
+                });
+            }
+            @Override public void setCompetitionPhase(String phase) {
+                currentPhase[0] = phase;
+                if (standaloneMapRenderer != null) standaloneMapRenderer.setCompetitionPhase(phase);
+                updateCompetitionHud(currentPhase[0], competitionResults);
+            }
+            @Override public void addCompetitionResult(String result) {
+                competitionResults.add(result);
+                if (standaloneMapRenderer != null) standaloneMapRenderer.addCompetitionResult(result);
+                updateCompetitionHud(currentPhase[0], competitionResults);
+            }
+            @Override public void clearCompetitionResults() {
+                competitionResults.clear();
+                currentPhase[0] = "";
+                if (standaloneMapRenderer != null) standaloneMapRenderer.clearCompetitionResults();
+                updateCompetitionHud("", competitionResults);
+            }
+            @Override public void setObjectives(java.util.List<se.hirt.searobots.api.StrategicWaypoint> objectives) {
+                if (standaloneMapRenderer != null) standaloneMapRenderer.setCompetitionObjectives(objectives);
+            }
+            @Override public void showResultsDialog(String text) {
+                System.out.println(text);
+            }
+            @Override public void scheduleDelayed(long delayMs, Runnable action) {
+                // Use a daemon thread with sleep for scheduling
+                Thread.ofPlatform().daemon().name("comp-delay").start(() -> {
+                    try { Thread.sleep(delayMs); } catch (InterruptedException ignored) {}
+                    action.run();
+                });
+            }
+        };
+
+        activeCompetition = new CompetitionRunner(callbacks, standaloneSimManager);
+        activeCompetition.start(competitors, 5,
+                se.hirt.searobots.engine.SubmarineCompetition.DEFAULT_DURATION
+                        / se.hirt.searobots.engine.SubmarineCompetition.TICKS_PER_SECOND);
+    }
+
+    /** Returns the active sim loop (competition or free patrol). */
+    private se.hirt.searobots.engine.SimulationLoop getActiveSim() {
+        if (activeCompetition != null && activeCompetition.isRunning()) {
+            return activeCompetition.currentSim();
+        }
+        return standaloneSimManager.currentLoop();
+    }
+
+    private void updateCompetitionHud(String phase, java.util.List<String> results) {
+        enqueue(() -> {
+            var sb = new StringBuilder();
+            if (!phase.isEmpty()) sb.append(phase).append("\n");
+            // Show last 8 results
+            int start = Math.max(0, results.size() - 8);
+            for (int i = start; i < results.size(); i++) {
+                sb.append(results.get(i)).append("\n");
+            }
+            competitionText.setText(sb.toString());
+            return null;
+        });
     }
 
     private long frameCount = 0;
@@ -778,6 +905,11 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
                         cam.getWidth() - toggleStatusText.getLineWidth() - 10,
                         keysText.getHeight() + keysText.getLineHeight() + 14, 0);
             }
+            // Competition overlay in 3D view
+            if (activeCompetition != null && activeCompetition.isRunning()) {
+                competitionText.setLocalTranslation(10, cam.getHeight() * 0.4f, 0);
+            }
+
             sunHour = (startTime.toSecondOfDay() / 3600f + latestTick / 50f / 3600f) % 24f;
             updateAtmosphere();
         } catch (Throwable t) {
@@ -1043,8 +1175,8 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
                 tod.toString(), cameraMode.label()));
 
         // Speed/pause indicator (separate text, top center, colored)
-        if (standaloneSimManager != null) {
-            var sim = standaloneSimManager.currentLoop();
+        {
+            var sim = getActiveSim();
             if (sim != null && sim.isPaused()) {
                 speedText.setText("PAUSED");
                 speedText.setColor(new ColorRGBA(1f, 0.3f, 0.3f, 0.95f));
