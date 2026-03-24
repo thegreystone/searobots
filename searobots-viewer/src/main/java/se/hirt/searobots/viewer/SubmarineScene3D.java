@@ -718,6 +718,10 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
     }
 
     private static void loadIcons(AppSettings settings) {
+        // macOS: GLFW doesn't support window icons (Cocoa windows use the app bundle icon),
+        // and loading via AWT ImageIO deadlocks with GLFW's main-thread requirement.
+        if (System.getProperty("os.name", "").toLowerCase().contains("mac")) return;
+
         String[] sizes = {"16", "24", "32", "48", "64", "128", "256", "512", "1024"};
         var icons = new java.util.ArrayList<java.awt.image.BufferedImage>();
         for (String size : sizes) {
