@@ -74,6 +74,10 @@ final class CommandPaletteState extends BaseAppState {
         var closeBtn = window.addChild(new Button("Close [Esc]"));
         closeBtn.addClickCommands(b -> setEnabled(false));
 
+        window.addChild(new Label("")); // spacer
+        var quitBtn = window.addChild(new Button("Quit"));
+        quitBtn.addClickCommands(b -> getApplication().stop());
+
         // Center on screen
         window.setLocalTranslation(
                 app.getCamera().getWidth() * 0.3f,

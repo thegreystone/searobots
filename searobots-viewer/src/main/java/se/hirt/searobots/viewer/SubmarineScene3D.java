@@ -81,7 +81,11 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
     private BitmapText loadingText;
     private BitmapText speedText;
     private BitmapText toggleStatusText;
-    private BitmapText competitionText;
+    private BitmapText competitionScoreText;  // compact score at top
+    private BitmapText competitionPhaseText;  // current phase label below score
+    private BitmapText competitionDetailText; // detailed breakdown, toggleable
+    private boolean showCompetitionDetails = false;
+    private final java.util.concurrent.CopyOnWriteArrayList<String> competitionDetailLines = new java.util.concurrent.CopyOnWriteArrayList<>();
     private CompetitionRunner activeCompetition;
     private MapRenderer standaloneMapRenderer;
     private volatile java.util.function.Supplier<se.hirt.searobots.engine.SimulationLoop.State> simStateSupplier = () -> se.hirt.searobots.engine.SimulationLoop.State.RUNNING;
@@ -363,7 +367,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
                 "[Tab] Cycle sub  [V] Camera  [Space] New map  [Esc] Menu\n" +
                 "[T] Trails  [R] Route  [E] Contacts  [W] Waypoints  [G] Strategic\n" +
                 "[B] Collision  [D] Pause on death  [F] Pause on solution\n" +
-                "[F2] Config  [F3] Render settings  [Ctrl+C] Copy seed");
+                "[I] Score details  [F2] Config  [F3] Render  [Ctrl+C] Copy seed");
         float keysWidth = keysText.getLineWidth();
         float keysHeight = keysText.getHeight();
         keysText.setLocalTranslation(settings.getWidth() - keysWidth - 10, keysHeight + 10, 0);
@@ -375,13 +379,26 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
         toggleStatusText.setText("");
         guiNode.attachChild(toggleStatusText);
 
-        // Competition overlay (left side, below HUD)
-        competitionText = new BitmapText(guiFont);
-        competitionText.setSize(guiFont.getCharSet().getRenderedSize());
-        competitionText.setColor(new ColorRGBA(1f, 0.9f, 0.3f, 0.9f));
-        competitionText.setText("");
-        competitionText.setLocalTranslation(10, 0, 0);
-        guiNode.attachChild(competitionText);
+        // Competition score (compact, centered below speed indicator)
+        competitionScoreText = new BitmapText(guiFont);
+        competitionScoreText.setSize(guiFont.getCharSet().getRenderedSize() * 1.3f);
+        competitionScoreText.setColor(new ColorRGBA(1f, 0.9f, 0.3f, 0.95f));
+        competitionScoreText.setText("");
+        guiNode.attachChild(competitionScoreText);
+
+        // Competition phase label (centered below score)
+        competitionPhaseText = new BitmapText(guiFont);
+        competitionPhaseText.setSize(guiFont.getCharSet().getRenderedSize());
+        competitionPhaseText.setColor(ColorRGBA.White);
+        competitionPhaseText.setText("");
+        guiNode.attachChild(competitionPhaseText);
+
+        // Competition details (toggleable, center-left)
+        competitionDetailText = new BitmapText(guiFont);
+        competitionDetailText.setSize(guiFont.getCharSet().getRenderedSize());
+        competitionDetailText.setColor(new ColorRGBA(0.85f, 0.9f, 1f, 0.85f));
+        competitionDetailText.setText("");
+        guiNode.attachChild(competitionDetailText);
 
         // Firing solution crosshair (solid circle + cross, built from triangle strips)
         crosshairNode = new Node("crosshair");
@@ -738,7 +755,9 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
         standaloneWorld = world;
         enqueue(() -> {
             setWorld(world);
-            competitionText.setText("");
+            competitionScoreText.setText("");
+            competitionPhaseText.setText("");
+            competitionDetailText.setText("");
             settings.setTitle("SeaRobots [seed: " + Long.toHexString(standaloneSeed) + "]");
             getContext().restart();
             return null;
@@ -769,10 +788,6 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
                     names.get(i), factories.get(i)));
         }
 
-        // Competition results list (shared between 2D and 3D)
-        var competitionResults = new java.util.concurrent.CopyOnWriteArrayList<String>();
-        final String[] currentPhase = {""};
-
         var callbacks = new CompetitionRunner.ViewerCallbacks() {
             @Override public void setTitle(String title) {
                 enqueue(() -> {
@@ -781,21 +796,41 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
                     return null;
                 });
             }
+            @Override public void setCompetitionScore(String score) {
+                enqueue(() -> {
+                    competitionScoreText.setText(score);
+                    float sw = competitionScoreText.getLineWidth();
+                    competitionScoreText.setLocalTranslation(
+                            (cam.getWidth() - sw) / 2f,
+                            cam.getHeight() - 35, 0);
+                    return null;
+                });
+            }
             @Override public void setCompetitionPhase(String phase) {
-                currentPhase[0] = phase;
                 if (standaloneMapRenderer != null) standaloneMapRenderer.setCompetitionPhase(phase);
-                updateCompetitionHud(currentPhase[0], competitionResults);
+                enqueue(() -> {
+                    competitionPhaseText.setText(phase);
+                    float pw = competitionPhaseText.getLineWidth();
+                    competitionPhaseText.setLocalTranslation(
+                            (cam.getWidth() - pw) / 2f,
+                            cam.getHeight() - 58, 0);
+                    return null;
+                });
             }
-            @Override public void addCompetitionResult(String result) {
-                competitionResults.add(result);
-                if (standaloneMapRenderer != null) standaloneMapRenderer.addCompetitionResult(result);
-                updateCompetitionHud(currentPhase[0], competitionResults);
+            @Override public void addDetailLine(String line) {
+                competitionDetailLines.add(line);
+                if (standaloneMapRenderer != null) standaloneMapRenderer.addCompetitionResult(line);
+                updateDetailHud();
             }
-            @Override public void clearCompetitionResults() {
-                competitionResults.clear();
-                currentPhase[0] = "";
+            @Override public void clearCompetition() {
+                competitionDetailLines.clear();
                 if (standaloneMapRenderer != null) standaloneMapRenderer.clearCompetitionResults();
-                updateCompetitionHud("", competitionResults);
+                enqueue(() -> {
+                    competitionScoreText.setText("");
+                    competitionPhaseText.setText("");
+                    competitionDetailText.setText("");
+                    return null;
+                });
             }
             @Override public void setObjectives(java.util.List<se.hirt.searobots.api.StrategicWaypoint> objectives) {
                 if (standaloneMapRenderer != null) standaloneMapRenderer.setCompetitionObjectives(objectives);
@@ -826,16 +861,15 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
         return standaloneSimManager.currentLoop();
     }
 
-    private void updateCompetitionHud(String phase, java.util.List<String> results) {
+    private void updateDetailHud() {
+        if (!showCompetitionDetails) return;
         enqueue(() -> {
             var sb = new StringBuilder();
-            if (!phase.isEmpty()) sb.append(phase).append("\n");
-            // Show last 8 results
-            int start = Math.max(0, results.size() - 8);
-            for (int i = start; i < results.size(); i++) {
-                sb.append(results.get(i)).append("\n");
+            for (var line : competitionDetailLines) {
+                sb.append(line).append("\n");
             }
-            competitionText.setText(sb.toString());
+            competitionDetailText.setText(sb.toString());
+            competitionDetailText.setLocalTranslation(10, cam.getHeight() * 0.85f, 0);
             return null;
         });
     }
@@ -897,6 +931,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
                 if (overlayConfig.waypoints) sb.append("[W] Waypoints  ");
                 if (overlayConfig.strategicWaypoints) sb.append("[G] Strategic  ");
                 if (showCollisionEllipsoids) sb.append("[B] Collision  ");
+                if (showCompetitionDetails) sb.append("[I] Details  ");
                 if (standaloneSimManager != null && standaloneSimManager.pauseOnDeath) sb.append("[D] Death  ");
                 if (standaloneSimManager != null && standaloneSimManager.pauseOnTorpedoSolution) sb.append("[F] Solution  ");
                 toggleStatusText.setText(sb.toString());
@@ -905,10 +940,9 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
                         cam.getWidth() - toggleStatusText.getLineWidth() - 10,
                         keysText.getHeight() + keysText.getLineHeight() + 14, 0);
             }
-            // Competition overlay in 3D view
-            if (activeCompetition != null && activeCompetition.isRunning()) {
-                competitionText.setLocalTranslation(10, cam.getHeight() * 0.4f, 0);
-            }
+            // Toggle competition detail visibility
+            competitionDetailText.setCullHint(
+                    showCompetitionDetails ? Spatial.CullHint.Never : Spatial.CullHint.Always);
 
             sunHour = (startTime.toSecondOfDay() / 3600f + latestTick / 50f / 3600f) % 24f;
             updateAtmosphere();
@@ -1888,6 +1922,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
         inputManager.addMapping("ToggleWaypoints", new KeyTrigger(KeyInput.KEY_W));
         inputManager.addMapping("ToggleStrategic", new KeyTrigger(KeyInput.KEY_G));
         inputManager.addMapping("ToggleEllipsoids", new KeyTrigger(KeyInput.KEY_B));
+        inputManager.addMapping("ToggleDetails", new KeyTrigger(KeyInput.KEY_I));
         inputManager.addListener((ActionListener) (name, isPressed, tpf) -> {
             if (!isPressed) return;
             switch (name) {
@@ -1897,8 +1932,9 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
                 case "ToggleWaypoints" -> overlayConfig.waypoints = !overlayConfig.waypoints;
                 case "ToggleStrategic" -> overlayConfig.strategicWaypoints = !overlayConfig.strategicWaypoints;
                 case "ToggleEllipsoids" -> showCollisionEllipsoids = !showCollisionEllipsoids;
+                case "ToggleDetails" -> { showCompetitionDetails = !showCompetitionDetails; updateDetailHud(); }
             }
-        }, "ToggleTrails", "ToggleRoute", "ToggleContacts", "ToggleWaypoints", "ToggleStrategic", "ToggleEllipsoids");
+        }, "ToggleTrails", "ToggleRoute", "ToggleContacts", "ToggleWaypoints", "ToggleStrategic", "ToggleEllipsoids", "ToggleDetails");
 
         // Mouse orbit/zoom (Orbit and Free Look modes)
         inputManager.addMapping("OrbitLeft", new MouseAxisTrigger(MouseInput.AXIS_X, true));

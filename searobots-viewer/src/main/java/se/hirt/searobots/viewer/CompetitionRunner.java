@@ -22,9 +22,13 @@ final class CompetitionRunner {
     /** Callback interface so CompetitionRunner works without Swing. */
     interface ViewerCallbacks {
         void setTitle(String title);
+        /** Compact score line shown at top during competition. */
+        void setCompetitionScore(String score);
+        /** Current phase label. */
         void setCompetitionPhase(String phase);
-        void addCompetitionResult(String result);
-        void clearCompetitionResults();
+        /** Add a line to the detailed results log (toggled with a key). */
+        void addDetailLine(String line);
+        void clearCompetition();
         void showResultsDialog(String text);
         void scheduleDelayed(long delayMs, Runnable action);
         /** Called with the nav objectives for the current phase (null to clear). */
@@ -46,6 +50,7 @@ final class CompetitionRunner {
     private final Map<String, Integer> navPoints = new LinkedHashMap<>();
     private final Map<String, Integer> combatPoints = new LinkedHashMap<>();
     private final List<String> log = new ArrayList<>();
+    private final List<SubmarineCompetition.SeedResult> allNavResults = new ArrayList<>();
 
     // Simulation state
     private SimulationLoop currentSim;
@@ -76,7 +81,7 @@ final class CompetitionRunner {
         for (int i = 0; i < numSeeds; i++) {
             seeds[i] = java.util.concurrent.ThreadLocalRandom.current().nextLong();
         }
-        viewer.clearCompetitionResults();
+        viewer.clearCompetition();
 
         for (var c : competitors) {
             navPoints.put(c.name(), 0);
@@ -174,8 +179,6 @@ final class CompetitionRunner {
 
         var controller = phase.factoryA().get();
 
-        // Inject objectives immediately (before sim starts). The controller
-        // stores them and applies them after onMatchStart on the first tick.
         double depth1 = Math.max(-300, world.terrain().elevationAt(objectives.x1(), objectives.y1()) + 90);
         double depth2 = Math.max(-300, world.terrain().elevationAt(objectives.x2(), objectives.y2()) + 90);
         var objList = List.of(
@@ -194,48 +197,35 @@ final class CompetitionRunner {
         var controllers = List.<SubmarineController>of(controller);
         var configs = List.of(VehicleConfig.submarine());
 
-        // Track objectives
-        double[] closestObj1 = {Double.MAX_VALUE};
-        double[] closestObj2After1 = {Double.MAX_VALUE};
-        boolean[] obj1Hit = {false};
+        // Full metrics tracker
+        var tracker = new NavMetricsTracker(objectives, 0);
 
         var listener = new SimulationListener() {
             @Override
             public void onTick(long tick, List<SubmarineSnapshot> submarines) {
                 if (cancelled) { sim.stop(); return; }
                 simManager.fanOutTick(tick, submarines);
+                tracker.onTick(tick, submarines);
 
                 if (submarines.isEmpty()) return;
                 var s = submarines.getFirst();
-                var pos = s.pose().position();
-
-                double d1 = Math.hypot(pos.x() - objectives.x1(), pos.y() - objectives.y1());
-                if (d1 < closestObj1[0]) closestObj1[0] = d1;
-                if (!obj1Hit[0] && d1 < 400) obj1Hit[0] = true;
-                if (obj1Hit[0]) {
-                    double d2 = Math.hypot(pos.x() - objectives.x2(), pos.y() - objectives.y2());
-                    if (d2 < closestObj2After1[0]) closestObj2After1[0] = d2;
-                    if (d2 < 400) { matchDone = true; sim.stop(); }
-                }
-
-                if (s.hp() <= 0 || s.forfeited()) { matchDone = true; sim.stop(); }
+                if (s.hp() <= 0 || s.forfeited()) { sim.stop(); }
+                if (tracker.objectivesHit() >= 2) { sim.stop(); }
                 if (tick >= navDurationTicks) sim.stop();
             }
 
             @Override public void onMatchEnd() {
-                // Score objectives
-                int hits = 0;
-                if (obj1Hit[0]) hits++;
-                if (obj1Hit[0] && closestObj2After1[0] < 400) hits++;
-                int pts = 0;
-                if (hits >= 1) pts += 1;
-                if (hits >= 2) pts += 3;
-                navPoints.merge(phase.nameA(), pts, Integer::sum);
+                tracker.onMatchEnd();
+                var metrics = tracker.getMetrics();
+                allNavResults.add(new SubmarineCompetition.SeedResult(phase.seed(), phase.nameA(), metrics));
 
-                String result = String.format("%s: %d/2 obj (%+dpts)", phase.nameA(), hits, pts);
+                // Points are awarded in printSeedSummary when both subs have finished this seed
+                String result = String.format("%s: %d/2 obj  depth:%.0fm  noise:%.0fdB  speed:%.1fm/s",
+                        phase.nameA(), metrics.objectivesHit(),
+                        metrics.avgDepth(), metrics.avgNoiseDb(), metrics.avgSpeed());
                 log.add(result);
                 matchResult = result;
-                viewer.addCompetitionResult(result);
+                System.out.println("[comp] " + result);
                 matchDone = true;
 
                 if (!cancelled) {
@@ -246,10 +236,7 @@ final class CompetitionRunner {
             }
         };
 
-        long tSetWorld = System.currentTimeMillis();
         simManager.setWorld(world);
-        // Paused state is read from sim loop via supplier
-        System.out.printf("[comp] setWorld in %dms%n", System.currentTimeMillis() - tSetWorld);
         sim.setSpeedMultiplier(currentSpeedMultiplier);
         currentThread = Thread.ofPlatform().daemon().name("competition-nav").start(() ->
                 sim.run(world, controllers, configs, listener));
@@ -329,7 +316,8 @@ final class CompetitionRunner {
                 if (matchResult == null) matchResult = "TIMEOUT";
                 String combatLog = shortName(phase.nameA()) + " vs " + shortName(phase.nameB()) + ": " + matchResult;
                 log.add(combatLog);
-                viewer.addCompetitionResult(combatLog);
+                viewer.addDetailLine(combatLog);
+                updateScore();
                 matchDone = true;
 
                 if (!cancelled) {
@@ -347,6 +335,17 @@ final class CompetitionRunner {
         sim.setSpeedMultiplier(currentSpeedMultiplier);
         currentThread = Thread.ofPlatform().daemon().name("competition-combat").start(() ->
                 sim.run(world, controllers, configs, listener));
+    }
+
+    private void updateScore() {
+        var sb = new StringBuilder();
+        for (var c : competitors) {
+            int nav = navPoints.getOrDefault(c.name(), 0);
+            int combat = combatPoints.getOrDefault(c.name(), 0);
+            if (sb.length() > 0) sb.append("    ");
+            sb.append(String.format("%s: %dpt", shortName(c.name()), nav + combat));
+        }
+        viewer.setCompetitionScore(sb.toString());
     }
 
     private static String shortName(String name) {
@@ -373,33 +372,91 @@ final class CompetitionRunner {
     }
 
     private void printSeedSummary(long seed, PhaseType type) {
-        var sb = new StringBuilder();
         String seedHex = hexSeed(seed);
-        sb.append(String.format("--- %s results for seed #%s ---", type, seedHex));
+        // Find which seed number this is (1-based)
+        int seedNum = 0;
+        for (int i = 0; i < seeds.length; i++) {
+            if (seeds[i] == seed) { seedNum = i + 1; break; }
+        }
 
-        // Collect results for this seed
-        for (var entry : log) {
-            if (entry.contains("#" + seedHex) || entry.contains(seedHex)) {
-                // This is a rough match; log entries for this seed's phases
+        if (type == PhaseType.NAV && competitors.size() == 2) {
+            SubmarineCompetition.Metrics mA = null, mB = null;
+            String nameA = null, nameB = null;
+            for (var result : allNavResults) {
+                if (result.seed() != seed) continue;
+                if (mA == null) { mA = result.metrics(); nameA = result.competitorName(); }
+                else { mB = result.metrics(); nameB = result.competitorName(); }
             }
-        }
+            if (mA != null && mB != null) {
+                String sA = shortName(nameA), sB = shortName(nameB);
 
-        // Show current standings
-        sb.append(String.format("%n  %-20s %8s %8s %8s", "Competitor", "Nav", "Combat", "TOTAL"));
-        for (var c : competitors) {
-            int nav = navPoints.getOrDefault(c.name(), 0);
-            int combat = combatPoints.getOrDefault(c.name(), 0);
-            sb.append(String.format("%n  %-20s %7dpt %7dpt %7dpt", c.name(), nav, combat, nav + combat));
-        }
+                // Build per-sub point breakdowns
+                var winsA = new ArrayList<String>();
+                var winsB = new ArrayList<String>();
+                int ptsA = 0, ptsB = 0;
 
-        String summary = sb.toString();
-        System.out.println(summary);
-        viewer.addCompetitionResult("--- Standings after seed #" + seedHex + " " + type + " ---");
-        for (var c : competitors) {
-            int nav = navPoints.getOrDefault(c.name(), 0);
-            int combat = combatPoints.getOrDefault(c.name(), 0);
-            viewer.addCompetitionResult(String.format("  %-12s Nav:%dpt Combat:%dpt TOTAL:%dpt",
-                    shortName(c.name()), nav, combat, nav + combat));
+                // Objectives (absolute)
+                int objPtsA = (mA.objectivesHit() >= 1 ? 1 : 0) + (mA.objectivesHit() >= 2 ? 3 : 0);
+                int objPtsB = (mB.objectivesHit() >= 1 ? 1 : 0) + (mB.objectivesHit() >= 2 ? 3 : 0);
+                if (objPtsA > 0) { ptsA += objPtsA; winsA.add("obj:" + objPtsA); }
+                if (objPtsB > 0) { ptsB += objPtsB; winsB.add("obj:" + objPtsB); }
+
+                // Depth (2pts)
+                if (mA.avgDepth() < mB.avgDepth()) { ptsA += 2; winsA.add("depth:2"); }
+                else if (mB.avgDepth() < mA.avgDepth()) { ptsB += 2; winsB.add("depth:2"); }
+
+                // Peak depth (1pt)
+                if (mA.peakDepthShallowest() < mB.peakDepthShallowest()) { ptsA++; winsA.add("peakDep:1"); }
+                else if (mB.peakDepthShallowest() < mA.peakDepthShallowest()) { ptsB++; winsB.add("peakDep:1"); }
+
+                // Noise (1pt each)
+                if (mA.avgNoiseDb() < mB.avgNoiseDb()) { ptsA++; winsA.add("noise:1"); }
+                else if (mB.avgNoiseDb() < mA.avgNoiseDb()) { ptsB++; winsB.add("noise:1"); }
+                if (mA.peakNoiseDb() < mB.peakNoiseDb()) { ptsA++; winsA.add("peakNs:1"); }
+                else if (mB.peakNoiseDb() < mA.peakNoiseDb()) { ptsB++; winsB.add("peakNs:1"); }
+
+                // Speed (1pt)
+                if (mA.avgSpeed() > mB.avgSpeed()) { ptsA++; winsA.add("speed:1"); }
+                else if (mB.avgSpeed() > mA.avgSpeed()) { ptsB++; winsB.add("speed:1"); }
+
+                // Patrol (1pt)
+                if (mA.normalPatrolPct() > mB.normalPatrolPct()) { ptsA++; winsA.add("patrol:1"); }
+                else if (mB.normalPatrolPct() > mA.normalPatrolPct()) { ptsB++; winsB.add("patrol:1"); }
+
+                // Late damage (1pt)
+                boolean aUndamaged = mA.timeOfFirstDamage() < 0;
+                boolean bUndamaged = mB.timeOfFirstDamage() < 0;
+                if (aUndamaged && !bUndamaged) { ptsA++; winsA.add("noDmg:1"); }
+                else if (bUndamaged && !aUndamaged) { ptsB++; winsB.add("noDmg:1"); }
+                else if (!aUndamaged && !bUndamaged && mA.timeOfFirstDamage() > mB.timeOfFirstDamage()) { ptsA++; winsA.add("lateDmg:1"); }
+                else if (!aUndamaged && !bUndamaged && mB.timeOfFirstDamage() > mA.timeOfFirstDamage()) { ptsB++; winsB.add("lateDmg:1"); }
+
+                // Survive (2pts)
+                boolean aSurvived = mA.timeToDeath() < 0;
+                boolean bSurvived = mB.timeToDeath() < 0;
+                if (aSurvived && !bSurvived) { ptsA += 2; winsA.add("survive:2"); }
+                else if (bSurvived && !aSurvived) { ptsB += 2; winsB.add("survive:2"); }
+                else if (!aSurvived && !bSurvived && mA.timeToDeath() > mB.timeToDeath()) { ptsA += 2; winsA.add("survive:2"); }
+                else if (!aSurvived && !bSurvived && mB.timeToDeath() > mA.timeToDeath()) { ptsB += 2; winsB.add("survive:2"); }
+
+                navPoints.merge(nameA, ptsA, Integer::sum);
+                navPoints.merge(nameB, ptsB, Integer::sum);
+                updateScore();
+
+                // Format: "6/15 NAV Seed #abcd1234"
+                String header = String.format("NAV %d/%d Seed #%s", seedNum, seeds.length, seedHex);
+                String lineA = String.format("  %s %dpts (%s)", nameA, ptsA, String.join(", ", winsA));
+                String lineB = String.format("  %s %dpts (%s)", nameB, ptsB, String.join(", ", winsB));
+
+                viewer.addDetailLine(header);
+                viewer.addDetailLine(lineA);
+                viewer.addDetailLine(lineB);
+                System.out.println(header);
+                System.out.println(lineA);
+                System.out.println(lineB);
+            }
+        } else if (type == PhaseType.COMBAT) {
+            // Just echo the combat log line (already added by onMatchEnd)
         }
     }
 
@@ -422,11 +479,13 @@ final class CompetitionRunner {
         }
 
         viewer.setTitle("SeaRobots Competition: COMPLETE");
-        viewer.setCompetitionPhase("FINAL STANDINGS");
+        viewer.setCompetitionPhase("COMPLETE");
+        updateScore();
+        viewer.addDetailLine("=== FINAL RESULTS ===");
         for (var c : competitors) {
             int nav = navPoints.getOrDefault(c.name(), 0);
             int combat = combatPoints.getOrDefault(c.name(), 0);
-            viewer.addCompetitionResult(String.format("%-12s Nav:%dpt Combat:%dpt TOTAL:%dpt",
+            viewer.addDetailLine(String.format("%-12s Nav:%dpt Combat:%dpt TOTAL:%dpt",
                     shortName(c.name()), nav, combat, nav + combat));
         }
 

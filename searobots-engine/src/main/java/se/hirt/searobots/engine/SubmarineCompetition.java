@@ -33,7 +33,7 @@ public class SubmarineCompetition {
 
     public record Competitor(String name, Supplier<SubmarineController> factory) {}
 
-    record Metrics(
+    public record Metrics(
             // Navigation
             int longestWaypointChain,    // consecutive waypoints reached without replan
             double waypointHitAccuracy,  // avg distance to waypoint center at arrival (m)
@@ -58,7 +58,7 @@ public class SubmarineCompetition {
             double timeToDeath           // seconds alive (-1 = survived)
     ) {}
 
-    record SeedResult(long seed, String competitorName, Metrics metrics) {}
+    public record SeedResult(long seed, String competitorName, Metrics metrics) {}
 
     /** Two objective waypoints per seed in deep, safe water. */
     public record Objectives(double x1, double y1, double x2, double y2) {}
