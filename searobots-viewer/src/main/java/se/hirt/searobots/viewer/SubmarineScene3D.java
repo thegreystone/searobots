@@ -211,6 +211,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 
     // Standalone mode state (null/false when embedded in Swing)
     private boolean standalone;
+    volatile boolean dialogOpen; // suppresses game key mappings when a text-input dialog is open
     private long standaloneSeed;
     private se.hirt.searobots.engine.WorldGenerator standaloneGenerator;
     private volatile GeneratedWorld standaloneWorld;
@@ -496,6 +497,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
             simConfigState.seedSupplier = () -> standaloneSeed;
             simConfigState.onSeedChanged = seed -> standaloneSeed = seed;
             simConfigState.simManager = standaloneSimManager;
+            simConfigState.scene = this;
             stateManager.attach(simConfigState);
             simConfigState.setEnabled(false);
 
@@ -566,7 +568,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
         // Space: new random map (or skip to next match during competition)
         inputManager.addMapping("NewMap", new KeyTrigger(KeyInput.KEY_SPACE));
         inputManager.addListener((ActionListener) (name, isPressed, tpf) -> {
-            if (!isPressed) return;
+            if (!isPressed || dialogOpen) return;
             if (activeCompetition != null && activeCompetition.isRunning()) {
                 activeCompetition.skipToNext();
             } else {
@@ -578,7 +580,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
         // P: pause/unpause
         inputManager.addMapping("Pause", new KeyTrigger(KeyInput.KEY_P));
         inputManager.addListener((ActionListener) (name, isPressed, tpf) -> {
-            if (!isPressed) return;
+            if (!isPressed || dialogOpen) return;
             var sim = getActiveSim();
             if (sim != null) sim.setPaused(!sim.isPaused());
         }, "Pause");
@@ -586,7 +588,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
         // N: step once
         inputManager.addMapping("StepOnce", new KeyTrigger(KeyInput.KEY_N));
         inputManager.addListener((ActionListener) (name, isPressed, tpf) -> {
-            if (!isPressed) return;
+            if (!isPressed || dialogOpen) return;
             var sim = getActiveSim();
             if (sim != null) sim.stepOnce();
         }, "StepOnce");
@@ -595,7 +597,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
         inputManager.addMapping("TogglePauseOnDeath", new KeyTrigger(KeyInput.KEY_D));
         inputManager.addMapping("TogglePauseOnSolution", new KeyTrigger(KeyInput.KEY_F));
         inputManager.addListener((ActionListener) (name, isPressed, tpf) -> {
-            if (!isPressed) return;
+            if (!isPressed || dialogOpen) return;
             switch (name) {
                 case "TogglePauseOnDeath" -> {
                     standaloneSimManager.pauseOnDeath = !standaloneSimManager.pauseOnDeath;
@@ -617,7 +619,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
         inputManager.addMapping("Speed24", new KeyTrigger(KeyInput.KEY_6));
         inputManager.addMapping("SpeedMax", new KeyTrigger(KeyInput.KEY_0));
         inputManager.addListener((ActionListener) (name, isPressed, tpf) -> {
-            if (!isPressed) return;
+            if (!isPressed || dialogOpen) return;
             // Use competition sim if running, otherwise standalone sim
             var sim = (activeCompetition != null && activeCompetition.isRunning())
                     ? activeCompetition.currentSim()
@@ -852,9 +854,10 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
         };
 
         activeCompetition = new CompetitionRunner(callbacks, standaloneSimManager);
-        activeCompetition.start(competitors, 5,
-                se.hirt.searobots.engine.SubmarineCompetition.DEFAULT_DURATION
-                        / se.hirt.searobots.engine.SubmarineCompetition.TICKS_PER_SECOND);
+        // Use the current seed as the competition master seed
+        var format = se.hirt.searobots.engine.SubmarineCompetition.CompetitionFormat.standard(standaloneSeed);
+        System.out.printf("Competition master seed: %s%n", Long.toHexString(standaloneSeed));
+        activeCompetition.start(competitors, format);
     }
 
     /** Returns the active sim loop (competition or free patrol). */
@@ -1871,7 +1874,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
         // Tab to cycle between submarines
         inputManager.addMapping("CycleSub", new KeyTrigger(KeyInput.KEY_TAB));
         inputManager.addListener((ActionListener) (name, isPressed, tpf) -> {
-            if (isPressed && !latestSnapshots.isEmpty()) {
+            if (isPressed && !dialogOpen && !latestSnapshots.isEmpty()) {
                 var ids = latestSnapshots.stream().mapToInt(SubmarineSnapshot::id).toArray();
                 int currentIdx = 0;
                 for (int i = 0; i < ids.length; i++) {
@@ -1895,7 +1898,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
         // V to cycle camera modes
         inputManager.addMapping("CycleCamera", new KeyTrigger(KeyInput.KEY_V));
         inputManager.addListener((ActionListener) (name, isPressed, tpf) -> {
-            if (isPressed) {
+            if (isPressed && !dialogOpen) {
                 // Ignore V when Ctrl is held (Ctrl+V = paste in dialogs)
                 long win = org.lwjgl.glfw.GLFW.glfwGetCurrentContext();
                 if (org.lwjgl.glfw.GLFW.glfwGetKey(win, org.lwjgl.glfw.GLFW.GLFW_KEY_LEFT_CONTROL) == org.lwjgl.glfw.GLFW.GLFW_PRESS
@@ -1928,7 +1931,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
         inputManager.addMapping("ToggleEllipsoids", new KeyTrigger(KeyInput.KEY_B));
         inputManager.addMapping("ToggleDetails", new KeyTrigger(KeyInput.KEY_I));
         inputManager.addListener((ActionListener) (name, isPressed, tpf) -> {
-            if (!isPressed) return;
+            if (!isPressed || dialogOpen) return;
             switch (name) {
                 case "ToggleTrails" -> overlayConfig.trails = !overlayConfig.trails;
                 case "ToggleRoute" -> overlayConfig.route = !overlayConfig.route;

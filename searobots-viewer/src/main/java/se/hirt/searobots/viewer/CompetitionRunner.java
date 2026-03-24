@@ -40,6 +40,7 @@ final class CompetitionRunner {
     private final WorldGenerator generator = new WorldGenerator();
 
     private List<Competitor> competitors;
+    private long masterSeed;
     private long[] seeds;
     private int navDurationTicks;
     private int combatDurationTicks;
@@ -73,20 +74,25 @@ final class CompetitionRunner {
         this.simManager = simManager;
     }
 
-    void start(List<Competitor> competitors, int numSeeds, int navDurationSeconds) {
+    void start(List<Competitor> competitors, SubmarineCompetition.CompetitionFormat format) {
         this.competitors = competitors;
-        this.navDurationTicks = navDurationSeconds * 50;
-        this.combatDurationTicks = 600 * 50; // 10 min combat
-        this.seeds = new long[numSeeds];
-        for (int i = 0; i < numSeeds; i++) {
-            seeds[i] = java.util.concurrent.ThreadLocalRandom.current().nextLong();
-        }
+        this.masterSeed = format.masterSeed();
+        this.navDurationTicks = format.navDurationSeconds() * 50;
+        this.combatDurationTicks = format.combatDurationSeconds() * 50;
+        this.seeds = format.matchSeeds();
         viewer.clearCompetition();
 
         for (var c : competitors) {
             navPoints.put(c.name(), 0);
             combatPoints.put(c.name(), 0);
         }
+
+        // Detail header
+        viewer.addDetailLine("Competition seed: " + Long.toHexString(masterSeed));
+        var seedList = new StringBuilder("Match seeds:");
+        for (long s : seeds) seedList.append(" ").append(hexSeed(s));
+        viewer.addDetailLine(seedList.toString());
+        viewer.addDetailLine("");
 
         // Build phase list: nav phases for each competitor on each seed,
         // then combat phases for each pair on each seed
@@ -388,56 +394,9 @@ final class CompetitionRunner {
                 else { mB = result.metrics(); nameB = result.competitorName(); }
             }
             if (mA != null && mB != null) {
-                String sA = shortName(nameA), sB = shortName(nameB);
-
-                // Build per-sub point breakdowns
-                var winsA = new ArrayList<String>();
-                var winsB = new ArrayList<String>();
-                int ptsA = 0, ptsB = 0;
-
-                // Objectives (absolute)
-                int objPtsA = (mA.objectivesHit() >= 1 ? 1 : 0) + (mA.objectivesHit() >= 2 ? 3 : 0);
-                int objPtsB = (mB.objectivesHit() >= 1 ? 1 : 0) + (mB.objectivesHit() >= 2 ? 3 : 0);
-                if (objPtsA > 0) { ptsA += objPtsA; winsA.add("obj:" + objPtsA); }
-                if (objPtsB > 0) { ptsB += objPtsB; winsB.add("obj:" + objPtsB); }
-
-                // Depth (2pts)
-                if (mA.avgDepth() < mB.avgDepth()) { ptsA += 2; winsA.add("depth:2"); }
-                else if (mB.avgDepth() < mA.avgDepth()) { ptsB += 2; winsB.add("depth:2"); }
-
-                // Peak depth (1pt)
-                if (mA.peakDepthShallowest() < mB.peakDepthShallowest()) { ptsA++; winsA.add("peakDep:1"); }
-                else if (mB.peakDepthShallowest() < mA.peakDepthShallowest()) { ptsB++; winsB.add("peakDep:1"); }
-
-                // Noise (1pt each)
-                if (mA.avgNoiseDb() < mB.avgNoiseDb()) { ptsA++; winsA.add("noise:1"); }
-                else if (mB.avgNoiseDb() < mA.avgNoiseDb()) { ptsB++; winsB.add("noise:1"); }
-                if (mA.peakNoiseDb() < mB.peakNoiseDb()) { ptsA++; winsA.add("peakNs:1"); }
-                else if (mB.peakNoiseDb() < mA.peakNoiseDb()) { ptsB++; winsB.add("peakNs:1"); }
-
-                // Speed (1pt)
-                if (mA.avgSpeed() > mB.avgSpeed()) { ptsA++; winsA.add("speed:1"); }
-                else if (mB.avgSpeed() > mA.avgSpeed()) { ptsB++; winsB.add("speed:1"); }
-
-                // Patrol (1pt)
-                if (mA.normalPatrolPct() > mB.normalPatrolPct()) { ptsA++; winsA.add("patrol:1"); }
-                else if (mB.normalPatrolPct() > mA.normalPatrolPct()) { ptsB++; winsB.add("patrol:1"); }
-
-                // Late damage (1pt)
-                boolean aUndamaged = mA.timeOfFirstDamage() < 0;
-                boolean bUndamaged = mB.timeOfFirstDamage() < 0;
-                if (aUndamaged && !bUndamaged) { ptsA++; winsA.add("noDmg:1"); }
-                else if (bUndamaged && !aUndamaged) { ptsB++; winsB.add("noDmg:1"); }
-                else if (!aUndamaged && !bUndamaged && mA.timeOfFirstDamage() > mB.timeOfFirstDamage()) { ptsA++; winsA.add("lateDmg:1"); }
-                else if (!aUndamaged && !bUndamaged && mB.timeOfFirstDamage() > mA.timeOfFirstDamage()) { ptsB++; winsB.add("lateDmg:1"); }
-
-                // Survive (2pts)
-                boolean aSurvived = mA.timeToDeath() < 0;
-                boolean bSurvived = mB.timeToDeath() < 0;
-                if (aSurvived && !bSurvived) { ptsA += 2; winsA.add("survive:2"); }
-                else if (bSurvived && !aSurvived) { ptsB += 2; winsB.add("survive:2"); }
-                else if (!aSurvived && !bSurvived && mA.timeToDeath() > mB.timeToDeath()) { ptsA += 2; winsA.add("survive:2"); }
-                else if (!aSurvived && !bSurvived && mB.timeToDeath() > mA.timeToDeath()) { ptsB += 2; winsB.add("survive:2"); }
+                // Use the shared scoring method (single source of truth)
+                var score = SubmarineCompetition.scoreNavSeed(mA, mB);
+                int ptsA = score.pointsA(), ptsB = score.pointsB();
 
                 navPoints.merge(nameA, ptsA, Integer::sum);
                 navPoints.merge(nameB, ptsB, Integer::sum);
@@ -445,8 +404,8 @@ final class CompetitionRunner {
 
                 // Format: "6/15 NAV Seed #abcd1234"
                 String header = String.format("NAV %d/%d Seed #%s", seedNum, seeds.length, seedHex);
-                String lineA = String.format("  %s %dpts (%s)", nameA, ptsA, String.join(", ", winsA));
-                String lineB = String.format("  %s %dpts (%s)", nameB, ptsB, String.join(", ", winsB));
+                String lineA = String.format("  %s %dpts (%s)", nameA, ptsA, String.join(", ", score.breakdownA()));
+                String lineB = String.format("  %s %dpts (%s)", nameB, ptsB, String.join(", ", score.breakdownB()));
 
                 viewer.addDetailLine(header);
                 viewer.addDetailLine(lineA);

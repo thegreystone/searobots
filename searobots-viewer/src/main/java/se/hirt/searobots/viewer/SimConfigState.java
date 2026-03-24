@@ -62,6 +62,7 @@ final class SimConfigState extends BaseAppState {
 
     // Seed: null means "use current seed", non-null means "use this seed"
     private Long pendingSeed;
+    SubmarineScene3D scene; // for dialogOpen flag
     // Callback to set the seed externally
     java.util.function.LongConsumer onSeedChanged;
     java.util.function.LongSupplier seedSupplier;
@@ -77,6 +78,7 @@ final class SimConfigState extends BaseAppState {
 
     @Override
     protected void onEnable() {
+        if (scene != null) scene.dialogOpen = true;
         var app = (SimpleApplication) getApplication();
 
         ship1Index = selectedShip1Index;
@@ -106,6 +108,7 @@ final class SimConfigState extends BaseAppState {
         seedRow.addChild(new Label("Seed (hex):"));
         seedField = seedRow.addChild(new TextField(
                 seedSupplier != null ? Long.toHexString(seedSupplier.getAsLong()) : ""));
+        seedField.setPreferredSize(new com.jme3.math.Vector3f(200, 22, 0));
         pendingSeed = null;
 
         window.addChild(new Label("")); // spacer
@@ -218,6 +221,7 @@ final class SimConfigState extends BaseAppState {
 
     @Override
     protected void onDisable() {
+        if (scene != null) scene.dialogOpen = false;
         if (window != null) {
             window.removeFromParent();
             window = null;

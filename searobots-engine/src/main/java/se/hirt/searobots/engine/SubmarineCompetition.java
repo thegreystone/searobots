@@ -31,7 +31,101 @@ public class SubmarineCompetition {
     public static final int TICKS_PER_SECOND = 50;
     public static final int DEFAULT_DURATION = TICKS_PER_SECOND * 2400; // 40 minutes
 
+    // Standard competition format
+    public static final int STANDARD_NAV_SEEDS = 5;
+    public static final int STANDARD_NAV_DURATION_SECONDS = 2400; // 40 minutes per nav
+    public static final int STANDARD_COMBAT_DURATION_SECONDS = 600; // 10 minutes per combat
+
+    /**
+     * A competition format: fully determined by a single master seed.
+     * The master seed deterministically generates all individual match seeds.
+     */
+    public record CompetitionFormat(long masterSeed, int navSeeds, int navDurationSeconds,
+                                     int combatDurationSeconds, long[] matchSeeds) {
+
+        /** Standard format with the given master seed. */
+        public static CompetitionFormat standard(long masterSeed) {
+            return create(masterSeed, STANDARD_NAV_SEEDS, STANDARD_NAV_DURATION_SECONDS,
+                    STANDARD_COMBAT_DURATION_SECONDS);
+        }
+
+        /** Create a format with custom parameters. */
+        public static CompetitionFormat create(long masterSeed, int navSeeds,
+                                                int navDurationSeconds, int combatDurationSeconds) {
+            var rng = new java.util.Random(masterSeed);
+            long[] seeds = new long[navSeeds];
+            for (int i = 0; i < navSeeds; i++) {
+                seeds[i] = rng.nextLong();
+            }
+            return new CompetitionFormat(masterSeed, navSeeds, navDurationSeconds,
+                    combatDurationSeconds, seeds);
+        }
+    }
+
     public record Competitor(String name, Supplier<SubmarineController> factory) {}
+
+    /**
+     * Per-seed H2H scoring result for two competitors on one seed.
+     * Points include absolute objective points + relative metric wins.
+     */
+    public record SeedScore(int pointsA, List<String> breakdownA,
+                             int pointsB, List<String> breakdownB) {}
+
+    /**
+     * Scores two competitors' metrics for a single seed.
+     * This is the single source of truth for nav scoring.
+     */
+    public static SeedScore scoreNavSeed(Metrics mA, Metrics mB) {
+        var winsA = new ArrayList<String>();
+        var winsB = new ArrayList<String>();
+        int ptsA = 0, ptsB = 0;
+
+        // Objectives (absolute: 1pt for WP1, +3pt for WP2)
+        int objA = (mA.objectivesHit >= 1 ? 1 : 0) + (mA.objectivesHit >= 2 ? 3 : 0);
+        int objB = (mB.objectivesHit >= 1 ? 1 : 0) + (mB.objectivesHit >= 2 ? 3 : 0);
+        if (objA > 0) { ptsA += objA; winsA.add("obj:" + objA); }
+        if (objB > 0) { ptsB += objB; winsB.add("obj:" + objB); }
+
+        // Depth (2pts: more negative = stealthier)
+        if (mA.avgDepth < mB.avgDepth) { ptsA += 2; winsA.add("depth:2"); }
+        else if (mB.avgDepth < mA.avgDepth) { ptsB += 2; winsB.add("depth:2"); }
+
+        // Peak depth (1pt)
+        if (mA.peakDepthShallowest < mB.peakDepthShallowest) { ptsA++; winsA.add("peakDep:1"); }
+        else if (mB.peakDepthShallowest < mA.peakDepthShallowest) { ptsB++; winsB.add("peakDep:1"); }
+
+        // Noise (1pt each: lower = stealthier)
+        if (mA.avgNoiseDb < mB.avgNoiseDb) { ptsA++; winsA.add("noise:1"); }
+        else if (mB.avgNoiseDb < mA.avgNoiseDb) { ptsB++; winsB.add("noise:1"); }
+        if (mA.peakNoiseDb < mB.peakNoiseDb) { ptsA++; winsA.add("peakNs:1"); }
+        else if (mB.peakNoiseDb < mA.peakNoiseDb) { ptsB++; winsB.add("peakNs:1"); }
+
+        // Speed (1pt: faster = better)
+        if (mA.avgSpeed > mB.avgSpeed) { ptsA++; winsA.add("speed:1"); }
+        else if (mB.avgSpeed > mA.avgSpeed) { ptsB++; winsB.add("speed:1"); }
+
+        // Normal patrol % (1pt)
+        if (mA.normalPatrolPct > mB.normalPatrolPct) { ptsA++; winsA.add("patrol:1"); }
+        else if (mB.normalPatrolPct > mA.normalPatrolPct) { ptsB++; winsB.add("patrol:1"); }
+
+        // Late damage (1pt)
+        boolean aUndamaged = mA.timeOfFirstDamage < 0;
+        boolean bUndamaged = mB.timeOfFirstDamage < 0;
+        if (aUndamaged && !bUndamaged) { ptsA++; winsA.add("noDmg:1"); }
+        else if (bUndamaged && !aUndamaged) { ptsB++; winsB.add("noDmg:1"); }
+        else if (!aUndamaged && !bUndamaged && mA.timeOfFirstDamage > mB.timeOfFirstDamage) { ptsA++; winsA.add("lateDmg:1"); }
+        else if (!aUndamaged && !bUndamaged && mB.timeOfFirstDamage > mA.timeOfFirstDamage) { ptsB++; winsB.add("lateDmg:1"); }
+
+        // Survive (2pts)
+        boolean aSurvived = mA.timeToDeath < 0;
+        boolean bSurvived = mB.timeToDeath < 0;
+        if (aSurvived && !bSurvived) { ptsA += 2; winsA.add("survive:2"); }
+        else if (bSurvived && !aSurvived) { ptsB += 2; winsB.add("survive:2"); }
+        else if (!aSurvived && !bSurvived && mA.timeToDeath > mB.timeToDeath) { ptsA += 2; winsA.add("survive:2"); }
+        else if (!aSurvived && !bSurvived && mB.timeToDeath > mA.timeToDeath) { ptsB += 2; winsB.add("survive:2"); }
+
+        return new SeedScore(ptsA, winsA, ptsB, winsB);
+    }
 
     public record Metrics(
             // Navigation
@@ -105,7 +199,9 @@ public class SubmarineCompetition {
     }
 
     /**
-     * Runs one competitor on one seed and collects metrics.
+     * Runs one competitor on one seed using SimulationLoop + NavMetricsTracker.
+     * This is the same simulation path used by the live viewer, ensuring
+     * identical results whether running headless or with the UI.
      */
     static Metrics runOne(Supplier<SubmarineController> factory, long seed,
                            int durationTicks, Objectives objectives) {
@@ -114,21 +210,6 @@ public class SubmarineCompetition {
         var terrain = world.terrain();
 
         var controller = factory.get();
-        var sp = world.spawnPoints().get(0);
-        double heading = WorldGenerator.findSafeHeading(terrain, sp.x(), sp.y());
-        if (Double.isNaN(heading)) {
-            heading = Math.atan2(-sp.x(), -sp.y());
-            if (heading < 0) heading += 2 * Math.PI;
-        }
-
-        var physics = new SubmarinePhysics();
-        var entity = new SubmarineEntity(
-                VehicleConfig.submarine(), 0, controller,
-                sp, heading, java.awt.Color.BLUE, 1000);
-
-        var context = new MatchContext(config, terrain, world.thermalLayers(),
-                world.currentField());
-        controller.onMatchStart(context);
 
         // Inject objectives if provided
         if (objectives != null) {
@@ -142,215 +223,35 @@ public class SubmarineCompetition {
             ));
         }
 
-        // Objective tracking (sequential: WP1 must be hit before WP2 counts)
-        double closestToObj1 = Double.MAX_VALUE;
-        double closestToObj2AfterObj1 = Double.MAX_VALUE;
-        double OBJ_HIT_RADIUS = 400.0;
-        long obj1HitTick = -1;
+        var sim = new SimulationLoop();
+        sim.setSpeedMultiplier(1_000_000); // run as fast as possible
 
-        // Tracking state
-        double totalDepth = 0;
-        double totalNoiseDb = 0;
-        double totalSpeed = 0;
-        double peakShallowest = Double.NEGATIVE_INFINITY;
-        double peakNoiseDb = Double.NEGATIVE_INFINITY;
-        int aliveTicks = 0;
-        double timeOfFirstDamage = -1;
-        double timeToDeath = -1;
-        int normalTicks = 0;
+        var tracker = new NavMetricsTracker(objectives, 0);
+        var controllers = List.<SubmarineController>of(controller);
+        var configs = List.of(VehicleConfig.submarine());
 
-        // Waypoint tracking
-        int waypointsReached = 0;
-        int waypointsAttempted = 0;
-        double timeToFirstWaypoint = -1;
-        double totalHitDistance = 0;
-        int currentChain = 0;
-        int longestChain = 0;
-
-        double[] currentTargetWp = null;
-
-        double startX = sp.x(), startY = sp.y();
-        double totalDistTraveled = 0;
-        double straightLineProgress = 0;
-        double lastX = sp.x(), lastY = sp.y();
-
-        for (int t = 0; t < durationTicks; t++) {
-            var pose = new Pose(new Vec3(entity.x(), entity.y(), entity.z()),
-                    entity.heading(), entity.pitch(), 0);
-            var vel = new Velocity(
-                    new Vec3(entity.speed() * Math.sin(entity.heading()),
-                             entity.speed() * Math.cos(entity.heading()),
-                             entity.verticalSpeed()),
-                    Vec3.ZERO);
-            var state = new SubmarineState(pose, vel, entity.hp(), 0);
-            var env = new EnvironmentSnapshot(terrain, List.of(), world.currentField());
-            var input = new SimpleInput(t, 1.0 / TICKS_PER_SECOND, state, env,
-                    List.of(), List.of(), 0);
-            var output = new SimpleOutput();
-            controller.onTick(input, output);
-
-            entity.setThrottle(output.throttle);
-            entity.setRudder(output.rudder);
-            entity.setSternPlanes(output.sternPlanes);
-            entity.setBallast(output.ballast);
-            physics.step(entity, 1.0 / TICKS_PER_SECOND, terrain, world.currentField(),
-                    config.battleArea());
-
-            if (entity.hp() <= 0 || entity.forfeited()) {
-                if (timeToDeath < 0) timeToDeath = t / (double) TICKS_PER_SECOND;
-                break;
+        var listener = new SimulationListener() {
+            @Override
+            public void onTick(long tick, List<SubmarineSnapshot> submarines) {
+                tracker.onTick(tick, submarines);
+                if (submarines.isEmpty()) return;
+                var s = submarines.getFirst();
+                if (s.hp() <= 0 || s.forfeited()) sim.stop();
+                if (tracker.objectivesHit() >= 2) sim.stop();
+                if (tick >= durationTicks) sim.stop();
             }
-            aliveTicks = t + 1;
-
-            // Stop early if both objectives reached
-            if (obj1HitTick >= 0 && closestToObj2AfterObj1 < OBJ_HIT_RADIUS) {
-                break;
+            @Override public void onMatchEnd() {
+                tracker.onMatchEnd();
             }
+        };
 
-            // Distance
-            double dx = entity.x() - lastX;
-            double dy = entity.y() - lastY;
-            totalDistTraveled += Math.sqrt(dx * dx + dy * dy);
-            lastX = entity.x();
-            lastY = entity.y();
+        var thread = new Thread(() -> sim.run(world, controllers, configs, listener));
+        thread.start();
+        try { thread.join(120_000); } catch (InterruptedException e) {}
+        sim.stop();
+        try { thread.join(5000); } catch (InterruptedException e) {}
 
-            // Depth
-            double depth = entity.z();
-            totalDepth += depth;
-            if (depth > peakShallowest) peakShallowest = depth;
-
-            // Noise (dB directly from physics)
-            double noiseDb = entity.sourceLevelDb();
-            totalNoiseDb += noiseDb;
-            if (noiseDb > peakNoiseDb) peakNoiseDb = noiseDb;
-
-            // Speed
-            totalSpeed += entity.speed();
-
-            // Objective proximity (sequential: track WP2 only after WP1 hit)
-            if (objectives != null) {
-                double d1 = Math.hypot(entity.x() - objectives.x1, entity.y() - objectives.y1);
-                if (d1 < closestToObj1) closestToObj1 = d1;
-                if (obj1HitTick < 0 && d1 < OBJ_HIT_RADIUS) obj1HitTick = t;
-                if (obj1HitTick >= 0) {
-                    double d2 = Math.hypot(entity.x() - objectives.x2, entity.y() - objectives.y2);
-                    if (d2 < closestToObj2AfterObj1) closestToObj2AfterObj1 = d2;
-                }
-            }
-
-            // Damage tracking
-            if (entity.hp() < 1000 && timeOfFirstDamage < 0) {
-                timeOfFirstDamage = t / (double) TICKS_PER_SECOND;
-            }
-
-            // Status tracking
-            String status = entity.status();
-            if (status == null || status.isEmpty()) {
-                normalTicks++;
-            } else {
-                // Strip floor/gap suffix
-                int fIdx = status.indexOf(" f:");
-                String key = fIdx >= 0 ? status.substring(0, fIdx) : status;
-                // Count as "normal" if it's a regular patrol state (P, P/A with high gap, etc.)
-                // Count as abnormal if it's emergency, avoiding, pull-up, etc.
-                if (!key.contains("EMERGENCY") && !key.contains("AVOIDING")
-                        && !key.contains("PULL UP") && !key.contains("SHALLOW")
-                        && !key.contains("THREE-PT") && !key.contains("DANGER")) {
-                    normalTicks++;
-                }
-            }
-
-            // Waypoint tracking: score high-level strategic waypoints when available.
-            var publishedWaypoints = output.strategicWaypoints.isEmpty()
-                    ? output.waypoints
-                    : output.strategicWaypoints;
-            if (!publishedWaypoints.isEmpty()) {
-                Waypoint activeWp = null;
-                for (var wp : publishedWaypoints) {
-                    if (wp.active()) {
-                        activeWp = wp;
-                        break;
-                    }
-                }
-
-                if (activeWp != null) {
-                    if (currentTargetWp == null) {
-                        currentTargetWp = new double[]{activeWp.x(), activeWp.y()};
-                        waypointsAttempted++;
-                    } else {
-                        double wpDist = Math.sqrt(
-                                Math.pow(activeWp.x() - currentTargetWp[0], 2)
-                                + Math.pow(activeWp.y() - currentTargetWp[1], 2));
-                        if (wpDist > 300) {
-                            double distToOld = Math.sqrt(
-                                    Math.pow(entity.x() - currentTargetWp[0], 2)
-                                    + Math.pow(entity.y() - currentTargetWp[1], 2));
-                            if (distToOld < 400) {
-                                waypointsReached++;
-                                totalHitDistance += distToOld;
-                                currentChain++;
-                                if (currentChain > longestChain) longestChain = currentChain;
-                                if (timeToFirstWaypoint < 0) {
-                                    timeToFirstWaypoint = t / (double) TICKS_PER_SECOND;
-                                }
-                            } else {
-                                currentChain = 0;
-                            }
-                            currentTargetWp = new double[]{activeWp.x(), activeWp.y()};
-                            waypointsAttempted++;
-                        }
-                    }
-                }
-            }
-        }
-
-        // Final waypoint check
-        if (currentTargetWp != null) {
-            double distToFinal = Math.sqrt(
-                    Math.pow(entity.x() - currentTargetWp[0], 2)
-                    + Math.pow(entity.y() - currentTargetWp[1], 2));
-            if (distToFinal < 400) {
-                waypointsReached++;
-                totalHitDistance += distToFinal;
-                currentChain++;
-                if (currentChain > longestChain) longestChain = currentChain;
-                if (timeToFirstWaypoint < 0) {
-                    timeToFirstWaypoint = aliveTicks / (double) TICKS_PER_SECOND;
-                }
-            }
-        }
-
-        // Compute path efficiency: progress toward first strategic waypoint
-        // vs total distance traveled
-        double progressDist = Math.sqrt(Math.pow(entity.x() - startX, 2)
-                + Math.pow(entity.y() - startY, 2));
-        double pathEff = totalDistTraveled > 0 ? progressDist / totalDistTraveled : 0;
-
-        double avgHitDist = waypointsReached > 0 ? totalHitDistance / waypointsReached : -1;
-        // Sequential: WP2 only counts if WP1 was hit first
-        // (tracked during the sim via obj1HitTick)
-        int objectivesHit = obj1HitTick >= 0 ? 1 : 0;
-        if (obj1HitTick >= 0 && closestToObj2AfterObj1 < OBJ_HIT_RADIUS) objectivesHit = 2;
-
-        return new Metrics(
-                longestChain,
-                avgHitDist,
-                waypointsReached,
-                waypointsAttempted,
-                timeToFirstWaypoint,
-                objectivesHit,
-                closestToObj1,
-                closestToObj2AfterObj1,
-                aliveTicks > 0 ? totalDepth / aliveTicks : 0,
-                peakShallowest,
-                aliveTicks > 0 ? totalNoiseDb / aliveTicks : 0,
-                peakNoiseDb,
-                aliveTicks > 0 ? totalSpeed / aliveTicks : 0,
-                pathEff,
-                aliveTicks > 0 ? 100.0 * normalTicks / aliveTicks : 0,
-                timeOfFirstDamage,
-                timeToDeath
-        );
+        return tracker.getMetrics();
     }
 
     /**
@@ -441,108 +342,44 @@ public class SubmarineCompetition {
             ));
         }
 
-        // Count wins per scored metric.
-        // Chain, WpHit, and PEff are shown for information but not scored:
-        // they reward short-distance waypoints rather than strategic quality.
+        // Per-seed H2H scoring using the shared scoreNavSeed() method
+        // (same scoring as the live viewer uses)
         var winCounts = new LinkedHashMap<String, Integer>();
         for (var comp : competitors) winCounts.put(comp.name(), 0);
 
-        // Scoring: absolute objective points + relative metric wins.
-        //
-        // Per seed, each competitor earns:
-        //   - 1 pt for reaching objective WP1
-        //   - 3 pts total for reaching both WP1 then WP2 (in order)
-        //   These are absolute: you earn them regardless of what the opponent does.
-        //
-        // Plus relative head-to-head wins on other metrics:
-        //   Depth: 2 pts. Not dying: 2 pts. Everything else: 1 pt.
+        if (competitors.size() == 2) {
+            String nameA = competitors.get(0).name();
+            String nameB = competitors.get(1).name();
 
-        // Add absolute objective points per seed
-        for (var comp : competitors) {
-            int objPoints = 0;
-            for (var result : allResults) {
-                if (!result.competitorName().equals(comp.name())) continue;
-                var m = result.metrics();
-                if (m.objectivesHit >= 1) objPoints += 1;  // 1 pt for WP1
-                if (m.objectivesHit >= 2) objPoints += 3;  // 3 pts for WP2
-            }
-            winCounts.merge(comp.name(), objPoints, Integer::sum);
-        }
+            System.out.println();
+            System.out.println("=".repeat(120));
+            System.out.println("PER-SEED H2H SCORING");
+            System.out.println("=".repeat(120));
 
-        // Per-seed bonus: 1 pt for fastest completion (both objectives)
-        for (long seed : seeds) {
-            double bestTime = Double.MAX_VALUE;
-            String bestComp = null;
-            for (var comp : competitors) {
-                var result = allResults.stream()
-                        .filter(r -> r.seed() == seed && r.competitorName().equals(comp.name()))
-                        .findFirst();
-                if (result.isPresent() && result.get().metrics().objectivesHit == 2) {
-                    // Completion time = aliveTicks (sim stopped on completion)
-                    // Use closestToObj2 as proxy: lower = reached it earlier in the sim
-                    // Actually, just compare total sim time (shorter = faster completion)
-                    double time = result.get().metrics().avgSpeed > 0
-                            ? result.get().metrics().pathEfficiency : Double.MAX_VALUE;
-                    // Better: use the raw alive ticks. Not stored directly, but
-                    // objectivesHit==2 means sim stopped early. Earlier stop = fewer
-                    // ticks = better. We don't have ticks in Metrics, so approximate
-                    // via total distance / avg speed.
-                    // For simplicity: whoever completed gets the point if opponent didn't.
-                    // If both completed, we need completion time. Let's just check if
-                    // this competitor completed and the other didn't.
-                    bestComp = comp.name(); // at least one completed
-                }
-            }
-            // Award 1 pt to each competitor that completed (tie if both did)
-            for (var comp : competitors) {
-                var result = allResults.stream()
-                        .filter(r -> r.seed() == seed && r.competitorName().equals(comp.name()))
-                        .findFirst();
-                if (result.isPresent() && result.get().metrics().objectivesHit == 2) {
-                    winCounts.merge(comp.name(), 1, Integer::sum);
-                }
-            }
-        }
+            for (long seed : seeds) {
+                var mA = allResults.stream()
+                        .filter(r -> r.seed() == seed && r.competitorName().equals(nameA))
+                        .findFirst().orElseThrow().metrics();
+                var mB = allResults.stream()
+                        .filter(r -> r.seed() == seed && r.competitorName().equals(nameB))
+                        .findFirst().orElseThrow().metrics();
 
-        // Add relative metric wins (head-to-head on averages)
-        for (var comp : competitors) {
-            var m = avgMetrics.get(comp.name());
-            for (var other : competitors) {
-                if (other.name().equals(comp.name())) continue;
-                var o = avgMetrics.get(other.name());
-                int wins = 0;
-                // Stealth: 2 pts for avg depth, 1 pt each for the rest
-                if (m.avgDepth < o.avgDepth) wins += 2;
-                if (m.peakDepthShallowest < o.peakDepthShallowest) wins++;
-                if (m.avgNoiseDb < o.avgNoiseDb) wins++;
-                if (m.peakNoiseDb < o.peakNoiseDb) wins++;
-                // Efficiency: 1 pt each
-                if (m.avgSpeed > o.avgSpeed) wins++;
-                if (m.normalPatrolPct > o.normalPatrolPct) wins++;
-                // Survivability: 2 pts for not dying, 1 pt for first damage
-                if (m.timeOfFirstDamage > o.timeOfFirstDamage || (m.timeOfFirstDamage < 0 && o.timeOfFirstDamage >= 0)) wins++;
-                if (m.timeToDeath < 0 && o.timeToDeath >= 0) wins += 2;
-                else if (m.timeToDeath >= 0 && o.timeToDeath >= 0 && m.timeToDeath > o.timeToDeath) wins += 2;
-                winCounts.merge(comp.name(), wins, Integer::sum);
-            }
-        }
+                var score = scoreNavSeed(mA, mB);
+                winCounts.merge(nameA, score.pointsA(), Integer::sum);
+                winCounts.merge(nameB, score.pointsB(), Integer::sum);
 
-        for (var comp : competitors) {
-            var m = avgMetrics.get(comp.name());
-            System.out.printf("%-20s", comp.name());
-            printAggregateMetricsValues(m, aggregated.get(comp.name()));
-            System.out.printf("  %dpts%n", winCounts.get(comp.name()));
+                System.out.printf("Seed #%s:  %s %dpts (%s)  |  %s %dpts (%s)%n",
+                        Long.toHexString(seed).substring(0, Math.min(8, Long.toHexString(seed).length())),
+                        nameA, score.pointsA(), String.join(", ", score.breakdownA()),
+                        nameB, score.pointsB(), String.join(", ", score.breakdownB()));
+            }
         }
 
         System.out.println();
-        System.out.println("Legend: Chain=longest strategic wp chain (info only), HitAcc=avg strategic arrival dist (SCORED, lower=better),");
-        System.out.println("  WpHit=strategic waypoints reached (info only), 1stWP=time to first strategic wp (SCORED, lower=better),");
-        System.out.println("  AvgDep/PeakDp=depth (SCORED, more negative=stealthier),");
-        System.out.println("  AvgNs/PeakN=noise dB (SCORED, lower=stealthier), Spd=avg speed (SCORED),");
-        System.out.println("  PEff=path efficiency (info only), Norm%=time in normal patrol (SCORED),");
-        System.out.println("  1stDmg=time to first damage (SCORED, higher=better, -=none),");
-        System.out.println("  Death=time to death (SCORED, higher=better, -=survived)");
-        System.out.println("  Wins counted on 10 scored metrics (excludes Chain, WpHit, PEff)");
+        System.out.println("NAV TOTALS:");
+        for (var comp : competitors) {
+            System.out.printf("  %-20s %dpts%n", comp.name(), winCounts.get(comp.name()));
+        }
 
         return winCounts;
     }
@@ -739,11 +576,11 @@ public class SubmarineCompetition {
     // ── Main entry point ─────────────────────────────────────────────
 
     /**
-     * Usage: SubmarineCompetition [numSeeds] [durationSeconds]
+     * Usage: SubmarineCompetition [masterSeed_hex]
      *
-     * With no arguments: runs 10 random seeds for 5 minutes each.
-     * numSeeds: number of random seeds to generate (default 10).
-     * durationSeconds: simulation duration per seed in seconds (default 300).
+     * With no arguments: generates a random master seed for a standard competition.
+     * With a hex seed: runs a reproducible standard competition with that master seed.
+     * The master seed deterministically generates all match seeds.
      */
     public static void main(String[] args) {
         var competitors = List.of(
@@ -751,51 +588,28 @@ public class SubmarineCompetition {
                 new Competitor("ClaudeAttackSub", ClaudeAttackSub::new)
         );
 
-        int numSeeds = args.length > 0 ? Integer.parseInt(args[0]) : 10;
-        int durationSec = args.length > 1 ? Integer.parseInt(args[1]) : DEFAULT_DURATION / TICKS_PER_SECOND;
+        long masterSeed = args.length > 0
+                ? Long.parseUnsignedLong(args[0], 16)
+                : java.util.concurrent.ThreadLocalRandom.current().nextLong();
 
-        long[] seeds = new long[numSeeds];
-        for (int i = 0; i < numSeeds; i++) {
-            seeds[i] = java.util.concurrent.ThreadLocalRandom.current().nextLong();
-        }
+        var format = CompetitionFormat.standard(masterSeed);
 
-        System.out.printf("Competition: %d random seeds, %ds per seed%n", numSeeds, durationSec);
-        System.out.print("Seeds:");
-        for (long s : seeds) System.out.printf(" %s", Long.toHexString(s));
+        System.out.printf("Competition: master seed %s, %d nav seeds, %ds nav / %ds combat%n",
+                Long.toHexString(masterSeed), format.navSeeds(),
+                format.navDurationSeconds(), format.combatDurationSeconds());
+        System.out.print("Match seeds:");
+        for (long s : format.matchSeeds()) System.out.printf(" %s", Long.toHexString(s));
         System.out.println("\n");
 
         // Navigation scenario
-        var navPoints = compete(competitors, seeds, TICKS_PER_SECOND * durationSec);
+        var navPoints = compete(competitors, format.matchSeeds(),
+                TICKS_PER_SECOND * format.navDurationSeconds());
 
         System.out.println();
 
-        // Combat scenario (10 min per match, enough for detection + firing solution)
-        runCombatScenario(competitors, seeds, TICKS_PER_SECOND * 600, navPoints);
+        // Combat scenario
+        runCombatScenario(competitors, format.matchSeeds(),
+                TICKS_PER_SECOND * format.combatDurationSeconds(), navPoints);
     }
 
-    // ── Lightweight SubmarineInput/Output for running controllers ────
-
-    record SimpleInput(long tick, double deltaTimeSeconds,
-                       SubmarineState self, EnvironmentSnapshot environment,
-                       List<SonarContact> sonarContacts,
-                       List<SonarContact> activeSonarReturns,
-                       int activeSonarCooldownTicks)
-            implements SubmarineInput {}
-
-    static final class SimpleOutput implements SubmarineOutput {
-        double rudder, sternPlanes, throttle, ballast;
-        boolean pinged;
-        final ArrayList<Waypoint> waypoints = new ArrayList<>();
-        final ArrayList<Waypoint> strategicWaypoints = new ArrayList<>();
-
-        @Override public void setRudder(double value) { rudder = value; }
-        @Override public void setSternPlanes(double value) { sternPlanes = value; }
-        @Override public void setThrottle(double value) { throttle = value; }
-        @Override public void setBallast(double value) { ballast = value; }
-        @Override public void activeSonarPing() { pinged = true; }
-        @Override public void setStatus(String s) {}
-        @Override public void publishWaypoint(Waypoint wp) { waypoints.add(wp); }
-        @Override public void publishStrategicWaypoint(Waypoint wp, Purpose purpose) { strategicWaypoints.add(wp); }
-        @Override public void publishContactEstimate(ContactEstimate e) {}
-    }
 }
