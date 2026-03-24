@@ -120,6 +120,8 @@ final class SimConfigState extends BaseAppState {
                     v -> simManager.pauseOnDeath = v);
             addToggle(window, "Pause on torpedo solution", simManager.pauseOnTorpedoSolution,
                     v -> simManager.pauseOnTorpedoSolution = v);
+            addToggle(window, "Pause on torpedo launch", simManager.pauseOnTorpedoLaunch,
+                    v -> simManager.pauseOnTorpedoLaunch = v);
             addToggle(window, "Inject competition objectives", simManager.injectObjectives,
                     v -> simManager.injectObjectives = v);
         }

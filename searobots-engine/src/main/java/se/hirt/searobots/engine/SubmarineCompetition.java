@@ -423,12 +423,16 @@ public class SubmarineCompetition {
 
     // ── Combat scenario ──────────────────────────────────────────────
 
-    record CombatResult(String winner, String loser, String reason, int points, long ticks) {}
+    /**
+     * Combat result: points for each competitor + description.
+     * Scoring: kill enemy = 5pts, survive = 5pts. Max 10pts per side.
+     */
+    record CombatResult(int pointsA, int pointsB, String description, long ticks) {}
 
     /**
-     * Pits two competitors head-to-head on a seed. Stops when one sub gets
-     * a firing solution, one dies, or time runs out.
-     * Winner gets 1 pt (2 pts if behind the opponent when getting the solution).
+     * Pits two competitors head-to-head on a seed. Match runs to completion
+     * (or time limit). Both sides score independently: 5pts for killing the
+     * enemy, 5pts for surviving.
      */
     static CombatResult runCombat(Supplier<SubmarineController> factoryA, String nameA,
                                    Supplier<SubmarineController> factoryB, String nameB,
@@ -444,58 +448,21 @@ public class SubmarineCompetition {
         List<SubmarineController> controllers = List.of(ctrlA, ctrlB);
         List<VehicleConfig> configs = List.of(VehicleConfig.submarine(), VehicleConfig.submarine());
 
-        String[] winner = {null};
-        String[] loser = {null};
-        String[] reason = {null};
-        int[] points = {0};
+        boolean[] aAlive = {true}, bAlive = {true};
         long[] endTick = {durationTicks};
 
         var listener = new SimulationListener() {
             @Override
-            public void onTick(long tick, List<SubmarineSnapshot> submarines, List<se.hirt.searobots.engine.TorpedoSnapshot> torpedoes) {
-                if (submarines.size() < 2 || winner[0] != null) return;
+            public void onTick(long tick, List<SubmarineSnapshot> submarines, List<TorpedoSnapshot> torpedoes) {
+                if (submarines.size() < 2) return;
                 var s0 = submarines.get(0);
                 var s1 = submarines.get(1);
 
-                // Check firing solutions
-                if (s0.firingSolution() != null) {
-                    winner[0] = nameA;
-                    loser[0] = nameB;
-                    reason[0] = "FIRING SOLUTION";
-                    points[0] = isBehind(s0, s1) ? 2 : 1;
-                    endTick[0] = tick;
-                    sim.stop();
-                } else if (s1.firingSolution() != null) {
-                    winner[0] = nameB;
-                    loser[0] = nameA;
-                    reason[0] = "FIRING SOLUTION";
-                    points[0] = isBehind(s1, s0) ? 2 : 1;
-                    endTick[0] = tick;
-                    sim.stop();
-                }
+                aAlive[0] = s0.hp() > 0 && !s0.forfeited();
+                bAlive[0] = s1.hp() > 0 && !s1.forfeited();
 
-                // Check death or forfeit (left battle area)
-                boolean s0out = s0.hp() <= 0 || s0.forfeited();
-                boolean s1out = s1.hp() <= 0 || s1.forfeited();
-                if (s0out && !s1out) {
-                    winner[0] = nameB;
-                    loser[0] = nameA;
-                    reason[0] = nameA + (s0.forfeited() ? " LEFT ARENA" : " DIED");
-                    points[0] = 1;
-                    endTick[0] = tick;
-                    sim.stop();
-                } else if (s1out && !s0out) {
-                    winner[0] = nameA;
-                    loser[0] = nameB;
-                    reason[0] = nameB + (s1.forfeited() ? " LEFT ARENA" : " DIED");
-                    points[0] = 1;
-                    endTick[0] = tick;
-                    sim.stop();
-                } else if (s0out && s1out) {
-                    reason[0] = "BOTH OUT";
-                    endTick[0] = tick;
-                    sim.stop();
-                }
+                // End match early if both are dead
+                if (!aAlive[0] && !bAlive[0]) { endTick[0] = tick; sim.stop(); }
 
                 if (tick >= durationTicks) sim.stop();
             }
@@ -509,8 +476,15 @@ public class SubmarineCompetition {
         sim.stop();
         try { thread.join(5000); } catch (InterruptedException e) {}
 
-        if (winner[0] == null && reason[0] == null) reason[0] = "TIMEOUT";
-        return new CombatResult(winner[0], loser[0], reason[0], points[0], endTick[0]);
+        // Score: kill=5pts, survive=5pts
+        int ptsA = 0, ptsB = 0;
+        var reasons = new ArrayList<String>();
+        if (!bAlive[0]) { ptsA += 5; reasons.add(nameA + " KILLED " + nameB); }
+        if (!aAlive[0]) { ptsB += 5; reasons.add(nameB + " KILLED " + nameA); }
+        if (aAlive[0]) { ptsA += 5; reasons.add(nameA + " SURVIVED"); }
+        if (bAlive[0]) { ptsB += 5; reasons.add(nameB + " SURVIVED"); }
+
+        return new CombatResult(ptsA, ptsB, String.join(", ", reasons), endTick[0]);
     }
 
     /** Returns true if attacker is within 60° of the target's stern arc. */
@@ -544,15 +518,12 @@ public class SubmarineCompetition {
                     var result = runCombat(a.factory(), a.name(), b.factory(), b.name(),
                             seed, durationTicks);
 
-                    System.out.printf("  %-18s vs %-18s -> %s%n",
-                            a.name(), b.name(),
-                            result.winner() != null
-                                    ? result.winner() + " wins (" + result.points() + "pt, " + result.reason() + ", " + result.ticks() / 50 + "s)"
-                                    : result.reason());
+                    System.out.printf("  %-18s vs %-18s -> %s (%ds)  [%s:%dpt %s:%dpt]%n",
+                            a.name(), b.name(), result.description(), result.ticks() / 50,
+                            a.name(), result.pointsA(), b.name(), result.pointsB());
 
-                    if (result.winner() != null) {
-                        combatPoints.merge(result.winner(), result.points(), Integer::sum);
-                    }
+                    combatPoints.merge(a.name(), result.pointsA(), Integer::sum);
+                    combatPoints.merge(b.name(), result.pointsB(), Integer::sum);
                 }
             }
         }

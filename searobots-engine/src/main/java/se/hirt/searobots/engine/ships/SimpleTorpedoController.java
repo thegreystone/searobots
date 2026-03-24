@@ -119,8 +119,8 @@ public class SimpleTorpedoController implements TorpedoController {
             // Active contact but not terminal: blend toward target depth
             desiredZ = pos.z() + (targetZ - pos.z()) * 0.05;
         } else if (!Double.isNaN(targetZ) && targetZ < 0) {
-            // No active contact: gently approach mission data depth
-            desiredZ = pos.z() + (targetZ - pos.z()) * 0.01;
+            // No active contact: approach mission data depth at moderate rate
+            desiredZ = pos.z() + (targetZ - pos.z()) * 0.03;
         }
 
         // Terrain avoidance (go UP only, unless in terminal phase)

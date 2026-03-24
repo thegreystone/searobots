@@ -273,53 +273,43 @@ final class CompetitionRunner {
         var controllers = List.<SubmarineController>of(ctrlA, ctrlB);
         var configs = List.of(VehicleConfig.submarine(), VehicleConfig.submarine());
 
-        long[] combatStartMs = {System.currentTimeMillis()};
+        // Track final state of each sub for end-of-match scoring
+        boolean[] aAlive = {true}, bAlive = {true};
+
         var listener = new SimulationListener() {
             @Override
             public void onTick(long tick, List<SubmarineSnapshot> submarines, List<se.hirt.searobots.engine.TorpedoSnapshot> torpedoes) {
                 if (cancelled) { sim.stop(); return; }
-                if (tick == 0) {
-                    System.out.printf("[comp] First combat tick after %dms%n",
-                            System.currentTimeMillis() - combatStartMs[0]);
-                }
                 simManager.fanOutTick(tick, submarines);
                 if (submarines.size() < 2) return;
                 var s0 = submarines.get(0);
                 var s1 = submarines.get(1);
 
-                // Check firing solutions
-                if (s0.firingSolution() != null) {
-                    int pts = isBehind(s0, s1) ? 2 : 1;
-                    combatPoints.merge(phase.nameA(), pts, Integer::sum);
-                    matchResult = phase.nameA() + " FIRING SOLUTION (" + pts + "pt)";
-                    sim.stop();
-                } else if (s1.firingSolution() != null) {
-                    int pts = isBehind(s1, s0) ? 2 : 1;
-                    combatPoints.merge(phase.nameB(), pts, Integer::sum);
-                    matchResult = phase.nameB() + " FIRING SOLUTION (" + pts + "pt)";
-                    sim.stop();
-                }
+                aAlive[0] = s0.hp() > 0 && !s0.forfeited();
+                bAlive[0] = s1.hp() > 0 && !s1.forfeited();
 
-                boolean s0out = s0.hp() <= 0 || s0.forfeited();
-                boolean s1out = s1.hp() <= 0 || s1.forfeited();
-                if (s0out && !s1out) {
-                    combatPoints.merge(phase.nameB(), 1, Integer::sum);
-                    matchResult = phase.nameA() + (s0.forfeited() ? " LEFT ARENA" : " DIED");
-                    sim.stop();
-                } else if (s1out && !s0out) {
-                    combatPoints.merge(phase.nameA(), 1, Integer::sum);
-                    matchResult = phase.nameB() + (s1.forfeited() ? " LEFT ARENA" : " DIED");
-                    sim.stop();
-                } else if (s0out && s1out) {
-                    matchResult = "BOTH OUT";
-                    sim.stop();
-                }
+                // End match early if both are dead
+                if (!aAlive[0] && !bAlive[0]) sim.stop();
 
                 if (tick >= combatDurationTicks) sim.stop();
             }
 
             @Override public void onMatchEnd() {
-                if (matchResult == null) matchResult = "TIMEOUT";
+                // Scoring: kill enemy = 5pts, survive = 5pts
+                int ptsA = 0, ptsB = 0;
+                var reasons = new java.util.ArrayList<String>();
+
+                if (!bAlive[0]) { ptsA += 5; reasons.add(shortName(phase.nameA()) + " KILLED " + shortName(phase.nameB())); }
+                if (!aAlive[0]) { ptsB += 5; reasons.add(shortName(phase.nameB()) + " KILLED " + shortName(phase.nameA())); }
+                if (aAlive[0]) { ptsA += 5; reasons.add(shortName(phase.nameA()) + " SURVIVED"); }
+                if (bAlive[0]) { ptsB += 5; reasons.add(shortName(phase.nameB()) + " SURVIVED"); }
+
+                combatPoints.merge(phase.nameA(), ptsA, Integer::sum);
+                combatPoints.merge(phase.nameB(), ptsB, Integer::sum);
+
+                matchResult = String.join(", ", reasons)
+                        + String.format(" (%s:%dpt %s:%dpt)",
+                            shortName(phase.nameA()), ptsA, shortName(phase.nameB()), ptsB);
                 String combatLog = shortName(phase.nameA()) + " vs " + shortName(phase.nameB()) + ": " + matchResult;
                 log.add(combatLog);
                 viewer.addDetailLine(combatLog);
@@ -327,7 +317,7 @@ final class CompetitionRunner {
                 matchDone = true;
 
                 if (!cancelled) {
-                    System.out.printf("[comp] Phase done, advancing in 1.5s%n");
+                    System.out.printf("[comp] Combat done: %s%n", matchResult);
                     currentPhase++;
                     viewer.scheduleDelayed(1500, () -> { if (!cancelled) runNextPhase(); });
                 }

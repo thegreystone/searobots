@@ -168,15 +168,33 @@ public final class SimulationLoop {
                     if (cmd != null) {
                         entity.clearPendingTorpedoLaunch();
                         // Launch in the submarine's current heading direction,
-                        // at the sub's speed + ejection boost
-                        double launchHdg = entity.heading(); // torpedo exits along sub's heading
+                        // at the sub's speed + ejection boost.
+                        // Alternate port/starboard tubes (offset ~3m from centerline)
+                        double launchHdg = entity.heading();
                         double launchPitch = entity.pitch();
                         double ejectionSpeed = 3.0; // m/s additional from tube ejection
-                        double fwd = entity.vehicleConfig().hullHalfLength() + 2; // just clear the bow
+                        // Use the same local frame as the collision system
+                        double sinH = Math.sin(launchHdg);
+                        double cosH = Math.cos(launchHdg);
+                        double sinP = Math.sin(launchPitch);
+                        double cosP = Math.cos(launchPitch);
+                        // Forward: bow direction (same as terrain collision points)
+                        double fwdX = sinH * cosP, fwdY = cosH * cosP, fwdZ = sinP;
+                        // Right: perpendicular in horizontal plane
+                        double rightX = cosH, rightY = -sinH;
+
+                        // Launch from the bow collision point, pulled back one torpedo length
+                        double bowDist = 33.5; // same as SubmarinePhysics
+                        double torpBack = 6.0; // pull back from bow tip
+                        double tubeLateral = 2.0; // port/starboard offset
+                        boolean portTube = (nextTorpedoId % 2 == 0);
+                        double latSign = portTube ? -1.0 : 1.0;
+
+                        double spawnFwd = bowDist - torpBack;
                         var launchPos = new Vec3(
-                                entity.x() + Math.sin(launchHdg) * fwd,
-                                entity.y() + Math.cos(launchHdg) * fwd,
-                                entity.z());
+                                entity.x() + fwdX * spawnFwd + rightX * latSign * tubeLateral,
+                                entity.y() + fwdY * spawnFwd + rightY * latSign * tubeLateral,
+                                entity.z() + fwdZ * spawnFwd - 1.5); // below hull centerline
                         double fuseR = Math.clamp(cmd.fuseRadius(),
                                 config.minFuseRadius(), config.maxFuseRadius());
 

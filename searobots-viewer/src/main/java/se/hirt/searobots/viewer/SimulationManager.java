@@ -24,6 +24,7 @@ final class SimulationManager {
     // Pause-on-event flags
     volatile boolean pauseOnDeath;
     volatile boolean pauseOnTorpedoSolution;
+    volatile boolean pauseOnTorpedoLaunch;
     volatile boolean injectObjectives;
     private boolean torpedoSolutionTriggered;
     private final java.util.Set<Integer> deadEntities =
@@ -83,6 +84,19 @@ final class SimulationManager {
                             System.out.printf("TORPEDO SOLUTION at tick %d: %s target=[%.0f,%.0f] hdg=%.0f spd=%.1f q=%.2f%n",
                                     tick, sub.name(), sol.targetX(), sol.targetY(),
                                     Math.toDegrees(sol.targetHeading()), sol.targetSpeed(), sol.quality());
+                            break;
+                        }
+                    }
+                }
+
+                // Pause on torpedo launch
+                if (pauseOnTorpedoLaunch && torpedoes != null && !torpedoes.isEmpty()) {
+                    // Check for new torpedoes (fuel near max = just launched)
+                    for (var t : torpedoes) {
+                        if (t.fuelRemaining() > 119.0) { // just launched (120s max fuel)
+                            sim.setPaused(true);
+                            System.out.printf("TORPEDO LAUNCHED at tick %d: torpedo %d from sub %d%n",
+                                    tick, t.id(), t.ownerId());
                             break;
                         }
                     }

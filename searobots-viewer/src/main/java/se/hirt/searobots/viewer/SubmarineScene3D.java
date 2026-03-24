@@ -336,21 +336,30 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
         modelNode.setLocalRotation(new Quaternion().fromAngles(-FastMath.HALF_PI, 0, 0));
         // modelNode is a template for cloning - don't attach to rootNode
 
-        // Load torpedo model template
+        // Load torpedo model template (scaled to ~5m, sub is ~75m so torpedo is ~1/15th)
         torpedoModelNode = new Node("torpedoTemplate");
         try {
             Spatial torpHull = assetManager.loadModel("models/torpedo.obj");
-            torpHull.setLocalScale(1f);
+            torpHull.setLocalScale(0.15f); // slightly exaggerated for visibility
+            // Center the model: Y origin is at 1.57, shift it to geometric center
+            torpHull.setLocalTranslation(0, -1.57f * 0.15f, 0);
+            // Disable backface culling on all geometries (propeller visible from both sides)
+            torpHull.depthFirstTraversal(spatial -> {
+                if (spatial instanceof Geometry g) {
+                    g.getMaterial().getAdditionalRenderState().setFaceCullMode(
+                            com.jme3.material.RenderState.FaceCullMode.Off);
+                }
+            });
             torpedoModelNode.attachChild(torpHull);
-            System.out.println("Loaded torpedo.obj");
+            System.out.println("Loaded torpedo.obj (scale 0.07)");
         } catch (Exception e) {
-            // Fallback: small yellow cylinder
+            // Fallback: small yellow elongated sphere
             var cyl = new com.jme3.scene.shape.Sphere(8, 8, 1f);
             Geometry ph = new Geometry("torpPlaceholder", cyl);
             Material mat = new Material(assetManager, "Common/MatDefs/Misc/Unshaded.j3md");
             mat.setColor("Color", ColorRGBA.Yellow);
             ph.setMaterial(mat);
-            ph.setLocalScale(0.25f, 2.5f, 0.25f); // elongated along Y
+            ph.setLocalScale(0.25f, 2.5f, 0.25f);
             torpedoModelNode.attachChild(ph);
             System.out.println("Using torpedo placeholder geometry");
         }
@@ -393,7 +402,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
                 "[1-6] Speed  [0] Max  [P] Pause  [N] Step  [F11] Fullscreen\n" +
                 "[Tab] Cycle sub  [V] Camera  [Space] New map  [Esc] Menu\n" +
                 "[T] Trails  [R] Route  [E] Contacts  [W] Waypoints  [G] Strategic\n" +
-                "[B] Collision  [D] Pause on death  [F] Pause on solution\n" +
+                "[B] Collision  [D] Pause death  [F] Pause solution  [L] Pause launch\n" +
                 "[I] Score details  [F2] Config  [F3] Render  [Ctrl+C] Copy seed");
         float keysWidth = keysText.getLineWidth();
         float keysHeight = keysText.getHeight();
@@ -619,9 +628,10 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
             if (sim != null) sim.stepOnce();
         }, "StepOnce");
 
-        // D: toggle pause on death, F: toggle pause on firing solution
+        // D: pause on death, F: pause on firing solution, L: pause on torpedo launch
         inputManager.addMapping("TogglePauseOnDeath", new KeyTrigger(KeyInput.KEY_D));
         inputManager.addMapping("TogglePauseOnSolution", new KeyTrigger(KeyInput.KEY_F));
+        inputManager.addMapping("TogglePauseOnLaunch", new KeyTrigger(KeyInput.KEY_L));
         inputManager.addListener((ActionListener) (name, isPressed, tpf) -> {
             if (!isPressed || dialogOpen) return;
             switch (name) {
@@ -633,8 +643,12 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
                     standaloneSimManager.pauseOnTorpedoSolution = !standaloneSimManager.pauseOnTorpedoSolution;
                     System.out.println("Pause on torpedo solution: " + (standaloneSimManager.pauseOnTorpedoSolution ? "ON" : "OFF"));
                 }
+                case "TogglePauseOnLaunch" -> {
+                    standaloneSimManager.pauseOnTorpedoLaunch = !standaloneSimManager.pauseOnTorpedoLaunch;
+                    System.out.println("Pause on torpedo launch: " + (standaloneSimManager.pauseOnTorpedoLaunch ? "ON" : "OFF"));
+                }
             }
-        }, "TogglePauseOnDeath", "TogglePauseOnSolution");
+        }, "TogglePauseOnDeath", "TogglePauseOnSolution", "TogglePauseOnLaunch");
 
         // 1-6, 0: speed multipliers
         inputManager.addMapping("Speed1", new KeyTrigger(KeyInput.KEY_1));
@@ -967,6 +981,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
                 if (showCompetitionDetails) sb.append("[I] Details  ");
                 if (standaloneSimManager != null && standaloneSimManager.pauseOnDeath) sb.append("[D] Death  ");
                 if (standaloneSimManager != null && standaloneSimManager.pauseOnTorpedoSolution) sb.append("[F] Solution  ");
+                if (standaloneSimManager != null && standaloneSimManager.pauseOnTorpedoLaunch) sb.append("[L] Launch  ");
                 toggleStatusText.setText(sb.toString());
                 toggleStatusText.setColor(new ColorRGBA(0.3f, 1f, 0.4f, 0.9f));
                 toggleStatusText.setLocalTranslation(
@@ -1217,6 +1232,16 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 
     private void updateHud() {
         var snapshots = latestSnapshots;
+        var torpSnapshots = latestTorpedoSnapshots;
+
+        // Check if selected entity is a torpedo
+        var torpSnap = torpSnapshots.stream()
+                .filter(t -> t.id() == selectedSubId && t.alive()).findFirst().orElse(null);
+        if (torpSnap != null) {
+            updateTorpedoHud(torpSnap);
+            return;
+        }
+
         var snap = snapshots.stream()
                 .filter(s -> s.id() == selectedSubId).findFirst().orElse(null);
         if (snap == null) {
@@ -1265,6 +1290,31 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 
         // Tactical info panel (top right)
         updateTacticalHud(snap, pos);
+    }
+
+    private void updateTorpedoHud(TorpedoSnapshot ts) {
+        var pos = ts.pose().position();
+        double hdgDeg = Math.toDegrees(ts.pose().heading());
+        if (hdgDeg < 0) hdgDeg += 360;
+        double pitchDeg = Math.toDegrees(ts.pose().pitch());
+        long tick = latestTick;
+        var elapsed = java.time.Duration.ofMillis((long) (tick * 1000.0 / 50));
+
+        // Find owner name
+        String ownerName = "?";
+        for (var s : latestSnapshots) {
+            if (s.id() == ts.ownerId()) { ownerName = s.name(); break; }
+        }
+
+        hudText.setText(String.format(
+                "TORPEDO #%d (from %s)  |  Speed: %.1f m/s  Depth: %.0f m\n" +
+                "Heading: %03.0f\u00b0  Pitch: %+.1f\u00b0  Fuel: %.0fs  Noise: %.0f dB\n" +
+                "Tick: %d  Elapsed: %02d:%02d:%02d  Cam: %s",
+                ts.id(), ownerName, ts.speed(), -pos.z(),
+                hdgDeg, pitchDeg, ts.fuelRemaining(), ts.sourceLevelDb(),
+                tick, elapsed.toHoursPart(), elapsed.toMinutesPart(), elapsed.toSecondsPart(),
+                cameraMode.label()));
+        tacticalText.setText("");
     }
 
     private void updateTacticalHud(SubmarineSnapshot snap, Vec3 pos) {
@@ -1908,6 +1958,12 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
                 Quaternion currentRot = torpNode.getLocalRotation();
                 currentRot.slerp(targetRot, lerpFactor);
                 torpNode.setLocalRotation(currentRot);
+            }
+            // Spin torpedo propeller (based on fuel/thrust, not speed)
+            Spatial torpProp = findChild(torpNode, "Propeller");
+            if (torpProp == null) torpProp = findChild(torpNode, "propeller");
+            if (torpProp != null && ts.fuelRemaining() > 0) {
+                torpProp.rotate(0, tpf * 15f, 0);
             }
             // Torpedo collision cylinder (B key)
             Geometry torpCollGeom = torpedoCollisionGeoms.get(ts.id());

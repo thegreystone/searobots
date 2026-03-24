@@ -437,8 +437,11 @@ public final class ClaudeAttackSub implements SubmarineController {
         if (leadBearing < 0) leadBearing += 2 * Math.PI;
 
         // Build mission data with target info
+        // Target depth: we don't know it precisely, use our own depth as best estimate
+        // The torpedo will use active sonar to refine once close
+        double targetDepth = pos.z();
         String missionData = String.format("%.0f,%.0f,%.0f,%.4f,%.1f",
-                leadX, leadY, pos.z(), // target at our depth
+                leadX, leadY, targetDepth,
                 Double.isNaN(trackedHeading) ? 0 : trackedHeading,
                 trackedSpeed > 0 ? trackedSpeed : 5.0);
 
