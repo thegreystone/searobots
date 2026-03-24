@@ -287,7 +287,7 @@ class NavigationSimTest {
 
         var listener = new SimulationListener() {
             @Override
-            public void onTick(long tick, List<SubmarineSnapshot> submarines) {
+            public void onTick(long tick, List<SubmarineSnapshot> submarines, List<se.hirt.searobots.engine.TorpedoSnapshot> torpedoes) {
                 ticked[0] = true;
                 if (tick % 100 == 0 && submarines.size() >= 2) {
                     var s0 = submarines.get(0);
@@ -535,7 +535,7 @@ class NavigationSimTest {
 
         var listener = new SimulationListener() {
             @Override
-            public void onTick(long tick, List<SubmarineSnapshot> submarines) {
+            public void onTick(long tick, List<SubmarineSnapshot> submarines, List<se.hirt.searobots.engine.TorpedoSnapshot> torpedoes) {
                 ticked[0] = true;
                 if (submarines.size() >= 2) {
                     finalHp[0] = submarines.get(0).hp();
@@ -613,7 +613,7 @@ class NavigationSimTest {
 
         var listener = new SimulationListener() {
             @Override
-            public void onTick(long tick, List<SubmarineSnapshot> submarines) {
+            public void onTick(long tick, List<SubmarineSnapshot> submarines, List<se.hirt.searobots.engine.TorpedoSnapshot> torpedoes) {
                 tickCount[0]++;
                 for (int i = 0; i < Math.min(subCount, submarines.size()); i++) {
                     var s = submarines.get(i);
@@ -803,7 +803,7 @@ class NavigationSimTest {
 
         var listener = new SimulationListener() {
             @Override
-            public void onTick(long tick, List<SubmarineSnapshot> submarines) {
+            public void onTick(long tick, List<SubmarineSnapshot> submarines, List<se.hirt.searobots.engine.TorpedoSnapshot> torpedoes) {
                 if (submarines.isEmpty()) return;
                 var s = submarines.get(0);
                 var pos = s.pose().position();

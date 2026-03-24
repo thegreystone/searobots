@@ -66,12 +66,21 @@ public interface SubmarineOutput {
      * Publishes a torpedo firing solution for viewer visualization and
      * match recording. Call once per tick when the controller believes
      * it has a viable solution; do not call when there is no solution.
-     * Has no effect on the simulation (torpedoes are not yet implemented).
      *
      * <p>The controller decides its own criteria for what constitutes a
      * valid firing solution (range, uncertainty, target geometry, environment).
      */
     default void publishFiringSolution(FiringSolution solution) {}
+
+    /**
+     * Launches a torpedo. The torpedo is autonomous after launch: no
+     * further communication is possible. The mission data string is the
+     * only information the torpedo controller receives from the sub.
+     *
+     * <p>Requires torpedoesRemaining > 0. Ignored if no torpedoes left.
+     * Creates a launch noise transient on the submarine.
+     */
+    default void launchTorpedo(TorpedoLaunchCommand command) {}
 
     /**
      * Engages or disengages the engine clutch. When disengaged, the prop

@@ -52,6 +52,10 @@ public final class SimulationLoop {
     private volatile State state = State.CREATED;
 
     private final List<SubmarineEntity> entities = new ArrayList<>();
+    private final List<TorpedoEntity> torpedoes = new ArrayList<>();
+    private final List<TorpedoEntity> pendingLaunches = new ArrayList<>();
+    private int nextTorpedoId = 1000; // torpedo IDs start at 1000 to avoid conflict with sub IDs
+    private final TorpedoPhysics torpedoPhysics = new TorpedoPhysics();
 
     public void run(GeneratedWorld world, List<SubmarineController> controllers,
                     List<VehicleConfig> vehicleConfigs, SimulationListener listener) {
@@ -81,6 +85,8 @@ public final class SimulationLoop {
 
         // Create entities at spawn points
         entities.clear();
+        torpedoes.clear();
+        pendingLaunches.clear();
         var spawns = world.spawnPoints();
         for (int i = 0; i < controllers.size(); i++) {
             var spawn = i < spawns.size() ? spawns.get(i) : spawns.getFirst();
@@ -101,6 +107,7 @@ public final class SimulationLoop {
             var vCfg = i < vehicleConfigs.size() ? vehicleConfigs.get(i) : VehicleConfig.submarine();
             var entity = new SubmarineEntity(vCfg, i, controllers.get(i), spawn, heading,
                     SUB_COLORS[i % SUB_COLORS.length], config.startingHp());
+            entity.setTorpedoesRemaining(config.torpedoCount());
             entities.add(entity);
         }
 
@@ -132,7 +139,7 @@ public final class SimulationLoop {
 
                 // Compute sonar contacts (based on current positions, before controller runs)
                 var sonarResults = sonar.computeContacts(
-                        currentTick, entities, world.terrain(), world.thermalLayers());
+                        currentTick, entities, torpedoes, world.terrain(), world.thermalLayers());
 
                 // Build input, call controller, advance physics
                 for (var entity : entities) {
@@ -155,23 +162,137 @@ public final class SimulationLoop {
                             config.battleArea());
                 }
 
+                // Process pending torpedo launches
+                for (var entity : entities) {
+                    var cmd = entity.pendingTorpedoLaunch();
+                    if (cmd != null) {
+                        entity.clearPendingTorpedoLaunch();
+                        // Launch in the submarine's current heading direction,
+                        // at the sub's speed + ejection boost
+                        double launchHdg = entity.heading(); // torpedo exits along sub's heading
+                        double launchPitch = entity.pitch();
+                        double ejectionSpeed = 3.0; // m/s additional from tube ejection
+                        double fwd = entity.vehicleConfig().hullHalfLength() + 2; // just clear the bow
+                        var launchPos = new Vec3(
+                                entity.x() + Math.sin(launchHdg) * fwd,
+                                entity.y() + Math.cos(launchHdg) * fwd,
+                                entity.z());
+                        double fuseR = Math.clamp(cmd.fuseRadius(),
+                                config.minFuseRadius(), config.maxFuseRadius());
+
+                        var torpCtrl = new se.hirt.searobots.engine.ships.SimpleTorpedoController();
+                        var torp = new TorpedoEntity(nextTorpedoId++, entity.id(),
+                                VehicleConfig.torpedo(), torpCtrl, launchPos,
+                                launchHdg, launchPitch, fuseR, entity.color());
+                        // Initial speed = sub speed + ejection
+                        torp.setSpeed(Math.max(entity.speed(), 0) + ejectionSpeed);
+
+                        var launchCtx = new TorpedoLaunchContext(
+                                config, world.terrain(), launchPos,
+                                launchHdg, launchPitch,
+                                cmd.missionData() != null ? cmd.missionData() : "");
+                        torpCtrl.onLaunch(launchCtx);
+                        pendingLaunches.add(torp);
+                    }
+                    entity.decrementLaunchTransient();
+                }
+                torpedoes.addAll(pendingLaunches);
+                pendingLaunches.clear();
+
+                // Torpedo controller + physics
+                for (var torp : torpedoes) {
+                    if (!torp.alive()) continue;
+
+                    // Manual detonation request
+                    if (torp.detonateRequested()) {
+                        handleDetonation(torp, entities, config);
+                        continue;
+                    }
+
+                    // Build torpedo input with sonar contacts
+                    var torpOutput = torp.createOutput();
+                    final long torpTick = tick;
+                    var torpSonar = sonarResults.getOrDefault(torp.id(),
+                            new SonarModel.SonarResult(List.of(), List.of(), 0));
+                    var torpInput = new TorpedoInput() {
+                        @Override public long tick() { return torpTick; }
+                        @Override public double deltaTimeSeconds() { return dt; }
+                        @Override public Pose self() { return torp.pose(); }
+                        @Override public Velocity velocity() { return torp.velocity(); }
+                        @Override public double speed() { return torp.speed(); }
+                        @Override public double fuelRemaining() { return torp.fuelRemaining(); }
+                        @Override public List<SonarContact> sonarContacts() { return torpSonar.passiveContacts(); }
+                        @Override public List<SonarContact> activeSonarReturns() { return torpSonar.activeReturns(); }
+                        @Override public int activeSonarCooldownTicks() { return torpSonar.cooldownTicks(); }
+                    };
+                    torp.controller().onTick(torpInput, torpOutput);
+
+                    // Check detonation request from controller
+                    if (torp.detonateRequested()) {
+                        handleDetonation(torp, entities, config);
+                        continue;
+                    }
+
+                    // Torpedo physics
+                    torpedoPhysics.step(torp, dt, world.terrain(), world.currentField(),
+                            config.battleArea());
+                }
+
+                // Proximity fuse check (only after arming delay)
+                for (var torp : torpedoes) {
+                    if (!torp.alive()) continue;
+                    torp.decrementArmingDelay();
+                    if (!torp.fuseArmed()) continue;
+                    for (var sub : entities) {
+                        if (sub.hp() <= 0 || sub.forfeited()) continue;
+                        double dist = Math.sqrt(
+                                Math.pow(torp.x() - sub.x(), 2) +
+                                Math.pow(torp.y() - sub.y(), 2) +
+                                Math.pow(torp.z() - sub.z(), 2));
+                        if (dist < torp.fuseRadius()) {
+                            System.out.printf("[Torpedo %d] PROXIMITY FUSE at tick %d, dist=%.1fm to sub %d (%s)%n",
+                                    torp.id(), tick, dist, sub.id(), sub.controller().name());
+                            handleDetonation(torp, entities, config);
+                            break;
+                        }
+                    }
+                }
+
+                // Remove dead torpedoes (log fate)
+                final long logTick = tick;
+                torpedoes.removeIf(t -> {
+                    if (t.alive()) return false;
+                    String fate = t.detonated() ? "DETONATED" : "LOST";
+                    if (!t.detonated()) {
+                        if (t.speed() < TorpedoEntity.minimumSpeed()) fate = "STALLED (sank)";
+                        else if (t.fuelRemaining() <= 0 && t.speed() < 1) fate = "FUEL DEPLETED (sank)";
+                        else fate = "TERRAIN/BOUNDARY";
+                    }
+                    System.out.printf("[Torpedo %d] %s at tick %d  pos=(%.0f,%.0f,%.0f) speed=%.1f fuel=%.1f%n",
+                            t.id(), fate, logTick, t.x(), t.y(), t.z(), t.speed(), t.fuelRemaining());
+                    return true;
+                });
+
                 // Sub-to-sub collision (ramming)
                 checkSubCollisions(entities);
 
-                // Snapshot before postTick clears pingRequested
+                // Snapshots before postTick clears pingRequested
                 var snapshots = entities.stream().map(SubmarineEntity::snapshot).toList();
+                var torpSnapshots = torpedoes.stream().map(TorpedoEntity::snapshot).toList();
 
                 // Clear per-tick published data after snapshot
                 entities.forEach(SubmarineEntity::clearContactEstimates);
                 entities.forEach(SubmarineEntity::clearWaypoints);
                 entities.forEach(SubmarineEntity::clearStrategicWaypoints);
                 entities.forEach(SubmarineEntity::clearFiringSolution);
+                torpedoes.forEach(TorpedoEntity::clearPingRequested);
 
                 // Post-tick: consume pings, tick cooldowns
                 sonar.postTick(entities);
+                torpedoes.forEach(TorpedoEntity::decrementSonarCooldown);
 
                 // Notify listener
-                listener.onTick(tick, snapshots);
+                listener.onTick(tick, snapshots, torpSnapshots);
 
                 // Timing
                 long sleepMs = (long) (1000.0 / config.tickRateHz() / speedMultiplier);
@@ -188,6 +309,57 @@ public final class SimulationLoop {
             listener.onMatchEnd();
         }
     }
+
+    // ── Torpedo explosion ────────────────────────────────────────────
+
+    private static final int EXPLOSION_BASE_DAMAGE = 500;
+    private static final double EXPLOSION_IMPULSE = 50.0; // m/s velocity change at zero range
+
+    private static void handleDetonation(TorpedoEntity torp, List<SubmarineEntity> subs,
+                                          MatchConfig config) {
+        torp.detonate();
+        double blastRadius = config.blastRadius();
+
+        for (var sub : subs) {
+            if (sub.hp() <= 0 || sub.forfeited()) continue;
+            double dx = sub.x() - torp.x();
+            double dy = sub.y() - torp.y();
+            double dz = sub.z() - torp.z();
+            double dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+
+            if (dist < blastRadius) {
+                // Quadratic falloff: (1 - d/r)^2
+                double falloff = (1.0 - dist / blastRadius);
+                falloff *= falloff;
+
+                // Damage
+                int damage = Math.max(1, (int) (EXPLOSION_BASE_DAMAGE * falloff));
+                sub.setHp(Math.max(0, sub.hp() - damage));
+
+                // Impulse: push sub away from blast
+                if (dist > 0.1) {
+                    double impulse = EXPLOSION_IMPULSE * falloff;
+                    double nx = dx / dist, ny = dy / dist, nz = dz / dist;
+
+                    // Linear impulse: velocity change
+                    double mass = sub.vehicleConfig().massSurge();
+                    sub.setSpeed(sub.speed() + impulse * (nx * Math.sin(sub.heading())
+                            + ny * Math.cos(sub.heading())));
+                    sub.setVerticalSpeed(sub.verticalSpeed() + impulse * nz);
+
+                    // Angular impulse: off-center hits disrupt heading/pitch
+                    // Cross product of blast direction with sub's forward axis
+                    double fwdX = Math.sin(sub.heading());
+                    double fwdY = Math.cos(sub.heading());
+                    double crossZ = nx * fwdY - ny * fwdX; // yaw torque
+                    sub.setYawRate(sub.yawRate() + crossZ * impulse * 0.1);
+                    sub.setPitchRate(sub.pitchRate() + nz * impulse * 0.05);
+                }
+            }
+        }
+    }
+
+    // ── Sub-to-sub collision ───────────────────────────────────────
 
     private static final double COLLISION_DAMAGE_FACTOR = 5.0;
 

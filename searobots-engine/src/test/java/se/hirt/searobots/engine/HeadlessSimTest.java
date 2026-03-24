@@ -38,8 +38,8 @@ class HeadlessSimTest {
 
         var listener = new SimulationListener() {
             @Override
-            public void onTick(long tick, List<SubmarineSnapshot> submarines) {
-                recorder.onTick(tick, submarines);
+            public void onTick(long tick, List<SubmarineSnapshot> submarines, List<se.hirt.searobots.engine.TorpedoSnapshot> torpedoes) {
+                recorder.onTick(tick, submarines, java.util.List.of());
                 if (tick % 500 == 0) {
                     var sb = new StringBuilder();
                     sb.append("t=").append(tick).append(" (").append(tick / 50).append("s)");

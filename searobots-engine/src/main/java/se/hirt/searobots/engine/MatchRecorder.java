@@ -98,7 +98,7 @@ public final class MatchRecorder implements SimulationListener {
     }
 
     @Override
-    public void onTick(long tick, List<SubmarineSnapshot> submarines) {
+    public void onTick(long tick, List<SubmarineSnapshot> submarines, List<se.hirt.searobots.engine.TorpedoSnapshot> torpedoes) {
         // Initialize HP tracking on first tick
         if (lastHp == null) {
             lastHp = new int[submarines.size()];

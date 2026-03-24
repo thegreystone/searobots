@@ -15,7 +15,7 @@ public class HeadlessRun {
 
         sim.run(world, controllers, configs, new SimulationListener() {
             @Override
-            public void onTick(long tick, List<SubmarineSnapshot> subs) {
+            public void onTick(long tick, List<SubmarineSnapshot> subs, List<TorpedoSnapshot> torpedoes) {
                 for (var s : subs) {
                     double yawDeg = Math.toDegrees(s.pose().heading());
                     double pitchDeg = Math.toDegrees(s.pose().pitch());

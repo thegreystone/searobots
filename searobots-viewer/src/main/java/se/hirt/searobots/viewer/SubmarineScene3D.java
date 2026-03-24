@@ -49,6 +49,7 @@ import se.hirt.searobots.engine.GeneratedWorld;
 import com.jme3.input.KeyInput;
 import com.jme3.input.controls.KeyTrigger;
 import se.hirt.searobots.engine.SubmarineSnapshot;
+import se.hirt.searobots.engine.TorpedoSnapshot;
 
 import java.nio.ByteBuffer;
 import java.util.HashMap;
@@ -70,6 +71,11 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 
     // Vehicle tracking
     private final Map<Integer, Node> subNodes = new HashMap<>();
+    // Torpedo 3D state
+    private Node torpedoModelNode; // template, loaded at init
+    private final Map<Integer, Node> torpedoNodes = new HashMap<>();
+    private final Map<Integer, Geometry> torpedoCollisionGeoms = new HashMap<>();
+    private volatile List<TorpedoSnapshot> latestTorpedoSnapshots = List.of();
     private volatile List<SubmarineSnapshot> latestSnapshots = List.of();
     private volatile long latestTick;
     private int selectedSubId = 0;
@@ -329,6 +335,26 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
         // Rotate so it faces along Z (model is built along Y axis)
         modelNode.setLocalRotation(new Quaternion().fromAngles(-FastMath.HALF_PI, 0, 0));
         // modelNode is a template for cloning - don't attach to rootNode
+
+        // Load torpedo model template
+        torpedoModelNode = new Node("torpedoTemplate");
+        try {
+            Spatial torpHull = assetManager.loadModel("models/torpedo.obj");
+            torpHull.setLocalScale(1f);
+            torpedoModelNode.attachChild(torpHull);
+            System.out.println("Loaded torpedo.obj");
+        } catch (Exception e) {
+            // Fallback: small yellow cylinder
+            var cyl = new com.jme3.scene.shape.Sphere(8, 8, 1f);
+            Geometry ph = new Geometry("torpPlaceholder", cyl);
+            Material mat = new Material(assetManager, "Common/MatDefs/Misc/Unshaded.j3md");
+            mat.setColor("Color", ColorRGBA.Yellow);
+            ph.setMaterial(mat);
+            ph.setLocalScale(0.25f, 2.5f, 0.25f); // elongated along Y
+            torpedoModelNode.attachChild(ph);
+            System.out.println("Using torpedo placeholder geometry");
+        }
+        torpedoModelNode.setLocalRotation(new Quaternion().fromAngles(-FastMath.HALF_PI, 0, 0));
 
         // HUD overlay - top left: sub telemetry
         hudText = new BitmapText(guiFont);
@@ -667,13 +693,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
             });
         }, "Fullscreen");
 
-        // M: toggle 2D map view with cross-fade
-        inputManager.addMapping("ToggleMap", new KeyTrigger(KeyInput.KEY_M));
-        inputManager.addListener((ActionListener) (name, isPressed, tpf) -> {
-            if (!isPressed) return;
-            var mapState = stateManager.getState(MapViewState.class);
-            if (mapState != null) mapState.toggle();
-        }, "ToggleMap");
+        // M: toggle 2D map view with cross-fade (registered here alongside other overlay keys)
 
         // +/- or =/- : zoom map (when map is visible)
         inputManager.addMapping("MapZoomIn", new KeyTrigger(KeyInput.KEY_EQUALS));
@@ -764,8 +784,12 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
             competitionScoreText.setText("");
             competitionPhaseText.setText("");
             competitionDetailText.setText("");
-            settings.setTitle("SeaRobots [seed: " + Long.toHexString(standaloneSeed) + "]");
-            getContext().restart();
+            // Update title without restarting the OpenGL context
+            try {
+                long win = org.lwjgl.glfw.GLFW.glfwGetCurrentContext();
+                org.lwjgl.glfw.GLFW.glfwSetWindowTitle(win,
+                        "SeaRobots [seed: " + Long.toHexString(standaloneSeed) + "]");
+            } catch (Exception e) { /* ignore */ }
             return null;
         });
         standaloneSimManager.stop();
@@ -797,8 +821,10 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
         var callbacks = new CompetitionRunner.ViewerCallbacks() {
             @Override public void setTitle(String title) {
                 enqueue(() -> {
-                    settings.setTitle(title);
-                    getContext().restart();
+                    try {
+                        long win = org.lwjgl.glfw.GLFW.glfwGetCurrentContext();
+                        org.lwjgl.glfw.GLFW.glfwSetWindowTitle(win, title);
+                    } catch (Exception e) { /* ignore */ }
                     return null;
                 });
             }
@@ -1006,8 +1032,9 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
     }
 
     @Override
-    public void onTick(long tick, List<SubmarineSnapshot> submarines) {
+    public void onTick(long tick, List<SubmarineSnapshot> submarines, List<se.hirt.searobots.engine.TorpedoSnapshot> torpedoes) {
         updateSubmarines(tick, submarines);
+        latestTorpedoSnapshots = torpedoes != null ? torpedoes : List.of();
     }
 
     @Override
@@ -1206,10 +1233,11 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
         var elapsed = java.time.Duration.ofMillis((long) (tick * 1000.0 / 50));
         var tod = startTime.plusSeconds((long) (tick / 50.0));
         hudText.setText(String.format(
-                "%s  |  Speed: %.1f kn  Depth: %.0f m  Throttle: %.0f%%  HP: %d\n" +
+                "%s  |  Speed: %.1f kn  Depth: %.0f m  Throttle: %.0f%%  HP: %d  Torps: %d\n" +
                 "Heading: %03.0f\u00b0  Pitch: %+.1f\u00b0  Roll: %+.1f\u00b0  Rudder: %+.0f%%  Planes: %+.0f%%\n" +
                 "Tick: %d  Elapsed: %02d:%02d:%02d  ToD: %s  Cam: %s",
                 snap.name(), snap.speed(), -pos.z(), snap.throttle() * 100, snap.hp(),
+                snap.torpedoesRemaining(),
                 hdgDeg, pitchDeg, rollDeg,
                 snap.rudder() * 100, snap.sternPlanes() * 100,
                 tick, elapsed.toHoursPart(), elapsed.toMinutesPart(), elapsed.toSecondsPart(),
@@ -1839,8 +1867,85 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
             }
         }
 
+        // ── Torpedo 3D rendering ──
+        var torpSnapshots = latestTorpedoSnapshots;
+        // Remove nodes for torpedoes that no longer exist
+        var activeTorpIds = torpSnapshots.stream().mapToInt(TorpedoSnapshot::id)
+                .boxed().collect(java.util.stream.Collectors.toSet());
+        torpedoNodes.entrySet().removeIf(entry -> {
+            if (!activeTorpIds.contains(entry.getKey())) {
+                entry.getValue().removeFromParent();
+                return true;
+            }
+            return false;
+        });
+
+        for (var ts : torpSnapshots) {
+            if (!ts.alive()) continue;
+            var tPos = ts.pose().position();
+            float tx = (float) tPos.x();
+            float ty = (float) tPos.z(); // sim Z -> JME Y
+            float tz = (float) -tPos.y(); // sim Y -> JME -Z
+
+            var targetPos = new Vector3f(tx, ty, tz);
+            float tHeading = (float) -ts.pose().heading() + FastMath.PI;
+            float tPitch = (float) ts.pose().pitch();
+            var targetRot = new Quaternion().fromAngles(
+                    -FastMath.HALF_PI - tPitch, tHeading, 0);
+
+            Node torpNode = torpedoNodes.get(ts.id());
+            if (torpNode == null) {
+                torpNode = (Node) torpedoModelNode.deepClone();
+                torpNode.setName("torpedo-" + ts.id());
+                torpedoNodes.put(ts.id(), torpNode);
+                rootNode.attachChild(torpNode);
+                torpNode.setLocalTranslation(targetPos);
+                torpNode.setLocalRotation(targetRot);
+            } else {
+                // Smooth interpolation
+                Vector3f currentPos = torpNode.getLocalTranslation();
+                torpNode.setLocalTranslation(currentPos.interpolateLocal(targetPos, lerpFactor));
+                Quaternion currentRot = torpNode.getLocalRotation();
+                currentRot.slerp(targetRot, lerpFactor);
+                torpNode.setLocalRotation(currentRot);
+            }
+            // Torpedo collision cylinder (B key)
+            Geometry torpCollGeom = torpedoCollisionGeoms.get(ts.id());
+            if (torpCollGeom == null) {
+                // Elongated sphere approximating a cylinder: 2.5m half-length, 0.25m radius
+                var sphere = new com.jme3.scene.shape.Sphere(12, 12, 1f);
+                torpCollGeom = new Geometry("torpColl-" + ts.id(), sphere);
+                Material collMat = new Material(assetManager, "Common/MatDefs/Misc/Unshaded.j3md");
+                collMat.setColor("Color", new ColorRGBA(1f, 1f, 0f, 0.2f));
+                collMat.getAdditionalRenderState().setBlendMode(RenderState.BlendMode.Alpha);
+                collMat.getAdditionalRenderState().setWireframe(true);
+                torpCollGeom.setMaterial(collMat);
+                torpCollGeom.setQueueBucket(RenderQueue.Bucket.Transparent);
+                rootNode.attachChild(torpCollGeom);
+                torpedoCollisionGeoms.put(ts.id(), torpCollGeom);
+            }
+            torpCollGeom.setCullHint(showCollisionEllipsoids ? Spatial.CullHint.Never : Spatial.CullHint.Always);
+            if (showCollisionEllipsoids) {
+                torpCollGeom.setLocalTranslation(targetPos);
+                torpCollGeom.setLocalRotation(targetRot);
+                // Scale: X=beam(0.25m), Y=length(2.5m), Z=height(0.25m)
+                torpCollGeom.setLocalScale(0.25f, 2.5f, 0.25f);
+            }
+        }
+
+        // Clean up collision geoms for removed torpedoes
+        torpedoCollisionGeoms.entrySet().removeIf(entry -> {
+            if (!activeTorpIds.contains(entry.getKey())) {
+                entry.getValue().removeFromParent();
+                return true;
+            }
+            return false;
+        });
+
         // Update orbit center tracking (used by Orbit mode and as fallback)
+        // Check both sub nodes and torpedo nodes
         Node selected = subNodes.get(selectedSubId);
+        if (selected == null) selected = torpedoNodes.get(selectedSubId);
         if (selected != null) {
             Vector3f targetPos = selected.getLocalTranslation();
             if (transitionTimer > 0) {
@@ -1875,7 +1980,13 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
         inputManager.addMapping("CycleSub", new KeyTrigger(KeyInput.KEY_TAB));
         inputManager.addListener((ActionListener) (name, isPressed, tpf) -> {
             if (isPressed && !dialogOpen && !latestSnapshots.isEmpty()) {
-                var ids = latestSnapshots.stream().mapToInt(SubmarineSnapshot::id).toArray();
+                // Merge sub + torpedo IDs for cycling
+                var subIds = latestSnapshots.stream().mapToInt(SubmarineSnapshot::id).boxed().toList();
+                var torpIds = latestTorpedoSnapshots.stream()
+                        .filter(TorpedoSnapshot::alive).mapToInt(TorpedoSnapshot::id).boxed().toList();
+                var allIds = new java.util.ArrayList<>(subIds);
+                allIds.addAll(torpIds);
+                var ids = allIds.stream().mapToInt(Integer::intValue).toArray();
                 int currentIdx = 0;
                 for (int i = 0; i < ids.length; i++) {
                     if (ids[i] == selectedSubId) { currentIdx = i; break; }
@@ -1930,6 +2041,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
         inputManager.addMapping("ToggleStrategic", new KeyTrigger(KeyInput.KEY_G));
         inputManager.addMapping("ToggleEllipsoids", new KeyTrigger(KeyInput.KEY_B));
         inputManager.addMapping("ToggleDetails", new KeyTrigger(KeyInput.KEY_I));
+        inputManager.addMapping("ToggleMap", new KeyTrigger(KeyInput.KEY_M));
         inputManager.addListener((ActionListener) (name, isPressed, tpf) -> {
             if (!isPressed || dialogOpen) return;
             switch (name) {
@@ -1940,8 +2052,12 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
                 case "ToggleStrategic" -> overlayConfig.strategicWaypoints = !overlayConfig.strategicWaypoints;
                 case "ToggleEllipsoids" -> showCollisionEllipsoids = !showCollisionEllipsoids;
                 case "ToggleDetails" -> { showCompetitionDetails = !showCompetitionDetails; updateDetailHud(); }
+                case "ToggleMap" -> {
+                    var mapState = standalone ? stateManager.getState(MapViewState.class) : null;
+                    if (mapState != null) mapState.toggle();
+                }
             }
-        }, "ToggleTrails", "ToggleRoute", "ToggleContacts", "ToggleWaypoints", "ToggleStrategic", "ToggleEllipsoids", "ToggleDetails");
+        }, "ToggleTrails", "ToggleRoute", "ToggleContacts", "ToggleWaypoints", "ToggleStrategic", "ToggleEllipsoids", "ToggleDetails", "ToggleMap");
 
         // Mouse orbit/zoom (Orbit and Free Look modes)
         inputManager.addMapping("OrbitLeft", new MouseAxisTrigger(MouseInput.AXIS_X, true));

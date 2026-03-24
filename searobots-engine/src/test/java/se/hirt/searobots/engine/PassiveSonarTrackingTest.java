@@ -263,7 +263,7 @@ class PassiveSonarTrackingTest {
 
         var listener = new SimulationListener() {
             @Override
-            public void onTick(long tick, List<SubmarineSnapshot> submarines) {
+            public void onTick(long tick, List<SubmarineSnapshot> submarines, List<se.hirt.searobots.engine.TorpedoSnapshot> torpedoes) {
                 ticked[0] = true;
                 if (tick % 100 == 0 && submarines.size() >= 2) {
                     var hunter = submarines.get(0);
@@ -358,7 +358,7 @@ class PassiveSonarTrackingTest {
 
         var listener = new SimulationListener() {
             @Override
-            public void onTick(long tick, List<SubmarineSnapshot> submarines) {
+            public void onTick(long tick, List<SubmarineSnapshot> submarines, List<se.hirt.searobots.engine.TorpedoSnapshot> torpedoes) {
                 ticked[0] = true;
                 if (tick % 100 == 0 && submarines.size() >= 2) {
                     var hunter = submarines.get(0);
@@ -536,7 +536,7 @@ class PassiveSonarTrackingTest {
 
         var listener = new SimulationListener() {
             @Override
-            public void onTick(long tick, List<SubmarineSnapshot> submarines) {
+            public void onTick(long tick, List<SubmarineSnapshot> submarines, List<se.hirt.searobots.engine.TorpedoSnapshot> torpedoes) {
                 ticked[0] = true;
                 if (tick % 100 == 0 && submarines.size() >= 2) {
                     var hunter = submarines.get(0);

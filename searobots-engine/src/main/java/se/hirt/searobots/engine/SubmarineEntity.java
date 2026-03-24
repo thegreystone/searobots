@@ -85,6 +85,11 @@ public final class SubmarineEntity implements SubmarineOutput {
     // firing solution (published by controller, cleared each tick)
     private FiringSolution firingSolution;
 
+    // torpedo state
+    private int torpedoesRemaining;
+    private TorpedoLaunchCommand pendingTorpedoLaunch;
+    private int launchTransientTicks; // noise spike after launch
+
     public SubmarineEntity(VehicleConfig vehicleConfig, int id, SubmarineController controller,
                            Vec3 spawn, double heading, Color color, int maxHp) {
         this.vehicleConfig = vehicleConfig;
@@ -155,6 +160,15 @@ public final class SubmarineEntity implements SubmarineOutput {
     }
 
     @Override
+    public void launchTorpedo(TorpedoLaunchCommand command) {
+        if (torpedoesRemaining > 0 && command != null && pendingTorpedoLaunch == null) {
+            pendingTorpedoLaunch = command;
+            torpedoesRemaining--;
+            launchTransientTicks = 75; // ~1.5 seconds noise spike
+        }
+    }
+
+    @Override
     public void publishStrategicWaypoint(Waypoint waypoint, Purpose purpose) {
         if (waypoint != null && purpose != null) {
             strategicWaypoints.add(new SubmarineSnapshot.StrategicWaypointViz(waypoint, purpose));
@@ -190,6 +204,14 @@ public final class SubmarineEntity implements SubmarineOutput {
 
     public boolean pingRequested() { return pingRequested; }
     public int activeSonarCooldown() { return activeSonarCooldown; }
+
+    // Torpedo launch
+    public int torpedoesRemaining() { return torpedoesRemaining; }
+    public void setTorpedoesRemaining(int n) { torpedoesRemaining = n; }
+    public TorpedoLaunchCommand pendingTorpedoLaunch() { return pendingTorpedoLaunch; }
+    public void clearPendingTorpedoLaunch() { pendingTorpedoLaunch = null; }
+    public int launchTransientTicks() { return launchTransientTicks; }
+    public void decrementLaunchTransient() { if (launchTransientTicks > 0) launchTransientTicks--; }
 
     public double rudder() { return rudder; }
     public double actualRudder() { return actualRudder; }
@@ -248,10 +270,11 @@ public final class SubmarineEntity implements SubmarineOutput {
         return new SubmarineSnapshot(id, controller.name(), pose(), velocity(), speed, color,
                 forfeited, hp, noiseLevel, sourceLevelDb,
                 throttle, rudder, sternPlanes, status, pingRequested,
+                torpedoesRemaining,
                 contactEstimates(), waypoints(), strategicWaypoints(), firingSolution);
     }
 
     public SubmarineState state() {
-        return new SubmarineState(pose(), velocity(), speed, hp, 0);
+        return new SubmarineState(pose(), velocity(), speed, hp, torpedoesRemaining);
     }
 }

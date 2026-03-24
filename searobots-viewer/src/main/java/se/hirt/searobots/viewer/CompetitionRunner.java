@@ -208,10 +208,10 @@ final class CompetitionRunner {
 
         var listener = new SimulationListener() {
             @Override
-            public void onTick(long tick, List<SubmarineSnapshot> submarines) {
+            public void onTick(long tick, List<SubmarineSnapshot> submarines, List<se.hirt.searobots.engine.TorpedoSnapshot> torpedoes) {
                 if (cancelled) { sim.stop(); return; }
                 simManager.fanOutTick(tick, submarines);
-                tracker.onTick(tick, submarines);
+                tracker.onTick(tick, submarines, java.util.List.of());
 
                 if (submarines.isEmpty()) return;
                 var s = submarines.getFirst();
@@ -276,7 +276,7 @@ final class CompetitionRunner {
         long[] combatStartMs = {System.currentTimeMillis()};
         var listener = new SimulationListener() {
             @Override
-            public void onTick(long tick, List<SubmarineSnapshot> submarines) {
+            public void onTick(long tick, List<SubmarineSnapshot> submarines, List<se.hirt.searobots.engine.TorpedoSnapshot> torpedoes) {
                 if (cancelled) { sim.stop(); return; }
                 if (tick == 0) {
                     System.out.printf("[comp] First combat tick after %dms%n",

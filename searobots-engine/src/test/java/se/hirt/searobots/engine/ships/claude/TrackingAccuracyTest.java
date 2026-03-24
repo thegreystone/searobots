@@ -25,7 +25,7 @@ class TrackingAccuracyTest {
 
         var listener = new SimulationListener() {
             @Override
-            public void onTick(long tick, List<SubmarineSnapshot> submarines) {
+            public void onTick(long tick, List<SubmarineSnapshot> submarines, List<se.hirt.searobots.engine.TorpedoSnapshot> torpedoes) {
                 if (tick % 250 != 0 || submarines.size() < 2) return;
                 var s0 = submarines.get(0);
                 var s1 = submarines.get(1);

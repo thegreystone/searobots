@@ -35,7 +35,7 @@ class ShallowDeathInvestigation {
 
         var listener = new SimulationListener() {
             @Override
-            public void onTick(long tick, List<SubmarineSnapshot> submarines) {
+            public void onTick(long tick, List<SubmarineSnapshot> submarines, List<se.hirt.searobots.engine.TorpedoSnapshot> torpedoes) {
                 if (submarines.isEmpty()) return;
                 var s0 = submarines.get(0);
                 var pos = s0.pose().position();

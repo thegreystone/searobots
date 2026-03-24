@@ -38,7 +38,7 @@ class RouteDeviationTest {
             String maxDeviationStatus = "";
 
             @Override
-            public void onTick(long tick, List<SubmarineSnapshot> submarines) {
+            public void onTick(long tick, List<SubmarineSnapshot> submarines, List<se.hirt.searobots.engine.TorpedoSnapshot> torpedoes) {
                 if (submarines.isEmpty() || dead) return;
                 var s0 = submarines.get(0);
                 if (s0.hp() <= 0) {

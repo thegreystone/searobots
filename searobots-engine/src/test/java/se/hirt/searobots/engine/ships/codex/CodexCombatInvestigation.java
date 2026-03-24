@@ -59,7 +59,7 @@ public final class CodexCombatInvestigation {
 
         var listener = new SimulationListener() {
             @Override
-            public void onTick(long tick, List<SubmarineSnapshot> submarines) {
+            public void onTick(long tick, List<SubmarineSnapshot> submarines, List<se.hirt.searobots.engine.TorpedoSnapshot> torpedoes) {
                 if (submarines.size() < 2) return;
 
                 var codex = submarines.get(0);

@@ -176,7 +176,7 @@ class ThreePointTurnDiagnosticTest {
             private boolean lastHasReverse = false;
 
             @Override
-            public void onTick(long tick, List<SubmarineSnapshot> submarines) {
+            public void onTick(long tick, List<SubmarineSnapshot> submarines, List<se.hirt.searobots.engine.TorpedoSnapshot> torpedoes) {
                 if (submarines.isEmpty()) return;
                 var s = submarines.get(0);
                 var pos = s.pose().position();

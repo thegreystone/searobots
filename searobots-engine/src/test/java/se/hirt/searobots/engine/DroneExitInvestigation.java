@@ -22,7 +22,7 @@ class DroneExitInvestigation {
             boolean droneForfeited = false;
 
             @Override
-            public void onTick(long tick, List<SubmarineSnapshot> submarines) {
+            public void onTick(long tick, List<SubmarineSnapshot> submarines, List<se.hirt.searobots.engine.TorpedoSnapshot> torpedoes) {
                 if (submarines.size() < 2) return;
                 var drone = submarines.get(1); // sub drone is index 1
 

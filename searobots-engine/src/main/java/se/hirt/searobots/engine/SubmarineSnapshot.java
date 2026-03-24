@@ -38,6 +38,7 @@ public record SubmarineSnapshot(int id, String name, Pose pose, Velocity velocit
                                  double sourceLevelDb,
                                  double throttle, double rudder, double sternPlanes,
                                  String status, boolean pingRequested,
+                                 int torpedoesRemaining,
                                  List<ContactEstimate> contactEstimates,
                                  List<Waypoint> waypoints,
                                  List<StrategicWaypointViz> strategicWaypoints,

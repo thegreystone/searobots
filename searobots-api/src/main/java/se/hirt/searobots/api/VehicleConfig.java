@@ -135,6 +135,62 @@ public record VehicleConfig(
         );
     }
 
+    /**
+     * Torpedo: 5m length, 0.5m diameter, ~300 kg.
+     * Max speed ~20 m/s (~39 knots). Highly maneuverable at speed,
+     * loses all control authority below ~3 m/s. Slightly negatively
+     * buoyant: relies on hydrodynamic lift to maintain depth.
+     * Very loud (~115 dB base), making passive sonar nearly useless
+     * but trivially detectable by targets.
+     */
+    public static VehicleConfig torpedo() {
+        double mass = 300;               // 300 kg
+        // Low drag for streamlined body: coasts for ~30-40s after fuel runs out.
+        // v_max = sqrt(thrust/drag) = 23 m/s (~45 knots).
+        double drag = 3.0;              // very low drag, torpedo-shaped
+        double vMax = 25.0;             // ~49 knots
+        return new VehicleConfig(
+            mass,                           // dryMass
+            100,                            // addedMassSurge (slender body)
+            mass * 1.0,                     // addedMassSway
+            mass * 0.8,                     // addedMassHeave
+            drag * vMax * vMax,             // maxThrust: drag * v_max^2
+            0.0,                            // reverseThrustFactor (no reverse)
+            0.0,                            // maxReverseSpeed
+            drag,                           // dragCoeff
+            drag * 5,                       // swayDragCoeff
+            0.5,                            // hullMomentArm (short body)
+            0.05,                           // rudderArea (m^2, very small fins)
+            2.0,                            // rudderArm (fins near tail of 5m body)
+            0.05,                           // planesArea (m^2, very small fins)
+            2.0,                            // planesArm
+            Math.toRadians(30),             // stallAngle
+            8.0,                            // rotationalInertia (high: long narrow body resists turning)
+            0,                              // ballastSlewRate (no ballast)
+            0,                              // ballastForceMax
+            0.5 * 1025 * 0.1 * 0.2 * 1.5,  // verticalDragCoeff (small cross-section)
+            1.0,                            // terrainClearance (torpedo is small)
+            2.5,                            // hullHalfLength (5m / 2)
+            0.25,                           // hullHalfBeam (0.5m / 2)
+            10.0,                           // collisionDamageFactor (torpedo is fragile)
+            0.0,                            // bounceSpeed (destroyed on terrain hit)
+            0.0,                            // propDragFactor
+            115.0,                      // baseSlDb (very loud propulsion)
+            5.0,                        // clutchDisengagedSlReduction
+            1.0,                        // speedNoiseDbPerMs
+            8.0,                        // baseCavitationSpeed
+            0.01,                       // cavitationDepthFactor
+            10.0,                       // cavitationMaxDb
+            5.0,                        // reverseCavitationDb
+            -30.0,                      // surfaceNoiseDepth
+            3.0,                        // surfaceNoiseDb
+            0,                          // ballastNoiseDb
+            0.5,                        // thrustSlewRate (fast spool-up)
+            false,                      // surfaceLocked
+            false                       // hasBallast
+        );
+    }
+
     /** Large noisy transport ship, max ~8 m/s, surface locked. */
     public static VehicleConfig surfaceShip() {
         double shipMass = 5_000_000;

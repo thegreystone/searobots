@@ -57,7 +57,7 @@ public final class NavMetricsTracker implements SimulationListener {
     }
 
     @Override
-    public void onTick(long tick, List<SubmarineSnapshot> submarines) {
+    public void onTick(long tick, List<SubmarineSnapshot> submarines, List<se.hirt.searobots.engine.TorpedoSnapshot> torpedoes) {
         if (finished || submarines.size() <= subIndex) return;
         var snap = submarines.get(subIndex);
         var pos = snap.pose().position();

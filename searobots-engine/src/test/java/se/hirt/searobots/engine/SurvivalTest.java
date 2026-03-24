@@ -37,7 +37,7 @@ public abstract class SurvivalTest extends AbstractControllerTest {
 
             var listener = new SimulationListener() {
                 @Override
-                public void onTick(long tick, List<SubmarineSnapshot> submarines) {
+                public void onTick(long tick, List<SubmarineSnapshot> submarines, List<se.hirt.searobots.engine.TorpedoSnapshot> torpedoes) {
                     if (submarines.size() < 2) return;
                     var s0 = submarines.get(0);
                     if (s0.hp() <= 0 && subAlive[0]) {

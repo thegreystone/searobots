@@ -147,9 +147,14 @@ final class MapRenderer implements se.hirt.searobots.engine.SimulationListener {
         this.pingAnimations.clear();
     }
 
+    // Torpedo state
+    private volatile List<se.hirt.searobots.engine.TorpedoSnapshot> torpedoSnapshots = List.of();
+
     @Override
-    public void onTick(long tick, List<se.hirt.searobots.engine.SubmarineSnapshot> submarines) {
+    public void onTick(long tick, List<se.hirt.searobots.engine.SubmarineSnapshot> submarines,
+                       List<se.hirt.searobots.engine.TorpedoSnapshot> torpedoes) {
         updateSubmarines(tick, submarines);
+        this.torpedoSnapshots = torpedoes != null ? torpedoes : List.of();
     }
 
     @Override
@@ -325,6 +330,7 @@ final class MapRenderer implements se.hirt.searobots.engine.SimulationListener {
         drawSubmarines(g2);
         if (overlayConfig.contactEstimates) drawContactEstimates(g2);
         if (overlayConfig.waypoints) drawWaypoints(g2);
+        drawTorpedoes(g2);
         drawPingAnimations(g2);
         drawDetectionHighlights(g2);
         drawFiringSolution(g2);
@@ -555,6 +561,55 @@ final class MapRenderer implements se.hirt.searobots.engine.SimulationListener {
                 ay = -dir.y() * arrowLen * 0.25 + dir.x() * arrowLen * 0.15;
                 g2.draw(new Line2D.Double(ex, ey, ex + ax, ey + ay));
             }
+        }
+    }
+
+    private void drawTorpedoes(Graphics2D g2) {
+        var torps = torpedoSnapshots;
+        if (torps.isEmpty()) return;
+
+        double size = 15 / pixelsPerMeter; // smaller than subs
+
+        for (var torp : torps) {
+            if (!torp.alive()) continue;
+            var pos = torp.pose().position();
+            double heading = torp.pose().heading();
+
+            var saved = g2.getTransform();
+            g2.translate(pos.x(), pos.y());
+            g2.rotate(-heading);
+
+            // Narrow diamond shape (torpedo profile)
+            var diamond = new Path2D.Double();
+            diamond.moveTo(0, size * 0.8);          // nose
+            diamond.lineTo(-size * 0.15, 0);        // port
+            diamond.lineTo(0, -size * 0.4);         // tail
+            diamond.lineTo(size * 0.15, 0);         // starboard
+            diamond.closePath();
+
+            Color c = torp.color();
+            g2.setColor(new Color(c.getRed(), c.getGreen(), c.getBlue(), 220));
+            g2.fill(diamond);
+            g2.setColor(new Color(255, 255, 255, 200));
+            g2.setStroke(new BasicStroke((float) (1.0 / pixelsPerMeter)));
+            g2.draw(diamond);
+
+            // Heading line (shows direction of travel)
+            g2.setColor(new Color(255, 200, 50, 180));
+            g2.draw(new Line2D.Double(0, size * 0.8, 0, size * 2.0));
+
+            g2.setTransform(saved);
+
+            // Trail: short dotted line behind torpedo
+            // (simple: just a line from current position backward along heading)
+            double trailLen = torp.speed() * 5; // 5 seconds of trail
+            double tx = pos.x() - Math.sin(heading) * trailLen;
+            double ty = pos.y() - Math.cos(heading) * trailLen;
+            g2.setColor(new Color(c.getRed(), c.getGreen(), c.getBlue(), 80));
+            g2.setStroke(new BasicStroke((float) (1.5 / pixelsPerMeter),
+                    BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND,
+                    0, new float[]{(float)(8/pixelsPerMeter), (float)(4/pixelsPerMeter)}, 0));
+            g2.draw(new Line2D.Double(pos.x(), pos.y(), tx, ty));
         }
     }
 
@@ -1012,7 +1067,7 @@ final class MapRenderer implements se.hirt.searobots.engine.SimulationListener {
             double pulseRadius = DETECTION_HIGHLIGHT_RADIUS * (0.5 + 0.5 * t); // grows slightly
 
             // Bright filled glow
-            int glowAlpha = (int) (fade * 100);
+            int glowAlpha = Math.clamp((int) (fade * 100), 0, 255);
             if (glowAlpha > 0) {
                 Color c = h.color();
                 g2.setColor(new Color(c.getRed(), c.getGreen(), c.getBlue(), glowAlpha));
@@ -1022,7 +1077,7 @@ final class MapRenderer implements se.hirt.searobots.engine.SimulationListener {
             }
 
             // Bright white ring
-            int ringAlpha = (int) (fade * 220);
+            int ringAlpha = Math.clamp((int) (fade * 220), 0, 255);
             if (ringAlpha > 0) {
                 g2.setColor(new Color(255, 255, 255, ringAlpha));
                 g2.setStroke(new BasicStroke((float) (2.5 / pixelsPerMeter),
@@ -1125,8 +1180,8 @@ final class MapRenderer implements se.hirt.searobots.engine.SimulationListener {
             double noiseDb = 80 + 20 * Math.log10(Math.max(noise, 0.001));
             int noiseR = (int) Math.clamp((noiseDb - 70) * 25.5, 0, 255);
             g2.setColor(new Color(Math.max(noiseR, 80), 200 - noiseR / 2, 50, 200));
-            g2.drawString(String.format("  noise:%3.0f dB  throttle:%+4.0f%%",
-                    noiseDb, throttle * 100), x, y);
+            g2.drawString(String.format("  noise:%3.0f dB  throttle:%+4.0f%%  torps:%d",
+                    noiseDb, throttle * 100, sub.torpedoesRemaining()), x, y);
             y += lineH;
 
             if (sub.status() != null && !sub.status().isEmpty()) {

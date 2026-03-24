@@ -57,10 +57,10 @@ final class SimulationManager {
 
         var fanOut = new SimulationListener() {
             @Override
-            public void onTick(long tick, List<SubmarineSnapshot> submarines) {
+            public void onTick(long tick, List<SubmarineSnapshot> submarines, List<se.hirt.searobots.engine.TorpedoSnapshot> torpedoes) {
                 // Fan out to all registered listeners
                 for (var l : listeners) {
-                    l.onTick(tick, submarines);
+                    l.onTick(tick, submarines, torpedoes);
                 }
 
                 // Pause-on-death
@@ -183,7 +183,7 @@ final class SimulationManager {
 
     void fanOutTick(long tick, List<SubmarineSnapshot> submarines) {
         for (var l : listeners) {
-            l.onTick(tick, submarines);
+            l.onTick(tick, submarines, java.util.List.of());
         }
     }
 

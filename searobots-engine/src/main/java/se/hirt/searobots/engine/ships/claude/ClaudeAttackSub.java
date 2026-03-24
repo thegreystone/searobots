@@ -66,6 +66,8 @@ public final class ClaudeAttackSub implements SubmarineController {
     private long lastCombatPlanTick = Long.MIN_VALUE / 4;
     private long lastPingTick = Long.MIN_VALUE / 4;
     private double lastCombatTargetX = Double.NaN, lastCombatTargetY = Double.NaN;
+    private long lastTorpedoLaunchTick = Long.MIN_VALUE / 4;
+    private static final long TORPEDO_REFIRE_COOLDOWN = 750; // 15 seconds between launches (2 tubes)
 
     // Public accessors for tests
     public enum State { PATROL, TRACKING, CHASE, RAM, EVADE }
@@ -216,8 +218,9 @@ public final class ClaudeAttackSub implements SubmarineController {
         // ── Active sonar ──
         handlePing(input, output, pos, tick);
 
-        // ── Firing solution ──
+        // ── Firing solution + torpedo launch ──
         publishFiringSolution(output, pos, tick);
+        launchTorpedoIfReady(input, output, pos, tick);
 
         // ── Contact estimate ──
         if (hasTrackedContact) {
@@ -397,6 +400,53 @@ public final class ClaudeAttackSub implements SubmarineController {
         output.publishFiringSolution(new FiringSolution(
                 trackedX, trackedY, trackedHeading,
                 trackedSpeed > 0 ? trackedSpeed : -1, quality));
+    }
+
+    private void launchTorpedoIfReady(SubmarineInput input, SubmarineOutput output,
+                                      Vec3 pos, long tick) {
+        if (input.self().torpedoesRemaining() <= 0) return;
+        if (tick < 500) return; // don't fire in the first 10 seconds
+        if (tick - lastTorpedoLaunchTick < TORPEDO_REFIRE_COOLDOWN) return;
+        if (!hasTrackedContact) return;
+        if (contactAlive < 0.50) return; // need solid contact
+        if (mode != Mode.CHASE) return; // only fire when actively chasing
+        if (!rangeConfirmedByActive) return; // need an active fix before firing
+
+        double dist = ClaudeAutopilot.hdist(pos.x(), pos.y(), trackedX, trackedY);
+        // Torpedo range: ~3000m at 25 m/s * 120s fuel.
+        // Min 500m (arming distance), max 2500m (need fuel margin for chase)
+        if (dist < 500 || dist > 2500) return;
+        if (uncertaintyRadius > 300) return;
+
+        // Compute bearing to target
+        double bearing = Math.atan2(trackedX - pos.x(), trackedY - pos.y());
+        if (bearing < 0) bearing += 2 * Math.PI;
+
+        // Lead the target: estimate where it will be when torpedo arrives
+        double torpSpeed = 25.0; // approximate torpedo speed
+        double timeToTarget = dist / torpSpeed;
+        double leadX, leadY;
+        if (!Double.isNaN(trackedHeading) && trackedSpeed > 0) {
+            leadX = trackedX + Math.sin(trackedHeading) * trackedSpeed * timeToTarget;
+            leadY = trackedY + Math.cos(trackedHeading) * trackedSpeed * timeToTarget;
+        } else {
+            leadX = trackedX;
+            leadY = trackedY;
+        }
+        double leadBearing = Math.atan2(leadX - pos.x(), leadY - pos.y());
+        if (leadBearing < 0) leadBearing += 2 * Math.PI;
+
+        // Build mission data with target info
+        String missionData = String.format("%.0f,%.0f,%.0f,%.4f,%.1f",
+                leadX, leadY, pos.z(), // target at our depth
+                Double.isNaN(trackedHeading) ? 0 : trackedHeading,
+                trackedSpeed > 0 ? trackedSpeed : 5.0);
+
+        output.launchTorpedo(new TorpedoLaunchCommand(
+                leadBearing, 0, 15.0, missionData));
+        lastTorpedoLaunchTick = tick;
+        System.out.printf("[Claude] Torpedo launched at tick %d, target=(%.0f,%.0f) dist=%.0fm%n",
+                tick, leadX, leadY, dist);
     }
 
     private boolean isBehindTarget(double x, double y) {

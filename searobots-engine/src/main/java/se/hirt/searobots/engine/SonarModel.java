@@ -80,7 +80,146 @@ public final class SonarModel {
      * Compute all sonar contacts for each entity this tick.
      * Returns a map from entity ID to its sonar result.
      */
+    /**
+     * Compute sonar contacts including torpedoes as sources and listeners.
+     */
     public Map<Integer, SonarResult> computeContacts(
+            long tick,
+            List<SubmarineEntity> entities,
+            List<TorpedoEntity> torpedoes,
+            TerrainMap terrain,
+            List<ThermalLayer> thermalLayers) {
+
+        // First: compute sub-to-sub contacts using the existing logic
+        var results = computeSubToSubContacts(tick, entities, terrain, thermalLayers);
+
+        // Second: torpedoes as additional noise sources for submarine listeners
+        // (subs hear torpedoes via passive sonar)
+        for (var listener : entities) {
+            if (listener.forfeited() || listener.hp() <= 0) continue;
+            var existing = results.get(listener.id());
+            var extraPassive = new ArrayList<>(existing.passiveContacts());
+
+            for (var torp : torpedoes) {
+                if (!torp.alive()) continue;
+                var contact = passiveDetect(listener.x(), listener.y(), listener.z(),
+                        listener.heading(), listener.sourceLevelDb(),
+                        torp.x(), torp.y(), torp.z(), torp.sourceLevelDb(),
+                        torp.pingRequested(), terrain, thermalLayers);
+                if (contact != null) extraPassive.add(contact);
+            }
+
+            if (extraPassive.size() > existing.passiveContacts().size()) {
+                results.put(listener.id(), new SonarResult(extraPassive, existing.activeReturns(), existing.cooldownTicks()));
+            }
+        }
+
+        // Third: compute contacts FOR torpedo listeners (torpedoes hear subs)
+        for (var torp : torpedoes) {
+            if (!torp.alive()) continue;
+            var passive = new ArrayList<SonarContact>();
+            var active = new ArrayList<SonarContact>();
+
+            // Torpedo passive: hear submarines (marginal due to high self-noise)
+            for (var source : entities) {
+                if (source.forfeited() || source.hp() <= 0) continue;
+                var contact = passiveDetect(torp.x(), torp.y(), torp.z(),
+                        torp.heading(), torp.sourceLevelDb(),
+                        source.x(), source.y(), source.z(), source.sourceLevelDb(),
+                        source.pingRequested(), terrain, thermalLayers);
+                if (contact != null) passive.add(contact);
+            }
+
+            // Torpedo active sonar returns
+            if (torp.pingRequested()) {
+                for (var source : entities) {
+                    if (source.forfeited() || source.hp() <= 0) continue;
+                    var ret = activeDetect(torp.x(), torp.y(), torp.z(),
+                            torp.sourceLevelDb(), source.x(), source.y(), source.z(),
+                            terrain, thermalLayers);
+                    if (ret != null) active.add(ret);
+                }
+            }
+
+            results.put(torp.id(), new SonarResult(passive, active, torp.activeSonarCooldown()));
+        }
+
+        return results;
+    }
+
+    public Map<Integer, SonarResult> computeContacts(
+            long tick,
+            List<SubmarineEntity> entities,
+            TerrainMap terrain,
+            List<ThermalLayer> thermalLayers) {
+        return computeContacts(tick, entities, List.of(), terrain, thermalLayers);
+    }
+
+    /** Passive detection: can listener hear source? Returns contact or null. */
+    private SonarContact passiveDetect(double lx, double ly, double lz, double lHeading, double lSLdB,
+                                        double sx, double sy, double sz, double sSLdB,
+                                        boolean sPinged,
+                                        TerrainMap terrain, List<ThermalLayer> thermalLayers) {
+        double distance = Math.sqrt((sx-lx)*(sx-lx) + (sy-ly)*(sy-ly) + (sz-lz)*(sz-lz));
+        if (distance < 1.0) distance = 1.0;
+
+        double trueBearing = Math.atan2(sx - lx, sy - ly);
+        if (trueBearing < 0) trueBearing += 2 * Math.PI;
+
+        double tl = transmissionLossDb(distance, new Vec3(lx, ly, lz), new Vec3(sx, sy, sz),
+                terrain, thermalLayers);
+        double sl = sSLdB;
+        if (sPinged) sl = Math.max(sl, ACTIVE_PING_SL_DB);
+
+        double selfNoiseDb = lSLdB - SELF_NOISE_OFFSET_DB;
+        double nl = Math.max(AMBIENT_NOISE_DB, selfNoiseDb);
+        if (isInBaffles(lHeading, trueBearing)) nl += BAFFLE_PENALTY_DB;
+
+        double se = sl - tl - nl;
+        if (se > DETECTION_THRESHOLD_DB) {
+            double bearingError = bearingStdDev(se);
+            double noisyBearing = trueBearing + bearingError * rng.nextGaussian();
+            noisyBearing = ((noisyBearing % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
+            return new SonarContact(noisyBearing, se, 0, false, -1,
+                    bearingError, 0, sl, 0, Double.NaN);
+        }
+        return null;
+    }
+
+    /** Active sonar return: does the ping illuminate the target? Returns contact or null. */
+    private SonarContact activeDetect(double lx, double ly, double lz, double lSLdB,
+                                       double sx, double sy, double sz,
+                                       TerrainMap terrain, List<ThermalLayer> thermalLayers) {
+        double distance = Math.sqrt((sx-lx)*(sx-lx) + (sy-ly)*(sy-ly) + (sz-lz)*(sz-lz));
+        if (distance < 1.0) distance = 1.0;
+
+        double trueBearing = Math.atan2(sx - lx, sy - ly);
+        if (trueBearing < 0) trueBearing += 2 * Math.PI;
+
+        double tl = transmissionLossDb(distance, new Vec3(lx, ly, lz), new Vec3(sx, sy, sz),
+                terrain, thermalLayers);
+
+        double selfNoiseDb = lSLdB - SELF_NOISE_OFFSET_DB;
+        double nl = Math.max(AMBIENT_NOISE_DB, selfNoiseDb);
+        double activeSe = ACTIVE_PING_SL_DB - 2 * tl + TARGET_STRENGTH_DB - nl;
+
+        if (activeSe > DETECTION_THRESHOLD_DB) {
+            double bearingError = bearingStdDev(activeSe);
+            double noisyBearing = trueBearing + bearingError * rng.nextGaussian();
+            noisyBearing = ((noisyBearing % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
+            double rangeRmsNoise = distance * RANGE_NOISE_FRACTION;
+            double noisyRange = distance + rangeRmsNoise * rng.nextGaussian();
+            if (noisyRange < 0) noisyRange = 10;
+            return new SonarContact(noisyBearing, activeSe, noisyRange, true, -1,
+                    bearingError, rangeRmsNoise, ACTIVE_PING_SL_DB, 0, Double.NaN);
+        }
+        return null;
+    }
+
+    /**
+     * Original submarine-to-submarine sonar computation (unchanged).
+     */
+    private Map<Integer, SonarResult> computeSubToSubContacts(
             long tick,
             List<SubmarineEntity> entities,
             TerrainMap terrain,

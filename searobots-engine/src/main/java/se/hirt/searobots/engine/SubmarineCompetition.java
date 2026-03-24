@@ -232,8 +232,8 @@ public class SubmarineCompetition {
 
         var listener = new SimulationListener() {
             @Override
-            public void onTick(long tick, List<SubmarineSnapshot> submarines) {
-                tracker.onTick(tick, submarines);
+            public void onTick(long tick, List<SubmarineSnapshot> submarines, List<se.hirt.searobots.engine.TorpedoSnapshot> torpedoes) {
+                tracker.onTick(tick, submarines, java.util.List.of());
                 if (submarines.isEmpty()) return;
                 var s = submarines.getFirst();
                 if (s.hp() <= 0 || s.forfeited()) sim.stop();
@@ -452,7 +452,7 @@ public class SubmarineCompetition {
 
         var listener = new SimulationListener() {
             @Override
-            public void onTick(long tick, List<SubmarineSnapshot> submarines) {
+            public void onTick(long tick, List<SubmarineSnapshot> submarines, List<se.hirt.searobots.engine.TorpedoSnapshot> torpedoes) {
                 if (submarines.size() < 2 || winner[0] != null) return;
                 var s0 = submarines.get(0);
                 var s1 = submarines.get(1);
