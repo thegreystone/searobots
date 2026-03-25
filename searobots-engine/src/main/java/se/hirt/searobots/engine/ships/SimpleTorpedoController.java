@@ -6,26 +6,25 @@ package se.hirt.searobots.engine.ships;
 import se.hirt.searobots.api.*;
 
 /**
- * Simple reference torpedo controller. Runs toward the suspected target
- * position from mission data, then goes active sonar to acquire and chase.
+ * Torpedo controller that uses consecutive active pings to estimate
+ * target position and velocity, then steers to an intercept point.
  */
 public class SimpleTorpedoController implements TorpedoController {
 
     private double targetX, targetY, targetZ;
     private boolean hasTarget;
-    private boolean hasActiveContact; // true when we have a live sonar fix
-    private double activeContactRange = Double.MAX_VALUE;
     private TerrainMap terrain;
-    private long launchTick;
-    private static final double MIN_TERRAIN_CLEARANCE = 30; // meters above seabed
-    private static final double PING_START_RANGE = 1500; // start pinging at this range
-    private static final double TERMINAL_RANGE = 300; // close enough to dive directly at target
+
+    // Target tracking from consecutive pings
+    private double prevFixX = Double.NaN, prevFixY = Double.NaN;
+    private long prevFixTick = -1;
+    private double estVelX = 0, estVelY = 0; // estimated target velocity
+
+    private static final double MIN_TERRAIN_CLEARANCE = 30;
 
     @Override
     public void onLaunch(TorpedoLaunchContext context) {
         this.terrain = context.terrain();
-        // Parse mission data for target position
-        // Expected format: "targetX,targetY,targetZ,heading,speed" or free text
         String data = context.missionData();
         if (data != null && !data.isBlank()) {
             try {
@@ -33,11 +32,11 @@ public class SimpleTorpedoController implements TorpedoController {
                 if (parts.length >= 2) {
                     targetX = Double.parseDouble(parts[0].trim());
                     targetY = Double.parseDouble(parts[1].trim());
-                    targetZ = parts.length >= 3 ? Double.parseDouble(parts[2].trim()) : -200;
+                    targetZ = parts.length >= 3 ? Double.parseDouble(parts[2].trim()) : -100;
                     hasTarget = true;
                 }
             } catch (NumberFormatException e) {
-                // Could not parse, just run straight
+                // Could not parse
             }
         }
     }
@@ -55,76 +54,89 @@ public class SimpleTorpedoController implements TorpedoController {
             return;
         }
 
+        // ── Always ping when ready ──
+        if (input.activeSonarCooldownTicks() == 0) {
+            output.activeSonarPing();
+        }
+
+        // ── Process active sonar returns ──
+        if (!input.activeSonarReturns().isEmpty()) {
+            // Pick the forward-most contact (ignore launcher behind us)
+            SonarContact best = pickForwardContact(input.activeSonarReturns(), heading);
+            if (best != null) {
+                double fixX = pos.x() + Math.sin(best.bearing()) * best.range();
+                double fixY = pos.y() + Math.cos(best.bearing()) * best.range();
+
+                // Estimate target velocity from consecutive fixes
+                if (!Double.isNaN(prevFixX) && prevFixTick >= 0) {
+                    double dtFix = (input.tick() - prevFixTick) / 50.0; // seconds between fixes
+                    if (dtFix > 0.5 && dtFix < 20) { // reasonable fix interval
+                        double rawVX = (fixX - prevFixX) / dtFix;
+                        double rawVY = (fixY - prevFixY) / dtFix;
+                        // Smooth velocity estimate (don't trust a single noisy measurement)
+                        estVelX = estVelX * 0.5 + rawVX * 0.5;
+                        estVelY = estVelY * 0.5 + rawVY * 0.5;
+                    }
+                }
+
+                prevFixX = fixX;
+                prevFixY = fixY;
+                prevFixTick = input.tick();
+
+                // Update target position and depth from active return
+                targetX = fixX;
+                targetY = fixY;
+                if (!Double.isNaN(best.estimatedDepth())) {
+                    targetZ = best.estimatedDepth();
+                }
+            }
+        }
+
+        // ── Compute intercept point ──
         double dx = targetX - pos.x();
         double dy = targetY - pos.y();
         double dist = Math.sqrt(dx * dx + dy * dy);
 
-        // ── Update target from sonar ──
+        // Time to intercept at current closing rate
+        double torpSpeed = Math.max(input.speed(), 5);
+        double timeToIntercept = dist / torpSpeed;
 
-        hasActiveContact = false;
-        // Active returns: best fix, update target position
-        if (!input.activeSonarReturns().isEmpty()) {
-            var best = input.activeSonarReturns().stream()
-                    .max(java.util.Comparator.comparingDouble(SonarContact::signalExcess))
-                    .orElse(null);
-            if (best != null && best.range() > 0) {
-                double range = best.range();
-                double bearing = best.bearing();
-                targetX = pos.x() + Math.sin(bearing) * range;
-                targetY = pos.y() + Math.cos(bearing) * range;
-                activeContactRange = range;
-                hasActiveContact = true;
-                dx = targetX - pos.x();
-                dy = targetY - pos.y();
-                dist = Math.sqrt(dx * dx + dy * dy);
-            }
-        }
-        // Passive: update bearing estimate (less reliable)
-        if (!hasActiveContact && !input.sonarContacts().isEmpty()) {
-            var loudest = input.sonarContacts().stream()
-                    .max(java.util.Comparator.comparingDouble(SonarContact::signalExcess))
-                    .orElse(null);
-            if (loudest != null) {
-                double bearing = loudest.bearing();
-                // Don't override range, just update direction
-                targetX = pos.x() + Math.sin(bearing) * Math.max(dist, 500);
-                targetY = pos.y() + Math.cos(bearing) * Math.max(dist, 500);
-                dx = targetX - pos.x();
-                dy = targetY - pos.y();
-                dist = Math.sqrt(dx * dx + dy * dy);
-            }
-        }
+        // Predict where target will be when we arrive
+        double interceptX = targetX + estVelX * timeToIntercept;
+        double interceptY = targetY + estVelY * timeToIntercept;
 
-        // ── Pinging: start when approaching suspected target area ──
-        if (dist < PING_START_RANGE && input.activeSonarCooldownTicks() == 0) {
-            output.activeSonarPing();
-        }
+        // ── Steer toward intercept point ──
+        double idx = interceptX - pos.x();
+        double idy = interceptY - pos.y();
+        double bearingToIntercept = Math.atan2(idx, idy);
+        if (bearingToIntercept < 0) bearingToIntercept += 2 * Math.PI;
 
-        // ── Steering: always head toward target ──
-        double bearingToTarget = Math.atan2(dx, dy);
-        if (bearingToTarget < 0) bearingToTarget += 2 * Math.PI;
-        double headingError = bearingToTarget - heading;
+        double headingError = bearingToIntercept - heading;
         while (headingError > Math.PI) headingError -= 2 * Math.PI;
         while (headingError < -Math.PI) headingError += 2 * Math.PI;
-        output.setRudder(Math.clamp(headingError * 2.0, -1, 1));
+        output.setRudder(Math.clamp(headingError * 1.5, -1, 1));
 
         // ── Depth control ──
-        double desiredZ = pos.z(); // default: hold current depth
-
-        if (hasActiveContact && activeContactRange < TERMINAL_RANGE) {
-            // Terminal phase: dive directly at the target depth
-            // Target is close, go for it aggressively
-            desiredZ = targetZ;
-        } else if (hasActiveContact) {
-            // Active contact but not terminal: blend toward target depth
-            desiredZ = pos.z() + (targetZ - pos.z()) * 0.05;
-        } else if (!Double.isNaN(targetZ) && targetZ < 0) {
-            // No active contact: approach mission data depth at moderate rate
-            desiredZ = pos.z() + (targetZ - pos.z()) * 0.03;
+        // Cruise at launch depth. Only adjust toward target depth when close
+        // and we have active sonar data to confirm where the target is.
+        double minDepth = -30;
+        double desiredZ;
+        if (dist < 200) {
+            desiredZ = pos.z(); // hold depth in terminal phase
+        } else if (dist < 500 && prevFixTick >= 0) {
+            // Close with active fix: adjust toward target depth
+            double depthError = targetZ - pos.z();
+            desiredZ = pos.z() + depthError * 0.03;
+        } else {
+            // Cruise: approach target depth gradually (don't stay at launch depth
+            // if target is at a different depth)
+            double cruiseTarget = Math.max(targetZ, -150); // don't go deeper than -150m
+            double depthError = cruiseTarget - pos.z();
+            desiredZ = pos.z() + depthError * 0.01; // very gentle blend
         }
 
-        // Terrain avoidance (go UP only, unless in terminal phase)
-        if (terrain != null && !(hasActiveContact && activeContactRange < TERMINAL_RANGE)) {
+        // Terrain avoidance (only when not terminal)
+        if (terrain != null && dist > 100) {
             double floor = terrain.elevationAt(pos.x(), pos.y());
             double safeZ = floor + MIN_TERRAIN_CLEARANCE;
             double lookAhead = input.speed() * 3;
@@ -135,12 +147,26 @@ public class SimpleTorpedoController implements TorpedoController {
             if (desiredZ < safeZ) desiredZ = safeZ;
         }
 
-        desiredZ = Math.min(desiredZ, -5); // don't breach surface
-
+        desiredZ = Math.min(desiredZ, minDepth); // never breach near surface
         double dz = desiredZ - pos.z();
-        // Terminal phase gets more pitch authority
-        double pitchGain = (hasActiveContact && activeContactRange < TERMINAL_RANGE) ? 0.06 : 0.03;
-        double pitchMax = (hasActiveContact && activeContactRange < TERMINAL_RANGE) ? 0.6 : 0.4;
+        double pitchGain = dist < 300 ? 0.06 : 0.03;
+        double pitchMax = dist < 300 ? 0.6 : 0.4;
         output.setSternPlanes(Math.clamp(dz * pitchGain, -pitchMax, pitchMax));
+    }
+
+    /** Pick the active return that's most forward of our heading. */
+    private SonarContact pickForwardContact(java.util.List<SonarContact> returns, double heading) {
+        SonarContact best = null;
+        double bestScore = Double.NEGATIVE_INFINITY;
+        for (var c : returns) {
+            if (c.range() <= 0) continue;
+            double angleDiff = c.bearing() - heading;
+            while (angleDiff > Math.PI) angleDiff -= 2 * Math.PI;
+            while (angleDiff < -Math.PI) angleDiff += 2 * Math.PI;
+            double forwardness = Math.cos(angleDiff);
+            double score = forwardness * 100 - c.range() * 0.01;
+            if (score > bestScore) { bestScore = score; best = c; }
+        }
+        return best;
     }
 }

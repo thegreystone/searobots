@@ -437,19 +437,26 @@ public final class ClaudeAttackSub implements SubmarineController {
         if (leadBearing < 0) leadBearing += 2 * Math.PI;
 
         // Build mission data with target info
-        // Target depth: we don't know it precisely, use our own depth as best estimate
-        // The torpedo will use active sonar to refine once close
-        double targetDepth = pos.z();
+        // Target depth: send a moderate depth (~80m), most targets are at patrol depth
+        // or shallower. The torpedo will adjust when it gets active sonar fixes.
+        double targetDepth = -80;
         String missionData = String.format("%.0f,%.0f,%.0f,%.4f,%.1f",
                 leadX, leadY, targetDepth,
                 Double.isNaN(trackedHeading) ? 0 : trackedHeading,
                 trackedSpeed > 0 ? trackedSpeed : 5.0);
 
+        // Only fire when our heading is roughly aligned with the target
+        // (torpedo tubes are forward-facing)
+        double headingError = leadBearing - input.self().pose().heading();
+        while (headingError > Math.PI) headingError -= 2 * Math.PI;
+        while (headingError < -Math.PI) headingError += 2 * Math.PI;
+        if (Math.abs(headingError) > Math.toRadians(30)) return; // not aligned enough
+
         output.launchTorpedo(new TorpedoLaunchCommand(
-                leadBearing, 0, 15.0, missionData));
+                leadBearing, 0, 20.0, missionData));
         lastTorpedoLaunchTick = tick;
-        System.out.printf("[Claude] Torpedo launched at tick %d, target=(%.0f,%.0f) dist=%.0fm%n",
-                tick, leadX, leadY, dist);
+        System.out.printf("[Claude] Torpedo launched at tick %d, target=(%.0f,%.0f) dist=%.0fm hdgErr=%.1f°%n",
+                tick, leadX, leadY, dist, Math.toDegrees(headingError));
     }
 
     private boolean isBehindTarget(double x, double y) {

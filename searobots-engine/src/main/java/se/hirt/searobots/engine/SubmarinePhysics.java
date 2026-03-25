@@ -384,6 +384,11 @@ public final class SubmarinePhysics {
             }
         }
 
+        // Torpedo launch transient: tube flooding + ejection noise spike
+        if (sub.launchTransientTicks() > 0) {
+            sl = Math.max(sl, 120.0); // ~120 dB transient, louder than normal ops
+        }
+
         sub.setSourceLevelDb(sl);
 
         // Also set linear noise level for viewer compatibility (80 dB = 1.0)

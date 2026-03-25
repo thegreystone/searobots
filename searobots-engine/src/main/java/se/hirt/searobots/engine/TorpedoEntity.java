@@ -18,7 +18,7 @@ import java.awt.Color;
  */
 public final class TorpedoEntity {
 
-    private static final double DEFAULT_FUEL_SECONDS = 120.0;
+    private static final double DEFAULT_FUEL_SECONDS = 180.0; // 3 minutes of powered run
     private static final double MINIMUM_SPEED = 3.0; // below this, torpedo sinks
     private static final double SINK_ACCELERATION = 2.0; // m/s^2 downward when stalled
 
@@ -28,7 +28,8 @@ public final class TorpedoEntity {
     private final TorpedoController controller;
     private final Color color;
     private final double fuseRadius;
-    private int armingTicks = 100; // fuse doesn't activate for 2 seconds (clears own sub)
+    private int armingTicks = 100; // fuse doesn't activate for 2 seconds
+    private long launchTick; // tick when torpedo was created
 
     // Position and orientation
     private double x, y, z;
@@ -141,6 +142,8 @@ public final class TorpedoEntity {
     /** True if the fuse is armed (arming delay has elapsed). */
     public boolean fuseArmed() { return armingTicks <= 0; }
     public void decrementArmingDelay() { if (armingTicks > 0) armingTicks--; }
+    public long launchTick() { return launchTick; }
+    public void setLaunchTick(long tick) { this.launchTick = tick; }
 
     // ── Controller interface ───────────────────────────────────────
 
@@ -167,6 +170,7 @@ public final class TorpedoEntity {
     public double cmdThrottle() { return fuelRemaining > 0 ? cmdThrottle : 0; }
 
     public void clearPingRequested() { pingRequested = false; }
+    public void setActiveSonarCooldown(int ticks) { activeSonarCooldown = ticks; }
 
     // ── Snapshot and state ─────────────────────────────────────────
 

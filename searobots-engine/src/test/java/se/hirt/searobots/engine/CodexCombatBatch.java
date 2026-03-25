@@ -29,18 +29,18 @@ public final class CodexCombatBatch {
                     ClaudeAttackSub::new, "ClaudeAttackSub",
                     seed, MATCH_TICKS);
 
-            reasonCounts.merge(result.reason(), 1, Integer::sum);
-            if ("CodexAttackSub".equals(result.winner())) {
+            reasonCounts.merge(result.description(), 1, Integer::sum);
+            if (result.pointsA() > result.pointsB()) {
                 codexWins++;
-            } else if ("ClaudeAttackSub".equals(result.winner())) {
+            } else if (result.pointsB() > result.pointsA()) {
                 claudeWins++;
             } else {
                 draws++;
             }
 
             System.out.printf(Locale.US,
-                    "seed=%d winner=%s reason=%s ticks=%d points=%d%n",
-                    seed, result.winner(), result.reason(), result.ticks(), result.points());
+                    "seed=%d %s ticks=%d codex=%dpt claude=%dpt%n",
+                    seed, result.description(), result.ticks(), result.pointsA(), result.pointsB());
         }
 
         System.out.println();

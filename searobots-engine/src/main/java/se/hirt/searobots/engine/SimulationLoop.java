@@ -169,7 +169,8 @@ public final class SimulationLoop {
                         entity.clearPendingTorpedoLaunch();
                         // Launch in the submarine's current heading direction,
                         // at the sub's speed + ejection boost.
-                        // Alternate port/starboard tubes (offset ~3m from centerline)
+                        // Torpedo exits along the sub's heading (tubes are fixed forward)
+                        // Alternate port/starboard tubes (offset ~2m from centerline)
                         double launchHdg = entity.heading();
                         double launchPitch = entity.pitch();
                         double ejectionSpeed = 3.0; // m/s additional from tube ejection
@@ -204,6 +205,7 @@ public final class SimulationLoop {
                                 launchHdg, launchPitch, fuseR, entity.color());
                         // Initial speed = sub speed + ejection
                         torp.setSpeed(Math.max(entity.speed(), 0) + ejectionSpeed);
+                        torp.setLaunchTick(tick);
 
                         var launchCtx = new TorpedoLaunchContext(
                                 config, world.terrain(), launchPos,
@@ -256,20 +258,19 @@ public final class SimulationLoop {
                             config.battleArea());
                 }
 
-                // Proximity fuse check (only after arming delay)
+                // Proximity fuse check against sub ellipsoid (only after arming delay)
                 for (var torp : torpedoes) {
                     if (!torp.alive()) continue;
                     torp.decrementArmingDelay();
                     if (!torp.fuseArmed()) continue;
                     for (var sub : entities) {
                         if (sub.hp() <= 0 || sub.forfeited()) continue;
-                        double dist = Math.sqrt(
-                                Math.pow(torp.x() - sub.x(), 2) +
-                                Math.pow(torp.y() - sub.y(), 2) +
-                                Math.pow(torp.z() - sub.z(), 2));
-                        if (dist < torp.fuseRadius()) {
-                            System.out.printf("[Torpedo %d] PROXIMITY FUSE at tick %d, dist=%.1fm to sub %d (%s)%n",
-                                    torp.id(), tick, dist, sub.id(), sub.controller().name());
+                        // Skip owner during first 5 seconds (250 ticks) to let torpedo clear
+                        if (sub.id() == torp.ownerId() && tick - torp.launchTick() < 250) continue;
+                        double hullDist = distanceToHullSurface(torp, sub);
+                        if (hullDist < torp.fuseRadius()) {
+                            System.out.printf("[Torpedo %d] PROXIMITY FUSE at tick %d, hull dist=%.1fm to sub %d (%s)%n",
+                                    torp.id(), tick, hullDist, sub.id(), sub.controller().name());
                             handleDetonation(torp, entities, config);
                             break;
                         }
@@ -303,7 +304,8 @@ public final class SimulationLoop {
                 entities.forEach(SubmarineEntity::clearWaypoints);
                 entities.forEach(SubmarineEntity::clearStrategicWaypoints);
                 entities.forEach(SubmarineEntity::clearFiringSolution);
-                torpedoes.forEach(TorpedoEntity::clearPingRequested);
+                // Note: torpedo pings are NOT cleared here. They're cleared by the sonar
+                // model on the next tick's computeContacts(), same as submarine pings.
 
                 // Post-tick: consume pings, tick cooldowns
                 sonar.postTick(entities);
@@ -328,9 +330,49 @@ public final class SimulationLoop {
         }
     }
 
+    /**
+     * Distance from a torpedo to the nearest point on a sub's hull ellipsoid.
+     * Returns 0 if the torpedo is inside the ellipsoid.
+     */
+    private static double distanceToHullSurface(TorpedoEntity torp, SubmarineEntity sub) {
+        // Sub's local frame (same as collision system)
+        double sinH = Math.sin(sub.heading()), cosH = Math.cos(sub.heading());
+        double sinP = Math.sin(sub.pitch()), cosP = Math.cos(sub.pitch());
+        double fwdX = sinH * cosP, fwdY = cosH * cosP, fwdZ = sinP;
+        double rightX = cosH, rightY = -sinH;
+        double upX = -sinH * sinP, upY = -cosH * sinP, upZ = cosP;
+
+        // Offset sub center aft (same as collision system)
+        double cx = sub.x() + fwdX * COLLISION_AFT_OFFSET;
+        double cy = sub.y() + fwdY * COLLISION_AFT_OFFSET;
+        double cz = sub.z() + fwdZ * COLLISION_AFT_OFFSET;
+
+        // Delta from sub center to torpedo
+        double dx = torp.x() - cx, dy = torp.y() - cy, dz = torp.z() - cz;
+
+        // Project into sub's local frame
+        double localFwd = dx * fwdX + dy * fwdY + dz * fwdZ;
+        double localRight = dx * rightX + dy * rightY;
+        double localUp = dx * upX + dy * upY + dz * upZ;
+
+        // Normalize by ellipsoid semi-axes
+        double normFwd = localFwd / COLLISION_SEMI_LENGTH;
+        double normRight = localRight / COLLISION_SEMI_BEAM;
+        double normUp = localUp / COLLISION_SEMI_HEIGHT;
+        double normDist = Math.sqrt(normFwd * normFwd + normRight * normRight + normUp * normUp);
+
+        if (normDist <= 1.0) return 0; // inside ellipsoid
+
+        // Distance from torpedo to ellipsoid surface along the line from center
+        // Approximate: actual distance = center-to-torp distance - ellipsoid radius in that direction
+        double centerDist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+        double ellipsoidRadius = centerDist / normDist; // radius in the direction of the torpedo
+        return centerDist - ellipsoidRadius;
+    }
+
     // ── Torpedo explosion ────────────────────────────────────────────
 
-    private static final int EXPLOSION_BASE_DAMAGE = 500;
+    private static final int EXPLOSION_BASE_DAMAGE = 1200; // instant kill at point blank, heavy damage at close range
     private static final double EXPLOSION_IMPULSE = 50.0; // m/s velocity change at zero range
 
     private static void handleDetonation(TorpedoEntity torp, List<SubmarineEntity> subs,
@@ -343,11 +385,13 @@ public final class SimulationLoop {
             double dx = sub.x() - torp.x();
             double dy = sub.y() - torp.y();
             double dz = sub.z() - torp.z();
-            double dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+            double centerDist = Math.sqrt(dx * dx + dy * dy + dz * dz);
 
-            if (dist < blastRadius) {
-                // Quadratic falloff: (1 - d/r)^2
-                double falloff = (1.0 - dist / blastRadius);
+            // Use hull surface distance for damage (closer to hull = more damage)
+            double hullDist = distanceToHullSurface(torp, sub);
+            if (hullDist < blastRadius) {
+                // Quadratic falloff based on distance to hull surface
+                double falloff = (1.0 - hullDist / blastRadius);
                 falloff *= falloff;
 
                 // Damage
@@ -355,9 +399,9 @@ public final class SimulationLoop {
                 sub.setHp(Math.max(0, sub.hp() - damage));
 
                 // Impulse: push sub away from blast
-                if (dist > 0.1) {
+                if (centerDist > 0.1) {
                     double impulse = EXPLOSION_IMPULSE * falloff;
-                    double nx = dx / dist, ny = dy / dist, nz = dz / dist;
+                    double nx = dx / centerDist, ny = dy / centerDist, nz = dz / centerDist;
 
                     // Linear impulse: velocity change
                     double mass = sub.vehicleConfig().massSurge();

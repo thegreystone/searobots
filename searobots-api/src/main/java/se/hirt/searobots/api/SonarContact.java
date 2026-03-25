@@ -43,8 +43,22 @@ package se.hirt.searobots.api;
  *                             louder than submarines) and more accurate SE-based ranging.
  * @param solutionQuality      TMA solution quality (0.0 to 1.0), equivalent to Cold Waters SOL%
  * @param estimatedHeading     estimated target heading in radians [0, 2pi), or NaN if quality too low
+ * @param estimatedDepth       estimated target depth in meters (negative = below surface),
+ *                             derived from vertical bearing angle and range for active returns.
+ *                             NaN if unavailable (passive contacts).
  */
 public record SonarContact(double bearing, double signalExcess, double range, boolean isActive,
                            double estimatedSpeed, double bearingUncertainty,
                            double rangeUncertainty, double estimatedSourceLevel,
-                           double solutionQuality, double estimatedHeading) {}
+                           double solutionQuality, double estimatedHeading,
+                           double estimatedDepth) {
+
+    /** Backwards-compatible constructor (no depth estimate). */
+    public SonarContact(double bearing, double signalExcess, double range, boolean isActive,
+                        double estimatedSpeed, double bearingUncertainty,
+                        double rangeUncertainty, double estimatedSourceLevel,
+                        double solutionQuality, double estimatedHeading) {
+        this(bearing, signalExcess, range, isActive, estimatedSpeed, bearingUncertainty,
+             rangeUncertainty, estimatedSourceLevel, solutionQuality, estimatedHeading, Double.NaN);
+    }
+}

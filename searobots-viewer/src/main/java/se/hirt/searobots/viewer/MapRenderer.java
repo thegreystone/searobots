@@ -149,12 +149,38 @@ final class MapRenderer implements se.hirt.searobots.engine.SimulationListener {
 
     // Torpedo state
     private volatile List<se.hirt.searobots.engine.TorpedoSnapshot> torpedoSnapshots = List.of();
+    private final java.util.Set<Integer> knownTorpedoIds = new java.util.HashSet<>();
+
+    // Explosion animations
+    private record ExplosionAnimation(double x, double y, double z, long startTick, Color color) {}
+    private final java.util.concurrent.CopyOnWriteArrayList<ExplosionAnimation> explosionAnimations =
+            new java.util.concurrent.CopyOnWriteArrayList<>();
+    private static final double EXPLOSION_DURATION = 2.0; // seconds
+    private static final double EXPLOSION_MAX_RADIUS = 50.0; // matches MatchConfig.blastRadius
 
     @Override
     public void onTick(long tick, List<se.hirt.searobots.engine.SubmarineSnapshot> submarines,
                        List<se.hirt.searobots.engine.TorpedoSnapshot> torpedoes) {
         updateSubmarines(tick, submarines);
-        this.torpedoSnapshots = torpedoes != null ? torpedoes : List.of();
+        var newTorps = torpedoes != null ? torpedoes : List.<se.hirt.searobots.engine.TorpedoSnapshot>of();
+
+        // Detect detonations: torpedoes that were alive last tick but are now detonated or gone
+        var newIds = new java.util.HashSet<Integer>();
+        for (var t : newTorps) {
+            newIds.add(t.id());
+            if (t.detonated()) {
+                var pos = t.pose().position();
+                explosionAnimations.add(new ExplosionAnimation(pos.x(), pos.y(), pos.z(), tick, t.color()));
+            }
+        }
+        // Torpedoes that disappeared (terrain/boundary kill) - no explosion animation
+        knownTorpedoIds.clear();
+        knownTorpedoIds.addAll(newIds);
+
+        // Expire old explosions
+        explosionAnimations.removeIf(e -> (tick - e.startTick) / 50.0 > EXPLOSION_DURATION);
+
+        this.torpedoSnapshots = newTorps;
     }
 
     @Override
@@ -331,6 +357,7 @@ final class MapRenderer implements se.hirt.searobots.engine.SimulationListener {
         if (overlayConfig.contactEstimates) drawContactEstimates(g2);
         if (overlayConfig.waypoints) drawWaypoints(g2);
         drawTorpedoes(g2);
+        drawExplosions(g2);
         drawPingAnimations(g2);
         drawDetectionHighlights(g2);
         drawFiringSolution(g2);
@@ -610,6 +637,47 @@ final class MapRenderer implements se.hirt.searobots.engine.SimulationListener {
                     BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND,
                     0, new float[]{(float)(8/pixelsPerMeter), (float)(4/pixelsPerMeter)}, 0));
             g2.draw(new Line2D.Double(pos.x(), pos.y(), tx, ty));
+        }
+    }
+
+    private void drawExplosions(Graphics2D g2) {
+        long tick = simTick;
+        for (var exp : explosionAnimations) {
+            double elapsed = (tick - exp.startTick) / 50.0;
+            double t = elapsed / EXPLOSION_DURATION;
+            if (t < 0 || t > 1) continue;
+
+            // Expanding shockwave ring
+            double radius = EXPLOSION_MAX_RADIUS * Math.sqrt(t); // fast initial expansion
+            double fade = (1.0 - t) * (1.0 - t); // quadratic fade
+
+            // Bright core flash (first 0.3s)
+            if (elapsed < 0.3) {
+                double flashT = elapsed / 0.3;
+                int flashAlpha = Math.clamp((int) ((1.0 - flashT) * 255), 0, 255);
+                double flashR = EXPLOSION_MAX_RADIUS * 0.3 * (1.0 + flashT);
+                g2.setColor(new Color(255, 255, 200, flashAlpha));
+                g2.fill(new Ellipse2D.Double(exp.x - flashR, exp.y - flashR, flashR * 2, flashR * 2));
+            }
+
+            // Orange shockwave ring
+            int ringAlpha = Math.clamp((int) (fade * 200), 0, 255);
+            if (ringAlpha > 0) {
+                Color c = exp.color;
+                g2.setColor(new Color(255, 140, 30, ringAlpha));
+                g2.setStroke(new BasicStroke((float) (3.0 / pixelsPerMeter),
+                        BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+                g2.draw(new Ellipse2D.Double(exp.x - radius, exp.y - radius, radius * 2, radius * 2));
+            }
+
+            // Inner debris ring
+            int innerAlpha = Math.clamp((int) (fade * 150), 0, 255);
+            if (innerAlpha > 0) {
+                double innerR = radius * 0.6;
+                g2.setColor(new Color(255, 80, 20, innerAlpha));
+                g2.setStroke(new BasicStroke((float) (2.0 / pixelsPerMeter)));
+                g2.draw(new Ellipse2D.Double(exp.x - innerR, exp.y - innerR, innerR * 2, innerR * 2));
+            }
         }
     }
 

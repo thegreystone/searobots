@@ -139,6 +139,9 @@ public final class SonarModel {
                             terrain, thermalLayers);
                     if (ret != null) active.add(ret);
                 }
+                // Clear ping and set cooldown (same as submarine ping handling)
+                torp.clearPingRequested();
+                torp.setActiveSonarCooldown(ACTIVE_PING_COOLDOWN_TICKS);
             }
 
             results.put(torp.id(), new SonarResult(passive, active, torp.activeSonarCooldown()));
@@ -210,8 +213,15 @@ public final class SonarModel {
             double rangeRmsNoise = distance * RANGE_NOISE_FRACTION;
             double noisyRange = distance + rangeRmsNoise * rng.nextGaussian();
             if (noisyRange < 0) noisyRange = 10;
+            // Estimate target depth from vertical angle + range
+            // True depth = listener depth + vertical component of range
+            double trueDepthDiff = sz - lz; // positive = target above listener
+            double depthNoiseRms = Math.max(5.0, distance * 0.05); // 5% depth noise, min 5m
+            double estimatedDepth = lz + trueDepthDiff + depthNoiseRms * rng.nextGaussian();
+
             return new SonarContact(noisyBearing, activeSe, noisyRange, true, -1,
-                    bearingError, rangeRmsNoise, ACTIVE_PING_SL_DB, 0, Double.NaN);
+                    bearingError, rangeRmsNoise, ACTIVE_PING_SL_DB, 0, Double.NaN,
+                    estimatedDepth);
         }
         return null;
     }
