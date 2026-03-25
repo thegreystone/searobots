@@ -1,15 +1,15 @@
 /*
  * Copyright (C) 2026 Marcus Hirt
  */
-package se.hirt.searobots.engine.ships;
+package se.hirt.searobots.engine.ships.claude;
 
 import se.hirt.searobots.api.*;
 
 /**
- * Torpedo controller that uses consecutive active pings to estimate
+ * Claude's torpedo controller. Uses consecutive active pings to estimate
  * target position and velocity, then steers to an intercept point.
  */
-public class SimpleTorpedoController implements TorpedoController {
+public class ClaudeTorpedoController implements TorpedoController {
 
     private double targetX, targetY, targetZ;
     private boolean hasTarget;

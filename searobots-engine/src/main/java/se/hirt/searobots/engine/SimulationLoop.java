@@ -199,7 +199,9 @@ public final class SimulationLoop {
                         double fuseR = Math.clamp(cmd.fuseRadius(),
                                 config.minFuseRadius(), config.maxFuseRadius());
 
-                        var torpCtrl = new se.hirt.searobots.engine.ships.SimpleTorpedoController();
+                        var customCtrl = entity.controller().createTorpedoController();
+                        var torpCtrl = customCtrl != null ? customCtrl
+                                : new se.hirt.searobots.engine.ships.SimpleTorpedoController();
                         var torp = new TorpedoEntity(nextTorpedoId++, entity.id(),
                                 VehicleConfig.torpedo(), torpCtrl, launchPos,
                                 launchHdg, launchPitch, fuseR, entity.color());
@@ -274,6 +276,14 @@ public final class SimulationLoop {
                             handleDetonation(torp, entities, config);
                             break;
                         }
+                    }
+                }
+
+                // Handle detonations that weren't from proximity fuse
+                // (terrain impact, manual detonation, stall)
+                for (var t : torpedoes) {
+                    if (t.detonated() && !t.explosionProcessed()) {
+                        handleDetonation(t, entities, config);
                     }
                 }
 
@@ -378,6 +388,7 @@ public final class SimulationLoop {
     private static void handleDetonation(TorpedoEntity torp, List<SubmarineEntity> subs,
                                           MatchConfig config) {
         torp.detonate();
+        torp.setExplosionProcessed();
         double blastRadius = config.blastRadius();
 
         for (var sub : subs) {

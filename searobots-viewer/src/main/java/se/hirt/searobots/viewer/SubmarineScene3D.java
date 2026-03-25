@@ -76,6 +76,17 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
     private final Map<Integer, Node> torpedoNodes = new HashMap<>();
     private final Map<Integer, Geometry> torpedoCollisionGeoms = new HashMap<>();
     private volatile List<TorpedoSnapshot> latestTorpedoSnapshots = List.of();
+
+    // 3D explosion effects
+    private record Explosion3D(Vector3f position, float startTime, ColorRGBA color) {}
+    private final java.util.List<Explosion3D> activeExplosions = new java.util.ArrayList<>();
+    private final Map<Integer, Geometry> explosionGeoms = new HashMap<>();
+    private float appTime = 0; // running time for animations
+    private static final float EXPLOSION_DURATION = 2.5f; // seconds
+    private static final float EXPLOSION_MAX_RADIUS = 50f;
+    private final java.util.Set<Integer> knownTorpedoIds3D = new java.util.HashSet<>();
+    // Torpedo intercept marker (3D diamond at published target)
+    private Geometry interceptMarker;
     private volatile List<SubmarineSnapshot> latestSnapshots = List.of();
     private volatile long latestTick;
     private int selectedSubId = 0;
@@ -491,6 +502,20 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
         crosshairGeom = circGeom; // reference for color changes
         crosshairNode.addControl(new BillboardControl());
         rootNode.attachChild(crosshairNode);
+
+        // Torpedo intercept marker (small diamond wireframe)
+        {
+            var diamond = new com.jme3.scene.shape.Sphere(4, 4, 3f);
+            interceptMarker = new Geometry("interceptMarker", diamond);
+            Material iMat = new Material(assetManager, "Common/MatDefs/Misc/Unshaded.j3md");
+            iMat.setColor("Color", new ColorRGBA(1f, 0.4f, 0.1f, 0.8f));
+            iMat.getAdditionalRenderState().setWireframe(true);
+            iMat.getAdditionalRenderState().setBlendMode(RenderState.BlendMode.Alpha);
+            interceptMarker.setMaterial(iMat);
+            interceptMarker.setQueueBucket(RenderQueue.Bucket.Transparent);
+            interceptMarker.setCullHint(Spatial.CullHint.Always);
+            rootNode.attachChild(interceptMarker);
+        }
 
         cam.setLocation(new Vector3f(0, 15, 60));
         cam.lookAt(Vector3f.ZERO, Vector3f.UNIT_Y);
@@ -1306,12 +1331,28 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
             if (s.id() == ts.ownerId()) { ownerName = s.name(); break; }
         }
 
+        // Target/intercept info line
+        String targetLine = "";
+        double tx = ts.targetX(), ty = ts.targetY(), tz = ts.targetZ();
+        if (!Double.isNaN(tx) && !Double.isNaN(ty)) {
+            double dx = tx - pos.x();
+            double dy = ty - pos.y();
+            double dist = Math.sqrt(dx * dx + dy * dy);
+            double bearing = Math.toDegrees(Math.atan2(dx, dy));
+            if (bearing < 0) bearing += 360;
+            double tgtDepth = Double.isNaN(tz) ? 0 : -tz;
+            targetLine = String.format(
+                    "Target: %03.0f\u00b0  %.0fm  Depth: %.0fm",
+                    bearing, dist, tgtDepth);
+        }
+
         hudText.setText(String.format(
                 "TORPEDO #%d (from %s)  |  Speed: %.1f m/s  Depth: %.0f m\n" +
-                "Heading: %03.0f\u00b0  Pitch: %+.1f\u00b0  Fuel: %.0fs  Noise: %.0f dB\n" +
-                "Tick: %d  Elapsed: %02d:%02d:%02d  Cam: %s",
+                "Heading: %03.0f\u00b0  Pitch: %+.1f\u00b0  %s\n" +
+                "Fuel: %.0fs  Noise: %.0f dB  Tick: %d  Elapsed: %02d:%02d:%02d  Cam: %s",
                 ts.id(), ownerName, ts.speed(), -pos.z(),
-                hdgDeg, pitchDeg, ts.fuelRemaining(), ts.sourceLevelDb(),
+                hdgDeg, pitchDeg, targetLine,
+                ts.fuelRemaining(), ts.sourceLevelDb(),
                 tick, elapsed.toHoursPart(), elapsed.toMinutesPart(), elapsed.toSecondsPart(),
                 cameraMode.label()));
         tacticalText.setText("");
@@ -1968,11 +2009,11 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
             // Torpedo collision cylinder (B key)
             Geometry torpCollGeom = torpedoCollisionGeoms.get(ts.id());
             if (torpCollGeom == null) {
-                // Elongated sphere approximating a cylinder: 2.5m half-length, 0.25m radius
-                var sphere = new com.jme3.scene.shape.Sphere(12, 12, 1f);
-                torpCollGeom = new Geometry("torpColl-" + ts.id(), sphere);
+                // Cylinder: 2.5m half-length, 0.25m radius
+                var cyl = new com.jme3.scene.shape.Cylinder(8, 12, 0.25f, 5f, true);
+                torpCollGeom = new Geometry("torpColl-" + ts.id(), cyl);
                 Material collMat = new Material(assetManager, "Common/MatDefs/Misc/Unshaded.j3md");
-                collMat.setColor("Color", new ColorRGBA(1f, 1f, 0f, 0.2f));
+                collMat.setColor("Color", new ColorRGBA(1f, 1f, 0f, 0.3f));
                 collMat.getAdditionalRenderState().setBlendMode(RenderState.BlendMode.Alpha);
                 collMat.getAdditionalRenderState().setWireframe(true);
                 torpCollGeom.setMaterial(collMat);
@@ -1984,8 +2025,6 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
             if (showCollisionEllipsoids) {
                 torpCollGeom.setLocalTranslation(targetPos);
                 torpCollGeom.setLocalRotation(targetRot);
-                // Scale: X=beam(0.25m), Y=length(2.5m), Z=height(0.25m)
-                torpCollGeom.setLocalScale(0.25f, 2.5f, 0.25f);
             }
         }
 
@@ -1997,6 +2036,100 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
             }
             return false;
         });
+
+        // Update intercept marker for selected torpedo
+        {
+            TorpedoSnapshot selTorp = null;
+            for (var ts : torpSnapshots) {
+                if (ts.id() == selectedSubId && ts.alive()) { selTorp = ts; break; }
+            }
+            if (selTorp != null && !Double.isNaN(selTorp.targetX()) && !Double.isNaN(selTorp.targetY())) {
+                float ix = (float) selTorp.targetX();
+                float iy = (float) (Double.isNaN(selTorp.targetZ()) ? selTorp.pose().position().z() : selTorp.targetZ());
+                float iz = (float) -selTorp.targetY();
+                interceptMarker.setLocalTranslation(ix, iy, iz);
+                interceptMarker.setCullHint(Spatial.CullHint.Never);
+                // Color matches torpedo owner
+                var tc = selTorp.color();
+                interceptMarker.getMaterial().setColor("Color",
+                        new ColorRGBA(tc.getRed()/255f, tc.getGreen()/255f, tc.getBlue()/255f, 0.8f));
+            } else {
+                interceptMarker.setCullHint(Spatial.CullHint.Always);
+            }
+        }
+
+        // Detect detonations: torpedoes that disappeared and were detonated
+        for (var ts : torpSnapshots) {
+            if (ts.detonated() && !knownTorpedoIds3D.contains(-ts.id())) { // use negative to mark seen
+                knownTorpedoIds3D.add(-ts.id());
+                var tPos = ts.pose().position();
+                float jx = (float) tPos.x();
+                float jy = (float) tPos.z();
+                float jz = (float) -tPos.y();
+                var ec = ts.color();
+                activeExplosions.add(new Explosion3D(
+                        new Vector3f(jx, jy, jz), appTime,
+                        new ColorRGBA(ec.getRed()/255f, ec.getGreen()/255f, ec.getBlue()/255f, 1f)));
+            }
+        }
+        knownTorpedoIds3D.retainAll(activeTorpIds.stream().map(i -> -i).collect(java.util.stream.Collectors.toSet()));
+
+        // Render 3D explosions
+        appTime += tpf;
+        var explosionIter = activeExplosions.iterator();
+        int expIdx = 0;
+        while (explosionIter.hasNext()) {
+            var exp = explosionIter.next();
+            float elapsed = appTime - exp.startTime();
+            float t = elapsed / EXPLOSION_DURATION;
+
+            if (t > 1.0f) {
+                // Expired: remove geometry and explosion
+                var geom = explosionGeoms.remove(expIdx);
+                if (geom != null) geom.removeFromParent();
+                explosionIter.remove();
+                continue;
+            }
+
+            Geometry geom = explosionGeoms.get(expIdx);
+            if (geom == null) {
+                var sphere = new com.jme3.scene.shape.Sphere(16, 16, 1f);
+                geom = new Geometry("explosion-" + expIdx, sphere);
+                Material mat = new Material(assetManager, "Common/MatDefs/Misc/Unshaded.j3md");
+                mat.getAdditionalRenderState().setBlendMode(RenderState.BlendMode.Additive);
+                mat.getAdditionalRenderState().setDepthWrite(false);
+                geom.setMaterial(mat);
+                geom.setQueueBucket(RenderQueue.Bucket.Transparent);
+                rootNode.attachChild(geom);
+                explosionGeoms.put(expIdx, geom);
+            }
+
+            // Expand sphere and fade out
+            float radius = EXPLOSION_MAX_RADIUS * (float) Math.sqrt(t);
+            float fade = (1.0f - t) * (1.0f - t);
+
+            // Bright flash for first 0.3s, then orange fireball fading
+            float r, g, b, a;
+            if (elapsed < 0.3f) {
+                float flashT = elapsed / 0.3f;
+                r = 1.0f;
+                g = 1.0f;
+                b = 0.8f + 0.2f * (1 - flashT);
+                a = (1 - flashT) * 0.8f;
+                radius = EXPLOSION_MAX_RADIUS * 0.3f * (1 + flashT);
+            } else {
+                r = 1.0f * fade + exp.color().r * (1 - fade);
+                g = 0.5f * fade + exp.color().g * (1 - fade);
+                b = 0.1f * fade;
+                a = fade * 0.6f;
+            }
+
+            geom.getMaterial().setColor("Color", new ColorRGBA(r, g, b, a));
+            geom.setLocalTranslation(exp.position());
+            geom.setLocalScale(radius);
+
+            expIdx++;
+        }
 
         // Update orbit center tracking (used by Orbit mode and as fallback)
         // Check both sub nodes and torpedo nodes

@@ -123,6 +123,9 @@ public final class DefaultAttackSub implements SubmarineController {
     // Chase timing
     private long chaseStartTick;
 
+    // Torpedo launch state
+    private long lastTorpedoLaunchTick = -10000;
+
     // Last known contact area (preserved across state transitions for patrol biasing)
     private double lastKnownContactX = Double.NaN;
     private double lastKnownContactY = Double.NaN;
@@ -481,13 +484,14 @@ public final class DefaultAttackSub implements SubmarineController {
                 }
             }
             case CHASE -> {
-                if (hasTrackedContact) {
+                if (hasTrackedContact && input.activeSonarCooldownTicks() == 0) {
                     boolean nearPredictedPos = trackedDist < TRACKED_PING_RANGE;
                     boolean contactStale = ticksSinceContact > 500;
                     boolean searchAreaGrowing = uncertaintyRadius > 1000;
-                    if (input.activeSonarCooldownTicks() == 0
-                            && ((nearPredictedPos && contactStale)
-                                || (searchAreaGrowing && contactStale))) {
+                    boolean wantFiringFix = trackedDist < 2500 && !rangeConfirmedByActive;
+                    if ((nearPredictedPos && contactStale)
+                            || (searchAreaGrowing && contactStale)
+                            || wantFiringFix) {
                         output.activeSonarPing();
                     }
                 }
@@ -513,16 +517,33 @@ public final class DefaultAttackSub implements SubmarineController {
         output.setStatus(String.format("%s f:%.0f g:%.0f",
                 stateTag, -floorBelow, immediateGap));
 
-        // Torpedo firing solution
-        if (hasTrackedContact && state == State.CHASE && isBehindTarget()
-                && trackedDist < 1500 && trackedDist > 200
-                && !Double.isNaN(trackedHeading) && trackedSpeed > 0
-                && contactAlive > 0.5 && uncertaintyRadius < 300) {
+        // Torpedo firing solution + launch
+        if (hasTrackedContact && (state == State.CHASE || state == State.RAM)
+                && trackedDist < 2500 && trackedDist > 200
+                && contactAlive > 0.3) {
             double solutionAge = (tick - trackedLastFixTick) / 50.0;
-            if (solutionAge < 30) {
+            if (solutionAge < 30 && !Double.isNaN(trackedHeading) && trackedSpeed > 0
+                    && uncertaintyRadius < 300) {
                 double quality = Math.clamp(1.0 - uncertaintyRadius / 300.0, 0.1, 1.0);
                 output.publishFiringSolution(new FiringSolution(
                         trackedX, trackedY, trackedHeading, trackedSpeed, quality));
+            }
+
+            // Launch torpedo if ready (needs active fix for targeting data)
+            if (input.self().torpedoesRemaining() > 0
+                    && tick - lastTorpedoLaunchTick > 750 // 15s cooldown
+                    && rangeConfirmedByActive
+                    && solutionAge < 15) {
+                double bearingToTarget = Math.atan2(trackedX - pos.x(), trackedY - pos.y());
+                if (bearingToTarget < 0) bearingToTarget += 2 * Math.PI;
+                double headingError = angleDiff(bearingToTarget, heading);
+                if (Math.abs(headingError) < Math.toRadians(30)) {
+                    String missionData = String.format("%.0f,%.0f,%.0f",
+                            trackedX, trackedY, -80.0);
+                    output.launchTorpedo(new TorpedoLaunchCommand(
+                            bearingToTarget, 0, 20.0, missionData));
+                    lastTorpedoLaunchTick = tick;
+                }
             }
         }
 

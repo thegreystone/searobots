@@ -196,11 +196,11 @@ public final class TorpedoPhysics {
             torp.setVerticalSpeed(0);
         }
 
-        // 10. Terrain collision: torpedo destroyed on impact
+        // 10. Terrain collision: torpedo DETONATES on impact (can damage nearby subs)
         if (terrain != null) {
             double floor = terrain.elevationAt(newX, newY);
             if (newZ < floor + cfg.terrainClearance()) {
-                torp.kill();
+                torp.detonate(); // detonate, not just kill
                 torp.setX(newX);
                 torp.setY(newY);
                 torp.setZ(floor + cfg.terrainClearance());

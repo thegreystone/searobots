@@ -100,6 +100,11 @@ public final class ClaudeAttackSub implements SubmarineController {
     @Override public String name() { return "Claude Sub"; }
 
     @Override
+    public TorpedoController createTorpedoController() {
+        return new ClaudeTorpedoController();
+    }
+
+    @Override
     public void onMatchStart(MatchContext context) {
         config = context.config();
         terrain = context.terrain();
@@ -496,18 +501,34 @@ public final class ClaudeAttackSub implements SubmarineController {
             targetSpeed = 6.0;
             arrival = 240;
         } else if (!Double.isNaN(trackedHeading) && trackedSpeed > 0.5) {
-            // Lead pursuit with stern offset
+            // Shadow at torpedo engagement range (1500-2500m), don't close in
+            // Stay behind the target for best torpedo geometry
             double predict = Math.clamp(dist / Math.max(speed, 4.5), 6, 35);
             tx += Math.sin(trackedHeading) * trackedSpeed * predict * 0.6;
             ty += Math.cos(trackedHeading) * trackedSpeed * predict * 0.6;
-            if (dist < 1800) {
+
+            // Maintain standoff: if too close, back off to stern at safe distance
+            double desiredDist = 2000; // ideal shadow distance
+            double minDist = 1200; // never closer than this
+            if (dist < minDist) {
+                // Back away: go to a point behind the target at desired distance
+                double awayBearing = ClaudeAutopilot.norm(
+                        Math.atan2(x - trackedX, y - trackedY)); // bearing FROM target TO us
+                tx = trackedX + Math.sin(awayBearing) * desiredDist;
+                ty = trackedY + Math.cos(awayBearing) * desiredDist;
+                noise = NoisePolicy.QUIET;
+                targetSpeed = 7.0;
+                purpose = Purpose.EVADE;
+            } else if (dist < 2500) {
+                // Good range: get behind the target for torpedo shot
                 double sternX = tx - Math.sin(trackedHeading) * STERN_OFFSET;
                 double sternY = ty - Math.cos(trackedHeading) * STERN_OFFSET;
                 if (battleArea.distanceToBoundary(sternX, sternY) > PATROL_MARGIN / 2
                         && pathPlanner.isSafe(sternX, sternY)) {
                     tx = sternX; ty = sternY;
-                    if (dist < 1100) { noise = NoisePolicy.QUIET; targetSpeed = 5.8; }
                 }
+                noise = NoisePolicy.QUIET;
+                targetSpeed = 6.5;
             }
             depth = safeDepth(tx, ty, Math.min(cruiseDepth, -170));
         }

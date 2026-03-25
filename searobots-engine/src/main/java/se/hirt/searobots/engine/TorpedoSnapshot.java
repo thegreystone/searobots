@@ -22,5 +22,8 @@ public record TorpedoSnapshot(
         boolean detonated,
         boolean alive,
         double sourceLevelDb,
-        boolean pingRequested
+        boolean pingRequested,
+        double targetX,
+        double targetY,
+        double targetZ
 ) {}

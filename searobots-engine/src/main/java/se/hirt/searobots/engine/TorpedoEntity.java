@@ -57,6 +57,10 @@ public final class TorpedoEntity {
     private boolean alive = true;
     private boolean detonated;
     private boolean detonateRequested;
+    private boolean explosionProcessed; // true after handleDetonation applies damage
+
+    // Published target (for viewer visualization)
+    private double pubTargetX = Double.NaN, pubTargetY = Double.NaN, pubTargetZ = Double.NaN;
 
     // Pending launch command output (used by TorpedoOutput impl)
     private double cmdRudder, cmdSternPlanes, cmdThrottle = 1.0;
@@ -134,6 +138,8 @@ public final class TorpedoEntity {
 
     public void kill() { alive = false; }
     public void detonate() { detonated = true; alive = false; }
+    public boolean explosionProcessed() { return explosionProcessed; }
+    public void setExplosionProcessed() { explosionProcessed = true; }
 
     public void decrementSonarCooldown() {
         if (activeSonarCooldown > 0) activeSonarCooldown--;
@@ -162,8 +168,15 @@ public final class TorpedoEntity {
                 if (activeSonarCooldown <= 0) { pingRequested = true; }
             }
             @Override public void detonate() { detonateRequested = true; }
+            @Override public void publishTarget(double x, double y, double z) {
+                pubTargetX = x; pubTargetY = y; pubTargetZ = z;
+            }
         };
     }
+
+    public double publishedTargetX() { return pubTargetX; }
+    public double publishedTargetY() { return pubTargetY; }
+    public double publishedTargetZ() { return pubTargetZ; }
 
     public double cmdRudder() { return cmdRudder; }
     public double cmdSternPlanes() { return cmdSternPlanes; }
@@ -188,7 +201,8 @@ public final class TorpedoEntity {
     public TorpedoSnapshot snapshot() {
         return new TorpedoSnapshot(
                 id, ownerId, pose(), velocity(), speed, color,
-                fuelRemaining, detonated, alive, sourceLevelDb, pingRequested);
+                fuelRemaining, detonated, alive, sourceLevelDb, pingRequested,
+                pubTargetX, pubTargetY, pubTargetZ);
     }
 
     // ── Constants ──────────────────────────────────────────────────

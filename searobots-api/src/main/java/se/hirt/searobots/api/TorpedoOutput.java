@@ -22,4 +22,7 @@ public interface TorpedoOutput {
 
     /** Manually detonate the torpedo's warhead at the current position. */
     default void detonate() {}
+
+    /** Publish current target position for viewer visualization. */
+    default void publishTarget(double x, double y, double z) {}
 }
