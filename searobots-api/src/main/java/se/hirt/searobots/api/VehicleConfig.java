@@ -119,7 +119,7 @@ public record VehicleConfig(
             5.0,                            // collisionDamageFactor
             0.5,                            // bounceSpeed
             0.5,                            // propDragFactor
-            80.0,                       // baseSlDb
+            90.0,                       // baseSlDb
             15.0,                       // clutchDisengagedSlReduction
             2.0,                        // speedNoiseDbPerMs
             5.0,                        // baseCavitationSpeed

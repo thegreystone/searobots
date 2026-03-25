@@ -76,6 +76,8 @@ public interface SubmarineOutput {
      * Launches a torpedo. The torpedo is autonomous after launch: no
      * further communication is possible. The mission data string is the
      * only information the torpedo controller receives from the sub.
+     * Torpedoes exit fixed forward tubes in the submarine's current
+     * heading and pitch, then steer autonomously after ejection.
      *
      * <p>Requires torpedoesRemaining > 0. Ignored if no torpedoes left.
      * Creates a launch noise transient on the submarine.

@@ -185,8 +185,9 @@ class SubmarinePhysicsTest {
         var sub = makeSub(0, 0, -200);
         physics.step(sub, DT, TERRAIN, NO_CURRENT, CONFIG.battleArea());
 
-        assertEquals(80.0, sub.sourceLevelDb(), 0.5,
-                "Stationary sub at depth should have ~80 dB SL (machinery only)");
+        double baseSL = VehicleConfig.submarine().baseSlDb();
+        assertEquals(baseSL, sub.sourceLevelDb(), 0.5,
+                "Stationary sub at depth should have base SL (machinery only)");
     }
 
     @Test
@@ -211,9 +212,11 @@ class SubmarinePhysicsTest {
         var sub = makeSub(4, 0, -200);
         physics.step(sub, DT, TERRAIN, NO_CURRENT, CONFIG.battleArea());
 
-        // Expected: 80 + 2*speed (speed ≈ 3.98 after drag) ≈ 87.96 dB
-        assertTrue(sub.sourceLevelDb() >= 87.0 && sub.sourceLevelDb() <= 89.0,
-                "At 4 m/s / -200m, SL should be ~88 dB (no cavitation), got " + sub.sourceLevelDb());
+        // Expected: baseSL + 2*speed (speed ≈ 3.98 after drag)
+        double baseSL = VehicleConfig.submarine().baseSlDb();
+        double expected = baseSL + 2 * 3.98;
+        assertTrue(sub.sourceLevelDb() >= expected - 1 && sub.sourceLevelDb() <= expected + 1,
+                "At 4 m/s / -200m, SL should be ~" + expected + " dB (no cavitation), got " + sub.sourceLevelDb());
     }
 
     @Test
@@ -224,7 +227,7 @@ class SubmarinePhysicsTest {
         var sub = makeSub(10, 0, -50);
         physics.step(sub, DT, TERRAIN, NO_CURRENT, CONFIG.battleArea());
 
-        double baseAndSpeed = 80.0 + 2.0 * 10.0; // 100 dB
+        double baseAndSpeed = VehicleConfig.submarine().baseSlDb() + 2.0 * 10.0;
         assertTrue(sub.sourceLevelDb() > baseAndSpeed + 5,
                 "At 10 m/s / -50m, SL should include cavitation penalty, got " + sub.sourceLevelDb());
     }
@@ -238,8 +241,10 @@ class SubmarinePhysicsTest {
         var sub = makeSub(10, 0, -400);
         physics.step(sub, DT, TERRAIN, NO_CURRENT, CONFIG.battleArea());
 
-        // Expected: 80 + 2*9.87 ≈ 99.7 dB, no cavitation component
-        assertTrue(sub.sourceLevelDb() >= 99.0 && sub.sourceLevelDb() <= 101.0,
+        // Expected: baseSL + 2*9.87, no cavitation component
+        double baseSL = VehicleConfig.submarine().baseSlDb();
+        double expected = baseSL + 2 * 9.87;
+        assertTrue(sub.sourceLevelDb() >= expected - 1 && sub.sourceLevelDb() <= expected + 1,
                 "At 10 m/s / -400m, SL should have no cavitation, got " + sub.sourceLevelDb());
     }
 

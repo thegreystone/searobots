@@ -36,9 +36,9 @@ public final class SonarModel {
 
     // Detection
     static final double DETECTION_THRESHOLD_DB = 5.0;
-    static final double AMBIENT_NOISE_DB = 60.0;
+    static final double AMBIENT_NOISE_DB = 55.0;
     // Self-noise is lower than radiated SL (hydrophones are isolated from machinery)
-    static final double SELF_NOISE_OFFSET_DB = 30.0;
+    static final double SELF_NOISE_OFFSET_DB = 35.0;
     // Cylindrical spreading for shallow water at our scale (surface + floor waveguide)
     static final double SPREADING_COEFFICIENT = 10.0;
 
