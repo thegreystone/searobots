@@ -87,6 +87,9 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
     private final java.util.Set<Integer> knownTorpedoIds3D = new java.util.HashSet<>();
     // Torpedo intercept marker (3D diamond at published target)
     private Geometry interceptMarker;
+
+    // Cinematic director (automatic camera)
+    private CinematicDirector cinematicDirector;
     private volatile List<SubmarineSnapshot> latestSnapshots = List.of();
     private volatile long latestTick;
     private int selectedSubId = 0;
@@ -149,17 +152,18 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 
     // Camera modes
     private enum CameraMode {
-        ORBIT, CHASE, TARGET, PERISCOPE, FREE_LOOK, FLY_BY;
+        ORBIT, CHASE, TARGET, PERISCOPE, FREE_LOOK, FLY_BY, DIRECTOR;
         private static final CameraMode[] VALUES = values();
         CameraMode next() { return VALUES[(ordinal() + 1) % VALUES.length]; }
         String label() {
             return switch (this) {
                 case ORBIT -> "Orbit"; case CHASE -> "Chase"; case TARGET -> "Target";
                 case PERISCOPE -> "Periscope"; case FREE_LOOK -> "Free Look"; case FLY_BY -> "Fly-by";
+                case DIRECTOR -> "Director";
             };
         }
     }
-    private CameraMode cameraMode = CameraMode.ORBIT;
+    private CameraMode cameraMode = CameraMode.DIRECTOR;
 
     // Orbit camera state
     private final Vector3f orbitCenter = new Vector3f();
@@ -1192,7 +1196,13 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
             viewPort.setBackgroundColor(new ColorRGBA(0.15f, 0.15f, 0.25f, 1f));
             return;
         }
-        waterFilter.setEnabled(true);
+        // Director mode can fade water/fog for overhead shots.
+        // Only touch transparency when actively fading; preserve user's F3 setting otherwise.
+        // Director mode: simply enable/disable water filter for overhead shots.
+        // No transparency manipulation (it causes visual glitches).
+        boolean directorHidesWater = cameraMode == CameraMode.DIRECTOR
+                && cinematicDirector != null && cinematicDirector.waterOpacity() < 0.5f;
+        waterFilter.setEnabled(!directorHidesWater);
 
         if (!atmosphereEnabled) {
             // Full flat lighting, no fog, but still track sun direction
@@ -1204,7 +1214,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
             return;
         }
 
-        fogFilter.setEnabled(true);
+        fogFilter.setEnabled(!directorHidesWater);
         float camY = cam.getLocation().y; // jME Y = sim depth (negative = underwater)
 
         // Scale sun intensity by elevation (dimmer near horizon)
@@ -1291,7 +1301,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
                 hdgDeg, pitchDeg, rollDeg,
                 snap.rudder() * 100, snap.sternPlanes() * 100,
                 tick, elapsed.toHoursPart(), elapsed.toMinutesPart(), elapsed.toSecondsPart(),
-                tod.toString(), cameraMode.label()));
+                tod.toString(), camLabel()));
 
         // Speed/pause indicator (separate text, top center, colored)
         {
@@ -1354,7 +1364,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
                 hdgDeg, pitchDeg, targetLine,
                 ts.fuelRemaining(), ts.sourceLevelDb(),
                 tick, elapsed.toHoursPart(), elapsed.toMinutesPart(), elapsed.toSecondsPart(),
-                cameraMode.label()));
+                camLabel()));
         tacticalText.setText("");
     }
 
@@ -2218,6 +2228,11 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
                 if (cameraMode == CameraMode.FLY_BY) {
                     pickFlyByStation();
                 }
+                // Restore water/fog when leaving director mode
+                if (cameraMode != CameraMode.DIRECTOR) {
+                    if (waterFilter != null) waterFilter.setEnabled(true);
+                    if (fogFilter != null) fogFilter.setEnabled(true);
+                }
                 System.out.println("Camera: " + cameraMode.label());
             }
         }, "CycleCamera");
@@ -2329,6 +2344,22 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
             case PERISCOPE -> computePeriscopeCamera(outPos, outLookAt);
             case FREE_LOOK -> computeFreeLookCamera(outPos, outLookAt, tpf);
             case FLY_BY    -> computeFlyByCamera(outPos, outLookAt, tpf);
+            case DIRECTOR  -> {
+                if (cinematicDirector == null) {
+                    cinematicDirector = new CinematicDirector(
+                            () -> latestSnapshots,
+                            () -> latestTorpedoSnapshots,
+                            subNodes, torpedoNodes,
+                            standaloneWorld != null ? standaloneWorld.terrain() : null);
+                }
+                int newId = cinematicDirector.update(tpf, outPos, outLookAt);
+                if (newId != selectedSubId) {
+                    selectedSubId = newId;
+                    chaseInitialized = false;
+                }
+                // Water/fog opacity is handled by the atmosphere update method
+                // via cinematicDirector.waterOpacity()
+            }
         }
     }
 
@@ -2439,6 +2470,13 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
         }
         outPos.set(flyByStation);
         outLookAt.set(subPos);
+    }
+
+    private String camLabel() {
+        if (cameraMode == CameraMode.DIRECTOR && cinematicDirector != null) {
+            return "Director: " + cinematicDirector.currentShotLabel();
+        }
+        return cameraMode.label();
     }
 
     // ---- helpers ----

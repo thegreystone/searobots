@@ -34,7 +34,7 @@ public class SubmarineCompetition {
     // Standard competition format
     public static final int STANDARD_NAV_SEEDS = 5;
     public static final int STANDARD_NAV_DURATION_SECONDS = 2400; // 40 minutes per nav
-    public static final int STANDARD_COMBAT_DURATION_SECONDS = 600; // 10 minutes per combat
+    public static final int STANDARD_COMBAT_DURATION_SECONDS = 1800; // 30 minutes per combat
 
     /**
      * A competition format: fully determined by a single master seed.
@@ -547,10 +547,11 @@ public class SubmarineCompetition {
     // ── Main entry point ─────────────────────────────────────────────
 
     /**
-     * Usage: SubmarineCompetition [masterSeed_hex]
+     * Usage: SubmarineCompetition [masterSeed_hex] [--combat-only]
      *
      * With no arguments: generates a random master seed for a standard competition.
      * With a hex seed: runs a reproducible standard competition with that master seed.
+     * With --combat-only: skips the navigation phase and runs combat only (faster iteration).
      * The master seed deterministically generates all match seeds.
      */
     public static void main(String[] args) {
@@ -559,24 +560,36 @@ public class SubmarineCompetition {
                 new Competitor("ClaudeAttackSub", ClaudeAttackSub::new)
         );
 
-        long masterSeed = args.length > 0
-                ? Long.parseUnsignedLong(args[0], 16)
-                : java.util.concurrent.ThreadLocalRandom.current().nextLong();
+        boolean combatOnly = false;
+        long masterSeed = java.util.concurrent.ThreadLocalRandom.current().nextLong();
+
+        for (String arg : args) {
+            if ("--combat-only".equals(arg)) {
+                combatOnly = true;
+            } else {
+                masterSeed = Long.parseUnsignedLong(arg, 16);
+            }
+        }
 
         var format = CompetitionFormat.standard(masterSeed);
 
-        System.out.printf("Competition: master seed %s, %d nav seeds, %ds nav / %ds combat%n",
+        System.out.printf("Competition: master seed %s, %d seeds, %ds nav / %ds combat%s%n",
                 Long.toHexString(masterSeed), format.navSeeds(),
-                format.navDurationSeconds(), format.combatDurationSeconds());
+                format.navDurationSeconds(), format.combatDurationSeconds(),
+                combatOnly ? " [COMBAT ONLY]" : "");
         System.out.print("Match seeds:");
         for (long s : format.matchSeeds()) System.out.printf(" %s", Long.toHexString(s));
         System.out.println("\n");
 
-        // Navigation scenario
-        var navPoints = compete(competitors, format.matchSeeds(),
-                TICKS_PER_SECOND * format.navDurationSeconds());
-
-        System.out.println();
+        Map<String, Integer> navPoints;
+        if (combatOnly) {
+            navPoints = new LinkedHashMap<>();
+            for (var c : competitors) navPoints.put(c.name(), 0);
+        } else {
+            navPoints = compete(competitors, format.matchSeeds(),
+                    TICKS_PER_SECOND * format.navDurationSeconds());
+            System.out.println();
+        }
 
         // Combat scenario
         runCombatScenario(competitors, format.matchSeeds(),

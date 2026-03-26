@@ -8,9 +8,16 @@ import se.hirt.searobots.api.TorpedoLaunchContext;
 import se.hirt.searobots.api.TorpedoOutput;
 
 public final class CodexTorpedoController implements TorpedoController {
-    private static final double MIN_TERRAIN_CLEARANCE = 30.0;
+    private static final double MIN_TERRAIN_CLEARANCE = 35.0;
     private static final double MAX_CRUISE_DEPTH = -30.0;
     private static final double MAX_TARGET_DEPTH = -150.0;
+    private static final long STRAIGHT_RUN_TICKS = 300L;
+    private static final double STRAIGHT_RUN_DISTANCE = 450.0;
+    private static final double STRAIGHT_RUN_RUDDER_LIMIT = 0.22;
+    private static final double ACTIVE_SONAR_ARM_DISTANCE = 850.0;
+    private static final double OWNER_AVOIDANCE_RADIUS = 850.0;
+    private static final double OWNER_REJECTION_RUN_DISTANCE = 1_200.0;
+    private static final double TARGET_GATE_RADIUS = 1_400.0;
 
     private TerrainMap terrain;
     private boolean hasTarget;
@@ -23,17 +30,26 @@ public final class CodexTorpedoController implements TorpedoController {
     private double prevFixY = Double.NaN;
     private long prevFixTick = Long.MIN_VALUE / 4;
     private double passiveRangeEstimate = Double.NaN;
+    private double launchX = Double.NaN;
+    private double launchY = Double.NaN;
+    private double launchHeading = Double.NaN;
+    private long launchTick = Long.MIN_VALUE / 4;
 
     @Override
     public void onLaunch(TorpedoLaunchContext context) {
         this.terrain = context.terrain();
+        this.launchX = context.launchPosition().x();
+        this.launchY = context.launchPosition().y();
+        this.launchHeading = context.launchHeading();
         String missionData = context.missionData();
         if (missionData == null || missionData.isBlank()) {
             return;
         }
 
         try {
-            var parts = missionData.split(",");
+            var parts = missionData.contains(";")
+                    ? missionData.split(";")
+                    : missionData.split(",");
             if (parts.length >= 2) {
                 targetX = Double.parseDouble(parts[0].trim());
                 targetY = Double.parseDouble(parts[1].trim());
@@ -59,12 +75,18 @@ public final class CodexTorpedoController implements TorpedoController {
 
         var pos = input.self().position();
         double heading = input.self().heading();
-
-        if (input.activeSonarCooldownTicks() == 0) {
+        if (launchTick <= Long.MIN_VALUE / 8) {
+            launchTick = input.tick();
+        }
+        double runDistance = Math.hypot(pos.x() - launchX, pos.y() - launchY);
+        boolean straightRun = inStraightRun(runDistance, input.tick());
+        if (input.activeSonarCooldownTicks() == 0
+                && !straightRun
+                && runDistance >= ACTIVE_SONAR_ARM_DISTANCE) {
             output.activeSonarPing();
         }
 
-        SonarContact fix = pickForwardContact(input.activeSonarReturns(), heading);
+        SonarContact fix = pickForwardContact(input.activeSonarReturns(), pos, heading);
         if (fix != null) {
             double fixX = pos.x() + Math.sin(fix.bearing()) * fix.range();
             double fixY = pos.y() + Math.cos(fix.bearing()) * fix.range();
@@ -77,7 +99,7 @@ public final class CodexTorpedoController implements TorpedoController {
             }
             hasTarget = true;
         } else if (hasTarget) {
-            SonarContact passive = pickForwardContact(input.sonarContacts(), heading);
+            SonarContact passive = pickForwardContact(input.sonarContacts(), pos, heading);
             if (passive != null) {
                 double rangeGuess = Double.isNaN(passiveRangeEstimate)
                         ? 450.0
@@ -97,19 +119,20 @@ public final class CodexTorpedoController implements TorpedoController {
             return;
         }
 
-        double dx = targetX - pos.x();
-        double dy = targetY - pos.y();
-        double dist = Math.hypot(dx, dy);
         double speed = Math.max(input.speed(), 8.0);
-        double timeToIntercept = Math.clamp(dist / speed, 1.0, 35.0);
-        double leadScale = dist < 220.0 ? 0.35 : 1.0;
-        double interceptX = targetX + estVelX * timeToIntercept * leadScale;
-        double interceptY = targetY + estVelY * timeToIntercept * leadScale;
-
-        double bearingToIntercept = Math.atan2(interceptX - pos.x(), interceptY - pos.y());
-        if (bearingToIntercept < 0.0) {
-            bearingToIntercept += 2.0 * Math.PI;
-        }
+        double[] intercept = predictedIntercept(pos.x(), pos.y(), speed);
+        double interceptX = intercept[0];
+        double interceptY = intercept[1];
+        double guidanceX = straightRun
+                ? launchX + Math.sin(launchHeading) * STRAIGHT_RUN_DISTANCE
+                : interceptX;
+        double guidanceY = straightRun
+                ? launchY + Math.cos(launchHeading) * STRAIGHT_RUN_DISTANCE
+                : interceptY;
+        double dx = guidanceX - pos.x();
+        double dy = guidanceY - pos.y();
+        double dist = Math.hypot(dx, dy);
+        double bearingToIntercept = normalize(Math.atan2(dx, dy));
 
         double headingError = bearingToIntercept - heading;
         while (headingError > Math.PI) {
@@ -118,13 +141,14 @@ public final class CodexTorpedoController implements TorpedoController {
         while (headingError < -Math.PI) {
             headingError += 2.0 * Math.PI;
         }
-        double rudderGain = dist < 250.0 ? 2.0 : 1.5;
-        output.setRudder(Math.clamp(headingError * rudderGain, -1.0, 1.0));
+        double rudderGain = straightRun ? 1.2 : dist < 250.0 ? 2.0 : 1.5;
+        double rudderLimit = straightRun ? STRAIGHT_RUN_RUDDER_LIMIT : 1.0;
+        output.setRudder(Math.clamp(headingError * rudderGain, -rudderLimit, rudderLimit));
 
         double desiredZ;
-        if (dist < 180.0) {
+        if (fix != null && dist < 180.0) {
             desiredZ = pos.z();
-        } else if (dist < 450.0 && prevFixTick > Long.MIN_VALUE / 8) {
+        } else if (fix != null && dist < 450.0 && prevFixTick > Long.MIN_VALUE / 8) {
             desiredZ = pos.z() + (targetZ - pos.z()) * 0.05;
         } else {
             double cruiseTarget = Math.max(targetZ, MAX_TARGET_DEPTH);
@@ -136,8 +160,8 @@ public final class CodexTorpedoController implements TorpedoController {
             double safeZ = floor + MIN_TERRAIN_CLEARANCE;
             double lookAhead = Math.max(input.speed(), 5.0) * 4.0;
             double aheadFloor = terrain.elevationAt(
-                    pos.x() + Math.sin(heading) * lookAhead,
-                    pos.y() + Math.cos(heading) * lookAhead);
+                    pos.x() + Math.sin(bearingToIntercept) * lookAhead,
+                    pos.y() + Math.cos(bearingToIntercept) * lookAhead);
             safeZ = Math.max(safeZ, aheadFloor + MIN_TERRAIN_CLEARANCE + 10.0);
             if (desiredZ < safeZ) {
                 desiredZ = safeZ;
@@ -153,7 +177,7 @@ public final class CodexTorpedoController implements TorpedoController {
         if (fix != null && fix.range() < 12.0) {
             output.detonate();
         }
-        output.publishTarget(interceptX, interceptY, targetZ);
+        output.publishTarget(guidanceX, guidanceY, targetZ);
     }
 
     private void updateVelocityEstimate(long tick, double fixX, double fixY) {
@@ -171,7 +195,9 @@ public final class CodexTorpedoController implements TorpedoController {
         prevFixTick = tick;
     }
 
-    private SonarContact pickForwardContact(java.util.List<SonarContact> contacts, double heading) {
+    private SonarContact pickForwardContact(java.util.List<SonarContact> contacts,
+                                            se.hirt.searobots.api.Vec3 pos,
+                                            double heading) {
         SonarContact best = null;
         double bestScore = Double.NEGATIVE_INFINITY;
         for (SonarContact contact : contacts) {
@@ -187,12 +213,76 @@ public final class CodexTorpedoController implements TorpedoController {
             }
             double forwardness = Math.cos(angleDiff);
             double rangePenalty = contact.range() > 0.0 ? contact.range() * 0.01 : 0.0;
+            if (!isPlausibleContact(contact, pos, heading)) {
+                continue;
+            }
             double score = forwardness * 100.0 + contact.signalExcess() - rangePenalty;
+            if (hasTarget) {
+                double contactRange = contact.range() > 0.0 ? contact.range() : Math.max(passiveRangeEstimate, 450.0);
+                double cx = targetX;
+                double cy = targetY;
+                if (!Double.isNaN(contactRange)) {
+                    cx = pos.x() + Math.sin(contact.bearing()) * contactRange;
+                    cy = pos.y() + Math.cos(contact.bearing()) * contactRange;
+                }
+                double predictedError = Math.hypot(cx - targetX, cy - targetY);
+                score -= predictedError * 0.03;
+            }
             if (score > bestScore) {
                 bestScore = score;
                 best = contact;
             }
         }
         return best;
+    }
+
+    private double[] predictedIntercept(double ownX, double ownY, double ownSpeed) {
+        double dist = Math.hypot(targetX - ownX, targetY - ownY);
+        double timeToIntercept = Math.clamp(dist / ownSpeed, 1.0, 35.0);
+        double leadScale = dist < 220.0 ? 0.35 : 1.0;
+        return new double[]{
+                targetX + estVelX * timeToIntercept * leadScale,
+                targetY + estVelY * timeToIntercept * leadScale
+        };
+    }
+
+    private boolean isPlausibleContact(SonarContact contact,
+                                       se.hirt.searobots.api.Vec3 pos,
+                                       double heading) {
+        if (!hasTarget) {
+            return true;
+        }
+        double rangeGuess = contact.range() > 0.0
+                ? contact.range()
+                : Double.isNaN(passiveRangeEstimate)
+                ? 500.0
+                : Math.max(passiveRangeEstimate, 300.0);
+        double cx = pos.x() + Math.sin(contact.bearing()) * rangeGuess;
+        double cy = pos.y() + Math.cos(contact.bearing()) * rangeGuess;
+        double fromLaunch = Math.hypot(cx - launchX, cy - launchY);
+        double fromTarget = Math.hypot(cx - targetX, cy - targetY);
+        double runDistance = Math.hypot(pos.x() - launchX, pos.y() - launchY);
+        double headingDiff = heading - launchHeading;
+        while (headingDiff > Math.PI) headingDiff -= 2.0 * Math.PI;
+        while (headingDiff < -Math.PI) headingDiff += 2.0 * Math.PI;
+        boolean stillOutbound = Math.abs(headingDiff) < Math.toRadians(70.0);
+        boolean ownerDangerZone = fromLaunch < OWNER_AVOIDANCE_RADIUS
+                && runDistance < OWNER_REJECTION_RUN_DISTANCE;
+        if ((stillOutbound || ownerDangerZone) && fromTarget > TARGET_GATE_RADIUS) {
+            return false;
+        }
+        return fromTarget <= TARGET_GATE_RADIUS || contact.signalExcess() > 18.0;
+    }
+
+    private boolean inStraightRun(double runDistance, long tick) {
+        return tick - launchTick < STRAIGHT_RUN_TICKS || runDistance < STRAIGHT_RUN_DISTANCE;
+    }
+
+    private double normalize(double bearing) {
+        double result = bearing % (2.0 * Math.PI);
+        if (result < 0.0) {
+            result += 2.0 * Math.PI;
+        }
+        return result;
     }
 }

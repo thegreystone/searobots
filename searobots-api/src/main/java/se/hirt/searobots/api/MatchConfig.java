@@ -81,7 +81,7 @@ public record MatchConfig(
                 50,
                 300_000,
                 2,
-                4,
+                8,
                 1000,
                 50.0,
                 5.0,

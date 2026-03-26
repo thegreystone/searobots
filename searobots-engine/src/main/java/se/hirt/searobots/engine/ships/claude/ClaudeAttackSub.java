@@ -162,7 +162,7 @@ public final class ClaudeAttackSub implements SubmarineController {
             if (hasObj && needPlan) {
                 var orig = objectives.get(objectiveIndex);
                 var wp = new StrategicWaypoint(orig.x(), orig.y(), orig.preferredDepth(),
-                        orig.purpose(), NoisePolicy.SPRINT, orig.pattern(), orig.arrivalRadius(), 12.0);
+                        orig.purpose(), NoisePolicy.NORMAL, orig.pattern(), orig.arrivalRadius(), 8.0);
                 strategicWaypoints = List.of(wp);
                 autopilot.setWaypoints(strategicWaypoints,
                         pos.x(), pos.y(), pos.z(), heading, speed, true);
@@ -379,11 +379,17 @@ public final class ClaudeAttackSub implements SubmarineController {
 
         boolean shouldPing = false;
         if (!hasTrackedContact) {
+            // Patrol: ping rarely to avoid revealing position
             shouldPing = since >= PATROL_PING_INTERVAL;
         } else if (mode == Mode.CHASE) {
-            shouldPing = dist < FIRING_RANGE + 200 || sinceFix > STALE_CONTACT_TICKS || uncertaintyRadius > 450;
+            // Chase: ping to get firing solution, but not too often
+            boolean needFix = dist < 2000 && uncertaintyRadius > 150 && sinceFix > 250;
+            boolean lostTrack = sinceFix > 500 && uncertaintyRadius > 600;
+            boolean longShadow = dist < 1500 && since > 600; // ping every 12s when shadowing close
+            shouldPing = needFix || lostTrack || longShadow;
         } else {
-            shouldPing = since >= PATROL_PING_INTERVAL / 2;
+            // Tracking: ping to confirm contact, but not too often
+            shouldPing = since >= PATROL_PING_INTERVAL;
         }
         if (shouldPing) { output.activeSonarPing(); lastPingTick = tick; }
     }
@@ -413,49 +419,52 @@ public final class ClaudeAttackSub implements SubmarineController {
         if (tick < 500) return; // don't fire in the first 10 seconds
         if (tick - lastTorpedoLaunchTick < TORPEDO_REFIRE_COOLDOWN) return;
         if (!hasTrackedContact) return;
-        if (contactAlive < 0.50) return; // need solid contact
-        if (mode != Mode.CHASE) return; // only fire when actively chasing
-        if (!rangeConfirmedByActive) return; // need an active fix before firing
+        if (contactAlive < 0.50) return;
+        if (mode != Mode.CHASE) return;
 
         double dist = ClaudeAutopilot.hdist(pos.x(), pos.y(), trackedX, trackedY);
-        // Torpedo range: ~3000m at 25 m/s * 120s fuel.
-        // Min 500m (arming distance), max 2500m (need fuel margin for chase)
-        if (dist < 500 || dist > 2500) return;
-        if (uncertaintyRadius > 300) return;
+        // Close before firing: 800-2000m is the sweet spot.
+        // Too close = arming risk. Too far = torpedo can't catch maneuvering target.
+        if (dist < 800 || dist > 2000) return;
+        // Need good track: either active fix or decent TMA solution
+        if (!rangeConfirmedByActive && uncertaintyRadius > 300) return;
+        if (uncertaintyRadius > 400) return;
+        // Conserve torpedoes: fire in pairs, with 45-second assessment between salvos.
+        int torpsRemaining = input.self().torpedoesRemaining();
+        int torpsFired = config.torpedoCount() - torpsRemaining;
+        if (torpsFired >= 2 && tick - lastTorpedoLaunchTick < 2250) return; // 45s between salvos
 
         // Compute bearing to target
         double bearing = Math.atan2(trackedX - pos.x(), trackedY - pos.y());
         if (bearing < 0) bearing += 2 * Math.PI;
 
-        // Lead the target: estimate where it will be when torpedo arrives
-        double torpSpeed = 25.0; // approximate torpedo speed
+        // Lead the target: estimate where it will be when torpedo arrives.
+        // Cap the lead distance to avoid garbage from bad velocity estimates.
+        double torpSpeed = 25.0;
         double timeToTarget = dist / torpSpeed;
-        double leadX, leadY;
-        if (!Double.isNaN(trackedHeading) && trackedSpeed > 0) {
-            leadX = trackedX + Math.sin(trackedHeading) * trackedSpeed * timeToTarget;
-            leadY = trackedY + Math.cos(trackedHeading) * trackedSpeed * timeToTarget;
-        } else {
-            leadX = trackedX;
-            leadY = trackedY;
+        double leadX = trackedX, leadY = trackedY;
+        if (!Double.isNaN(trackedHeading) && trackedSpeed > 0.5 && trackedSpeed < 20) {
+            double maxLead = dist * 0.4; // lead at most 40% of current distance
+            double leadDist = Math.min(trackedSpeed * timeToTarget, maxLead);
+            leadX = trackedX + Math.sin(trackedHeading) * leadDist;
+            leadY = trackedY + Math.cos(trackedHeading) * leadDist;
         }
         double leadBearing = Math.atan2(leadX - pos.x(), leadY - pos.y());
         if (leadBearing < 0) leadBearing += 2 * Math.PI;
 
-        // Build mission data with target info
-        // Target depth: send a moderate depth (~80m), most targets are at patrol depth
-        // or shallower. The torpedo will adjust when it gets active sonar fixes.
-        double targetDepth = -80;
+        // Build mission data with target info and estimated velocity
+        double targetDepth = -100; // conservative depth estimate
         String missionData = String.format("%.0f,%.0f,%.0f,%.4f,%.1f",
                 leadX, leadY, targetDepth,
                 Double.isNaN(trackedHeading) ? 0 : trackedHeading,
-                trackedSpeed > 0 ? trackedSpeed : 5.0);
+                trackedSpeed > 0.5 && trackedSpeed < 20 ? trackedSpeed : 5.0);
 
-        // Only fire when our heading is roughly aligned with the target
-        // (torpedo tubes are forward-facing)
+        // Only fire when heading is well aligned with the target
+        // (torpedo tubes are forward-facing, tight alignment = better hit chance)
         double headingError = leadBearing - input.self().pose().heading();
         while (headingError > Math.PI) headingError -= 2 * Math.PI;
         while (headingError < -Math.PI) headingError += 2 * Math.PI;
-        if (Math.abs(headingError) > Math.toRadians(30)) return; // not aligned enough
+        if (Math.abs(headingError) > Math.toRadians(20)) return;
 
         output.launchTorpedo(new TorpedoLaunchCommand(
                 leadBearing, 0, 20.0, missionData));
@@ -598,10 +607,10 @@ public final class ClaudeAttackSub implements SubmarineController {
                 double floorDepth = Math.abs(terrain.elevationAt(tx, ty));
                 double boundary = battleArea.distanceToBoundary(tx, ty);
 
-                double score = alignment * 300 + sweep * 180
-                        + Math.min(boundary, 2000) * 0.12
-                        + Math.min(floorDepth, 600) * 0.7
-                        - Math.abs(dist - desiredDist) * 0.15
+                double score = alignment * 250 + sweep * 150
+                        + Math.min(boundary, 2000) * 0.10
+                        + Math.min(floorDepth, 600) * 1.5  // strongly prefer deep water
+                        - Math.abs(dist - desiredDist) * 0.12
                         - (pathRatio - 1) * 1400;
 
                 if (!Double.isNaN(lastTargetX)) {
@@ -612,7 +621,7 @@ public final class ClaudeAttackSub implements SubmarineController {
                 if (score > bestScore) {
                     bestScore = score;
                     bestX = tx; bestY = ty; bestDepth = depth;
-                    bestSpeed = pathRatio > 1.3 ? 7.5 : 8.0;
+                    bestSpeed = pathRatio > 1.3 ? 7.0 : 7.5;
                 }
             }
         }
@@ -625,7 +634,7 @@ public final class ClaudeAttackSub implements SubmarineController {
                         && pathPlanner.isSafe(tx, ty)) {
                     bestX = tx; bestY = ty;
                     bestDepth = safeDepth(tx, ty, cruiseDepth);
-                    bestSpeed = 7.5;
+                    bestSpeed = 7.0;
                     break;
                 }
             }
@@ -634,15 +643,15 @@ public final class ClaudeAttackSub implements SubmarineController {
         planCount++;
         lastTargetX = bestX; lastTargetY = bestY;
         return new StrategicWaypoint(bestX, bestY, bestDepth, Purpose.PATROL,
-                NoisePolicy.NORMAL, MovementPattern.DIRECT, 250, bestSpeed);
+                NoisePolicy.QUIET, MovementPattern.DIRECT, 250, bestSpeed);
     }
 
     // ── Utilities ───────────────────────────────────────────────────
 
     private double safeDepth(double x, double y, double cruiseDepth) {
         double floor = terrain.elevationAt(x, y);
-        double target = Math.max(cruiseDepth, floor + 80);
-        return Math.clamp(target, config.crushDepth() + 50, -50);
+        double target = Math.max(cruiseDepth, floor + 60);
+        return Math.clamp(target, config.crushDepth() + 50, -35);
     }
 
     private double polylineLength(List<Vec3> path) {
