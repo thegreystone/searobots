@@ -161,7 +161,10 @@ public final class ClaudeAttackSub implements SubmarineController {
             }
             if (hasObj && needPlan) {
                 var orig = objectives.get(objectiveIndex);
-                var wp = new StrategicWaypoint(orig.x(), orig.y(), orig.preferredDepth(),
+                // Override objective depth: go as deep as terrain allows, not
+                // the objective's preferred depth (which may be shallow).
+                double objDepth = safeDepth(orig.x(), orig.y(), autopilot.cruiseDepth());
+                var wp = new StrategicWaypoint(orig.x(), orig.y(), objDepth,
                         orig.purpose(), NoisePolicy.NORMAL, orig.pattern(), orig.arrivalRadius(), 8.0);
                 strategicWaypoints = List.of(wp);
                 autopilot.setWaypoints(strategicWaypoints,
@@ -621,7 +624,7 @@ public final class ClaudeAttackSub implements SubmarineController {
                 if (score > bestScore) {
                     bestScore = score;
                     bestX = tx; bestY = ty; bestDepth = depth;
-                    bestSpeed = pathRatio > 1.3 ? 7.0 : 7.5;
+                    bestSpeed = pathRatio > 1.3 ? 7.5 : 8.0;
                 }
             }
         }
@@ -634,7 +637,7 @@ public final class ClaudeAttackSub implements SubmarineController {
                         && pathPlanner.isSafe(tx, ty)) {
                     bestX = tx; bestY = ty;
                     bestDepth = safeDepth(tx, ty, cruiseDepth);
-                    bestSpeed = 7.0;
+                    bestSpeed = 7.5;
                     break;
                 }
             }
@@ -650,8 +653,8 @@ public final class ClaudeAttackSub implements SubmarineController {
 
     private double safeDepth(double x, double y, double cruiseDepth) {
         double floor = terrain.elevationAt(x, y);
-        double target = Math.max(cruiseDepth, floor + 60);
-        return Math.clamp(target, config.crushDepth() + 50, -35);
+        double target = Math.max(cruiseDepth, floor + 40); // 40m clearance (aggressive but safe)
+        return Math.clamp(target, config.crushDepth() + 50, -40); // never shallower than -40m
     }
 
     private double polylineLength(List<Vec3> path) {

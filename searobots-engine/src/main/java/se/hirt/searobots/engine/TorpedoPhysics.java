@@ -105,7 +105,7 @@ public final class TorpedoPhysics {
         // Speed damping grows with v^2, making the torpedo progressively less
         // maneuverable at higher speeds. At 20 m/s the turn radius is ~200m;
         // at 5 m/s it's much tighter (~30m) but control surfaces are also weaker.
-        double speedDampingCoeff = 0.8; // much higher than sub's 0.05
+        double speedDampingCoeff = 0.4; // higher than sub's 0.05, but allows reasonable turns
         double speedDamping = baseInertia * speedDampingCoeff * speed * Math.abs(speed);
         double effectiveInertia = baseInertia + speedDamping;
 

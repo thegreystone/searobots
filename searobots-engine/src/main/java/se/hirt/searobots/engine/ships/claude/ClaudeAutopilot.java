@@ -12,7 +12,7 @@ import java.util.List;
 final class ClaudeAutopilot {
     private static final double MIN_DEPTH = -20.0;
     private static final double CRUSH_SAFETY_MARGIN = 50.0;
-    private static final double FLOOR_CLEARANCE = 78.0;
+    private static final double FLOOR_CLEARANCE = 45.0;
     private static final double EMERGENCY_GAP = 40.0;
     private static final double WARNING_GAP = 70.0;
     private static final double BOUNDARY_MARGIN = 850.0;
