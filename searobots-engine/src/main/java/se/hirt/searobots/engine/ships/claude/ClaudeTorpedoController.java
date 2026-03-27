@@ -35,8 +35,8 @@ public class ClaudeTorpedoController implements TorpedoController {
     private Phase phase = Phase.TRANSIT;
 
     private static final double MIN_TERRAIN_CLEARANCE = 30;
-    private static final double ACQUISITION_RANGE = 800;  // start pinging at this distance
-    private static final double TERMINAL_RANGE = 300;      // committed attack run
+    private static final double ACQUISITION_RANGE = 1500; // start pinging early for better tracking
+    private static final double TERMINAL_RANGE = 500;     // committed attack run, begin slowing
 
     @Override
     public void onLaunch(TorpedoLaunchContext context) {
@@ -71,12 +71,11 @@ public class ClaudeTorpedoController implements TorpedoController {
 
     @Override
     public void onTick(TorpedoInput input, TorpedoOutput output) {
-        output.setThrottle(1.0);
-
         var pos = input.self().position();
         double heading = input.self().heading();
 
         if (!hasTarget) {
+            output.setThrottle(1.0);
             output.setRudder(0);
             output.setSternPlanes(0);
             return;
@@ -94,6 +93,26 @@ public class ClaudeTorpedoController implements TorpedoController {
         if (phase == Phase.ACQUISITION && dist < TERMINAL_RANGE) {
             phase = Phase.TERMINAL;
         }
+
+        // ── Throttle management ──
+        // Must always close the gap: torpedo speed must exceed target speed.
+        // Target subs typically move at 5-10 m/s. We want at least 5 m/s
+        // closing speed, but reduce throttle in terminal to improve turn radius.
+        // At 25 m/s the yaw turn radius is 3.1km (useless). At 15 m/s it's
+        // 2km. At 10 m/s it's 1.4km. The compromise: slow to ~15 m/s in
+        // terminal (still 5-10 m/s faster than the target, but half the
+        // turn radius of full speed).
+        // Throttle management: target a specific speed in each phase.
+        // The torpedo must always be faster than the target sub (~7-10 m/s)
+        // but slower in terminal for better maneuverability.
+        double targetSpeed = switch (phase) {
+            case TRANSIT -> 25.0;  // max speed
+            case ACQUISITION -> 18.0; // good tracking speed, still fast
+            case TERMINAL -> 14.0; // half turn radius vs full speed
+        };
+        double speedError = targetSpeed - input.speed();
+        double throttle = Math.clamp(speedError * 0.15 + 0.5, 0.1, 1.0);
+        output.setThrottle(throttle);
 
         // ── Phase-specific sonar behavior ──
         switch (phase) {
@@ -149,33 +168,38 @@ public class ClaudeTorpedoController implements TorpedoController {
         while (headingError > Math.PI) headingError -= 2 * Math.PI;
         while (headingError < -Math.PI) headingError += 2 * Math.PI;
 
-        if (phase == Phase.TERMINAL && dist < 150) {
-            // Final approach: gentle corrections only (avoid oscillation at close range)
-            output.setRudder(Math.clamp(headingError * 0.8, -0.5, 0.5));
+        if (phase == Phase.TERMINAL && dist < 100) {
+            // Very final approach: commit to course (oscillation at this range is fatal)
+            output.setRudder(Math.clamp(headingError * 0.5, -0.3, 0.3));
+        } else if (phase == Phase.TERMINAL) {
+            // Terminal: aggressive turning at reduced speed (good turn radius)
+            output.setRudder(Math.clamp(headingError * 3.0, -1, 1));
         } else {
             output.setRudder(Math.clamp(headingError * 2.0, -1, 1));
         }
 
         // ── Depth control ──
+        // Stay at a safe cruise depth during transit/acquisition to avoid
+        // terrain collisions. Only dive to target depth in terminal when
+        // close enough that intervening terrain is not an issue.
         double minDepth = -20; // never breach
         double desiredZ;
 
-        if (phase == Phase.TERMINAL) {
-            // Terminal: hold current depth (don't chase depth changes at close range)
-            desiredZ = pos.z();
-        } else if (phase == Phase.ACQUISITION && prevFixTick >= 0) {
-            // Have active fix: adjust toward target depth
+        if (dist < 200) {
+            // Final dive: descend to target depth only when very close.
+            // At 200m range and ~70m depth difference, the dive angle is
+            // arctan(70/200) ≈ 19 degrees, which is achievable.
             double depthError = targetZ - pos.z();
-            desiredZ = pos.z() + depthError * 0.05;
+            desiredZ = pos.z() + depthError * 0.10;
         } else {
-            // Transit: gradually approach target depth from mission data
-            double cruiseTarget = Math.max(targetZ, -200);
-            double depthError = cruiseTarget - pos.z();
-            desiredZ = pos.z() + depthError * 0.015;
+            // All other phases: cruise at a safe altitude (-80m).
+            // This keeps the torpedo above most terrain features.
+            // Don't descend until the last 200m.
+            desiredZ = Math.max(-80, pos.z());
         }
 
-        // Terrain avoidance (skip in terminal to avoid last-second pull-up)
-        if (terrain != null && phase != Phase.TERMINAL) {
+        // Terrain avoidance: always active (including terminal, to prevent crashes)
+        if (terrain != null) {
             double floor = terrain.elevationAt(pos.x(), pos.y());
             double safeZ = floor + MIN_TERRAIN_CLEARANCE;
             double lookAhead = input.speed() * 3;

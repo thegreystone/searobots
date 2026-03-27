@@ -131,12 +131,14 @@ public final class TorpedoPhysics {
             double pitchMoment = 0.5 * WATER_DENSITY * speed * Math.abs(speed)
                     * cfg.planesArea() * planesCl * cfg.planesArm();
 
-            // Torpedo: long narrow body strongly resists pitch changes
-            double pitchDampingCoeff = 0.8; // same as yaw speed damping
+            // Torpedoes should answer depth commands faster than they answer yaw.
+            // Keeping pitch damping as high as yaw made deep targets effectively
+            // unreachable before the weapon had already overrun them.
+            double pitchDampingCoeff = 0.18;
             double pitchSpeedDamping = baseInertia * pitchDampingCoeff * speed * Math.abs(speed);
             double pitchInertia = baseInertia * 1.5 + pitchSpeedDamping;
             double pitchRateSteady = pitchInertia > 0 ? pitchMoment / pitchInertia : 0;
-            double pitchTau = Math.clamp(pitchInertia / (cfg.swayDragCoeff() * absSpeed), 2.0, 15.0);
+            double pitchTau = Math.clamp(pitchInertia / (cfg.swayDragCoeff() * absSpeed), 1.2, 6.0);
 
             double pitchRate = torp.pitchRate();
             pitchRate += (pitchRateSteady - pitchRate) * (1.0 - Math.exp(-dt / pitchTau));

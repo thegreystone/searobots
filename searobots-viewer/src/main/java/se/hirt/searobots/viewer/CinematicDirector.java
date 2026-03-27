@@ -251,8 +251,10 @@ final class CinematicDirector {
             // down from the current position (prevents the camera going horizontal
             // mid-transition). For other transitions, lerp between focus points.
             if (!isUnderwaterShot(currentShot.type) && fromPos.y > 10f) {
-                // Both overhead: look directly below the splined camera position
-                outLookAt.set(outPos.x, -30f, outPos.z);
+                // Both overhead: look below the camera but slightly north (JME -Z)
+                // to avoid the straight-down ambiguity that flips the camera direction.
+                // The small north offset keeps "up" on screen consistently north.
+                outLookAt.set(outPos.x, -30f, outPos.z - 1f);
             } else {
                 outLookAt.set(
                         fromLookAt.x + (destLX - fromLookAt.x) * t,
@@ -790,8 +792,8 @@ final class CinematicDirector {
         float southOffset = height * 0.1f;
         outPos.set(midX, height, midZ + southOffset);
 
-        // Look at the centroid, slightly below water surface
-        outLookAt.set(midX, -30f, midZ);
+        // Look at centroid, slightly north to maintain consistent north-up orientation
+        outLookAt.set(midX, -30f, midZ - 1f);
     }
 
     private void computeIdleOrbit(float tpf, List<SubmarineSnapshot> subs,

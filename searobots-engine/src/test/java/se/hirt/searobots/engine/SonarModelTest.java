@@ -294,6 +294,38 @@ class SonarModelTest {
     }
 
     @Test
+    void activePingIsAccurateAtCloseRange() {
+        var sonar = new SonarModel(42);
+        var pinger = makeSub(0, new Vec3(0, 0, -200), 0, 80);
+        pinger.activeSonarPing();
+        var target = makeSub(1, new Vec3(120, 160, -260), Math.PI, 80);
+
+        var results = sonar.computeContacts(0L,
+                List.of(pinger, target), TERRAIN, NO_LAYERS);
+
+        var activeReturns = results.get(0).activeReturns();
+        assertFalse(activeReturns.isEmpty(), "Close-range active ping should produce returns");
+
+        var contact = activeReturns.getFirst();
+        double actualRange = pinger.pose().position().distanceTo(target.pose().position());
+        double actualBearing = Math.atan2(
+                target.pose().position().x() - pinger.pose().position().x(),
+                target.pose().position().y() - pinger.pose().position().y());
+        if (actualBearing < 0) {
+            actualBearing += 2 * Math.PI;
+        }
+
+        assertEquals(actualRange, contact.range(), 12.0,
+                "Close-range active range should stay within a few meters");
+        assertEquals(actualBearing, contact.bearing(), Math.toRadians(2.0),
+                "Close-range active bearing should stay within a couple of degrees");
+        assertEquals(target.pose().position().z(), contact.estimatedDepth(), 25.0,
+                "Close-range active depth should stay within a few tens of meters");
+        assertTrue(contact.rangeUncertainty() <= 5.0,
+                "Close-range active range uncertainty should stay small, got " + contact.rangeUncertainty());
+    }
+
+    @Test
     void activePingIsLoudForEveryone() {
         var sonar = new SonarModel(42);
         var pinger = makeSub(0, new Vec3(0, 0, -200), 0, 80);

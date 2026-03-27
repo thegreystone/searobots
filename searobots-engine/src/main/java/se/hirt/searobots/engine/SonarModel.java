@@ -322,9 +322,11 @@ public final class SonarModel {
                         double rangeRmsNoise = distance * RANGE_NOISE_FRACTION;
                         double rangeNoise = rangeRmsNoise * rng.nextGaussian();
                         double reportedRange = Math.max(1.0, distance + rangeNoise);
-                        double estSpeed = estimateTargetSpeed(source.speed(), se, rng);
+                        double estSpeed = estimateTargetSpeed(source.speed(), activeSe, rng);
                         double slError = Math.clamp(10.0 / Math.max(activeSe, 1.0), 1.0, 5.0);
                         double estSL = sl + rng.nextGaussian() * slError;
+                        double depthNoiseRms = Math.max(5.0, distance * 0.05);
+                        double estimatedDepth = source.z() + depthNoiseRms * rng.nextGaussian();
 
                         // Update contact tracker from ping
                         var tracker = getOrCreateTracker(listener.id(), source.id());
@@ -333,7 +335,8 @@ public final class SonarModel {
 
                         active.add(new SonarContact(reportedBearing, activeSe, reportedRange, true,
                                 estSpeed, activeBrgStdDev, rangeRmsNoise, estSL,
-                                tracker.solutionQuality(), tracker.estimatedHeading()));
+                                tracker.solutionQuality(), tracker.estimatedHeading(),
+                                estimatedDepth));
                     }
                 }
             }
