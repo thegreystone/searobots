@@ -1039,6 +1039,8 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
     public void setWorld(GeneratedWorld world) {
         System.out.println("SubmarineScene3D.setWorld() called, world=" + (world != null));
         pendingWorld = world;
+        // Reset the cinematic director so it replays the opening flyaround
+        cinematicDirector = null;
     }
 
     public void setStartTime(java.time.LocalTime time) {
