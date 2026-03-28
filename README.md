@@ -5,6 +5,9 @@
 # SeaRobots
 
 [![Build](https://github.com/thegreystone/searobots/actions/workflows/build.yml/badge.svg)](https://github.com/thegreystone/searobots/actions/workflows/build.yml)
+[![Release](https://img.shields.io/github/v/release/thegreystone/searobots)](https://github.com/thegreystone/searobots/releases/latest)
+[![Java](https://img.shields.io/badge/Java-25-blue)](https://jdk.java.net/25/)
+[![License](https://img.shields.io/badge/License-BSD--3-green)](LICENSE)
 
 SeaRobots is a competitive autonomous underwater combat simulator, a spiritual
 successor to [C-Robots](https://en.wikipedia.org/wiki/Crobots), set beneath the
