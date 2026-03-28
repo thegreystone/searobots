@@ -7,7 +7,7 @@
 
     <groupId>se.hirt.searobots</groupId>
     <artifactId>searobots</artifactId>
-    <version>0.1.0-SNAPSHOT</version>
+    <version>0.1.1-SNAPSHOT</version>
     <packaging>pom</packaging>
     <name>SeaRobots</name>
     <description>Competitive autonomous underwater combat simulator</description>

@@ -1,15 +1,23 @@
+<p align="center">
+  <img src="docs/images/logo-128.png" alt="SeaRobots logo">
+</p>
+
 # SeaRobots
+
+[![Build](https://github.com/thegreystone/searobots/actions/workflows/build.yml/badge.svg)](https://github.com/thegreystone/searobots/actions/workflows/build.yml)
 
 SeaRobots is a competitive autonomous underwater combat simulator, a spiritual
 successor to [C-Robots](https://en.wikipedia.org/wiki/Crobots), set beneath the
-waves. It is based on an idea and implementation from 2004, revised so that
-submarines can participate in a language-agnostic manner and untrusted code
-is isolated using modern sandboxing techniques rather than the JVM Security
-Manager.
+waves. It is based on an idea and implementation from 2004. It will eventually 
+be revised so that submarines can participate in a language-agnostic manner and 
+untrusted code will be isolated using modern sandboxing techniques rather than 
+the JVM Security Manager (which was used by the original simulator).
 
 Participants submit programs that control autonomous submarines and their
-torpedoes in a real-time simulation. Matches are sandboxed and fully
-replayable in a 3D viewer.
+torpedoes in a real-time simulation. Matches are fully replayable in a 3D viewer.
+
+Right now two subs are being built by Claude and Codex (with some human guidance, 
+help and patience). There are also the two submarines that will battle by default.
 
 ---
 
@@ -39,18 +47,23 @@ mvn clean install
 
 ### Running the Viewer
 
+**Easiest:** download the fat jar from
+[GitHub Actions](https://github.com/thegreystone/searobots/actions) and run:
+
 ```bash
-mvn clean install -DskipTests
-mvn exec:java -pl searobots-viewer -Dexec.mainClass=se.hirt.searobots.viewer.TerrainViewer
+java -jar searobots-viewer-<version>.jar
 ```
 
-To start with a specific seed:
+**From source:**
 
 ```bash
-mvn exec:java -pl searobots-viewer -Dexec.mainClass=se.hirt.searobots.viewer.TerrainViewer -Dexec.args="12345"
+mvn clean install -DskipTests
+mvn exec:java -pl searobots-viewer -Dexec.mainClass=se.hirt.searobots.viewer.SubmarineScene3D
 ```
 
 #### Viewer Controls
+
+**Simulation:**
 
 | Key | Action |
 |-----|--------|
@@ -58,23 +71,69 @@ mvn exec:java -pl searobots-viewer -Dexec.mainClass=se.hirt.searobots.viewer.Ter
 | P | Pause / resume |
 | N | Step one tick (when paused) |
 | 1-5 | Speed: 1x, 2x, 4x, 8x, 16x |
-| F2 | Configure simulation (ship picker) |
+| 0 | Maximum speed |
+| F2 | Configure simulation (ship picker, seed) |
+| F3 | Render settings (water, fog, lighting) |
 | F11 | Maximize window |
-| +/- | Zoom in/out (2D view) |
-| C | Toggle contour lines |
+| Esc | Menu (quit, restart) |
+
+**Camera:**
+
+| Key | Action |
+|-----|--------|
+| V | Cycle camera mode (Orbit, Chase, Target, Periscope, Free Look, Fly-by, Director) |
+| Tab | Cycle between entities (subs + torpedoes). In Director mode, exits to Orbit. |
+| Mouse drag | Orbit / pan (in Orbit and Free Look modes) |
+| Scroll | Zoom (in Orbit and Free Look modes) |
+
+**Overlays:**
+
+| Key | Action |
+|-----|--------|
+| M | Toggle 2D map overlay |
 | T | Toggle trails |
+| R | Toggle route visualization |
+| E | Toggle contact estimates |
+| W | Toggle waypoints |
+| G | Toggle strategic waypoints |
+| B | Toggle collision volumes |
+| I | Toggle score details |
+| D | Pause on sub death |
+| F | Pause on firing solution |
+| L | Pause on torpedo launch |
+
+**Clipboard:**
+
+| Key | Action |
+|-----|--------|
+| Ctrl+C | Copy current seed to clipboard |
+| Ctrl+V | Paste seed (in F2 dialog) |
+
+#### Camera Modes
+
+- **Orbit**: free orbit around the selected entity
+- **Chase**: trailing camera behind the sub along its heading
+- **Target**: chase camera looking toward the tracked contact
+- **Periscope**: first-person from the conning tower
+- **Free Look**: detached orbit with manual control
+- **Fly-by**: static camera watching the entity pass by
+- **Director** (default): automatic cinematic camera with event-driven
+  cuts. Cycles through all entities with structured transitions
+  (close underwater, birds-eye, tactical overview). Automatically
+  cuts to torpedo launches, terminal approaches, and explosions.
+  North-up overhead views for situational awareness.
 
 #### Ship Configuration
 
-Press **F2** (or Simulation > Configure Simulation) to open the ship
-picker dialog. Select which controller to use for each ship slot:
+Press **F2** to open simulation configuration. Select controllers
+for each ship slot and optionally enter a hex seed for reproducible
+matches:
 
-- **Claude Sub** -- Claude-authored attack submarine (custom torpedo AI)
-- **Codex Sub** -- Codex-authored attack submarine
-- **Default Sub** -- reference implementation (fires torpedoes)
-- **Sub Drone** -- simple patrol submarine (no combat AI)
-- **Ship Drone** -- noisy surface vessel (target practice)
-- **(empty)** -- no ship in this slot
+- **Claude Sub**: Claude-authored attack submarine (custom torpedo AI)
+- **Codex Sub**: Codex-authored attack submarine
+- **Default Sub**: reference implementation (fires torpedoes)
+- **Sub Drone**: simple patrol submarine (no combat AI)
+- **Ship Drone**: noisy surface vessel (target practice)
 
 Settings persist across seed changes and simulation restarts.
 
@@ -106,6 +165,14 @@ mvn exec:java -pl searobots-engine \
 The master seed deterministically generates all individual match seeds,
 so the same master seed always produces the same competition.
 
+To run combat only (skip navigation, faster iteration):
+
+```bash
+mvn exec:java -pl searobots-engine \
+  -Dexec.mainClass=se.hirt.searobots.engine.SubmarineCompetition \
+  -Dexec.args="deadbeef --combat-only"
+```
+
 A standard competition has two phases:
 
 **Navigation phase** (5 seeds, 40 minutes each): each controller runs
@@ -115,8 +182,9 @@ solo through mandatory waypoints. Scoring is head-to-head per seed:
 - Stealth metrics: depth, noise (lower wins)
 - Efficiency: speed, path efficiency
 
-**Combat phase** (same 5 seeds, 10 minutes each): every pair of
-controllers fights on each seed. Scoring per match:
+**Combat phase** (same 5 seeds, 30 minutes each): every pair of
+controllers fights on each seed. Each sub has 8 torpedoes.
+Scoring per match:
 
 - **Kill the enemy**: 5 points
 - **Survive the match**: 5 points
@@ -184,8 +252,8 @@ void mySubVsDefault() {
 Key points for headless testing:
 
 - `setSpeedMultiplier(1_000_000)` removes the real-time throttle
-- `MatchConfig.withDefaults(seed)` gives each sub 4 torpedoes, 1000 HP,
-  50m blast radius, 10-minute combat duration
+- `MatchConfig.withDefaults(seed)` gives each sub 8 torpedoes, 1000 HP,
+  50m blast radius
 - Matches are fully deterministic for a given seed (assuming controllers
   don't use their own RNGs)
 - Use the 3D viewer with the same seed to visually debug torpedo
@@ -195,13 +263,14 @@ Key points for headless testing:
 
 To visually inspect a combat match:
 
-1. Launch the viewer: `mvn exec:java -pl searobots-viewer -Dexec.mainClass=se.hirt.searobots.viewer.SubmarineScene3D`
+1. Launch the viewer (starts in Director mode with cinematic camera)
 2. Press **F2** to open simulation configuration
 3. Select the two controllers to pit against each other
 4. Paste a hex seed into the seed field
 5. Press **Apply** to start
-6. Use **Tab** to cycle between submarines and torpedoes
-7. Press **B** to show collision volumes
+6. Watch the Director auto-switch between entities, overhead views, and torpedo events
+7. Press **Tab** to exit Director mode and manually cycle between entities
+8. Press **V** to switch camera modes, **B** to show collision volumes
 
 ---
 
@@ -220,7 +289,8 @@ searobots/
 │       │   ├── ClaudeAttackSub        # Claude-authored submarine
 │       │   └── ClaudeTorpedoController # Claude-authored torpedo AI
 │       └── codex/
-│           └── CodexAttackSub         # Codex-authored submarine
+│           ├── CodexAttackSub         # Codex-authored submarine
+│           └── CodexTorpedoController # Codex-authored torpedo AI
 ├── searobots-viewer/        # 3D viewer (jMonkeyEngine + Lemur GUI)
 └── docs/                    # Design docs, implementation plan
 ```
@@ -253,10 +323,6 @@ progress and next steps.
 
 - **[Design Document](docs/DESIGN.md):** architecture, execution model,
   control interfaces, physics, sonar, damage model, and design principles.
-- **[Default Submarine Design](docs/default-submarine-design.md):**
-  behaviour design for the built-in `DefaultAttackSub`.
-- **[Implementation Plan](docs/implementation-plan.md):** phased
-  implementation roadmap.
 - **[Physics Research](docs/physics-research.md):** research notes on
   submarine physics from games, simulations, and academic papers.
 - **[Passive Sonar / TMA Design](docs/passive-sonar-tma-design.md):**
