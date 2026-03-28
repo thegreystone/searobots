@@ -50,8 +50,8 @@ mvn clean install
 
 ### Running the Viewer
 
-**Easiest:** download the fat jar from
-[GitHub Actions](https://github.com/thegreystone/searobots/actions) and run:
+**Easiest:** download `searobots-<version>.jar` from the
+[latest release](https://github.com/thegreystone/searobots/releases/latest) and run:
 
 ```bash
 java -jar searobots-viewer-<version>.jar
