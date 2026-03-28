@@ -496,8 +496,8 @@ class PassiveSonarTrackingTest {
 
         // Check that the controller entered at least TRACKING
         assertTrue(ctrl.state() == DefaultAttackSub.State.TRACKING
-                        || ctrl.state() == DefaultAttackSub.State.CHASE,
-                "Controller should be in TRACKING or CHASE, was " + ctrl.state());
+                        || ctrl.state() == DefaultAttackSub.State.STALKING,
+                "Controller should be in TRACKING or STALKING, was " + ctrl.state());
     }
 
     // ====================================================================

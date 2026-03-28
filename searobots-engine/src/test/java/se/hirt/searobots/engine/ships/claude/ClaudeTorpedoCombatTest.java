@@ -21,6 +21,7 @@ public class ClaudeTorpedoCombatTest {
 
     private static final int TICKS_10MIN = 30_000;
     private static final int TICKS_15MIN = 45_000;
+    private static final int TICKS_30MIN = 90_000;
 
     record CombatOutcome(int hpA, int hpB, int torpsAFired, int torpsBFired,
                          int detonations, long endTick) {
@@ -103,7 +104,7 @@ public class ClaudeTorpedoCombatTest {
         int gotHit = 0;
 
         for (long seed : seeds) {
-            var result = runCombat(ClaudeAttackSub::new, DefaultAttackSub::new, seed, TICKS_10MIN);
+            var result = runCombat(ClaudeAttackSub::new, DefaultAttackSub::new, seed, TICKS_30MIN);
             torpsFired += result.torpsAFired;
             if (result.aHitB()) hits++;
             if (result.aKilledB()) kills++;

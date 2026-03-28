@@ -2,6 +2,7 @@ package se.hirt.searobots.engine.ships.claude;
 
 import se.hirt.searobots.api.*;
 import se.hirt.searobots.engine.*;
+import se.hirt.searobots.engine.ships.DefaultAttackSub;
 import se.hirt.searobots.engine.ships.codex.CodexAttackSub;
 import org.junit.jupiter.api.Test;
 
@@ -14,13 +15,13 @@ public class ClaudeCombatTrace {
 
     @Test
     void traceEngagement() {
-        long seed = 0xac28e4112d80c751L; // match seed where Claude dies
+        long seed = 0xa000; // Default fires 3 torpedoes, only 4 damage
         var config = MatchConfig.withDefaults(seed);
         var world = new WorldGenerator().generate(config);
         var sim = new SimulationLoop();
         sim.setSpeedMultiplier(1_000_000);
 
-        var controllers = List.<SubmarineController>of(new ClaudeAttackSub(), new CodexAttackSub());
+        var controllers = List.<SubmarineController>of(new ClaudeAttackSub(), new DefaultAttackSub());
         var configs = List.of(VehicleConfig.submarine(), VehicleConfig.submarine());
 
         Set<Integer> seenTorps = new HashSet<>();

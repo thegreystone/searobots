@@ -35,117 +35,141 @@ import se.hirt.searobots.api.*;
 import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * A smart submarine captain AI that behaves realistically:
+ *
+ * <ul>
+ *   <li>Sprint-drift patrol below the thermocline (sprint deep, drift up to listen)</li>
+ *   <li>Passive-only TMA: builds firing solutions through maneuvering, never pings</li>
+ *   <li>Stalks targets from their stern quarter (baffles)</li>
+ *   <li>Fires torpedoes from concealment, then goes silent</li>
+ *   <li>Evades incoming torpedoes by turning toward them, crossing the thermocline,
+ *       and ducking behind terrain</li>
+ * </ul>
+ */
 public final class DefaultAttackSub implements SubmarineController {
 
     @Override
     public String name() { return "Default Sub"; }
 
-    // State machine
-    public enum State { PATROL, TRACKING, CHASE, RAM, EVADE }
 
-    // Throttle constants
-    static final double PATROL_THROTTLE = 0.4;
-    public static final double TRACKING_THROTTLE = 0.25;
-    static final double CHASE_THROTTLE = 0.8;
-    public static final double RAM_THROTTLE = 1.0;
-    static final double EVADE_THROTTLE = 0.15;
+    // ── State machine ──
 
-    // Terrain / depth constants
-    private static final double MIN_DEPTH = -20;
-    private static final double FLOOR_CLEARANCE = 50;
-    private static final double CRUSH_SAFETY_MARGIN = 50;
-    private static final double BOUNDARY_TURN_DIST = 700;
-    private static final double SHALLOW_WATER_LIMIT = -90.0;
+    public enum State { PATROL, TRACKING, STALKING, ATTACKING, EVADING, REPOSITIONING }
 
-    // Contact tracking constants
-    public static final int CONTACT_CONFIRM_TICKS = 3;
-    static final double CHASE_RANGE = 3000.0;
-    static final double RAM_RANGE = 500.0;
-    static final double RAM_OVERSHOT_RANGE = 800.0;
-    // Confidence-based tracking constants
-    static final double CONFIDENCE_DECAY = 0.999;
-    static final double CONFIDENCE_HUNT_MIN = 0.1;
-    static final double CONFIDENCE_RAM_MIN = 0.05;
+    // ── Constants ──
 
-    // Baffle clearing constants (referenced by tests)
-    public static final int BAFFLE_CLEAR_INTERVAL = 1500;
+    // Sprint-drift cycle
+    private static final int SPRINT_TICKS = 1000;       // 20 seconds
+    private static final int DRIFT_TICKS = 1500;         // 30 seconds
+    private static final double SPRINT_THROTTLE = 0.35;  // ~6 m/s, quiet repositioning
+    private static final double QUIET_THROTTLE = 0.25;   // ~5 m/s, hard to detect
+    private static final double THERMOCLINE_MARGIN = 30;  // meters below thermocline during sprint
 
-    // Patrol ping constants
-    public static final int PATROL_SILENCE_PING_TICKS = 3000;
-    private static final double BEHIND_OFFSET = 500.0;
+    // TMA thresholds
+    private static final double TMA_TRACKING_QUALITY = 0.3;  // enough to start stalking
+    private static final double TMA_FIRING_QUALITY = 0.5;     // enough to fire
+    private static final int CONTACT_CONFIRM_TICKS = 3;
 
-    // Stern tailing constants
-    private static final double BEHIND_ARC = Math.toRadians(45);
+    // Engagement
+    private static final double STALKING_RANGE = 2000;   // desired firing distance
+    private static final double MIN_FIRING_RANGE = 800;
+    private static final double MAX_FIRING_RANGE = 2500;
+    private static final double STERN_OFFSET = 500;       // how far behind target to position
+    private static final long TORPEDO_COOLDOWN = 750;     // 15 seconds between launches
 
-    // Cavitation constants
-    private static final double BASE_CAVITATION_SPEED = 5.0;
-    private static final double CAVITATION_DEPTH_FACTOR = 0.02;
+    // Torpedo classification
+    private static final double TORPEDO_SL_THRESHOLD = 105; // dB, above = torpedo
 
-    // Ping range threshold for tracked contact
-    private static final double TRACKED_PING_RANGE = 1500.0;
+    // Evasion and repositioning
+    private static final int REPOSITION_TICKS = 2000;     // 40 seconds silent after attack
+    private static final int EVADE_CLEAR_TICKS = 200;     // 4 seconds without torpedo = safe
 
-    // Replan thresholds
-    private static final double REPLAN_TARGET_MOVE_DIST = 500.0;
+    // Terrain / depth
+    private static final double MIN_DEPTH = -25;
+    private static final double FLOOR_CLEARANCE = 45;
+    private static final double CRUSH_SAFETY = 50;
+    private static final double PATROL_MARGIN = 900;
 
-    // State
+    // ── State ──
+
     private State state = State.PATROL;
     private MatchConfig config;
     private TerrainMap terrain;
-    private double depthLimit;
-    private double maxSubSpeed = 15.0;
-    private double refUncertainty = 50.0;
-    private List<ThermalLayer> thermalLayers = List.of();
-
-    // Contact tracking (sonar analysis, per-tick)
-    private double lastHeading;
-    private double lastSpeed;
-    private double lastContactBearing;
-    private double lastContactSE;
-    private long lastContactTick = -1000;
-    private int consecutiveContactTicks;
-    private double estimatedRange = Double.MAX_VALUE;
-    private boolean rangeConfirmedByActive;
-    private int previousHp;
-
-    // Tracked contact (persistent, dead-reckoned between updates)
-    private boolean hasTrackedContact;
-    private double trackedX, trackedY;
-    private double trackedHeading = Double.NaN;
-    private double trackedSpeed = 2.0;
-    private double contactAlive = 0.0;
-    private double uncertaintyRadius = 0.0;
-    private long trackedLastFixTick = -1;
-
-    // Ping fix history for viewer trace lines
-    private record PingFix(double x, double y, long tick) {}
-    private final List<PingFix> pingFixHistory = new ArrayList<>();
-
-    // Chase timing
-    private long chaseStartTick;
-
-    // Torpedo launch state
-    private long lastTorpedoLaunchTick = -10000;
-
-    // Last known contact area (preserved across state transitions for patrol biasing)
-    private double lastKnownContactX = Double.NaN;
-    private double lastKnownContactY = Double.NaN;
-
-    // Patrol silence tracking
-    private long patrolSilenceTicks;
-
-    // Autopilot
-    private SubmarineAutopilot autopilot;
-    private List<StrategicWaypoint> strategicWaypoints = List.of();
-    private double lastStrategicTargetX = Double.NaN;
-    private double lastStrategicTargetY = Double.NaN;
-
-    // Mandatory objectives
-    private List<StrategicWaypoint> objectives = List.of();
-    private int objectiveIndex = 0;
-    private long lastReplanTick = -1000;
-    private static final int REPLAN_COOLDOWN_TICKS = 250; // 5 seconds
     private BattleArea battleArea;
     private PathPlanner pathPlanner;
+    private SubmarineAutopilot autopilot;
+    private List<ThermalLayer> thermalLayers = List.of();
+    private double thermoclineDepth = -200; // default if no layers
+    private double depthLimit;
+
+    // Sprint-drift (start with drift = listen first)
+    private long sprintDriftStart;
+    private boolean inSprintPhase = false;
+
+    // Ping evasion: cross thermocline when pinged
+    private boolean wasPinged;
+    private double pingerDepth = Double.NaN;
+    private long lastPingedTick = Long.MIN_VALUE / 4;
+    private boolean preferAboveThermocline = false; // which side to hide on
+
+    // Contact tracking
+    private boolean hasTrackedContact;
+    private double trackedX = Double.NaN, trackedY = Double.NaN;
+    private double trackedHeading = Double.NaN, trackedSpeed = 5;
+    private double contactAlive;
+    private double uncertaintyRadius;
+    private double estimatedRange = Double.POSITIVE_INFINITY;
+    private long lastContactTick = Long.MIN_VALUE / 4;
+    private int consecutiveContactTicks;
+    private double lastContactBearing = Double.NaN;
+    private double bestSolutionQuality;
+
+    // Torpedo threat
+    private SonarContact torpedoThreat;
+    private long lastTorpedoTick = Long.MIN_VALUE / 4;
+
+    // Attack state
+    private long lastTorpedoLaunchTick = Long.MIN_VALUE / 4;
+    private long attackCompleteTick = Long.MIN_VALUE / 4;
+    private int previousHp;
+
+    // Strategic planning
+    private List<StrategicWaypoint> strategicWaypoints = List.of();
+    private long lastPlanTick = Long.MIN_VALUE / 4;
+    private double lastPlanTargetX = Double.NaN, lastPlanTargetY = Double.NaN;
+    private long planCount;
+
+    // Objectives (from competition)
+    private List<StrategicWaypoint> objectives = List.of();
+    private int objectiveIndex;
+
+    // ── Public accessors (for tests) ──
+
+    public State state() { return state; }
+    public boolean hasTrackedContact() { return hasTrackedContact; }
+    public double trackedX() { return trackedX; }
+    public double trackedY() { return trackedY; }
+    public double contactAlive() { return contactAlive; }
+    public double estimatedRange() { return estimatedRange; }
+    public double trackedHeading() { return trackedHeading; }
+    public SubmarineAutopilot autopilot() { return autopilot; }
+    public static final double TRACKING_THROTTLE = QUIET_THROTTLE;
+    public static final double RAM_THROTTLE = 1.0;
+    public static final int BAFFLE_CLEAR_INTERVAL = 1500;
+    public static final int PATROL_SILENCE_PING_TICKS = 3000;
+    public static double angleDiff(double a, double b) {
+        double d = a - b;
+        while (d > Math.PI) d -= 2 * Math.PI;
+        while (d < -Math.PI) d += 2 * Math.PI;
+        return d;
+    }
+    public List<StrategicWaypoint> generatePatrolWaypoints(double x, double y, double h, BattleArea a) {
+        return List.of(planPatrolWaypoint(x, y, h));
+    }
+    public List<StrategicWaypoint> generateEvadeWaypoints(double px, double py, double cb, TerrainMap t) {
+        return List.of();
+    }
 
     @Override
     public void setObjectives(java.util.List<StrategicWaypoint> objectives) {
@@ -155,748 +179,614 @@ public final class DefaultAttackSub implements SubmarineController {
 
     @Override
     public void onMatchStart(MatchContext context) {
-        this.config = context.config();
-        this.terrain = context.terrain();
-        this.depthLimit = config.crushDepth() + CRUSH_SAFETY_MARGIN;
-        this.maxSubSpeed = config.maxSubSpeed();
-        this.thermalLayers = context.thermalLayers();
-        this.previousHp = config.startingHp();
-        this.battleArea = config.battleArea();
-        this.pathPlanner = new PathPlanner(context.terrain(), SHALLOW_WATER_LIMIT, 200, 75);
-        this.autopilot = new SubmarineAutopilot(context);
+        config = context.config();
+        terrain = context.terrain();
+        battleArea = config.battleArea();
+        thermalLayers = context.thermalLayers();
+        depthLimit = config.crushDepth() + CRUSH_SAFETY;
+        pathPlanner = new PathPlanner(terrain, -90.0, 225, 75, 400.0, 5.0);
+        autopilot = new SubmarineAutopilot(context);
+        previousHp = config.startingHp();
+
+        // Find shallowest thermocline depth for sprint-drift cycle
+        if (!thermalLayers.isEmpty()) {
+            thermoclineDepth = thermalLayers.getFirst().depth();
+            for (var l : thermalLayers) {
+                if (l.depth() > thermoclineDepth) thermoclineDepth = l.depth();
+            }
+        }
     }
 
-    public State state() { return state; }
-    public double estimatedRange() { return estimatedRange; }
-    public boolean hasTrackedContact() { return hasTrackedContact; }
-    public double trackedX() { return trackedX; }
-    public double trackedY() { return trackedY; }
-    public double contactAlive() { return contactAlive; }
-    double uncertaintyRadius() { return uncertaintyRadius; }
-    public double trackedHeading() { return trackedHeading; }
-    public SubmarineAutopilot autopilot() { return autopilot; }
+    // ── Main tick ──
 
     @Override
     public void onTick(SubmarineInput input, SubmarineOutput output) {
         var self = input.self();
         var pos = self.pose().position();
         double heading = self.pose().heading();
-        this.lastHeading = heading;
-        this.lastSpeed = self.velocity().speed();
-        double depth = pos.z();
+        double speed = self.velocity().speed();
         long tick = input.tick();
 
-        // =================================================================
-        // Step 1: Process sonar contacts (engine provides TMA data)
-        // =================================================================
-        SonarContact bestContact = pickBestContact(input.sonarContacts(), input.activeSonarReturns());
+        // Step 1: Process sonar contacts
+        SonarContact bestContact = pickBestSubContact(input.sonarContacts(), input.activeSonarReturns());
+        torpedoThreat = detectTorpedoThreat(input.sonarContacts());
+        updateTrackedContact(bestContact, pos, tick);
 
-        if (bestContact != null) {
-            lastContactBearing = bestContact.bearing();
-            lastContactSE = bestContact.signalExcess();
-            lastContactTick = tick;
-            consecutiveContactTicks++;
-
-            if (bestContact.range() > 0 && bestContact.range() < 50000) {
-                estimatedRange = bestContact.range();
+        // Step 2: Detect if we've been pinged (active return means someone pinged us)
+        wasPinged = false;
+        for (var c : input.activeSonarReturns()) {
+            wasPinged = true;
+            lastPingedTick = tick;
+            if (!Double.isNaN(c.estimatedDepth())) {
+                pingerDepth = c.estimatedDepth();
+                // Pinger is below thermocline? Hide above. Pinger above? Hide below.
+                preferAboveThermocline = pingerDepth < thermoclineDepth;
             }
-            rangeConfirmedByActive = bestContact.isActive();
-        } else {
-            consecutiveContactTicks = 0;
+            break; // one ping is enough
         }
 
-        // =================================================================
-        // Step 1b: Update tracked contact from engine TMA data
-        // =================================================================
-        double dt = 1.0 / 50.0;
-        if (hasTrackedContact) {
-            if (!Double.isNaN(trackedHeading) && bestContact == null) {
-                trackedX += trackedSpeed * Math.sin(trackedHeading) * dt;
-                trackedY += trackedSpeed * Math.cos(trackedHeading) * dt;
-            }
-            uncertaintyRadius += maxSubSpeed * dt;
-            contactAlive *= CONFIDENCE_DECAY;
-        }
-
-        if (bestContact != null) {
-            contactAlive = 1.0;
-
-            if (bestContact.estimatedSpeed() >= 0) {
-                double quality = Math.clamp(bestContact.signalExcess() / 30.0, 0.1, 0.8);
-                trackedSpeed = hasTrackedContact ?
-                        trackedSpeed * (1 - quality) + bestContact.estimatedSpeed() * quality :
-                        bestContact.estimatedSpeed();
-            }
-
-            if (!Double.isNaN(bestContact.estimatedHeading())) {
-                trackedHeading = bestContact.estimatedHeading();
-            }
-
-            double range = bestContact.range() > 50 ? bestContact.range() : 1000;
-            double tx = pos.x() + range * Math.sin(bestContact.bearing());
-            double ty = pos.y() + range * Math.cos(bestContact.bearing());
-
-            if (hasTrackedContact) {
-                double blend = bestContact.isActive() ? 0.8 : 0.2;
-                trackedX = trackedX * (1 - blend) + tx * blend;
-                trackedY = trackedY * (1 - blend) + ty * blend;
-            } else {
-                trackedX = tx;
-                trackedY = ty;
-                hasTrackedContact = true;
-            }
-
-            if (bestContact.rangeUncertainty() > 0) {
-                uncertaintyRadius = bestContact.rangeUncertainty() * 2;
-            }
-
-            if (bestContact.isActive() && bestContact.rangeUncertainty() > 0) {
-                refUncertainty = bestContact.rangeUncertainty() * 2;
-            }
-
-            trackedLastFixTick = tick;
-
-            if (bestContact.isActive() && bestContact.range() > 0) {
-                pingFixHistory.add(new PingFix(tx, ty, tick));
-                while (pingFixHistory.size() > 20) pingFixHistory.removeFirst();
-            }
-        }
-
-        if (hasTrackedContact && uncertaintyRadius > 5000) {
-            hasTrackedContact = false;
-            trackedHeading = Double.NaN;
-            pingFixHistory.clear();
-        }
-
+        // Step 3: Check for damage (someone hit us)
         boolean tookDamage = self.hp() < previousHp;
         previousHp = self.hp();
 
-        // =================================================================
-        // Step 2: State transitions (confidence-based)
-        // =================================================================
-        long ticksSinceContact = tick - lastContactTick;
+        // Step 3: State transitions
+        updateState(pos, tick, tookDamage);
 
-        double trackedDist = Double.MAX_VALUE;
-        if (hasTrackedContact) {
-            double dx = trackedX - pos.x();
-            double dy = trackedY - pos.y();
-            trackedDist = Math.sqrt(dx * dx + dy * dy);
-        }
-
-        State prevState = state;
-
-        switch (state) {
-            case PATROL -> {
-                if (bestContact != null && bestContact.isActive() && bestContact.range() > 0) {
-                    enterState(State.CHASE, tick);
-                } else if (consecutiveContactTicks >= CONTACT_CONFIRM_TICKS) {
-                    enterState(State.TRACKING, tick);
-                }
-            }
-            case TRACKING -> {
-                if ((tookDamage || shouldEvade()) && terrain.elevationAt(pos.x(), pos.y()) < -60) {
-                    enterState(State.EVADE, tick);
-                } else if (bestContact != null && bestContact.isActive() && bestContact.range() > 0) {
-                    enterState(State.CHASE, tick);
-                } else if (estimatedRange < CHASE_RANGE && contactAlive >= CONFIDENCE_HUNT_MIN) {
-                    enterState(State.CHASE, tick);
-                } else if (hasTrackedContact && trackedDist < CHASE_RANGE && contactAlive >= CONFIDENCE_HUNT_MIN) {
-                    enterState(State.CHASE, tick);
-                } else if (consecutiveContactTicks > 500 && contactAlive >= CONFIDENCE_HUNT_MIN) {
-                    enterState(State.CHASE, tick);
-                } else if (!hasTrackedContact && ticksSinceContact > 500) {
-                    enterState(State.PATROL, tick);
-                }
-            }
-            case CHASE -> {
-                if (tookDamage && terrain.elevationAt(pos.x(), pos.y()) < -60) {
-                    enterState(State.EVADE, tick);
-                } else if (estimatedRange < RAM_RANGE && rangeConfirmedByActive) {
-                    enterState(State.RAM, tick);
-                } else if (!hasTrackedContact && uncertaintyRadius > 3000) {
-                    enterState(State.PATROL, tick);
-                }
-            }
-            case RAM -> {
-                if (estimatedRange > RAM_OVERSHOT_RANGE && ticksSinceContact > 50) {
-                    enterState(State.CHASE, tick);
-                } else if (!hasTrackedContact || contactAlive < CONFIDENCE_RAM_MIN) {
-                    enterState(State.PATROL, tick);
-                }
-            }
-            case EVADE -> {
-                if (!hasTrackedContact) {
-                    enterState(State.PATROL, tick);
-                } else if (bestContact != null && lastContactSE < 8.0 && ticksSinceContact == 0) {
-                    enterState(State.TRACKING, tick);
-                }
-            }
-        }
-
-        boolean stateChanged = state != prevState;
-
-        // =================================================================
-        // Step 3: Strategic waypoint generation (BEFORE autopilot tick)
-        // =================================================================
-        // If objectives are set, navigate to them first
-        boolean hasObjective = !objectives.isEmpty() && objectiveIndex < objectives.size();
-        if (hasObjective) {
-            if (autopilot != null && autopilot.hasArrived()) {
+        // Step 4: Handle objectives first (competition waypoints)
+        boolean hasObj = !objectives.isEmpty() && objectiveIndex < objectives.size();
+        if (hasObj) {
+            if (autopilot.hasArrived()) {
                 objectiveIndex++;
-                hasObjective = objectiveIndex < objectives.size();
+                hasObj = objectiveIndex < objectives.size();
             }
-            if (hasObjective) {
-                var obj = objectives.get(objectiveIndex);
-                if (strategicWaypoints.isEmpty() || autopilot.hasArrived()) {
-                    strategicWaypoints = List.of(obj);
-                    if (autopilot != null) {
-                        autopilot.setWaypoints(strategicWaypoints, pos.x(), pos.y(), depth, heading, lastSpeed);
-                    }
+            if (hasObj) {
+                var orig = objectives.get(objectiveIndex);
+                double depth = safeDepth(orig.x(), orig.y(), belowThermocline());
+                var wp = new StrategicWaypoint(orig.x(), orig.y(), depth,
+                        orig.purpose(), NoisePolicy.NORMAL, orig.pattern(), orig.arrivalRadius(), 8.0);
+                if (strategicWaypoints.isEmpty() || autopilot.hasArrived() || autopilot.isBlocked()) {
+                    strategicWaypoints = List.of(wp);
+                    autopilot.setWaypoints(strategicWaypoints, pos.x(), pos.y(), pos.z(), heading, speed);
                 }
             }
-        }
-
-        boolean needReplan = !hasObjective && (stateChanged || strategicWaypoints.isEmpty());
-
-        // State-specific replan triggers
-        if (!needReplan) {
-            switch (state) {
-                case PATROL -> {
-                    if (autopilot != null && autopilot.hasArrived()) {
-                        autopilot.advanceWaypoint(pos.x(), pos.y(), depth, heading, lastSpeed);
-                        if (autopilot.currentWaypointIndex() >= strategicWaypoints.size()) {
-                            needReplan = true;
-                        }
-                    }
-                    if (autopilot != null && autopilot.isBlocked()) {
-                        needReplan = true;
-                    }
-                }
-                case TRACKING -> {
-                    if (hasTrackedContact && !Double.isNaN(lastStrategicTargetX)) {
-                        double targetMoved = Math.sqrt(Math.pow(trackedX - lastStrategicTargetX, 2)
-                                + Math.pow(trackedY - lastStrategicTargetY, 2));
-                        if (targetMoved > REPLAN_TARGET_MOVE_DIST) needReplan = true;
-                    }
-                    if (autopilot != null && (autopilot.hasArrived() || autopilot.isBlocked())) {
-                        needReplan = true;
-                    }
-                }
-                case CHASE -> {
-                    if (hasTrackedContact && !Double.isNaN(lastStrategicTargetX)) {
-                        double targetMoved = Math.sqrt(Math.pow(trackedX - lastStrategicTargetX, 2)
-                                + Math.pow(trackedY - lastStrategicTargetY, 2));
-                        if (targetMoved > REPLAN_TARGET_MOVE_DIST) needReplan = true;
-                    }
-                    if (autopilot != null && (autopilot.hasArrived() || autopilot.isBlocked())) {
-                        needReplan = true;
-                    }
-                }
-                case EVADE -> {
-                    if (autopilot != null && autopilot.isBlocked()) {
-                        needReplan = true;
-                    }
-                }
-                case RAM -> {} // RAM bypasses autopilot
+        } else {
+            // Step 5: State-specific waypoint generation
+            boolean needPlan = stateChanged() || strategicWaypoints.isEmpty()
+                    || autopilot.hasArrived() || autopilot.isBlocked()
+                    || wasPinged; // immediately replan when pinged (change depth)
+            if (!needPlan && hasTrackedContact) {
+                double targetMoved = hdist(trackedX, trackedY, lastPlanTargetX, lastPlanTargetY);
+                if (targetMoved > 300) needPlan = true;
             }
-        }
-
-        // Enforce replan cooldown to prevent thrashing when the sub is in
-        // a difficult situation (e.g., emergency surface near terrain). Each
-        // replan produces a new route that may conflict with the previous one,
-        // and replanning every tick makes it worse. State changes bypass the
-        // cooldown since they represent genuine strategic shifts.
-        if (needReplan && !stateChanged && (tick - lastReplanTick) < REPLAN_COOLDOWN_TICKS) {
-            needReplan = false;
-        }
-
-        if (needReplan && state != State.RAM) {
-            strategicWaypoints = switch (state) {
-                case PATROL -> generatePatrolWaypoints(pos.x(), pos.y(), heading, battleArea);
-                case TRACKING -> {
+            if (needPlan && tick - lastPlanTick > 100) {
+                strategicWaypoints = generateWaypoints(pos, heading, speed, tick);
+                if (!strategicWaypoints.isEmpty()) {
+                    autopilot.setWaypoints(strategicWaypoints, pos.x(), pos.y(), pos.z(), heading, speed);
+                    lastPlanTick = tick;
                     if (hasTrackedContact) {
-                        var contact = buildTrackedContact(pos, ticksSinceContact);
-                        yield generateTrackingWaypoints(pos.x(), pos.y(), heading,
-                                lastContactBearing, contact);
-                    }
-                    yield generatePatrolWaypoints(pos.x(), pos.y(), heading, battleArea);
-                }
-                case CHASE -> {
-                    if (hasTrackedContact) {
-                        var contact = buildTrackedContact(pos, ticksSinceContact);
-                        yield generateChaseWaypoints(pos.x(), pos.y(), heading, contact,
-                                input.activeSonarCooldownTicks() == 0);
-                    }
-                    yield generatePatrolWaypoints(pos.x(), pos.y(), heading, battleArea);
-                }
-                case EVADE -> generateEvadeWaypoints(pos.x(), pos.y(),
-                        lastContactBearing, terrain);
-                case RAM -> List.of(); // not reached
-            };
-
-            if (autopilot != null && !strategicWaypoints.isEmpty()) {
-                autopilot.setWaypoints(strategicWaypoints, pos.x(), pos.y(), depth, heading, lastSpeed);
-                lastStrategicTargetX = strategicWaypoints.getFirst().x();
-                lastStrategicTargetY = strategicWaypoints.getFirst().y();
-                lastReplanTick = tick;
-            }
-        }
-
-        // =================================================================
-        // Step 4: Execute controls
-        // =================================================================
-        if (state == State.RAM) {
-            // RAM bypasses autopilot: direct steering and full throttle
-            double rudder = 0;
-            if (hasTrackedContact && trackedDist > 50) {
-                double ramBearing = Math.atan2(trackedX - pos.x(), trackedY - pos.y());
-                if (ramBearing < 0) ramBearing += 2 * Math.PI;
-                double diff = angleDiff(ramBearing, heading);
-                rudder = Math.clamp(diff * 3.0, -1, 1);
-            } else if (lastContactTick >= 0) {
-                double diff = angleDiff(lastContactBearing, heading);
-                rudder = Math.clamp(diff * 3.0, -1, 1);
-            }
-
-            output.setRudder(rudder);
-            output.setSternPlanes(0);
-            output.setThrottle(RAM_THROTTLE);
-            output.setBallast(0.5);
-        } else if (autopilot != null) {
-            // Autopilot handles all navigation
-            autopilot.tick(input, output);
-        }
-
-        // =================================================================
-        // Step 5: Active sonar decisions
-        // =================================================================
-        switch (state) {
-            case PATROL -> {
-                if (bestContact != null) {
-                    patrolSilenceTicks = 0;
-                } else {
-                    patrolSilenceTicks++;
-                }
-                if (patrolSilenceTicks > PATROL_SILENCE_PING_TICKS
-                        && input.activeSonarCooldownTicks() == 0) {
-                    output.activeSonarPing();
-                    patrolSilenceTicks = 0;
-                }
-            }
-            case CHASE -> {
-                if (hasTrackedContact && input.activeSonarCooldownTicks() == 0) {
-                    boolean nearPredictedPos = trackedDist < TRACKED_PING_RANGE;
-                    boolean contactStale = ticksSinceContact > 500;
-                    boolean searchAreaGrowing = uncertaintyRadius > 1000;
-                    boolean wantFiringFix = trackedDist < 2500 && !rangeConfirmedByActive;
-                    if ((nearPredictedPos && contactStale)
-                            || (searchAreaGrowing && contactStale)
-                            || wantFiringFix) {
-                        output.activeSonarPing();
+                        lastPlanTargetX = trackedX;
+                        lastPlanTargetY = trackedY;
                     }
                 }
             }
-            case RAM -> {
-                if (ticksSinceContact > 100 && input.activeSonarCooldownTicks() == 0) {
-                    output.activeSonarPing();
-                }
-            }
-            default -> {}
         }
 
-        // =================================================================
-        // Step 6: Status, firing solution, contact estimate
-        // =================================================================
-        String stateTag = state.name().substring(0, 1);
-        boolean tailing = (state == State.CHASE && isBehindTarget());
-        if (tailing) stateTag = "C/TAIL";
-        double floorBelow = terrain.elevationAt(pos.x(), pos.y());
-        double immediateGap = depth - floorBelow;
-        String apStatus = autopilot != null ? autopilot.lastStatus() : "";
-        if (!apStatus.isEmpty()) stateTag += "/" + apStatus.charAt(0);
-        output.setStatus(String.format("%s f:%.0f g:%.0f",
-                stateTag, -floorBelow, immediateGap));
+        // Step 6: Run autopilot
+        autopilot.tick(input, output);
 
-        // Torpedo firing solution + launch
-        if (hasTrackedContact && (state == State.CHASE || state == State.RAM)
-                && trackedDist < 2500 && trackedDist > 200
-                && contactAlive > 0.3) {
-            double solutionAge = (tick - trackedLastFixTick) / 50.0;
-            if (solutionAge < 30 && !Double.isNaN(trackedHeading) && trackedSpeed > 0
-                    && uncertaintyRadius < 300) {
-                double quality = Math.clamp(1.0 - uncertaintyRadius / 300.0, 0.1, 1.0);
-                output.publishFiringSolution(new FiringSolution(
-                        trackedX, trackedY, trackedHeading, trackedSpeed, quality));
-            }
+        // Step 7: Sprint-drift and stalking throttle override
+        applySprintDrift(output, tick, pos);
 
-            // Launch torpedo if ready (needs active fix for targeting data)
-            if (input.self().torpedoesRemaining() > 0
-                    && tick - lastTorpedoLaunchTick > 750 // 15s cooldown
-                    && rangeConfirmedByActive
-                    && solutionAge < 15) {
-                double bearingToTarget = Math.atan2(trackedX - pos.x(), trackedY - pos.y());
-                if (bearingToTarget < 0) bearingToTarget += 2 * Math.PI;
-                double headingError = angleDiff(bearingToTarget, heading);
-                if (Math.abs(headingError) < Math.toRadians(30)) {
-                    String missionData = String.format("%.0f,%.0f,%.0f",
-                            trackedX, trackedY, -80.0);
-                    output.launchTorpedo(new TorpedoLaunchCommand(
-                            bearingToTarget, 0, 20.0, missionData));
-                    lastTorpedoLaunchTick = tick;
-                }
-            }
+        // Step 8: Active sonar (almost never)
+        // Ping defensively during evasion if we lost the torpedo track
+        if (state == State.EVADING && torpedoThreat == null
+                && tick - lastTorpedoTick < 500
+                && input.activeSonarCooldownTicks() == 0) {
+            output.activeSonarPing();
+        }
+        // One "snapshot" ping right before firing: confirm the solution.
+        // We've been silent the whole approach; this one ping gives a precise
+        // fix and we fire immediately after. The ping reveals us, but the
+        // torpedoes are already in the water before the enemy can react.
+        if (state == State.ATTACKING && input.activeSonarCooldownTicks() == 0
+                && tick - lastTorpedoLaunchTick > TORPEDO_COOLDOWN) {
+            output.activeSonarPing();
         }
 
-        // Publish strategic waypoints for viewer visualization
-        for (int i = 0; i < strategicWaypoints.size(); i++) {
-            var sw = strategicWaypoints.get(i);
-            boolean active = autopilot != null && i == autopilot.currentWaypointIndex();
-            output.publishStrategicWaypoint(
-                    new Waypoint(sw.x(), sw.y(), sw.preferredDepth(), active), sw.purpose());
-        }
+        // Step 9: Torpedo launch
+        launchTorpedoIfReady(input, output, pos, tick);
 
-        // Publish tracked contact estimate
+        // Step 10: Status and viewer data
+        output.setStatus(String.format("%s %s",
+                state.name().substring(0, Math.min(4, state.name().length())),
+                inSprintPhase && state == State.PATROL ? "SPR" : ""));
+
         if (hasTrackedContact) {
-            double posConf = refUncertainty / (refUncertainty + uncertaintyRadius);
-            double conf = contactAlive * posConf;
-            String label = uncertaintyRadius < 100 ? "ping" : "passive";
+            double confidence = Math.max(0, contactAlive * (1 - uncertaintyRadius / 3000));
             output.publishContactEstimate(new ContactEstimate(
-                    trackedX, trackedY, conf, contactAlive, uncertaintyRadius,
-                    trackedHeading, trackedSpeed, label));
+                    trackedX, trackedY, confidence, contactAlive, uncertaintyRadius,
+                    trackedHeading, trackedSpeed, "passive"));
+        }
+
+        // Publish strategic waypoints for viewer
+        for (int i = 0; i < strategicWaypoints.size(); i++) {
+            var wp = strategicWaypoints.get(i);
+            output.publishStrategicWaypoint(
+                    new Waypoint(wp.x(), wp.y(), wp.preferredDepth(),
+                            i == autopilot.currentWaypointIndex()), wp.purpose());
         }
     }
 
-    // ── Helpers ──────────────────────────────────────────────────────
+    @Override
+    public void onMatchEnd(MatchResult result) {}
 
-    private TrackedContact buildTrackedContact(Vec3 pos, long ticksSinceContact) {
-        double dx = trackedX - pos.x();
-        double dy = trackedY - pos.y();
-        double dist = Math.sqrt(dx * dx + dy * dy);
-        return new TrackedContact(
-                trackedX, trackedY, trackedHeading, trackedSpeed,
-                dist, isBehindTarget(), ticksSinceContact,
-                ticksSinceContact > 500);
-    }
+    // ── Contact tracking ──
 
-    // State machine helpers
-
-    private void enterState(State newState, long tick) {
-        state = newState;
-        if (newState == State.PATROL) {
-            estimatedRange = Double.MAX_VALUE;
-            rangeConfirmedByActive = false;
-            patrolSilenceTicks = 0;
-            if (hasTrackedContact) {
-                lastKnownContactX = trackedX;
-                lastKnownContactY = trackedY;
-            }
-            hasTrackedContact = false;
-            trackedHeading = Double.NaN;
-            contactAlive = 0;
-            uncertaintyRadius = 0;
-            pingFixHistory.clear();
-            lastStrategicTargetX = Double.NaN;
-            lastStrategicTargetY = Double.NaN;
-        } else if (newState == State.CHASE) {
-            chaseStartTick = tick;
-            lastStrategicTargetX = Double.NaN;
-            lastStrategicTargetY = Double.NaN;
-        }
-    }
-
-    private boolean isBehindTarget() {
-        if (Double.isNaN(trackedHeading)) return false;
-        double diff = Math.abs(angleDiff(trackedHeading, lastContactBearing));
-        return diff < BEHIND_ARC;
-    }
-
-    private boolean shouldEvade() {
-        if (lastContactSE > 25.0 && hasTrackedContact && !Double.isNaN(trackedHeading)
-                && estimatedRange < 2000) {
-            double bearingToUs = normalizeBearing(lastContactBearing + Math.PI);
-            double diff = Math.abs(angleDiff(trackedHeading, bearingToUs));
-            return diff < Math.toRadians(20);
-        }
-        return false;
-    }
-
-    private SonarContact pickBestContact(List<SonarContact> passive, List<SonarContact> active) {
+    private SonarContact pickBestSubContact(List<SonarContact> passive, List<SonarContact> active) {
         SonarContact best = null;
         double bestSE = 0;
         for (var c : active) {
-            if (c.signalExcess() > bestSE) {
-                bestSE = c.signalExcess();
-                best = c;
-            }
+            if (c.estimatedSourceLevel() > TORPEDO_SL_THRESHOLD) continue; // skip torpedoes
+            if (c.signalExcess() > bestSE) { best = c; bestSE = c.signalExcess(); }
         }
         for (var c : passive) {
-            if (c.signalExcess() > bestSE) {
-                bestSE = c.signalExcess();
-                best = c;
-            }
+            if (c.estimatedSourceLevel() > TORPEDO_SL_THRESHOLD) continue;
+            if (c.signalExcess() > bestSE) { best = c; bestSE = c.signalExcess(); }
         }
         return best;
     }
 
-    private double preferredDepthBelowThermocline(double currentDepth) {
-        if (thermalLayers.isEmpty()) return Double.NaN;
-        double shallowest = thermalLayers.getFirst().depth();
-        for (var layer : thermalLayers) {
-            if (layer.depth() > shallowest) shallowest = layer.depth();
+    private SonarContact detectTorpedoThreat(List<SonarContact> contacts) {
+        for (var c : contacts) {
+            if (c.estimatedSourceLevel() > TORPEDO_SL_THRESHOLD && c.signalExcess() > 8) {
+                return c;
+            }
         }
-        return shallowest - 30;
+        return null;
     }
 
-    // ── Terrain utilities (kept for strategic waypoint generation) ──
-
-    private double safeDepthAt(double x, double y, TerrainMap terrain) {
-        double floor = terrain.elevationAt(x, y);
-        double target = floor + FLOOR_CLEARANCE;
-        return clampTarget(target);
-    }
-
-    private double stealthDepthAt(double x, double y, TerrainMap terrain) {
-        double floor = terrain.elevationAt(x, y);
-        double target = floor + FLOOR_CLEARANCE * 0.6;
-        return clampTarget(target);
-    }
-
-    private double clampTarget(double target) {
-        if (target < depthLimit) target = depthLimit;
-        if (target > MIN_DEPTH) target = MIN_DEPTH;
-        return target;
-    }
-
-    private static double worstFloorNear(double x, double y, double radius, TerrainMap terrain) {
-        double worst = terrain.elevationAt(x, y);
-        for (int deg = 0; deg < 360; deg += 45) {
-            double brg = Math.toRadians(deg);
-            double floor = terrain.elevationAt(x + Math.sin(brg) * radius, y + Math.cos(brg) * radius);
-            if (floor > worst) worst = floor;
+    private void updateTrackedContact(SonarContact contact, Vec3 pos, long tick) {
+        double dt = 1.0 / 50;
+        if (hasTrackedContact) {
+            if (!Double.isNaN(trackedHeading)) {
+                trackedX += trackedSpeed * Math.sin(trackedHeading) * dt;
+                trackedY += trackedSpeed * Math.cos(trackedHeading) * dt;
+            }
+            uncertaintyRadius += config.maxSubSpeed() * dt;
+            contactAlive *= 0.9985;
         }
-        return worst;
-    }
 
-    // ── Geometry ────────────────────────────────────────────────────
+        if (contact == null) {
+            consecutiveContactTicks = 0;
+            if (hasTrackedContact && uncertaintyRadius > 5000) clearTrack();
+            return;
+        }
 
-    public static double angleDiff(double a, double b) {
-        double diff = a - b;
-        while (diff > Math.PI) diff -= 2 * Math.PI;
-        while (diff < -Math.PI) diff += 2 * Math.PI;
-        return diff;
-    }
+        lastContactBearing = contact.bearing();
+        lastContactTick = tick;
+        consecutiveContactTicks++;
+        contactAlive = 1.0;
+        bestSolutionQuality = Math.max(bestSolutionQuality, contact.solutionQuality());
 
-    private static double normalizeBearing(double bearing) {
-        bearing = bearing % (2 * Math.PI);
-        if (bearing < 0) bearing += 2 * Math.PI;
-        return bearing;
-    }
+        if (contact.estimatedSpeed() >= 0) {
+            double q = contact.isActive() ? 0.8 : Math.clamp(contact.signalExcess() / 25, 0.1, 0.4);
+            trackedSpeed = hasTrackedContact ? trackedSpeed * (1 - q) + contact.estimatedSpeed() * q
+                    : contact.estimatedSpeed();
+        }
+        if (!Double.isNaN(contact.estimatedHeading())) trackedHeading = contact.estimatedHeading();
 
-    // ── Strategic waypoint generation ───────────────────────────────
+        double range = contact.range() > 50 ? contact.range() : 2000;
+        double tx = pos.x() + range * Math.sin(contact.bearing());
+        double ty = pos.y() + range * Math.cos(contact.bearing());
 
-    public List<StrategicWaypoint> generatePatrolWaypoints(double x, double y,
-                                                            double heading, BattleArea area) {
-        var waypoints = new ArrayList<StrategicWaypoint>();
-        int numPoints = 5;
-        double arenaExtent = area.extent();
-
-        double targetX, targetY;
-        if (!Double.isNaN(lastKnownContactX)) {
-            targetX = lastKnownContactX;
-            targetY = lastKnownContactY;
+        if (hasTrackedContact) {
+            double blend = contact.isActive() ? 0.8 : 0.2;
+            trackedX = trackedX * (1 - blend) + tx * blend;
+            trackedY = trackedY * (1 - blend) + ty * blend;
         } else {
-            double distFromCenter = Math.sqrt(x * x + y * y);
-            if (distFromCenter > arenaExtent * 0.3) {
-                targetX = 0;
-                targetY = 0;
-            } else {
-                targetX = x + 3000 * Math.sin(heading);
-                targetY = y + 3000 * Math.cos(heading);
-            }
+            trackedX = tx; trackedY = ty; hasTrackedContact = true;
         }
 
-        double toTargetAngle = Math.atan2(targetX - x, targetY - y);
-        if (toTargetAngle < 0) toTargetAngle += 2 * Math.PI;
-        double distToTarget = Math.sqrt(Math.pow(targetX - x, 2) + Math.pow(targetY - y, 2));
+        estimatedRange = hdist(pos.x(), pos.y(), trackedX, trackedY);
 
-        for (int i = 0; i < numPoints; i++) {
-            double angle;
-            double radius;
-            if (i == 0) {
-                angle = toTargetAngle;
-                radius = Math.min(distToTarget * 0.6, 3000);
-                radius = Math.max(radius, 1500);
-            } else {
-                double spread = Math.PI * 0.4;
-                angle = toTargetAngle + spread * (i % 2 == 0 ? 1 : -1) * ((i + 1) / 2.0) / (numPoints / 2.0);
-                radius = 2000 + i * 500;
+        if (contact.rangeUncertainty() > 0) {
+            uncertaintyRadius = contact.isActive() ?
+                    contact.rangeUncertainty() * 2 : Math.min(uncertaintyRadius, range * 0.4);
+        }
+    }
+
+    private void clearTrack() {
+        hasTrackedContact = false;
+        trackedX = trackedY = trackedHeading = Double.NaN;
+        trackedSpeed = 5; contactAlive = 0; uncertaintyRadius = 0;
+        estimatedRange = Double.POSITIVE_INFINITY;
+        bestSolutionQuality = 0;
+        consecutiveContactTicks = 0;
+    }
+
+    // ── State transitions ──
+
+    private State prevState = State.PATROL;
+
+    private boolean stateChanged() { return state != prevState; }
+
+    private void updateState(Vec3 pos, long tick, boolean tookDamage) {
+        prevState = state;
+
+        // Torpedo threat always triggers evasion
+        if (torpedoThreat != null) {
+            lastTorpedoTick = tick;
+            if (state != State.EVADING) {
+                state = State.EVADING;
+                return;
             }
+        }
+        if (tookDamage && state != State.EVADING) {
+            state = State.EVADING;
+            return;
+        }
 
-            double px = x + radius * Math.sin(angle);
-            double py = y + radius * Math.cos(angle);
-
-            double margin = BOUNDARY_TURN_DIST + 200;
-            if (area.distanceToBoundary(px, py) < margin) {
-                px *= 0.7;
-                py *= 0.7;
-            }
-
-            boolean waypointUnsafe = pathPlanner != null
-                    ? !pathPlanner.isSafe(px, py)
-                    : worstFloorNear(px, py, 200, terrain) > SHALLOW_WATER_LIMIT;
-            if (waypointUnsafe) {
-                double toCenterAngle = Math.atan2(-px, -py);
-                boolean relocated = false;
-                for (double pullDist = 500; pullDist <= 2000; pullDist += 500) {
-                    double npx = px + Math.sin(toCenterAngle) * pullDist;
-                    double npy = py + Math.cos(toCenterAngle) * pullDist;
-                    if (terrain.elevationAt(npx, npy) < SHALLOW_WATER_LIMIT - 50) {
-                        px = npx;
-                        py = npy;
-                        relocated = true;
-                        break;
+        switch (state) {
+            case PATROL -> {
+                if (consecutiveContactTicks >= CONTACT_CONFIRM_TICKS) {
+                    // Contact detected: immediately stop sprinting and start tracking
+                    if (inSprintPhase) {
+                        inSprintPhase = false;
+                        sprintDriftStart = tick;
                     }
+                    state = State.TRACKING;
                 }
-                if (!relocated) continue;
             }
-
-            double safeZ = stealthDepthAt(px, py, terrain);
-
-            Purpose purpose = Purpose.PATROL;
-            NoisePolicy noise = NoisePolicy.NORMAL;
-            if (i == 2 && !thermalLayers.isEmpty()) {
-                double thermoclineDepth = thermalLayers.getFirst().depth();
-                for (var layer : thermalLayers) {
-                    if (layer.depth() > thermoclineDepth) thermoclineDepth = layer.depth();
+            case TRACKING -> {
+                if (!hasTrackedContact) { state = State.PATROL; return; }
+                if (bestSolutionQuality >= TMA_TRACKING_QUALITY
+                        && !Double.isNaN(trackedHeading)) {
+                    state = State.STALKING;
                 }
-                safeZ = Math.max(thermoclineDepth + 10, MIN_DEPTH);
-                purpose = Purpose.PING_POSITION;
-                noise = NoisePolicy.NORMAL;
             }
-
-            waypoints.add(new StrategicWaypoint(
-                    px, py, safeZ, purpose, noise,
-                    MovementPattern.DIRECT, 200, -1));
-        }
-
-        return waypoints;
-    }
-
-    public List<StrategicWaypoint> generateTrackingWaypoints(double posX, double posY,
-                                                       double heading, double contactBearing,
-                                                       TrackedContact contact) {
-        var waypoints = new ArrayList<StrategicWaypoint>();
-
-        double perpBearing = normalizeBearing(contactBearing + Math.PI / 2);
-        double perpBearing2 = normalizeBearing(contactBearing - Math.PI / 2);
-        double diff1 = Math.abs(angleDiff(perpBearing, heading));
-        double diff2 = Math.abs(angleDiff(perpBearing2, heading));
-        double chosenPerp = diff1 < diff2 ? perpBearing : perpBearing2;
-
-        double crossDist = Math.min(contact.distance() * 0.3, 1000);
-        crossDist = Math.max(crossDist, 400);
-        double crossX = posX + Math.sin(chosenPerp) * crossDist;
-        double crossY = posY + Math.cos(chosenPerp) * crossDist;
-        double crossDepth = preferredDepthBelowThermocline(-100);
-        if (Double.isNaN(crossDepth)) crossDepth = stealthDepthAt(crossX, crossY, terrain);
-
-        waypoints.add(new StrategicWaypoint(
-                crossX, crossY, crossDepth, Purpose.INVESTIGATE, NoisePolicy.QUIET,
-                MovementPattern.DIRECT, 300, contact.speed() + 1));
-
-        double targetDepth = preferredDepthBelowThermocline(-100);
-        if (Double.isNaN(targetDepth)) targetDepth = stealthDepthAt(contact.x(), contact.y(), terrain);
-
-        waypoints.add(new StrategicWaypoint(
-                contact.x(), contact.y(), targetDepth, Purpose.INTERCEPT, NoisePolicy.QUIET,
-                MovementPattern.DIRECT, 400, contact.speed() + 1));
-
-        return waypoints;
-    }
-
-    public List<StrategicWaypoint> generateChaseWaypoints(double posX, double posY,
-                                                    double heading, TrackedContact contact,
-                                                    boolean sonarCooldownReady) {
-        var waypoints = new ArrayList<StrategicWaypoint>();
-
-        double targetX = contact.x();
-        double targetY = contact.y();
-        double dist = contact.distance();
-
-        if (!Double.isNaN(contact.heading()) && dist < 1500 && dist > RAM_RANGE * 2) {
-            double offsetFraction = 1.0 - (dist - RAM_RANGE * 2) / (1500 - RAM_RANGE * 2);
-            double offset = BEHIND_OFFSET * offsetFraction;
-            double sternX = targetX - offset * Math.sin(contact.heading());
-            double sternY = targetY - offset * Math.cos(contact.heading());
-            if (pathPlanner == null || pathPlanner.isSafe(sternX, sternY)) {
-                targetX = sternX;
-                targetY = sternY;
+            case STALKING -> {
+                if (!hasTrackedContact || contactAlive < 0.1) { state = State.PATROL; return; }
+                if (bestSolutionQuality < TMA_TRACKING_QUALITY * 0.5) {
+                    state = State.TRACKING; return;
+                }
+                double dist = hdist(pos.x(), pos.y(), trackedX, trackedY);
+                // Only attack when: in range, good TMA, AND behind the target
+                if (dist < MAX_FIRING_RANGE && dist > MIN_FIRING_RANGE
+                        && bestSolutionQuality >= TMA_FIRING_QUALITY
+                        && isBehindTarget(pos.x(), pos.y())) {
+                    state = State.ATTACKING;
+                }
+            }
+            case ATTACKING -> {
+                // Transition handled in launchTorpedoIfReady
+            }
+            case EVADING -> {
+                if (tick - lastTorpedoTick > EVADE_CLEAR_TICKS && torpedoThreat == null) {
+                    state = State.REPOSITIONING;
+                    attackCompleteTick = tick;
+                }
+            }
+            case REPOSITIONING -> {
+                if (tick - attackCompleteTick > REPOSITION_TICKS) {
+                    state = State.PATROL;
+                }
+                if (hasTrackedContact && consecutiveContactTicks >= CONTACT_CONFIRM_TICKS) {
+                    state = State.TRACKING;
+                }
             }
         }
+    }
 
-        MovementPattern pattern;
-        NoisePolicy noise;
-        if (dist > 4000) {
-            pattern = MovementPattern.ZIGZAG_TMA;
-            noise = NoisePolicy.SPRINT;
-        } else if (dist > 2000) {
-            pattern = MovementPattern.SPRINT_DRIFT;
-            noise = NoisePolicy.NORMAL;
-        } else if (contact.behindTarget() && dist < 1000) {
-            pattern = MovementPattern.DIRECT;
-            noise = NoisePolicy.QUIET;
+    // ── Waypoint generation ──
+
+    private List<StrategicWaypoint> generateWaypoints(Vec3 pos, double heading, double speed, long tick) {
+        return switch (state) {
+            case PATROL -> List.of(planPatrolWaypoint(pos.x(), pos.y(), heading));
+            case TRACKING -> planTrackingWaypoints(pos, heading);
+            case STALKING -> planStalkingWaypoint(pos, heading);
+            case ATTACKING -> List.of(); // don't change waypoints during attack
+            case EVADING -> planEvadeWaypoint(pos, heading);
+            case REPOSITIONING -> planRepositionWaypoint(pos, heading);
+        };
+    }
+
+    private StrategicWaypoint planPatrolWaypoint(double x, double y, double heading) {
+        // Patrol at tactical depth (opposite thermocline side from enemy)
+        double toCenter = norm(Math.atan2(-x, -y));
+        double sweepBase = norm(toCenter + (planCount++) * 2.399963);
+        double cruiseDepth = tacticalDepth(lastPingedTick > 0 ? lastPingedTick : 0);
+
+        // Try several directions, prefer deep water and forward motion
+        double bestX = x, bestY = y, bestDepth = cruiseDepth;
+        double bestScore = Double.NEGATIVE_INFINITY;
+        for (double angle : new double[]{heading, sweepBase,
+                norm(heading + 0.5), norm(heading - 0.5),
+                norm(heading + 1.0), norm(heading - 1.0), toCenter}) {
+            for (double dist : new double[]{1500, 2000, 2500}) {
+                double tx = x + Math.sin(angle) * dist;
+                double ty = y + Math.cos(angle) * dist;
+                if (battleArea.distanceToBoundary(tx, ty) < PATROL_MARGIN) continue;
+                if (!pathPlanner.isSafe(tx, ty)) continue;
+                double floor = Math.abs(terrain.elevationAt(tx, ty));
+                double boundary = battleArea.distanceToBoundary(tx, ty);
+                double alignment = 1 + Math.cos(angleDiff(angle, heading));
+                double score = floor * 1.5 + boundary * 0.1 + alignment * 200
+                        - Math.abs(dist - 2000) * 0.1;
+                if (score > bestScore) {
+                    bestScore = score;
+                    bestX = tx; bestY = ty;
+                    bestDepth = safeDepth(tx, ty, cruiseDepth);
+                }
+            }
+        }
+        return new StrategicWaypoint(bestX, bestY, bestDepth, Purpose.PATROL,
+                NoisePolicy.QUIET, MovementPattern.DIRECT, 250, 6.0);
+    }
+
+    private List<StrategicWaypoint> planTrackingWaypoints(Vec3 pos, double heading) {
+        // Zig-zag perpendicular to contact bearing to build TMA
+        double bearing = !Double.isNaN(lastContactBearing) ? lastContactBearing
+                : norm(Math.atan2(trackedX - pos.x(), trackedY - pos.y()));
+
+        // Pick the perpendicular direction closer to current heading
+        double perpA = norm(bearing + Math.PI / 2);
+        double perpB = norm(bearing - Math.PI / 2);
+        double chosen = Math.abs(angleDiff(perpA, heading))
+                < Math.abs(angleDiff(perpB, heading)) ? perpA : perpB;
+
+        double dist = Math.clamp(estimatedRange * 0.2, 300, 800);
+        double tx = pos.x() + Math.sin(chosen) * dist;
+        double ty = pos.y() + Math.cos(chosen) * dist;
+        double depth = safeDepth(tx, ty, tacticalDepth(lastPingedTick));
+
+        return List.of(new StrategicWaypoint(tx, ty, depth, Purpose.INVESTIGATE,
+                NoisePolicy.QUIET, MovementPattern.DIRECT, 200, 5.0));
+    }
+
+    private List<StrategicWaypoint> planStalkingWaypoint(Vec3 pos, double heading) {
+        // Silently approach the target's stern quarter (their baffles).
+        // This is the money maneuver: if we get behind them undetected,
+        // they can't hear us and we have a clean shot.
+        if (Double.isNaN(trackedHeading)) {
+            return planTrackingWaypoints(pos, heading);
+        }
+
+        double dist = hdist(pos.x(), pos.y(), trackedX, trackedY);
+
+        // If already behind the target, close in directly
+        if (isBehindTarget(pos.x(), pos.y())) {
+            double closeDist = Math.max(STALKING_RANGE, dist * 0.7);
+            double bearing = norm(Math.atan2(trackedX - pos.x(), trackedY - pos.y()));
+            double tx = pos.x() + Math.sin(bearing) * Math.min(closeDist, 800);
+            double ty = pos.y() + Math.cos(bearing) * Math.min(closeDist, 800);
+            double depth = safeDepth(tx, ty, tacticalDepth(lastPingedTick));
+            // Creep in silently
+            return List.of(new StrategicWaypoint(tx, ty, depth, Purpose.INTERCEPT,
+                    NoisePolicy.SILENT, MovementPattern.DIRECT, 150, 3.5));
+        }
+
+        // Not behind yet: arc around to the stern. Pick the side that's
+        // shorter to reach (left or right of the target's stern).
+        double sternBearing = norm(trackedHeading + Math.PI);
+        double toTargetBearing = norm(Math.atan2(trackedX - pos.x(), trackedY - pos.y()));
+
+        // Offset to one side of the stern (whichever is closer to our current bearing)
+        double sternLeft = norm(sternBearing - Math.toRadians(40));
+        double sternRight = norm(sternBearing + Math.toRadians(40));
+        double chosen = Math.abs(angleDiff(sternLeft, toTargetBearing))
+                < Math.abs(angleDiff(sternRight, toTargetBearing)) ? sternLeft : sternRight;
+
+        // Position behind the target at a comfortable standoff
+        double approachDist = Math.max(STERN_OFFSET, dist * 0.5);
+        double tx = trackedX + Math.sin(chosen) * approachDist;
+        double ty = trackedY + Math.cos(chosen) * approachDist;
+
+        if (battleArea.distanceToBoundary(tx, ty) < PATROL_MARGIN || !pathPlanner.isSafe(tx, ty)) {
+            // Can't get behind: approach directly but quietly
+            tx = trackedX + Math.sin(sternBearing) * STERN_OFFSET;
+            ty = trackedY + Math.cos(sternBearing) * STERN_OFFSET;
+        }
+
+        double depth = safeDepth(tx, ty, tacticalDepth(lastPingedTick));
+
+        // Quiet approach: slow, clutch engaged but minimal throttle
+        return List.of(new StrategicWaypoint(tx, ty, depth, Purpose.INTERCEPT,
+                NoisePolicy.QUIET, MovementPattern.DIRECT, 250, 4.5));
+    }
+
+    private List<StrategicWaypoint> planEvadeWaypoint(Vec3 pos, double heading) {
+        // Turn TOWARD the torpedo (minimize cross-section, force overshoot)
+        // Then cross the thermocline and go deep
+        double evadeBearing;
+        if (torpedoThreat != null) {
+            evadeBearing = torpedoThreat.bearing(); // head toward the threat
         } else {
-            pattern = MovementPattern.DIRECT;
-            noise = NoisePolicy.NORMAL;
+            evadeBearing = heading; // keep current heading if lost track
         }
 
-        double chaseDepth = preferredDepthBelowThermocline(-100);
-        if (Double.isNaN(chaseDepth)) chaseDepth = -200;
-        if (noise == NoisePolicy.SPRINT) {
-            double minDepthForQuiet = -(11.0 - BASE_CAVITATION_SPEED) / CAVITATION_DEPTH_FACTOR;
-            chaseDepth = Math.min(chaseDepth, minDepthForQuiet - 20);
+        double dist = 500;
+        double tx = pos.x() + Math.sin(evadeBearing) * dist;
+        double ty = pos.y() + Math.cos(evadeBearing) * dist;
+
+        // Try to find terrain cover
+        for (double off : new double[]{0, Math.PI/4, -Math.PI/4, Math.PI/2, -Math.PI/2}) {
+            double cx = pos.x() + Math.sin(evadeBearing + off) * 800;
+            double cy = pos.y() + Math.cos(evadeBearing + off) * 800;
+            double floor = terrain.elevationAt(cx, cy);
+            if (floor > -80) { // shallow terrain = potential cover
+                tx = cx; ty = cy; break;
+            }
         }
 
-        waypoints.add(new StrategicWaypoint(
-                targetX, targetY, chaseDepth, Purpose.INTERCEPT, noise,
-                pattern, 200, contact.speed() + 1));
+        // Go as deep as possible
+        double depth = safeDepth(tx, ty, depthLimit + 20);
 
-        if (contact.contactStale() && sonarCooldownReady) {
-            waypoints.add(new StrategicWaypoint(
-                    contact.x(), contact.y(), chaseDepth, Purpose.PING_POSITION,
-                    NoisePolicy.NORMAL, MovementPattern.DIRECT, 300, -1));
-        }
-
-        return waypoints;
+        return List.of(new StrategicWaypoint(tx, ty, depth, Purpose.EVADE,
+                NoisePolicy.SPRINT, MovementPattern.DIRECT, 150, 12.0));
     }
 
-    public List<StrategicWaypoint> generateEvadeWaypoints(double posX, double posY,
-                                                    double threatBearing, TerrainMap terrain) {
-        double perpBearing1 = normalizeBearing(threatBearing + Math.PI / 2);
-        double perpBearing2 = normalizeBearing(threatBearing - Math.PI / 2);
-        double escapeDist = 2000;
+    private List<StrategicWaypoint> planRepositionWaypoint(Vec3 pos, double heading) {
+        // Silent drift away from the engagement at 90 degrees
+        double escapeDir = norm(heading + Math.PI / 2);
+        double tx = pos.x() + Math.sin(escapeDir) * 1500;
+        double ty = pos.y() + Math.cos(escapeDir) * 1500;
 
-        double tx1 = posX + Math.sin(perpBearing1) * escapeDist;
-        double ty1 = posY + Math.cos(perpBearing1) * escapeDist;
-        double tx2 = posX + Math.sin(perpBearing2) * escapeDist;
-        double ty2 = posY + Math.cos(perpBearing2) * escapeDist;
-
-        boolean safe1 = pathPlanner != null && pathPlanner.isSafe(tx1, ty1);
-        boolean safe2 = pathPlanner != null && pathPlanner.isSafe(tx2, ty2);
-        double tx, ty;
-        if (safe1 && !safe2) { tx = tx1; ty = ty1; }
-        else if (safe2 && !safe1) { tx = tx2; ty = ty2; }
-        else {
-            double f1 = terrain.elevationAt(tx1, ty1);
-            double f2 = terrain.elevationAt(tx2, ty2);
-            if (f1 < f2) { tx = tx1; ty = ty1; }
-            else { tx = tx2; ty = ty2; }
+        if (battleArea.distanceToBoundary(tx, ty) < PATROL_MARGIN) {
+            escapeDir = norm(heading - Math.PI / 2);
+            tx = pos.x() + Math.sin(escapeDir) * 1500;
+            ty = pos.y() + Math.cos(escapeDir) * 1500;
         }
 
-        double evadeDepth = depthLimit + 20;
+        double depth = safeDepth(tx, ty, belowThermocline());
 
-        return List.of(new StrategicWaypoint(
-                tx, ty, evadeDepth, Purpose.EVADE, NoisePolicy.SILENT,
-                MovementPattern.DIRECT, 500, -1));
+        return List.of(new StrategicWaypoint(tx, ty, depth, Purpose.PATROL,
+                NoisePolicy.SILENT, MovementPattern.DIRECT, 300, 3.0));
+    }
+
+    // ── Sprint-drift cycle ──
+
+    private void applySprintDrift(SubmarineOutput output, long tick, Vec3 pos) {
+        if (state != State.PATROL) {
+            output.setEngineClutch(true);
+
+            // Silent running during repositioning
+            if (state == State.REPOSITIONING) {
+                output.setEngineClutch(false);
+                output.setThrottle(0);
+            }
+
+            // Stalking: if we're in the target's baffles, they can't hear us.
+            // Sprint in for the kill at moderate speed. If not yet behind them,
+            // creep quietly to avoid detection.
+            if (state == State.STALKING && hasTrackedContact) {
+                double dist = hdist(pos.x(), pos.y(), trackedX, trackedY);
+                if (isBehindTarget(pos.x(), pos.y())) {
+                    // In the baffles: they're deaf to us. Move in confidently.
+                    output.setEngineClutch(true);
+                    output.setThrottle(dist > STALKING_RANGE ? 0.5 : 0.35);
+                } else if (dist < STALKING_RANGE + 500) {
+                    // Close but not behind yet: go silent, drift into position
+                    output.setEngineClutch(false);
+                    output.setThrottle(0);
+                }
+            }
+            return;
+        }
+
+        long elapsed = tick - sprintDriftStart;
+        if (inSprintPhase && elapsed >= SPRINT_TICKS) {
+            inSprintPhase = false;
+            sprintDriftStart = tick;
+        } else if (!inSprintPhase && elapsed >= DRIFT_TICKS) {
+            inSprintPhase = true;
+            sprintDriftStart = tick;
+        }
+
+        if (inSprintPhase) {
+            output.setEngineClutch(true);
+            // Autopilot handles throttle, but ensure we're below thermocline
+        } else {
+            // Drift: cut engines, go silent, rise toward thermocline to listen
+            output.setEngineClutch(false);
+            output.setThrottle(0);
+        }
+    }
+
+    // ── Torpedo launch ──
+
+    private void launchTorpedoIfReady(SubmarineInput input, SubmarineOutput output,
+                                       Vec3 pos, long tick) {
+        if (state != State.ATTACKING && state != State.STALKING) return;
+        if (input.self().torpedoesRemaining() <= 0) return;
+        if (tick - lastTorpedoLaunchTick < TORPEDO_COOLDOWN) return;
+        if (!hasTrackedContact || contactAlive < 0.4) return;
+        if (bestSolutionQuality < TMA_FIRING_QUALITY) return;
+
+        double dist = hdist(pos.x(), pos.y(), trackedX, trackedY);
+        if (dist < MIN_FIRING_RANGE || dist > MAX_FIRING_RANGE) return;
+        if (uncertaintyRadius > 250) return;
+
+        // Compute lead position
+        double torpSpeed = 25.0;
+        double timeToTarget = dist / torpSpeed;
+        double leadX = trackedX, leadY = trackedY;
+        if (!Double.isNaN(trackedHeading) && trackedSpeed > 0.5 && trackedSpeed < 20) {
+            double maxLead = dist * 0.4;
+            double leadDist = Math.min(trackedSpeed * timeToTarget, maxLead);
+            leadX = trackedX + Math.sin(trackedHeading) * leadDist;
+            leadY = trackedY + Math.cos(trackedHeading) * leadDist;
+        }
+
+        double bearing = Math.atan2(leadX - pos.x(), leadY - pos.y());
+        if (bearing < 0) bearing += 2 * Math.PI;
+
+        // Check heading alignment (tubes are forward-facing)
+        double headingError = angleDiff(bearing, input.self().pose().heading());
+        if (Math.abs(headingError) > Math.toRadians(25)) return;
+
+        // Target depth: estimate from our own depth and the thermocline.
+        // If we're below the thermocline and can hear them, they're likely
+        // near our depth or above the layer. Use a reasonable estimate.
+        double targetDepth = Math.max(thermoclineDepth + 20, -150);
+        String missionData = String.format("%.0f,%.0f,%.0f,%.4f,%.1f",
+                leadX, leadY, targetDepth,
+                Double.isNaN(trackedHeading) ? 0 : trackedHeading,
+                trackedSpeed > 0.5 ? trackedSpeed : 5.0);
+
+        output.launchTorpedo(new TorpedoLaunchCommand(bearing, 0, 20.0, missionData));
+        lastTorpedoLaunchTick = tick;
+
+        // After firing 2, go to repositioning
+        int fired = config.torpedoCount() - input.self().torpedoesRemaining() + 1;
+        if (fired % 2 == 0 || input.self().torpedoesRemaining() <= 1) {
+            state = State.REPOSITIONING;
+            attackCompleteTick = tick;
+        }
+    }
+
+    // ── Depth helpers ──
+
+    /** The preferred tactical depth: on the opposite side of the thermocline
+     *  from the enemy when pinged, below it by default. */
+    private double tacticalDepth(long tick) {
+        boolean recentlyPinged = tick - lastPingedTick < 3000; // remember for 60s
+        if (recentlyPinged && preferAboveThermocline) {
+            // Hide above the thermocline (enemy is below)
+            return Math.min(thermoclineDepth + THERMOCLINE_MARGIN, MIN_DEPTH);
+        }
+        // Default: below the thermocline (shielded from above)
+        return Math.max(thermoclineDepth - THERMOCLINE_MARGIN, depthLimit);
+    }
+
+    /** Convenience: below the thermocline depth. */
+    private double belowThermocline() {
+        return Math.max(thermoclineDepth - THERMOCLINE_MARGIN, depthLimit);
+    }
+
+    private double safeDepth(double x, double y, double preferred) {
+        double floor = terrain.elevationAt(x, y);
+        double target = Math.max(preferred, floor + FLOOR_CLEARANCE);
+        return Math.clamp(target, depthLimit, MIN_DEPTH);
+    }
+
+    // ── Geometry helpers ──
+
+    private static double hdist(double x1, double y1, double x2, double y2) {
+        double dx = x2 - x1, dy = y2 - y1;
+        return Math.sqrt(dx * dx + dy * dy);
+    }
+
+    /** True if we are within 60 degrees of the target's stern arc (their baffles). */
+    private boolean isBehindTarget(double x, double y) {
+        if (Double.isNaN(trackedHeading)) return false;
+        double sternBearing = norm(trackedHeading + Math.PI);
+        double ourBearing = norm(Math.atan2(x - trackedX, y - trackedY));
+        return Math.abs(angleDiff(ourBearing, sternBearing)) < Math.toRadians(60);
+    }
+
+    private static double norm(double a) {
+        a %= 2 * Math.PI;
+        if (a < 0) a += 2 * Math.PI;
+        return a;
     }
 }
