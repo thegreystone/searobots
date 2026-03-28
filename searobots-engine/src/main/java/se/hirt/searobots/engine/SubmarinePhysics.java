@@ -63,7 +63,8 @@ public final class SubmarinePhysics {
 
     public void step(SubmarineEntity sub, double dt, TerrainMap terrain,
                      CurrentField currentField, BattleArea battleArea) {
-        if (sub.forfeited() || sub.hp() <= 0) return;
+        if (sub.forfeited()) return;
+        // Dead subs still get physics (sinking to the bottom)
 
         var cfg = sub.vehicleConfig();
 
@@ -287,12 +288,14 @@ public final class SubmarinePhysics {
             {newX - upX * keelDown,         newY - upY * keelDown,          -upZ * keelDown},   // keel
         };
 
+        // Dead subs rest directly on the seabed (no clearance buffer).
+        // Alive subs maintain a safety margin above terrain.
+        double clearance = sub.hp() <= 0 ? 1.0 : cfg.terrainClearance();
+
         double worstPenetration = Double.NEGATIVE_INFINITY;
         for (var pt : points) {
             double floorElev = terrain.elevationAt(pt[0], pt[1]);
-            // The point's actual Z = newZ + pt[2] (offset from center)
-            // It collides when: newZ + pt[2] < floorElev + terrainClearance
-            double penetration = (floorElev + cfg.terrainClearance()) - (newZ + pt[2]);
+            double penetration = (floorElev + clearance) - (newZ + pt[2]);
             if (penetration > worstPenetration) {
                 worstPenetration = penetration;
             }
@@ -302,21 +305,42 @@ public final class SubmarinePhysics {
         boolean scraping = false;
         if (worstPenetration > 0) {
             scraping = true;
-            double closingSpeed = worstPenetration / dt;
-
-            int damage = Math.max(1, (int) (cfg.collisionDamageFactor() * closingSpeed * closingSpeed));
-            sub.setHp(Math.max(0, sub.hp() - damage));
-
             newZ = newZ + worstPenetration;
-            sub.setVerticalSpeed(cfg.bounceSpeed());
-            sub.setPitch(Math.max(sub.pitch(), 0));
 
-            // Terrain friction: scraping absorbs energy proportional to speed
-            // Hard impact halves speed; continuous scraping bleeds 5% per tick
-            if (closingSpeed > 3.0) {
-                sub.setSpeed(speed * 0.5);
+            if (sub.hp() <= 0) {
+                // Dead sub: settle on the bottom, no bounce, no damage.
+                // Bleed all speed, align pitch with terrain slope.
+                sub.setVerticalSpeed(0);
+                sub.setSpeed(speed * 0.90); // drag to a stop
+                sub.setYawRate(sub.yawRate() * 0.9);
+                sub.setPitchRate(sub.pitchRate() * 0.9);
+
+                // Compute terrain slope along the sub's heading to set rest pitch.
+                // Sample terrain at bow and stern to find the slope angle.
+                double halfLen = cfg.hullHalfLength();
+                double bowX = newX + Math.sin(heading) * halfLen;
+                double bowY = newY + Math.cos(heading) * halfLen;
+                double sternX = newX - Math.sin(heading) * halfLen;
+                double sternY = newY - Math.cos(heading) * halfLen;
+                double bowFloor = terrain.elevationAt(bowX, bowY);
+                double sternFloor = terrain.elevationAt(sternX, sternY);
+                double terrainPitch = Math.atan2(bowFloor - sternFloor, 2 * halfLen);
+                // Settle toward terrain pitch (not flat)
+                double currentPitch = sub.pitch();
+                sub.setPitch(currentPitch + (terrainPitch - currentPitch) * 0.03);
             } else {
-                sub.setSpeed(speed * 0.95);
+                // Alive: bounce, take damage, lose speed
+                double closingSpeed = worstPenetration / dt;
+                int damage = Math.max(1, (int) (cfg.collisionDamageFactor() * closingSpeed * closingSpeed));
+                sub.setHp(Math.max(0, sub.hp() - damage));
+                sub.setVerticalSpeed(cfg.bounceSpeed());
+                sub.setPitch(Math.max(sub.pitch(), 0));
+
+                if (closingSpeed > 3.0) {
+                    sub.setSpeed(speed * 0.5);
+                } else {
+                    sub.setSpeed(speed * 0.95);
+                }
             }
         }
 

@@ -143,7 +143,20 @@ public final class SimulationLoop {
 
                 // Build input, call controller, advance physics
                 for (var entity : entities) {
-                    if (entity.forfeited() || entity.hp() <= 0) continue;
+                    if (entity.forfeited()) continue;
+
+                    if (entity.hp() <= 0) {
+                        // Dead sub: no controller, but physics still runs for sinking.
+                        // Disengage clutch (prop freewheels), flood ballast (sink).
+                        entity.setThrottle(0);
+                        entity.setEngineClutch(false);
+                        entity.setBallast(0); // full flood = maximum negative buoyancy
+                        entity.setRudder(0);
+                        entity.setSternPlanes(0);
+                        physics.step(entity, dt, world.terrain(), world.currentField(),
+                                config.battleArea());
+                        continue;
+                    }
 
                     var sr = sonarResults.getOrDefault(entity.id(),
                             new SonarModel.SonarResult(List.of(), List.of(), 0));
@@ -287,25 +300,11 @@ public final class SimulationLoop {
                     }
                 }
 
-                // Remove dead torpedoes (log fate)
-                final long logTick = tick;
-                torpedoes.removeIf(t -> {
-                    if (t.alive()) return false;
-                    String fate = t.detonated() ? "DETONATED" : "LOST";
-                    if (!t.detonated()) {
-                        if (t.speed() < TorpedoEntity.minimumSpeed()) fate = "STALLED (sank)";
-                        else if (t.fuelRemaining() <= 0 && t.speed() < 1) fate = "FUEL DEPLETED (sank)";
-                        else fate = "TERRAIN/BOUNDARY";
-                    }
-                    System.out.printf("[Torpedo %d] %s at tick %d  pos=(%.0f,%.0f,%.0f) speed=%.1f fuel=%.1f%n",
-                            t.id(), fate, logTick, t.x(), t.y(), t.z(), t.speed(), t.fuelRemaining());
-                    return true;
-                });
-
                 // Sub-to-sub collision (ramming)
                 checkSubCollisions(entities);
 
-                // Snapshots before postTick clears pingRequested
+                // Snapshots BEFORE removing dead torpedoes, so the viewer sees
+                // detonated torpedoes for one tick and can create explosion effects.
                 var snapshots = entities.stream().map(SubmarineEntity::snapshot).toList();
                 var torpSnapshots = torpedoes.stream().map(TorpedoEntity::snapshot).toList();
 
@@ -323,6 +322,21 @@ public final class SimulationLoop {
 
                 // Notify listener
                 listener.onTick(tick, snapshots, torpSnapshots);
+
+                // Remove dead torpedoes (after snapshot and listener notification)
+                final long logTick = tick;
+                torpedoes.removeIf(t -> {
+                    if (t.alive()) return false;
+                    String fate = t.detonated() ? "DETONATED" : "LOST";
+                    if (!t.detonated()) {
+                        if (t.speed() < TorpedoEntity.minimumSpeed()) fate = "STALLED (sank)";
+                        else if (t.fuelRemaining() <= 0 && t.speed() < 1) fate = "FUEL DEPLETED (sank)";
+                        else fate = "TERRAIN/BOUNDARY";
+                    }
+                    System.out.printf("[Torpedo %d] %s at tick %d  pos=(%.0f,%.0f,%.0f) speed=%.1f fuel=%.1f%n",
+                            t.id(), fate, logTick, t.x(), t.y(), t.z(), t.speed(), t.fuelRemaining());
+                    return true;
+                });
 
                 // Timing
                 long sleepMs = (long) (1000.0 / config.tickRateHz() / speedMultiplier);
@@ -383,7 +397,7 @@ public final class SimulationLoop {
     // ── Torpedo explosion ────────────────────────────────────────────
 
     private static final int EXPLOSION_BASE_DAMAGE = 1200; // instant kill at point blank, heavy damage at close range
-    private static final double EXPLOSION_IMPULSE = 50.0; // m/s velocity change at zero range
+    private static final double EXPLOSION_IMPULSE = 15.0; // m/s velocity change at zero range (before mass division)
 
     private static void handleDetonation(TorpedoEntity torp, List<SubmarineEntity> subs,
                                           MatchConfig config) {
@@ -409,24 +423,28 @@ public final class SimulationLoop {
                 int damage = Math.max(1, (int) (EXPLOSION_BASE_DAMAGE * falloff));
                 sub.setHp(Math.max(0, sub.hp() - damage));
 
-                // Impulse: push sub away from blast
+                // Impulse: push sub away from blast. Divide by mass so
+                // heavier subs resist more. A submarine is thousands of tons,
+                // so the velocity change is modest (shove, not launch).
                 if (centerDist > 0.1) {
-                    double impulse = EXPLOSION_IMPULSE * falloff;
+                    double force = EXPLOSION_IMPULSE * falloff;
+                    double mass = sub.vehicleConfig().massSurge();
+                    double dv = force / (mass * 0.001); // scale: mass is in kg, want moderate push
                     double nx = dx / centerDist, ny = dy / centerDist, nz = dz / centerDist;
 
-                    // Linear impulse: velocity change
-                    double mass = sub.vehicleConfig().massSurge();
-                    sub.setSpeed(sub.speed() + impulse * (nx * Math.sin(sub.heading())
-                            + ny * Math.cos(sub.heading())));
-                    sub.setVerticalSpeed(sub.verticalSpeed() + impulse * nz);
+                    // Linear impulse: velocity change along sub heading
+                    double along = nx * Math.sin(sub.heading()) + ny * Math.cos(sub.heading());
+                    sub.setSpeed(sub.speed() + dv * along);
+                    sub.setVerticalSpeed(sub.verticalSpeed() + dv * nz * 0.5);
 
-                    // Angular impulse: off-center hits disrupt heading/pitch
-                    // Cross product of blast direction with sub's forward axis
+                    // Angular impulse: very small. A torpedo blast nudges a
+                    // submarine's heading, it doesn't spin it around.
                     double fwdX = Math.sin(sub.heading());
                     double fwdY = Math.cos(sub.heading());
-                    double crossZ = nx * fwdY - ny * fwdX; // yaw torque
-                    sub.setYawRate(sub.yawRate() + crossZ * impulse * 0.1);
-                    sub.setPitchRate(sub.pitchRate() + nz * impulse * 0.05);
+                    double crossZ = nx * fwdY - ny * fwdX;
+                    double rotInertia = mass * sub.vehicleConfig().rotationalInertia();
+                    sub.setYawRate(sub.yawRate() + crossZ * force / rotInertia * 0.5);
+                    sub.setPitchRate(sub.pitchRate() + nz * force / rotInertia * 0.2);
                 }
             }
         }

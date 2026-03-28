@@ -128,7 +128,19 @@ final class CinematicDirector {
 
     // ── Opening fly-around state ──
 
-    private float openingAngle; // current angle around the arena
+    private float openingAngle;
+
+    // ── Overview entry direction (true = entered from above, false = from below) ──
+    private boolean overviewEnteredFromAbove = false;
+
+    // ── Smoothed overview centroid (prevents jumps when entities appear/disappear) ──
+    private final Vector3f smoothedCentroid = new Vector3f();
+    private boolean centroidInitialized = false;
+
+    // ── Terminal approach tracking (detect miss vs hit) ──
+    private float terminalClosestDist = Float.MAX_VALUE;
+    private float terminalPrevDist = Float.MAX_VALUE;
+    private int terminalRecedingTicks = 0; // ticks where distance is increasing
 
     // ── Random for idle variety ──
 
@@ -186,7 +198,10 @@ final class CinematicDirector {
         // the camera is already descending (smooth re-entry, not a hard pop).
         boolean overheadShot = currentShot.type == ShotType.IDLE_ESTABLISHING
                 || currentShot.type == ShotType.CONTEXT_WIDE;
-        waterOpacityTarget = (overheadShot && shotTimer > 1.0f) ? 0f : 1f;
+        // When entering from above, disable water immediately (already above it).
+        // When entering from below, wait 1 second for the camera to rise first.
+        float fadeDelay = overviewEnteredFromAbove ? 0f : 1.0f;
+        waterOpacityTarget = (overheadShot && shotTimer > fadeDelay) ? 0f : 1f;
         if (waterOpacity > waterOpacityTarget) {
             // Fading out (going transparent): normal speed
             waterOpacity = Math.max(waterOpacity - WATER_FADE_OUT_SPEED * tpf, waterOpacityTarget);
@@ -199,8 +214,7 @@ final class CinematicDirector {
             }
         }
 
-        // Spline transition: cubic Hermite for camera position,
-        // lookAt smoothly lerps between source and destination focus points.
+        // Transition blending between shots.
         if (transitionTimer > 0) {
             float totalDur = currentShot.transition.duration;
             float raw = totalDur > 0 ? 1f - transitionTimer / totalDur : 1f;
@@ -211,56 +225,54 @@ final class CinematicDirector {
             float destX = outPos.x, destY = outPos.y, destZ = outPos.z;
             float destLX = outLookAt.x, destLY = outLookAt.y, destLZ = outLookAt.z;
 
-            // Cubic Hermite for camera position:
-            // H(t) = (2t³-3t²+1)P0 + (t³-2t²+t)T0 + (-2t³+3t²)P1 + (t³-t²)T1
-            float t2 = t * t, t3 = t2 * t;
-            float h00 = 2*t3 - 3*t2 + 1;
-            float h10 = t3 - 2*t2 + t;
-            float h01 = -2*t3 + 3*t2;
-            float h11 = t3 - t2;
+            boolean bothOverhead = !isUnderwaterShot(currentShot.type) && fromPos.y > 10f;
 
-            // Scale tangents proportional to travel distance
-            float transDist = fromPos.distance(new Vector3f(destX, destY, destZ));
-            float tangentScale = Math.max(transDist * 0.4f, 30f);
+            if (bothOverhead) {
+                // Overhead-to-overhead: simple linear lerp with easing.
+                outPos.set(
+                        fromPos.x + (destX - fromPos.x) * t,
+                        fromPos.y + (destY - fromPos.y) * t,
+                        fromPos.z + (destZ - fromPos.z) * t);
+                // Blend lookAt too (don't force a fixed Y, let it transition smoothly)
+                outLookAt.set(
+                        fromLookAt.x + (destLX - fromLookAt.x) * t,
+                        fromLookAt.y + (destLY - fromLookAt.y) * t,
+                        fromLookAt.z + (destLZ - fromLookAt.z) * t);
 
-            // Start tangent: from switchToShot (horizontal for overhead, look-dir for underwater)
-            Vector3f t0 = new Vector3f(fromTangent).multLocal(tangentScale);
+            } else {
+                // Spline transition: cubic Hermite for underwater/mixed transitions
+                float t2 = t * t, t3 = t2 * t;
+                float h00 = 2*t3 - 3*t2 + 1;
+                float h10 = t3 - 2*t2 + t;
+                float h01 = -2*t3 + 3*t2;
+                float h11 = t3 - t2;
 
-            // End tangent: for overhead destinations, use horizontal approach
-            // (don't arc downward just because we're looking down).
-            // For underwater destinations, arrive along the look direction.
-            boolean toOverhead = !isUnderwaterShot(currentShot.type);
-            Vector3f arriveDir;
-            if (toOverhead) {
-                arriveDir = new Vector3f(destLX - destX, 0, destLZ - destZ);
+                float transDist = fromPos.distance(new Vector3f(destX, destY, destZ));
+                float tangentScale = Math.max(transDist * 0.4f, 30f);
+                Vector3f t0 = new Vector3f(fromTangent).multLocal(tangentScale);
+
+                Vector3f arriveDir = new Vector3f(destLX - destX, destLY - destY, destLZ - destZ);
                 if (arriveDir.lengthSquared() > 0.01f) arriveDir.normalizeLocal();
                 else arriveDir.set(0, 0, -1);
-            } else {
-                arriveDir = new Vector3f(destLX - destX, destLY - destY, destLZ - destZ);
-                if (arriveDir.lengthSquared() > 0.01f) arriveDir.normalizeLocal();
-                else arriveDir.set(0, 0, -1);
-            }
-            Vector3f t1 = arriveDir.mult(tangentScale);
+                Vector3f t1 = arriveDir.mult(tangentScale);
 
-            outPos.set(
-                    h00*fromPos.x + h10*t0.x + h01*destX + h11*t1.x,
-                    h00*fromPos.y + h10*t0.y + h01*destY + h11*t1.y,
-                    h00*fromPos.z + h10*t0.z + h01*destZ + h11*t1.z);
+                outPos.set(
+                        h00*fromPos.x + h10*t0.x + h01*destX + h11*t1.x,
+                        h00*fromPos.y + h10*t0.y + h01*destY + h11*t1.y,
+                        h00*fromPos.z + h10*t0.z + h01*destZ + h11*t1.z);
 
-            // LookAt: for overhead-to-overhead transitions, always look straight
-            // down from the current position (prevents the camera going horizontal
-            // mid-transition). For other transitions, lerp between focus points.
-            if (!isUnderwaterShot(currentShot.type) && fromPos.y > 10f) {
-                // Both overhead: look below the camera but slightly north (JME -Z)
-                // to avoid the straight-down ambiguity that flips the camera direction.
-                // The small north offset keeps "up" on screen consistently north.
-                outLookAt.set(outPos.x, -30f, outPos.z - 1f);
-            } else {
                 outLookAt.set(
                         fromLookAt.x + (destLX - fromLookAt.x) * t,
                         fromLookAt.y + (destLY - fromLookAt.y) * t,
                         fromLookAt.z + (destLZ - fromLookAt.z) * t);
             }
+
+            // Progressively update the start point toward the blended position.
+            // This absorbs entity movement so the transition doesn't jitter
+            // when the destination keeps shifting under a moving subject.
+            float absorb = Math.min(tpf * 2f, 0.1f);
+            fromPos.interpolateLocal(outPos, absorb);
+            fromLookAt.interpolateLocal(outLookAt, absorb);
 
             transitionTimer = Math.max(0, transitionTimer - tpf);
         }
@@ -285,6 +297,7 @@ final class CinematicDirector {
             outPos.y = Math.min(outPos.y, 5f); // allow brief surface skim during transition
         }
 
+        // Log every frame for overhead shots to find the glitch
         // Save the final camera position for next frame's transition start
         lastCamPos.set(outPos);
         lastCamLookAt.set(outLookAt);
@@ -351,10 +364,26 @@ final class CinematicDirector {
                             (float) -ts.pose().position().y());
                 }
                 detonationPullback = 0;
-                // Find nearest sub for the secondary ID
+
+                // Check if this detonation is near a sub (a hit vs terrain impact)
                 int nearestSub = findNearestSub(subs, ts.pose().position().x(), ts.pose().position().y());
+                double nearestDist = Double.MAX_VALUE;
+                for (var s : subs) {
+                    double d = ts.pose().position().distanceTo(s.pose().position());
+                    if (d < nearestDist) nearestDist = d;
+                }
+                boolean isSubHit = nearestDist < 80; // within blast effect range
+
+                // Sub hit: preempt any ongoing detonation camera (force min duration 0)
+                // Terrain hit: normal priority, can be preempted by sub hits
+                float minDur = isSubHit ? 0f : 3.0f;
+                if (isSubHit && currentShot != null && currentShot.type == ShotType.DETONATION) {
+                    // Force the current terrain detonation to expire immediately
+                    shotTimer = currentShot.duration;
+                }
+
                 pendingShots.add(new Shot(ShotType.DETONATION, ts.id(), nearestSub,
-                        3.5f, 0f, TransitionType.HARD_CUT));
+                        4.0f, minDur, TransitionType.HARD_CUT));
             }
 
             if (ts.alive() && !seenTerminal.contains(ts.id())) {
@@ -368,7 +397,7 @@ final class CinematicDirector {
                     if (dist < 600) {
                         seenTerminal.add(ts.id());
                         pendingShots.add(new Shot(ShotType.TORPEDO_TERMINAL, ts.id(), s.id(),
-                                5f, 1f, TransitionType.DRAMATIC_ZOOM));
+                                30f, 2f, TransitionType.DRAMATIC_ZOOM));
                         break;
                     }
                 }
@@ -416,6 +445,37 @@ final class CinematicDirector {
             }
         }
 
+        // Terminal approach: check if the torpedo resolved (missed or gone)
+        if (currentShot != null && currentShot.type == ShotType.TORPEDO_TERMINAL && !expired) {
+            var torps = torpedoSnapshotsSupplier.get();
+            var subs = snapshotsSupplier.get();
+            boolean torpGone = torps.stream().noneMatch(t -> t.id() == currentShot.subjectId && t.alive());
+            boolean targetGone = subs.stream().noneMatch(s -> s.id() == currentShot.secondaryId && s.hp() > 0);
+
+            if (torpGone || targetGone) {
+                // Torpedo detonated, died, or target destroyed: hold 1.5s then move on
+                if (shotTimer > currentShot.minDuration + 1.5f) expired = true;
+            } else {
+                // Track closing distance to detect a miss (torpedo receding)
+                Node torpNode = torpedoNodes.get(currentShot.subjectId);
+                Node targetNode = subNodes.get(currentShot.secondaryId);
+                if (torpNode != null && targetNode != null) {
+                    float dist = torpNode.getLocalTranslation().distance(targetNode.getLocalTranslation());
+                    terminalClosestDist = Math.min(terminalClosestDist, dist);
+                    if (dist > terminalPrevDist + 1f) {
+                        terminalRecedingTicks++;
+                    } else {
+                        terminalRecedingTicks = 0;
+                    }
+                    terminalPrevDist = dist;
+                    // Clear miss: receding for 3+ seconds after closest approach
+                    if (terminalRecedingTicks > 150 && dist > terminalClosestDist + 100) {
+                        expired = true;
+                    }
+                }
+            }
+        }
+
         if (expired) {
             // If an overhead shot just finished with a queued follow-up,
             // transition with a slow descent back into the water
@@ -450,6 +510,12 @@ final class CinematicDirector {
         fromPos.set(lastCamPos);
         fromLookAt.set(lastCamLookAt);
 
+        // Track whether overhead shots are entered from above or below
+        if (shot.type == ShotType.CONTEXT_WIDE || shot.type == ShotType.IDLE_ESTABLISHING) {
+            overviewEnteredFromAbove = fromPos.y > 100f;
+        }
+
+
         currentShot = shot;
         shotTimer = 0;
         transitionTimer = shot.transition.duration;
@@ -476,6 +542,11 @@ final class CinematicDirector {
         if (shot.type == ShotType.IDLE_FLY_BY) {
             pickFlyByStation(shot.subjectId);
             flyByAge = 0;
+        }
+        if (shot.type == ShotType.TORPEDO_TERMINAL) {
+            terminalClosestDist = Float.MAX_VALUE;
+            terminalPrevDist = Float.MAX_VALUE;
+            terminalRecedingTicks = 0;
         }
     }
 
@@ -514,7 +585,7 @@ final class CinematicDirector {
                 if (idleEntityIds.size() >= 2) {
                     nextIdlePhase = IdlePhase.PREVIEW_TOPDOWN;
                     switchToShot(new Shot(ShotType.CONTEXT_WIDE, 0, -1,
-                            4f, 2.5f, TransitionType.SLOW_PULLBACK));
+                            10f, 4f, TransitionType.SLOW_PULLBACK));
                 } else {
                     nextIdlePhase = IdlePhase.CLOSE_UNDERWATER;
                     switchToShot(makeCloseShot(idleEntityIds.getFirst()));
@@ -600,14 +671,47 @@ final class CinematicDirector {
     }
 
     private void computeDetonation(float tpf, Vector3f outPos, Vector3f outLookAt) {
-        // Camera 100m from blast, elevated 30m, slowly pulling back
-        detonationPullback += tpf * 40f; // 40 m/s pullback
-        float dist = 100f + detonationPullback;
-        float angle = 0.7f; // fixed angle
+        // Slow orbit around the detonation point, pulling back gradually.
+        // Picks a camera position with terrain LOS to the blast.
+        detonationPullback += tpf * 25f;
+        idleOrbitAngle += 0.5f * tpf; // slow dramatic orbit
+        float dist = 80f + detonationPullback;
+        float elev = 20f + detonationPullback * 0.4f; // rise slightly
+
+        // Try the orbit position; if terrain blocks LOS, try higher
+        for (int attempt = 0; attempt < 4; attempt++) {
+            float camX = detonationPos.x + dist * FastMath.sin(idleOrbitAngle);
+            float camY = detonationPos.y + elev;
+            float camZ = detonationPos.z + dist * FastMath.cos(idleOrbitAngle);
+
+            if (terrain != null) {
+                // Check terrain height at camera position
+                float floor = (float) terrain.elevationAt(camX, -camZ);
+                if (camY < floor + 15f) {
+                    // Camera is inside terrain, go higher
+                    elev += 30f;
+                    continue;
+                }
+                // Simple LOS check: sample midpoint between camera and blast
+                float midX = (camX + detonationPos.x) * 0.5f;
+                float midZ = (camZ + detonationPos.z) * 0.5f;
+                float midFloor = (float) terrain.elevationAt(midX, -midZ);
+                float midCamY = (camY + detonationPos.y) * 0.5f;
+                if (midCamY < midFloor + 10f) {
+                    // Terrain in the way, go higher
+                    elev += 30f;
+                    continue;
+                }
+            }
+            outPos.set(camX, camY, camZ);
+            outLookAt.set(detonationPos);
+            return;
+        }
+        // Fallback: just go high above
         outPos.set(
-                detonationPos.x + dist * FastMath.sin(angle),
-                detonationPos.y + 30f + detonationPullback * 0.3f,
-                detonationPos.z + dist * FastMath.cos(angle));
+                detonationPos.x + dist * FastMath.sin(idleOrbitAngle),
+                detonationPos.y + elev + 50f,
+                detonationPos.z + dist * FastMath.cos(idleOrbitAngle));
         outLookAt.set(detonationPos);
     }
 
@@ -779,20 +883,39 @@ final class CinematicDirector {
         }
         if (count == 0) { outPos.set(0, 300, 0); outLookAt.set(0, 0, 0); return; }
 
-        float midX = sumX / count;
-        float midZ = sumZ / count;
+        float rawMidX = sumX / count;
+        float rawMidZ = sumZ / count;
+
+        // Smooth the centroid to prevent jumps when entities appear/disappear
+        if (!centroidInitialized) {
+            smoothedCentroid.set(rawMidX, 0, rawMidZ);
+            centroidInitialized = true;
+        } else {
+            smoothedCentroid.x += (rawMidX - smoothedCentroid.x) * Math.min(tpf * 1.5f, 0.15f);
+            smoothedCentroid.z += (rawMidZ - smoothedCentroid.z) * Math.min(tpf * 1.5f, 0.15f);
+        }
+        float midX = smoothedCentroid.x;
+        float midZ = smoothedCentroid.z;
         float spread = Math.max(maxX - minX, maxZ - minZ);
 
-        // Height: enough to see the spread with some margin, but not so high
-        // that everything is tiny. At FOV 60, visible width ≈ 1.15 * height.
-        float height = Math.max(300f, spread * 1.0f + 150f);
+        // Height: enough to see the spread, with dynamic altitude animation.
+        // Coming from below (underwater): start low and rise (zoom out).
+        // Coming from above (birds-eye): start high and descend (zoom in).
+        float baseHeight = Math.max(400f, spread * 1.2f + 200f);
+        float altitudeRange = 500f; // total altitude change over the shot
+        float progress = Math.min(shotTimer / currentShot.duration, 1f);
+        float height;
+        if (overviewEnteredFromAbove) {
+            // Entered from above: start high, slowly zoom in
+            height = baseHeight + altitudeRange * (1f - progress);
+        } else {
+            // Entered from below: start at base, slowly rise
+            height = baseHeight + altitudeRange * progress;
+        }
 
-        // Fixed orientation: camera offset toward south (JME +Z) so that
-        // "up" on screen is north, matching the 2D map orientation.
+        // Fixed orientation: camera offset toward south (JME +Z).
         float southOffset = height * 0.1f;
         outPos.set(midX, height, midZ + southOffset);
-
-        // Look at centroid, slightly north to maintain consistent north-up orientation
         outLookAt.set(midX, -30f, midZ - 1f);
     }
 
@@ -838,10 +961,18 @@ final class CinematicDirector {
         if (node == null) { outPos.set(0, 200, 500); outLookAt.set(0, 0, 0); return; }
 
         Vector3f subPos = node.getLocalTranslation();
-        // Close top-down: 150m above, small offset toward south so
-        // "up" on screen is north (matches 2D map orientation).
+        // Close top-down with dynamic altitude.
+        // From below: rise from 100m to 180m (pulling up from underwater).
+        // From above: descend from 180m to 100m (zooming in from overview).
+        float progress = Math.min(shotTimer / currentShot.duration, 1f);
+        float height;
+        if (overviewEnteredFromAbove) {
+            height = 180f - 80f * progress;
+        } else {
+            height = 100f + 80f * progress;
+        }
         float southOffset = 50f;
-        outPos.set(subPos.x, 150f, subPos.z + southOffset);
+        outPos.set(subPos.x, height, subPos.z + southOffset);
         outLookAt.set(subPos);
     }
 

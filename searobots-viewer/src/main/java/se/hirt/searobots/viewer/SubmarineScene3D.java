@@ -78,12 +78,15 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
     private volatile List<TorpedoSnapshot> latestTorpedoSnapshots = List.of();
 
     // 3D explosion effects
-    private record Explosion3D(Vector3f position, float startTime, ColorRGBA color) {}
+    private record Explosion3D(int id, Vector3f position, float startTime, ColorRGBA color) {}
     private final java.util.List<Explosion3D> activeExplosions = new java.util.ArrayList<>();
-    private final Map<Integer, Geometry> explosionGeoms = new HashMap<>();
+    private final Map<Integer, Geometry> explosionGeoms = new HashMap<>(); // fireball sphere
+    private final Map<Integer, ParticleEmitter> debrisEmitters = new HashMap<>(); // debris particles
+    private final Map<Integer, ParticleEmitter> deathBubbles = new HashMap<>(); // sub death bubbles
+    private final Map<Integer, Float> deathPropSpin = new HashMap<>(); // decaying prop spin rate
     private float appTime = 0; // running time for animations
-    private static final float EXPLOSION_DURATION = 2.5f; // seconds
-    private static final float EXPLOSION_MAX_RADIUS = 50f;
+    private static final float EXPLOSION_DURATION = 3.5f; // seconds
+    private static final float EXPLOSION_MAX_RADIUS = 80f;
     private final java.util.Set<Integer> knownTorpedoIds3D = new java.util.HashSet<>();
     // Torpedo intercept marker (3D diamond at published target)
     private Geometry interceptMarker;
@@ -1820,11 +1823,51 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
                 subNode.setLocalRotation(currentRot);
             }
 
-            // Spin propeller based on throttle
+            // Spin propeller: based on throttle when alive, free-spinning when dead
             Spatial prop = findChild(subNode, "Propeller");
             if (prop != null) {
-                float spinRate = (float) snap.throttle() * tpf * 8f;
-                prop.rotate(0, spinRate, 0);
+                if (snap.hp() > 0) {
+                    float spinRate = (float) snap.throttle() * tpf * 8f;
+                    prop.rotate(0, spinRate, 0);
+                } else {
+                    // Dead: prop freewheels, decaying from water drag
+                    float spin = deathPropSpin.getOrDefault(snap.id(), 3f);
+                    spin *= (1f - tpf * 0.3f); // exponential decay, ~3 second half-life
+                    if (spin < 0.01f) spin = 0;
+                    deathPropSpin.put(snap.id(), spin);
+                    prop.rotate(0, tpf * spin, 0);
+                }
+            }
+
+            // Death bubbles: stream of bubbles from a sinking sub
+            if (snap.hp() <= 0) {
+                ParticleEmitter db = deathBubbles.get(snap.id());
+                if (db == null) {
+                    db = new ParticleEmitter("deathBubbles-" + snap.id(),
+                            ParticleMesh.Type.Triangle, 100);
+                    Material dbMat = new Material(assetManager, "Common/MatDefs/Misc/Particle.j3md");
+                    dbMat.setTexture("Texture",
+                            assetManager.loadTexture("Effects/Explosion/smoketrail.png"));
+                    dbMat.getAdditionalRenderState().setBlendMode(RenderState.BlendMode.Alpha);
+                    db.setMaterial(dbMat);
+                    db.setImagesX(1); db.setImagesY(3);
+                    db.setStartColor(new ColorRGBA(0.8f, 0.9f, 1f, 0.6f));
+                    db.setEndColor(new ColorRGBA(0.9f, 0.95f, 1f, 0f));
+                    db.setStartSize(0.5f);
+                    db.setEndSize(3f);
+                    db.setGravity(0, 5f, 0); // bubbles float up (JME Y = up)
+                    db.setLowLife(2f);
+                    db.setHighLife(5f);
+                    db.getParticleInfluencer().setInitialVelocity(new Vector3f(0, 8f, 0));
+                    db.getParticleInfluencer().setVelocityVariation(0.5f);
+                    db.setParticlesPerSec(15);
+                    rootNode.attachChild(db);
+                    deathBubbles.put(snap.id(), db);
+                }
+                db.setLocalTranslation(targetPos);
+                // Reduce bubbles as the sub settles (less motion = fewer air leaks)
+                float sinkSpeed = Math.abs((float) snap.speed()) + 0.5f;
+                db.setParticlesPerSec(Math.max(2, (int)(sinkSpeed * 3)));
             }
 
             // Animate control surfaces with inertia (slerp toward target)
@@ -1851,13 +1894,14 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
             if (bubbles == null) {
                 bubbles = new ParticleEmitter("bubbles-" + snap.id(), ParticleMesh.Type.Triangle, 200);
                 Material bubbleMat = new Material(assetManager, "Common/MatDefs/Misc/Particle.j3md");
-                bubbleMat.setTexture("Texture", createBubbleTexture());
-                bubbleMat.getAdditionalRenderState().setBlendMode(RenderState.BlendMode.Alpha);
+                bubbleMat.setTexture("Texture",
+                        assetManager.loadTexture("Effects/Explosion/smoketrail.png"));
+                bubbleMat.getAdditionalRenderState().setBlendMode(RenderState.BlendMode.Additive);
                 bubbles.setMaterial(bubbleMat);
                 bubbles.setImagesX(1);
-                bubbles.setImagesY(1);
-                bubbles.setStartColor(new ColorRGBA(0.7f, 0.85f, 1.0f, 0.4f));
-                bubbles.setEndColor(new ColorRGBA(0.8f, 0.9f, 1.0f, 0.0f));
+                bubbles.setImagesY(3);
+                bubbles.setStartColor(new ColorRGBA(1f, 1f, 1f, 0.6f));
+                bubbles.setEndColor(new ColorRGBA(0.8f, 0.9f, 1f, 0f));
                 bubbles.setStartSize(0.15f);
                 bubbles.setEndSize(0.5f);
                 bubbles.setGravity(0, -5f, 0); // bubbles rise (negative = upward in local space)
@@ -2077,68 +2121,125 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
                 float jy = (float) tPos.z();
                 float jz = (float) -tPos.y();
                 var ec = ts.color();
-                activeExplosions.add(new Explosion3D(
+                activeExplosions.add(new Explosion3D(ts.id(),
                         new Vector3f(jx, jy, jz), appTime,
                         new ColorRGBA(ec.getRed()/255f, ec.getGreen()/255f, ec.getBlue()/255f, 1f)));
             }
         }
         knownTorpedoIds3D.retainAll(activeTorpIds.stream().map(i -> -i).collect(java.util.stream.Collectors.toSet()));
 
-        // Render 3D explosions
+        // Render 3D explosions: fireball + shockwave ring + debris particles
         appTime += tpf;
         var explosionIter = activeExplosions.iterator();
-        int expIdx = 0;
         while (explosionIter.hasNext()) {
             var exp = explosionIter.next();
             float elapsed = appTime - exp.startTime();
             float t = elapsed / EXPLOSION_DURATION;
 
             if (t > 1.0f) {
-                // Expired: remove geometry and explosion
-                var geom = explosionGeoms.remove(expIdx);
+                // Expired: clean up all effect geometries
+                var geom = explosionGeoms.remove(exp.id());
                 if (geom != null) geom.removeFromParent();
+                var debris = debrisEmitters.remove(exp.id());
+                if (debris != null) debris.removeFromParent();
                 explosionIter.remove();
                 continue;
             }
 
-            Geometry geom = explosionGeoms.get(expIdx);
+            // === Fireball (expanding hot sphere) ===
+            Geometry geom = explosionGeoms.get(exp.id());
             if (geom == null) {
                 var sphere = new com.jme3.scene.shape.Sphere(16, 16, 1f);
-                geom = new Geometry("explosion-" + expIdx, sphere);
+                geom = new Geometry("explosion-" + exp.id(), sphere);
                 Material mat = new Material(assetManager, "Common/MatDefs/Misc/Unshaded.j3md");
                 mat.getAdditionalRenderState().setBlendMode(RenderState.BlendMode.Additive);
                 mat.getAdditionalRenderState().setDepthWrite(false);
                 geom.setMaterial(mat);
                 geom.setQueueBucket(RenderQueue.Bucket.Transparent);
                 rootNode.attachChild(geom);
-                explosionGeoms.put(expIdx, geom);
+                explosionGeoms.put(exp.id(), geom);
             }
 
-            // Expand sphere and fade out
-            float radius = EXPLOSION_MAX_RADIUS * (float) Math.sqrt(t);
+            float fireRadius;
             float fade = (1.0f - t) * (1.0f - t);
-
-            // Bright flash for first 0.3s, then orange fireball fading
             float r, g, b, a;
-            if (elapsed < 0.3f) {
-                float flashT = elapsed / 0.3f;
-                r = 1.0f;
-                g = 1.0f;
-                b = 0.8f + 0.2f * (1 - flashT);
-                a = (1 - flashT) * 0.8f;
-                radius = EXPLOSION_MAX_RADIUS * 0.3f * (1 + flashT);
+            if (elapsed < 0.15f) {
+                // Intense white flash (very bright, visible through water)
+                float flashT = elapsed / 0.15f;
+                r = 2f; g = 2f; b = 1.5f; // >1 for extra glow with additive blending
+                a = (1 - flashT * 0.3f);
+                fireRadius = EXPLOSION_MAX_RADIUS * 0.5f * (0.5f + flashT);
+            } else if (elapsed < 0.8f) {
+                // Hot orange-yellow fireball expanding
+                float phase = (elapsed - 0.15f) / 0.65f;
+                r = 2f - phase * 0.5f; g = 1.2f - phase * 0.6f; b = 0.4f - phase * 0.3f;
+                a = (1 - phase * 0.4f) * 0.9f;
+                fireRadius = EXPLOSION_MAX_RADIUS * (0.5f + phase * 0.3f);
             } else {
+                // Cooling dark cloud, expanding, fading
                 r = 1.0f * fade + exp.color().r * (1 - fade);
-                g = 0.5f * fade + exp.color().g * (1 - fade);
+                g = 0.4f * fade + exp.color().g * (1 - fade);
                 b = 0.1f * fade;
-                a = fade * 0.6f;
+                a = fade * 0.7f;
+                fireRadius = EXPLOSION_MAX_RADIUS * (float) Math.sqrt(t);
             }
 
             geom.getMaterial().setColor("Color", new ColorRGBA(r, g, b, a));
             geom.setLocalTranslation(exp.position());
-            geom.setLocalScale(radius);
+            geom.setLocalScale(fireRadius);
 
-            expIdx++;
+            // === Fire/smoke particles (flame texture, animated) ===
+            ParticleEmitter fireEmitter = debrisEmitters.get(exp.id());
+            if (fireEmitter == null) {
+                fireEmitter = new ParticleEmitter("fire-" + exp.id(), ParticleMesh.Type.Triangle, 50);
+                Material fireMat = new Material(assetManager, "Common/MatDefs/Misc/Particle.j3md");
+                fireMat.setTexture("Texture",
+                        assetManager.loadTexture("Effects/Explosion/flame.png"));
+                fireMat.getAdditionalRenderState().setBlendMode(RenderState.BlendMode.Additive);
+                fireEmitter.setMaterial(fireMat);
+                fireEmitter.setImagesX(2); fireEmitter.setImagesY(2);
+                fireEmitter.setStartColor(new ColorRGBA(1f, 0.9f, 0.3f, 1f));
+                fireEmitter.setEndColor(new ColorRGBA(1f, 0.2f, 0f, 0f));
+                fireEmitter.setStartSize(5f);
+                fireEmitter.setEndSize(20f);
+                fireEmitter.setGravity(0, 2f, 0); // slight upward drift (hot gas rises)
+                fireEmitter.setLowLife(0.5f);
+                fireEmitter.setHighLife(1.5f);
+                fireEmitter.getParticleInfluencer().setInitialVelocity(
+                        new Vector3f(0, 12f, 0));
+                fireEmitter.getParticleInfluencer().setVelocityVariation(1f);
+                fireEmitter.setLocalTranslation(exp.position());
+                fireEmitter.setParticlesPerSec(0); // burst mode
+                fireEmitter.emitAllParticles();
+                rootNode.attachChild(fireEmitter);
+                debrisEmitters.put(exp.id(), fireEmitter);
+
+                // Also spawn debris chunks
+                var debrisEmitter = new ParticleEmitter("debris-" + exp.id(),
+                        ParticleMesh.Type.Triangle, 15);
+                Material debrisMat = new Material(assetManager, "Common/MatDefs/Misc/Particle.j3md");
+                debrisMat.setTexture("Texture",
+                        assetManager.loadTexture("Effects/Explosion/Debris.png"));
+                debrisEmitter.setMaterial(debrisMat);
+                debrisEmitter.setImagesX(3); debrisEmitter.setImagesY(3);
+                debrisEmitter.setSelectRandomImage(true);
+                debrisEmitter.setRotateSpeed(4);
+                debrisEmitter.setStartColor(ColorRGBA.White);
+                debrisEmitter.setEndColor(new ColorRGBA(0.5f, 0.5f, 0.5f, 0f));
+                debrisEmitter.setStartSize(2f);
+                debrisEmitter.setEndSize(4f);
+                debrisEmitter.setGravity(0, -3f, 0); // debris sinks in water
+                debrisEmitter.setLowLife(1f);
+                debrisEmitter.setHighLife(3f);
+                debrisEmitter.getParticleInfluencer().setInitialVelocity(
+                        new Vector3f(0, 15f, 0));
+                debrisEmitter.getParticleInfluencer().setVelocityVariation(0.8f);
+                debrisEmitter.setLocalTranslation(exp.position());
+                debrisEmitter.setParticlesPerSec(0);
+                debrisEmitter.emitAllParticles();
+                rootNode.attachChild(debrisEmitter);
+                // Note: debris emitter is not tracked separately; it self-cleans when particles die
+            }
         }
 
         // Update orbit center tracking (used by Orbit mode and as fallback)
@@ -2179,6 +2280,14 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
         inputManager.addMapping("CycleSub", new KeyTrigger(KeyInput.KEY_TAB));
         inputManager.addListener((ActionListener) (name, isPressed, tpf) -> {
             if (isPressed && !dialogOpen && !latestSnapshots.isEmpty()) {
+                // In Director mode, Tab exits to Orbit on the current entity
+                if (cameraMode == CameraMode.DIRECTOR) {
+                    cameraMode = CameraMode.ORBIT;
+                    if (waterFilter != null) waterFilter.setEnabled(true);
+                    if (fogFilter != null) fogFilter.setEnabled(true);
+                    System.out.println("Camera: Orbit (exited Director)");
+                    return;
+                }
                 // Merge sub + torpedo IDs for cycling
                 var subIds = latestSnapshots.stream().mapToInt(SubmarineSnapshot::id).boxed().toList();
                 var torpIds = latestTorpedoSnapshots.stream()
@@ -2322,18 +2431,26 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
         Vector3f desiredLookAt = new Vector3f();
         computeCameraForMode(desiredPos, desiredLookAt, tpf);
 
+        // Choose the up vector based on camera orientation. When looking nearly
+        // straight down (overhead shots), UNIT_Y is degenerate and causes the camera
+        // to flicker. Use -Z (north in JME) as up instead, which gives stable north-up framing.
+        Vector3f camPos, lookAt;
         if (modeTransTimer > 0) {
             modeTransTimer -= tpf;
             float t = 1f - Math.max(0f, modeTransTimer / MODE_TRANS_DURATION);
             t = t * t * (3f - 2f * t); // smoothstep
-            Vector3f pos = new Vector3f(modeTransFromPos).interpolateLocal(desiredPos, t);
-            Vector3f look = new Vector3f(modeTransFromLookAt).interpolateLocal(desiredLookAt, t);
-            cam.setLocation(pos);
-            cam.lookAt(look, Vector3f.UNIT_Y);
+            camPos = new Vector3f(modeTransFromPos).interpolateLocal(desiredPos, t);
+            lookAt = new Vector3f(modeTransFromLookAt).interpolateLocal(desiredLookAt, t);
         } else {
-            cam.setLocation(desiredPos);
-            cam.lookAt(desiredLookAt, Vector3f.UNIT_Y);
+            camPos = desiredPos;
+            lookAt = desiredLookAt;
         }
+        cam.setLocation(camPos);
+        // If camera is mostly above the lookAt point, use north as up to avoid gimbal flicker
+        Vector3f toLook = lookAt.subtract(camPos);
+        float downness = Math.abs(toLook.normalize().dot(Vector3f.UNIT_Y));
+        Vector3f up = downness > 0.7f ? new Vector3f(0, 0, -1) : Vector3f.UNIT_Y;
+        cam.lookAt(lookAt, up);
     }
 
     private void computeCameraForMode(Vector3f outPos, Vector3f outLookAt, float tpf) {
@@ -2665,20 +2782,4 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
         return new Texture2D(new Image(Image.Format.RGBA8, size, size, buf, ColorSpace.sRGB));
     }
 
-    private Texture2D createBubbleTexture() {
-        int size = 32;
-        ByteBuffer buf = BufferUtils.createByteBuffer(size * size * 4);
-        float center = size / 2f, radius = size / 2f;
-        for (int y = 0; y < size; y++) {
-            for (int x = 0; x < size; x++) {
-                float dx = x - center, dy = y - center;
-                float dist = (float) Math.sqrt(dx * dx + dy * dy);
-                float alpha = Math.max(0, 1f - dist / radius);
-                alpha *= alpha;
-                buf.put((byte) 255).put((byte) 255).put((byte) 255).put((byte) (alpha * 255));
-            }
-        }
-        buf.flip();
-        return new Texture2D(new Image(Image.Format.RGBA8, size, size, buf, ColorSpace.sRGB));
-    }
 }
