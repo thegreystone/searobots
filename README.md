@@ -17,7 +17,7 @@ Participants submit programs that control autonomous submarines and their
 torpedoes in a real-time simulation. Matches are fully replayable in a 3D viewer.
 
 Right now two subs are being built by Claude and Codex (with some human guidance, 
-help and patience). There are also the two submarines that will battle by default.
+help and patience). They are also the two submarines that will battle by default.
 
 ---
 

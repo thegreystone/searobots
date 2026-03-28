@@ -1,0 +1,40 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@v5
+        with:
+          java-version: '25-ea'
+          distribution: 'oracle'
+          cache: maven
+
+      - name: Set version from tag
+        run: mvn -B versions:set -DnewVersion="${GITHUB_REF_NAME#v}" -DgenerateBackupPoms=false
+
+      - name: Build and test
+        run: mvn -B install
+
+      - name: Rename fat jar for release
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          mv searobots-viewer/target/searobots-viewer-${VERSION}.jar \
+             searobots-viewer/target/searobots-${VERSION}.jar
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: searobots-viewer/target/searobots-*.jar
