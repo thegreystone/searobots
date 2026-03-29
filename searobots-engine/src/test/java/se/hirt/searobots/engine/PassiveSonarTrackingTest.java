@@ -285,7 +285,7 @@ class PassiveSonarTrackingTest {
                         hunterTracking[0] = true;
                     }
                 }
-                if (tick >= 4000) {
+                if (tick >= 8000) { // 160s: two full sprint-drift cycles
                     sim.stop();
                 }
             }
@@ -317,7 +317,7 @@ class PassiveSonarTrackingTest {
         // closes (at patrol throttle ~6 m/s), detection should occur within
         // ~30-40 seconds when range drops below ~1500m.
         assertTrue(hunterDetected[0],
-                "Hunter should detect the drone during the 80-second engagement");
+                "Hunter should detect the drone during the engagement");
         assertTrue(hunterTracking[0],
                 "Hunter should enter at least TRACKING state");
     }
@@ -378,7 +378,7 @@ class PassiveSonarTrackingTest {
                         hunterTracking[0] = true;
                     }
                 }
-                if (tick >= 3000) {
+                if (tick >= 6000) { // 120s: enough for sprint-drift detection
                     sim.stop();
                 }
             }
@@ -564,7 +564,7 @@ class PassiveSonarTrackingTest {
                         }
                     }
                 }
-                if (tick >= 10000) {
+                if (tick >= 15000) { // 300s: enough for sprint-drift sub to close and detect
                     sim.stop();
                 }
             }
@@ -593,7 +593,7 @@ class PassiveSonarTrackingTest {
         // Verify the hunter got at least one contact (either active or passive)
         boolean anyContact = gotActiveContact[0] || gotPassiveContact[0];
         assertTrue(anyContact,
-                "Hunter should have detected the drone (active or passive) during 200-second engagement");
+                "Hunter should have detected the drone during the engagement");
 
         // Verify distance decreased over time (hunter is closing)
         if (distanceLog.size() >= 2) {

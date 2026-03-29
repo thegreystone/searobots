@@ -60,8 +60,8 @@ public final class DefaultAttackSub implements SubmarineController {
     // ── Constants ──
 
     // Sprint-drift cycle
-    private static final int SPRINT_TICKS = 1000;       // 20 seconds
-    private static final int DRIFT_TICKS = 1500;         // 30 seconds
+    private static final int SPRINT_TICKS = 750;         // 15 seconds
+    private static final int DRIFT_TICKS = 1250;         // 25 seconds
     private static final double SPRINT_THROTTLE = 0.35;  // ~6 m/s, quiet repositioning
     private static final double QUIET_THROTTLE = 0.25;   // ~5 m/s, hard to detect
     private static final double THERMOCLINE_MARGIN = 30;  // meters below thermocline during sprint
@@ -103,9 +103,9 @@ public final class DefaultAttackSub implements SubmarineController {
     private double thermoclineDepth = -200; // default if no layers
     private double depthLimit;
 
-    // Sprint-drift (start with drift = listen first)
+    // Sprint-drift: start with a short sprint to get moving, then alternate
     private long sprintDriftStart;
-    private boolean inSprintPhase = false;
+    private boolean inSprintPhase = true;
 
     // Ping evasion: cross thermocline when pinged
     private boolean wasPinged;
@@ -326,19 +326,28 @@ public final class DefaultAttackSub implements SubmarineController {
         SonarContact best = null;
         double bestSE = 0;
         for (var c : active) {
-            if (c.estimatedSourceLevel() > TORPEDO_SL_THRESHOLD) continue; // skip torpedoes
+            if (isConfirmedTorpedo(c)) continue; // skip confirmed torpedoes
             if (c.signalExcess() > bestSE) { best = c; bestSE = c.signalExcess(); }
         }
         for (var c : passive) {
-            if (c.estimatedSourceLevel() > TORPEDO_SL_THRESHOLD) continue;
+            if (isConfirmedTorpedo(c)) continue;
             if (c.signalExcess() > bestSE) { best = c; bestSE = c.signalExcess(); }
         }
         return best;
     }
 
+    /** A confirmed torpedo: loud AND fast. Loud but slow = surface ship or sprinting sub. */
+    private boolean isConfirmedTorpedo(SonarContact c) {
+        return c.estimatedSourceLevel() > TORPEDO_SL_THRESHOLD && c.estimatedSpeed() > 20;
+    }
+
     private SonarContact detectTorpedoThreat(List<SonarContact> contacts) {
         for (var c : contacts) {
-            if (c.estimatedSourceLevel() > TORPEDO_SL_THRESHOLD && c.signalExcess() > 8) {
+            // Torpedo signature: very loud (>105 dB) AND fast (>20 m/s).
+            // Surface ships and sprinting subs are loud but not 20+ m/s.
+            // Torpedoes cruise at 25 m/s, clearly distinct.
+            if (c.estimatedSourceLevel() > TORPEDO_SL_THRESHOLD
+                    && c.estimatedSpeed() > 20) {
                 return c;
             }
         }
