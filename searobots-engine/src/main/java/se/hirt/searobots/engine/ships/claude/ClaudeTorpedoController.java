@@ -35,12 +35,18 @@ public class ClaudeTorpedoController implements TorpedoController {
     private Phase phase = Phase.TRANSIT;
 
     private static final double MIN_TERRAIN_CLEARANCE = 30;
-    private static final double ACQUISITION_RANGE = 1500; // start pinging early for better tracking
-    private static final double TERMINAL_RANGE = 500;     // committed attack run, begin slowing
+    private static final double ACQUISITION_RANGE = 1500;
+    private static final double TERMINAL_RANGE = 500;
+
+    // PID depth controller
+    private double depthIntegral;
+    private double prevDepthError;
+    private double launchDepth = Double.NaN; // remember where we started
 
     @Override
     public void onLaunch(TorpedoLaunchContext context) {
         this.terrain = context.terrain();
+        this.launchDepth = context.launchPosition().z();
         String data = context.missionData();
         if (data != null && !data.isBlank()) {
             try {
@@ -178,27 +184,35 @@ public class ClaudeTorpedoController implements TorpedoController {
             output.setRudder(Math.clamp(headingError * 2.0, -1, 1));
         }
 
-        // ── Depth control ──
-        // Stay at a safe cruise depth during transit/acquisition to avoid
-        // terrain collisions. Only dive to target depth in terminal when
-        // close enough that intervening terrain is not an issue.
+        // ── Depth control (PID) ──
+        // Depth profile: start shallow (terrain clearance), then smoothly
+        // converge to target depth as we close in. This naturally avoids
+        // terrain early and reaches the target's depth for the kill.
         double minDepth = -20; // never breach
-        double desiredZ;
 
-        if (dist < 200) {
-            // Final dive: descend to target depth only when very close.
-            // At 200m range and ~70m depth difference, the dive angle is
-            // arctan(70/200) ≈ 19 degrees, which is achievable.
-            double depthError = targetZ - pos.z();
-            desiredZ = pos.z() + depthError * 0.10;
+        // Depth profile depends on range:
+        // Close range (<800m): go straight for target depth (no time to be strategic)
+        // Long range (>800m): cruise slightly above target for terrain clearance,
+        //   then blend down as we close.
+        double goalZ;
+        if (dist < 800) {
+            // Close: direct approach to target depth
+            goalZ = targetZ;
         } else {
-            // All other phases: cruise at a safe altitude (-80m).
-            // This keeps the torpedo above most terrain features.
-            // Don't descend until the last 200m.
-            desiredZ = Math.max(-80, pos.z());
+            // Far: cruise above target depth for terrain clearance.
+            // Limit the climb: never more than 150m above launch depth
+            // (prevents extreme climbs that breach the surface).
+            double cruiseZ = Math.min(targetZ + 30, -60);
+            if (!Double.isNaN(launchDepth)) {
+                double maxClimb = launchDepth + 150;
+                cruiseZ = Math.min(cruiseZ, maxClimb);
+            }
+            // Blend from cruise to target over the 800-2000m range
+            double t = Math.clamp((dist - 800) / 1200.0, 0, 1); // 1 at 2000m, 0 at 800m
+            goalZ = targetZ + (cruiseZ - targetZ) * t;
         }
 
-        // Terrain avoidance: always active (including terminal, to prevent crashes)
+        // Terrain avoidance
         if (terrain != null) {
             double floor = terrain.elevationAt(pos.x(), pos.y());
             double safeZ = floor + MIN_TERRAIN_CLEARANCE;
@@ -207,14 +221,62 @@ public class ClaudeTorpedoController implements TorpedoController {
                     pos.x() + Math.sin(heading) * lookAhead,
                     pos.y() + Math.cos(heading) * lookAhead);
             safeZ = Math.max(safeZ, aheadFloor + MIN_TERRAIN_CLEARANCE + 10);
-            if (desiredZ < safeZ) desiredZ = safeZ;
+            if (goalZ < safeZ) goalZ = safeZ;
+        }
+        goalZ = Math.min(goalZ, minDepth);
+        // Depth floor ramps based on distance:
+        // Far (>800m): floor at -60m (terrain clearance, lob over ridges)
+        // Close (<200m): floor at targetZ (must reach the target, even if shallow)
+        // Between: smooth blend
+        if (dist > 800) {
+            goalZ = Math.min(goalZ, -60);
+        } else if (dist > 200) {
+            double t = (dist - 200) / 600.0; // 1 at 800m, 0 at 200m
+            double floor = targetZ + (-60 - targetZ) * t;
+            goalZ = Math.min(goalZ, floor);
+        }
+        // Below 200m: no floor, goalZ = targetZ from the close-range path
+
+        // PID controller with distance-dependent gains.
+        // Far away: soft P, strong D (stay smooth, go shallow for clearance).
+        // Close in: aggressive P, less D (commit to target depth for the kill).
+        double dt = input.deltaTimeSeconds();
+        double depthError = goalZ - pos.z();
+        depthIntegral += depthError * dt;
+        depthIntegral = Math.clamp(depthIntegral, -20, 20); // tight anti-windup
+        double depthDerivative = (depthError - prevDepthError) / Math.max(dt, 0.001);
+        prevDepthError = depthError;
+
+        // Urgency ramps from 0 (far) to 1 (close)
+        double urgency = Math.clamp(1.0 - dist / 1500.0, 0, 1);
+        double kP = 0.0015 + urgency * 0.008;   // 0.0015 far -> 0.0095 close
+        double kI = 0.0002 + urgency * 0.0008; // very gentle integral
+        // D term: extra damping when ascending (prevents overshoot past target depth)
+        double basekD = 0.05 - urgency * 0.02;
+        double kD = depthDerivative > 0 ? basekD * 2.0 : basekD; // double D when rising
+        double maxPlanes = 0.10 + urgency * 0.15;
+
+        double planes = kP * depthError + kI * depthIntegral + kD * depthDerivative;
+
+        // Surface avoidance: predictive + hard limit.
+        // At speed s and pitch p, vertical rate is s*sin(p).
+        double vRate = input.speed() * Math.sin(input.self().pitch());
+        double predictedZ = pos.z() + vRate * 4; // where we'll be in 4 seconds
+
+        // If predicted to be above -40m, start braking now
+        if (predictedZ > -40 && vRate > 0) {
+            double brakeUrgency = Math.max(0, (predictedZ + 40) * 0.03 + vRate * 0.05);
+            planes = Math.min(planes, -brakeUrgency);
+            depthIntegral = Math.min(depthIntegral, 0);
+        }
+        // Hard floor at -45m
+        if (pos.z() > -45) {
+            double surfaceUrgency = (pos.z() + 45) * 0.08;
+            planes = Math.min(planes, -surfaceUrgency - 0.10);
+            depthIntegral = Math.min(depthIntegral, 0);
         }
 
-        desiredZ = Math.min(desiredZ, minDepth);
-        double dz = desiredZ - pos.z();
-        double pitchGain = phase == Phase.TERMINAL ? 0.04 : 0.03;
-        double pitchMax = phase == Phase.TERMINAL ? 0.4 : 0.3;
-        output.setSternPlanes(Math.clamp(dz * pitchGain, -pitchMax, pitchMax));
+        output.setSternPlanes(Math.clamp(planes, -maxPlanes, maxPlanes));
 
         // Publish intercept point for viewer
         output.publishTarget(interceptX, interceptY, targetZ);

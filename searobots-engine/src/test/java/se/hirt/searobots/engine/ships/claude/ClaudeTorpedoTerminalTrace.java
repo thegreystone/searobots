@@ -18,7 +18,7 @@ public class ClaudeTorpedoTerminalTrace {
     @Test
     void traceTerminal() {
         // Run multiple seeds and trace all torpedoes within 500m of target
-        long[] seeds = {0x1e001};
+        long[] seeds = {0x1e001, 0x3000, 0xa000, 0xdeadbeefL, 0x77777777L};
 
         for (long seed : seeds) {
             System.out.printf("%n=== Seed %s ===%n", Long.toHexString(seed));

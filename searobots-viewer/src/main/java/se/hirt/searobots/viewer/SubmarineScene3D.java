@@ -83,6 +83,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
     private final Map<Integer, Geometry> explosionGeoms = new HashMap<>(); // fireball sphere
     private final Map<Integer, ParticleEmitter> debrisEmitters = new HashMap<>(); // debris particles
     private final Map<Integer, ParticleEmitter> deathBubbles = new HashMap<>(); // sub death bubbles
+    private final Map<Integer, ParticleEmitter> torpedoBubbles = new HashMap<>(); // torpedo wake
     private final Map<Integer, Float> deathPropSpin = new HashMap<>(); // decaying prop spin rate
     private float appTime = 0; // running time for animations
     private static final float EXPLOSION_DURATION = 3.5f; // seconds
@@ -1869,7 +1870,8 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
                 db.setLocalTranslation(targetPos);
                 // Reduce bubbles as the sub settles (less motion = fewer air leaks)
                 float sinkSpeed = Math.abs((float) snap.speed()) + 0.5f;
-                db.setParticlesPerSec(Math.max(2, (int)(sinkSpeed * 3)));
+                var simLp = getActiveSim();
+                db.setParticlesPerSec(simLp != null && simLp.isPaused() ? 0 : Math.max(2, (int)(sinkSpeed * 3)));
             }
 
             // Animate control surfaces with inertia (slerp toward target)
@@ -1899,6 +1901,8 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
                 bubbleMat.setTexture("Texture",
                         assetManager.loadTexture("Effects/Explosion/smoketrail.png"));
                 bubbleMat.getAdditionalRenderState().setBlendMode(RenderState.BlendMode.Additive);
+                bubbleMat.getAdditionalRenderState().setFaceCullMode(
+                        com.jme3.material.RenderState.FaceCullMode.Off);
                 bubbles.setMaterial(bubbleMat);
                 bubbles.setImagesX(1);
                 bubbles.setImagesY(3);
@@ -1919,7 +1923,8 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
             // Scale emission rate by noise level (noiseLevel is linear, ~1.0 = quiet, ~10+ = loud)
             float noise = (float) snap.noiseLevel();
             float emitRate = Math.max(0, (noise - 1.5f) * 30f); // no bubbles below noise 1.5
-            bubbles.setParticlesPerSec(emitRate);
+            var simL = getActiveSim();
+            bubbles.setParticlesPerSec(simL != null && simL.isPaused() ? 0 : emitRate);
 
             // Debug collision ellipsoid
             Geometry ellGeom = ellipsoidGeoms.get(snap.id());
@@ -2056,16 +2061,56 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
                 currentRot.slerp(targetRot, lerpFactor);
                 torpNode.setLocalRotation(currentRot);
             }
-            // Spin torpedo propeller (based on fuel/thrust, not speed)
-            Spatial torpProp = findChild(torpNode, "Propeller");
-            if (torpProp == null) torpProp = findChild(torpNode, "propeller");
-            if (torpProp != null && ts.fuelRemaining() > 0) {
-                torpProp.rotate(0, tpf * 15f, 0);
+            // Spin torpedo propeller proportional to speed
+            Spatial torpProp = findChild(torpNode, "g_Propeller_Plane");
+            if (torpProp != null && ts.speed() > 1) {
+                torpProp.rotate(0, tpf * (float) ts.speed() * 0.4f, 0);
             }
+
+            // Torpedo wake bubbles (much more than sub: torpedo is loud and fast)
+            ParticleEmitter torpBub = torpedoBubbles.get(ts.id());
+            if (torpBub == null) {
+                torpBub = new ParticleEmitter("torpWake-" + ts.id(),
+                        ParticleMesh.Type.Triangle, 150);
+                Material bMat = new Material(assetManager, "Common/MatDefs/Misc/Particle.j3md");
+                bMat.setTexture("Texture",
+                        assetManager.loadTexture("Effects/Explosion/smoketrail.png"));
+                bMat.getAdditionalRenderState().setBlendMode(RenderState.BlendMode.Additive);
+                bMat.getAdditionalRenderState().setFaceCullMode(
+                        com.jme3.material.RenderState.FaceCullMode.Off);
+                torpBub.setMaterial(bMat);
+                torpBub.setImagesX(1); torpBub.setImagesY(3);
+                torpBub.setStartColor(new ColorRGBA(1f, 1f, 1f, 0.5f));
+                torpBub.setEndColor(new ColorRGBA(0.7f, 0.85f, 1f, 0f));
+                torpBub.setStartSize(0.3f);
+                torpBub.setEndSize(2f);
+                torpBub.setGravity(0, 3f, 0); // bubbles float up
+                torpBub.setLowLife(0.3f);
+                torpBub.setHighLife(1.5f);
+                torpBub.getParticleInfluencer().setInitialVelocity(
+                        new Vector3f(0, 2f, 0));
+                torpBub.getParticleInfluencer().setVelocityVariation(0.6f);
+                rootNode.attachChild(torpBub);
+                torpedoBubbles.put(ts.id(), torpBub);
+            }
+            // Position at the stern (behind the propeller).
+            // Stern position: opposite of forward direction.
+            // Sim forward: (sin(h), cos(h), 0). JME: X=simX, Y=simZ, Z=-simY.
+            // So JME forward = (sin(h), 0, -cos(h)). Stern = negate.
+            float simH = (float) ts.pose().heading();
+            float sternX = -(float) Math.sin(simH) * 4f;
+            float sternZ = (float) Math.cos(simH) * 4f;
+            torpBub.setLocalTranslation(
+                    targetPos.x + sternX,
+                    targetPos.y,
+                    targetPos.z + sternZ);
+            // Stop emission when paused (particles freeze in place)
+            var simLoop = getActiveSim();
+            boolean paused = simLoop != null && simLoop.isPaused();
+            torpBub.setParticlesPerSec(paused ? 0 : Math.max(0, (int)(ts.speed() * 4)));
             // Torpedo collision cylinder (B key)
             Geometry torpCollGeom = torpedoCollisionGeoms.get(ts.id());
             if (torpCollGeom == null) {
-                // Cylinder: 2.5m half-length, 0.25m radius
                 var cyl = new com.jme3.scene.shape.Cylinder(8, 12, 0.25f, 5f, true);
                 torpCollGeom = new Geometry("torpColl-" + ts.id(), cyl);
                 Material collMat = new Material(assetManager, "Common/MatDefs/Misc/Unshaded.j3md");
@@ -2080,12 +2125,24 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
             torpCollGeom.setCullHint(showCollisionEllipsoids ? Spatial.CullHint.Never : Spatial.CullHint.Always);
             if (showCollisionEllipsoids) {
                 torpCollGeom.setLocalTranslation(targetPos);
-                torpCollGeom.setLocalRotation(targetRot);
+                // JME Cylinder axis is along Y. The torpedo model's forward is
+                // also Y in OBJ space, but targetRot includes -HALF_PI pitch
+                // that tips the model from Y-up to Z-forward. The cylinder needs
+                // an extra HALF_PI to undo that and align with the body axis.
+                var cylRot = targetRot.mult(new Quaternion().fromAngles(FastMath.HALF_PI, 0, 0));
+                torpCollGeom.setLocalRotation(cylRot);
             }
         }
 
-        // Clean up collision geoms for removed torpedoes
+        // Clean up collision geoms and wake bubbles for removed torpedoes
         torpedoCollisionGeoms.entrySet().removeIf(entry -> {
+            if (!activeTorpIds.contains(entry.getKey())) {
+                if (entry.getValue() != null) entry.getValue().removeFromParent();
+                return true;
+            }
+            return false;
+        });
+        torpedoBubbles.entrySet().removeIf(entry -> {
             if (!activeTorpIds.contains(entry.getKey())) {
                 entry.getValue().removeFromParent();
                 return true;
@@ -2303,6 +2360,10 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
                 }
                 selectedSubId = ids[(currentIdx + 1) % ids.length];
                 chaseInitialized = false;
+                // Adjust orbit distance: closer for torpedoes (they're tiny)
+                if (selectedSubId >= 1000) {
+                    orbitDistance = Math.min(orbitDistance, 60f);
+                }
                 if (cameraMode == CameraMode.ORBIT) {
                     transitionTimer = LOOK_PHASE_DURATION;
                 } else {
@@ -2422,7 +2483,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
                 }
             }
             switch (name) {
-                case "ZoomIn" -> { if (fl) freeLookDistance = Math.max(20f, freeLookDistance * 0.9f); else orbitDistance = Math.max(20f, orbitDistance * 0.9f); }
+                case "ZoomIn" -> { if (fl) freeLookDistance = Math.max(5f, freeLookDistance * 0.9f); else orbitDistance = Math.max(5f, orbitDistance * 0.9f); }
                 case "ZoomOut" -> { if (fl) freeLookDistance *= 1.1f; else orbitDistance *= 1.1f; }
             }
         }, "OrbitLeft", "OrbitRight", "OrbitUp", "OrbitDown", "ZoomIn", "ZoomOut");
@@ -2589,6 +2650,13 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
         }
         outPos.set(flyByStation);
         outLookAt.set(subPos);
+    }
+
+    private void dumpSpatial(Spatial s, String indent) {
+        System.out.println(indent + s.getName() + " (" + s.getClass().getSimpleName() + ")");
+        if (s instanceof Node n) {
+            for (var c : n.getChildren()) dumpSpatial(c, indent + "  ");
+        }
     }
 
     private String camLabel() {
