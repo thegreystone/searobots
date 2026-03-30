@@ -88,6 +88,10 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
     private float appTime = 0; // running time for animations
     private static final float EXPLOSION_DURATION = 3.5f; // seconds
     private static final float EXPLOSION_MAX_RADIUS = 80f;
+
+    // Torpedo collision cylinder dimensions (visual, shrunk from physical hull)
+    private static final float TORP_HALF_LENGTH = 1.98f;
+    private static final float TORP_RADIUS = 0.22f;
     private final java.util.Set<Integer> knownTorpedoIds3D = new java.util.HashSet<>();
     // Torpedo intercept marker (3D diamond at published target)
     private Geometry interceptMarker;
@@ -1943,6 +1947,11 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
             }
             ellGeom.setCullHint(showCollisionEllipsoids ? Spatial.CullHint.Never : Spatial.CullHint.Always);
             if (showCollisionEllipsoids) {
+                // Use model's interpolated position so ellipsoid tracks visual model
+                // (not raw snapshot position, which leads at high sim speeds)
+                Vector3f subModelPos = subNode.getLocalTranslation();
+                Quaternion subModelRot = subNode.getLocalRotation();
+
                 // Ellipsoid for hull body (excluding tower):
                 // tighter vertical, offset aft since bow is longer than stern
                 float semiLength = 38f;   // covers bow to stern body
@@ -1950,10 +1959,10 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
                 float semiHeight = 4.5f;  // hull body only, tower excluded
                 float aftOffset = 2f;     // shift center slightly aft (sub local Y)
 
-                ellGeom.setLocalRotation(targetRot);
+                ellGeom.setLocalRotation(subModelRot);
                 // Offset in sub's local frame then transform to world
-                Vector3f offset = targetRot.mult(new Vector3f(0, aftOffset, 0));
-                ellGeom.setLocalTranslation(targetPos.add(offset));
+                Vector3f offset = subModelRot.mult(new Vector3f(0, aftOffset, 0));
+                ellGeom.setLocalTranslation(subModelPos.add(offset));
                 // In sub's local frame: X = beam, Y = forward (length), Z = up (height)
                 ellGeom.setLocalScale(semiBeam, semiLength, semiHeight);
             }
@@ -2054,7 +2063,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
                 torpNode.setLocalTranslation(targetPos);
                 torpNode.setLocalRotation(targetRot);
             } else {
-                // Smooth interpolation
+                // Smooth interpolation (same lerpFactor as subs)
                 Vector3f currentPos = torpNode.getLocalTranslation();
                 torpNode.setLocalTranslation(currentPos.interpolateLocal(targetPos, lerpFactor));
                 Quaternion currentRot = torpNode.getLocalRotation();
@@ -2093,17 +2102,26 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
                 rootNode.attachChild(torpBub);
                 torpedoBubbles.put(ts.id(), torpBub);
             }
-            // Position at the stern (behind the propeller).
-            // Stern position: opposite of forward direction.
-            // Sim forward: (sin(h), cos(h), 0). JME: X=simX, Y=simZ, Z=-simY.
-            // So JME forward = (sin(h), 0, -cos(h)). Stern = negate.
+            // Use the model's interpolated position (not raw targetPos) so that
+            // bubbles and collision cylinder stay aligned with the visual model,
+            // especially at high sim speeds where lerp causes lag.
+            Vector3f modelPos = torpNode.getLocalTranslation();
+            Quaternion modelRot = torpNode.getLocalRotation();
+
+            // Position bubbles at the visual stern, accounting for pitch.
+            // Stern = -forward direction in sim coords
             float simH = (float) ts.pose().heading();
-            float sternX = -(float) Math.sin(simH) * 4f;
-            float sternZ = (float) Math.cos(simH) * 4f;
+            float simP = (float) ts.pose().pitch();
+            float halfLen = TORP_HALF_LENGTH;
+            float cosP = (float) Math.cos(simP);
+            float sinP = (float) Math.sin(simP);
+            float sternSimX = -(float) Math.sin(simH) * cosP * halfLen;
+            float sternSimY = -(float) Math.cos(simH) * cosP * halfLen;
+            float sternSimZ = -sinP * halfLen;
             torpBub.setLocalTranslation(
-                    targetPos.x + sternX,
-                    targetPos.y,
-                    targetPos.z + sternZ);
+                    modelPos.x + sternSimX,
+                    modelPos.y + sternSimZ,  // JME Y = sim Z
+                    modelPos.z - sternSimY); // JME Z = -sim Y
             // Stop emission when paused (particles freeze in place)
             var simLoop = getActiveSim();
             boolean paused = simLoop != null && simLoop.isPaused();
@@ -2111,7 +2129,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
             // Torpedo collision cylinder (B key)
             Geometry torpCollGeom = torpedoCollisionGeoms.get(ts.id());
             if (torpCollGeom == null) {
-                var cyl = new com.jme3.scene.shape.Cylinder(8, 12, 0.25f, 5f, true);
+                var cyl = new com.jme3.scene.shape.Cylinder(8, 12, TORP_RADIUS, TORP_HALF_LENGTH * 2, true);
                 torpCollGeom = new Geometry("torpColl-" + ts.id(), cyl);
                 Material collMat = new Material(assetManager, "Common/MatDefs/Misc/Unshaded.j3md");
                 collMat.setColor("Color", new ColorRGBA(1f, 1f, 0f, 0.3f));
@@ -2124,12 +2142,8 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
             }
             torpCollGeom.setCullHint(showCollisionEllipsoids ? Spatial.CullHint.Never : Spatial.CullHint.Always);
             if (showCollisionEllipsoids) {
-                torpCollGeom.setLocalTranslation(targetPos);
-                // JME Cylinder axis is along Y. The torpedo model's forward is
-                // also Y in OBJ space, but targetRot includes -HALF_PI pitch
-                // that tips the model from Y-up to Z-forward. The cylinder needs
-                // an extra HALF_PI to undo that and align with the body axis.
-                var cylRot = targetRot.mult(new Quaternion().fromAngles(FastMath.HALF_PI, 0, 0));
+                torpCollGeom.setLocalTranslation(modelPos);
+                var cylRot = modelRot.mult(new Quaternion().fromAngles(FastMath.HALF_PI, 0, 0));
                 torpCollGeom.setLocalRotation(cylRot);
             }
         }
@@ -2316,11 +2330,17 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
                 while (angleDiff < -FastMath.PI) angleDiff += FastMath.TWO_PI;
                 orbitAzimuth += angleDiff * Math.min(1f, tpf * 5f);
             } else {
-                float dist = orbitCenter.distance(targetPos);
-                float speed = dist > 100f ? 3f : 5f;
-                float factor = Math.min(1f, tpf * speed);
-                if (dist > 10f) factor = Math.max(factor, 0.05f);
-                orbitCenter.interpolateLocal(targetPos, factor);
+                boolean isTorpedo = torpedoNodes.containsKey(selectedSubId);
+                if (isTorpedo) {
+                    // Torpedoes are small and fast: snap orbit center directly
+                    orbitCenter.set(targetPos);
+                } else {
+                    float dist = orbitCenter.distance(targetPos);
+                    float speed = dist > 100f ? 3f : 5f;
+                    float factor = Math.min(1f, tpf * speed);
+                    if (dist > 10f) factor = Math.max(factor, 0.05f);
+                    orbitCenter.interpolateLocal(targetPos, factor);
+                }
             }
         }
     }
