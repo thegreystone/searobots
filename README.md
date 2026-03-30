@@ -9,12 +9,15 @@
 [![Java](https://img.shields.io/badge/Java-25-blue)](https://jdk.java.net/25/)
 [![License](https://img.shields.io/badge/License-BSD--3-green)](LICENSE)
 
-SeaRobots is a competitive autonomous underwater combat simulator, a spiritual
-successor to [C-Robots](https://en.wikipedia.org/wiki/Crobots), set beneath the
-waves. It is based on an idea and implementation from 2004. It will eventually 
-be revised so that submarines can participate in a language-agnostic manner and 
-untrusted code will be isolated using modern sandboxing techniques rather than 
-the JVM Security Manager (which was used by the original simulator).
+SeaRobots is a competitive autonomous underwater combat simulator inspired by
+the classic [C-Robots](https://en.wikipedia.org/wiki/Crobots) (1985). The idea
+was simple: what if you did Crobots, but in a vastly more complex environment?
+It could be submarines, because then it would be SeaRobots (lol). 
+
+Based on an idea and implementation from 2004, it will eventually be revised so
+that submarines can participate in a language-agnostic manner and untrusted code
+will be isolated using modern sandboxing techniques rather than the JVM Security
+Manager (which was used by the original simulator).
 
 Participants submit programs that control autonomous submarines and their
 torpedoes in a real-time simulation. Matches are fully replayable in a 3D viewer.
