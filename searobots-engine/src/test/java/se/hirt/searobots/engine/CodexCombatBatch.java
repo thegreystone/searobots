@@ -3,12 +3,7 @@ package se.hirt.searobots.engine;
 import se.hirt.searobots.engine.ships.claude.ClaudeAttackSub;
 import se.hirt.searobots.engine.ships.codex.CodexAttackSub;
 
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.LinkedHashSet;
-import java.util.LinkedHashMap;
-import java.util.Locale;
-import java.util.Random;
+import java.util.*;
 
 public final class CodexCombatBatch {
     private static final int DEFAULT_MATCH_TICKS =

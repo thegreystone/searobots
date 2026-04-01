@@ -1,17 +1,17 @@
 package se.hirt.searobots.engine.ships.codex;
 
-import se.hirt.searobots.api.SonarContact;
-import se.hirt.searobots.api.TerrainMap;
-import se.hirt.searobots.api.TorpedoController;
-import se.hirt.searobots.api.TorpedoInput;
-import se.hirt.searobots.api.TorpedoLaunchContext;
-import se.hirt.searobots.api.TorpedoOutput;
+import se.hirt.searobots.api.*;
 
 public final class CodexTorpedoController implements TorpedoController {
     private static final double MIN_TERRAIN_CLEARANCE = 35.0;
     private static final double MAX_CRUISE_DEPTH = -30.0;
     private static final double MAX_TARGET_DEPTH = -650.0;
     private static final double MIN_INTERCEPT_DEPTH_DISTANCE = 60.0;
+    private static final double LONG_RANGE_SHALLOW_CRUISE_FACTOR = 0.40;
+    private static final double LONG_RANGE_SHALLOW_MIN_DEPTH = -140.0;
+    private static final double LONG_RANGE_SHALLOW_MAX_DEPTH = -55.0;
+    private static final double LONG_RANGE_DEPTH_BLEND_START = 1_600.0;
+    private static final double LONG_RANGE_DEPTH_BLEND_END = 450.0;
     private static final double TERMINAL_TRACK_RANGE = 650.0;
     private static final double TERMINAL_COMMIT_RANGE = 260.0;
     private static final double TERMINAL_HOLD_RANGE = 90.0;
@@ -44,6 +44,9 @@ public final class CodexTorpedoController implements TorpedoController {
     private double launchY = Double.NaN;
     private double launchHeading = Double.NaN;
     private long launchTick = Long.MIN_VALUE / 4;
+    private double pitchErrorIntegral = 0.0;
+    private double lastPitch = 0.0;
+    private boolean hasLastPitchSample;
 
     @Override
     public void onLaunch(TorpedoLaunchContext context) {
@@ -51,6 +54,9 @@ public final class CodexTorpedoController implements TorpedoController {
         this.launchX = context.launchPosition().x();
         this.launchY = context.launchPosition().y();
         this.launchHeading = context.launchHeading();
+        this.pitchErrorIntegral = 0.0;
+        this.lastPitch = 0.0;
+        this.hasLastPitchSample = false;
         String missionData = context.missionData();
         if (missionData == null || missionData.isBlank()) {
             return;
@@ -150,7 +156,8 @@ public final class CodexTorpedoController implements TorpedoController {
                 : 1.0;
         output.setRudder(Math.clamp(headingError * rudderGain, -rudderLimit, rudderLimit));
 
-        double desiredZ = Math.clamp(targetZ, MAX_TARGET_DEPTH, MAX_CRUISE_DEPTH);
+        double missionDepth = Math.clamp(targetZ, MAX_TARGET_DEPTH, MAX_CRUISE_DEPTH);
+        double desiredZ = desiredDepthForRange(missionDepth, targetDist);
         if (targetDist < TERMINAL_HOLD_RANGE && Math.abs(desiredZ - pos.z()) < 12.0) {
             desiredZ = pos.z();
         }
@@ -315,7 +322,8 @@ public final class CodexTorpedoController implements TorpedoController {
             if (!isPlausibleContact(contact, pos, heading)) {
                 continue;
             }
-            double score = forwardness * 100.0 + contact.signalExcess() - rangePenalty;
+            double score = forwardness * 100.0 + contact.signalExcess() - rangePenalty
+                    + targetClassBias(contact);
             if (hasTarget) {
                 double contactRange = contact.range() > 0.0 ? contact.range() : Math.max(passiveRangeEstimate, 450.0);
                 double cx = targetX;
@@ -333,6 +341,15 @@ public final class CodexTorpedoController implements TorpedoController {
             }
         }
         return best;
+    }
+
+    private double targetClassBias(SonarContact contact) {
+        return switch (contact.classification()) {
+            case SUBMARINE -> 180.0;
+            case UNKNOWN -> 0.0;
+            case SURFACE_SHIP -> -120.0;
+            case TORPEDO -> -260.0;
+        };
     }
 
     private double[] predictedIntercept(double ownX, double ownY, double ownSpeed, long tick) {
@@ -413,17 +430,52 @@ public final class CodexTorpedoController implements TorpedoController {
         desiredPitch = Math.clamp(desiredPitch, -maxDesiredPitch, maxDesiredPitch);
 
         double pitchError = desiredPitch - currentPitch;
-        double projectedDepthAtTarget = pos.z() + Math.sin(currentPitch) * targetDist;
-        double interceptDepthError = desiredZ - projectedDepthAtTarget;
-        double depthBias = Math.clamp(depthError / 150.0, -0.35, 0.35);
-        double interceptBias = Math.clamp(interceptDepthError / 90.0, -0.9, 0.9);
-        double pitchGain = targetDist < TERMINAL_COMMIT_RANGE ? 4.8
-                : targetDist < TERMINAL_TRACK_RANGE ? 4.0
-                : 3.2;
-        double pitchMax = targetDist < TERMINAL_COMMIT_RANGE ? 1.0
-                : targetDist < TERMINAL_TRACK_RANGE ? 1.0
-                : Math.abs(interceptDepthError) > 40.0 ? 1.0 : 0.8;
-        return Math.clamp(pitchError * pitchGain + depthBias + interceptBias, -pitchMax, pitchMax);
+        double dt = Math.max(input.deltaTimeSeconds(), 0.01);
+        if (hasLastPitchSample && Math.signum(pitchError) != Math.signum(desiredPitch - lastPitch)) {
+            pitchErrorIntegral *= 0.35;
+        }
+        pitchErrorIntegral += pitchError * dt;
+        double integralLimit = targetDist < TERMINAL_COMMIT_RANGE
+                ? 0.26
+                : targetDist < TERMINAL_TRACK_RANGE
+                ? 0.18
+                : 0.10;
+        pitchErrorIntegral = Math.clamp(pitchErrorIntegral, -integralLimit, integralLimit);
+
+        double measuredPitchRate = hasLastPitchSample ? (currentPitch - lastPitch) / dt : 0.0;
+        lastPitch = currentPitch;
+        hasLastPitchSample = true;
+
+        double proportionalGain = targetDist < TERMINAL_COMMIT_RANGE
+                ? 5.6
+                : targetDist < TERMINAL_TRACK_RANGE
+                ? 4.4
+                : 2.8;
+        double integralGain = targetDist < TERMINAL_COMMIT_RANGE
+                ? 1.8
+                : targetDist < TERMINAL_TRACK_RANGE
+                ? 1.1
+                : 0.45;
+        double derivativeGain = targetDist < TERMINAL_COMMIT_RANGE
+                ? 0.32
+                : targetDist < TERMINAL_TRACK_RANGE
+                ? 0.52
+                : 0.90;
+        double feedForward = targetDist < TERMINAL_COMMIT_RANGE
+                ? Math.clamp(depthError / 120.0, -0.25, 0.25)
+                : targetDist < TERMINAL_TRACK_RANGE
+                ? Math.clamp(depthError / 180.0, -0.18, 0.18)
+                : Math.clamp(depthError / 260.0, -0.10, 0.10);
+        double output = pitchError * proportionalGain
+                + pitchErrorIntegral * integralGain
+                - measuredPitchRate * derivativeGain
+                + feedForward;
+        double outputLimit = targetDist < TERMINAL_COMMIT_RANGE
+                ? 1.0
+                : targetDist < TERMINAL_TRACK_RANGE
+                ? 0.95
+                : 0.60;
+        return Math.clamp(output, -outputLimit, outputLimit);
     }
 
     private double computeThrottle(TorpedoInput input,
@@ -504,5 +556,22 @@ public final class CodexTorpedoController implements TorpedoController {
             result += 2.0 * Math.PI;
         }
         return result;
+    }
+
+    private double desiredDepthForRange(double missionDepth, double targetDist) {
+        double shallowCruiseDepth = Math.clamp(
+                missionDepth * LONG_RANGE_SHALLOW_CRUISE_FACTOR,
+                LONG_RANGE_SHALLOW_MIN_DEPTH,
+                LONG_RANGE_SHALLOW_MAX_DEPTH);
+        if (targetDist >= LONG_RANGE_DEPTH_BLEND_START) {
+            return shallowCruiseDepth;
+        }
+        if (targetDist <= LONG_RANGE_DEPTH_BLEND_END) {
+            return missionDepth;
+        }
+        double blend = 1.0 - (targetDist - LONG_RANGE_DEPTH_BLEND_END)
+                / (LONG_RANGE_DEPTH_BLEND_START - LONG_RANGE_DEPTH_BLEND_END);
+        blend = blend * blend * (3.0 - 2.0 * blend);
+        return shallowCruiseDepth + (missionDepth - shallowCruiseDepth) * blend;
     }
 }

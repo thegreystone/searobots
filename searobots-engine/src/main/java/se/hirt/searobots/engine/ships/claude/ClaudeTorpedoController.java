@@ -13,8 +13,8 @@ import se.hirt.searobots.api.*;
  *       No pinging. Use passive sonar bearings to refine heading.</li>
  *   <li><b>Acquisition:</b> Near target area, start pinging. Use consecutive
  *       fixes to estimate target velocity. Steer toward intercept point.</li>
- *   <li><b>Terminal:</b> Within 300m, committed attack run. Hold steady
- *       course (can't turn fast at 25 m/s anyway).</li>
+ *   <li><b>Terminal:</b> Within 800m, slow down for tight turning.
+ *       True proportional navigation using line-of-sight rate.</li>
  * </ol>
  */
 public class ClaudeTorpedoController implements TorpedoController {
@@ -35,8 +35,12 @@ public class ClaudeTorpedoController implements TorpedoController {
     private Phase phase = Phase.TRANSIT;
 
     private static final double MIN_TERRAIN_CLEARANCE = 30;
-    private static final double ACQUISITION_RANGE = 1500;
-    private static final double TERMINAL_RANGE = 500;
+    private static final double ACQUISITION_RANGE = 2500;
+    private static final double TERMINAL_RANGE = 800;
+
+    // Proportional navigation: track bearing rate to target
+    private double prevBearingToTarget = Double.NaN;
+    private long prevBearingTick = -1;
 
     // PID depth controller
     private double depthIntegral;
@@ -101,45 +105,58 @@ public class ClaudeTorpedoController implements TorpedoController {
         }
 
         // ── Throttle management ──
-        // Must always close the gap: torpedo speed must exceed target speed.
-        // Target subs typically move at 5-10 m/s. We want at least 5 m/s
-        // closing speed, but reduce throttle in terminal to improve turn radius.
-        // At 25 m/s the yaw turn radius is 3.1km (useless). At 15 m/s it's
-        // 2km. At 10 m/s it's 1.4km. The compromise: slow to ~15 m/s in
-        // terminal (still 5-10 m/s faster than the target, but half the
-        // turn radius of full speed).
-        // Throttle management: target a specific speed in each phase.
-        // The torpedo must always be faster than the target sub (~7-10 m/s)
-        // but slower in terminal for better maneuverability.
-        double targetSpeed = switch (phase) {
-            case TRANSIT -> 25.0;  // max speed
-            case ACQUISITION -> 18.0; // good tracking speed, still fast
-            case TERMINAL -> 14.0; // half turn radius vs full speed
-        };
-        double speedError = targetSpeed - input.speed();
+        // Adaptive speed: stay fast when heading is aligned (tail chase),
+        // slow down when heading error is large (need to turn for crossing shots).
+        // This maximizes closing speed in tail chases while enabling tight
+        // turns in beam/crossing engagements.
+        double headingToTarget = Math.atan2(dx, dy);
+        if (headingToTarget < 0) headingToTarget += 2 * Math.PI;
+        double headingErr = headingToTarget - heading;
+        while (headingErr > Math.PI) headingErr -= 2 * Math.PI;
+        while (headingErr < -Math.PI) headingErr += 2 * Math.PI;
+        double absErr = Math.abs(headingErr);
+
+        // turnNeed: 0 when on course, 1 when 45+ degrees off
+        double turnNeed = Math.clamp(absErr / Math.toRadians(45), 0, 1);
+
+        // Adaptive speed: two competing needs.
+        //
+        // 1. Turn authority: slow down when heading error is large (turn radius ~ v^2)
+        double turnSpeed = 23.0 - turnNeed * 11.0; // 23 on course, 12 turning hard
+        //
+        // 2. Closing speed: must be faster than the target's escape speed.
+        //    Target's speed along our bearing (how fast it's running from us):
+        double bearingX = dx / Math.max(dist, 1), bearingY = dy / Math.max(dist, 1);
+        double targetAwaySpeed = Math.max(estVelX * bearingX + estVelY * bearingY, 0);
+        double closingFloor = targetAwaySpeed + 8.0; // always 8 m/s faster than target retreat
+        //
+        // Take the max: never sacrifice closing speed, but slow for turns when we can.
+        double goalSpeed = Math.clamp(Math.max(turnSpeed, closingFloor), 12.0, 23.0);
+        if (phase == Phase.TRANSIT) goalSpeed = 23.0;
+        double speedError = goalSpeed - input.speed();
         double throttle = Math.clamp(speedError * 0.15 + 0.5, 0.1, 1.0);
         output.setThrottle(throttle);
 
-        // ── Phase-specific sonar behavior ──
+        // ── Sonar: passive every tick, active when cooldown allows ──
+        // Passive bearings update the target bearing continuously (every tick).
+        // Active pings give range + precise position (every 5 seconds).
+        // Between pings, passive tracking keeps the PN guidance fed with
+        // fresh bearing data instead of flying on stale predictions.
+        usePassiveContacts(input, pos, heading);
+        processActiveReturns(input, pos, heading);
+
+        // Active ping scheduling
         switch (phase) {
             case TRANSIT -> {
-                // Silent running: use passive sonar only.
-                // If we hear something ahead, adjust course toward it.
-                usePassiveContacts(input, pos, heading);
+                // Start pinging when within 3000m of estimated target
+                if (dist < 3000 && input.activeSonarCooldownTicks() == 0) {
+                    output.activeSonarPing();
+                }
             }
-            case ACQUISITION -> {
-                // Go active: ping when ready, build intercept solution
+            case ACQUISITION, TERMINAL -> {
                 if (input.activeSonarCooldownTicks() == 0) {
                     output.activeSonarPing();
                 }
-                processActiveReturns(input, pos, heading);
-            }
-            case TERMINAL -> {
-                // Keep pinging for last-second corrections
-                if (input.activeSonarCooldownTicks() == 0) {
-                    output.activeSonarPing();
-                }
-                processActiveReturns(input, pos, heading);
             }
         }
 
@@ -155,33 +172,80 @@ public class ClaudeTorpedoController implements TorpedoController {
             cappedVelX *= scale;
             cappedVelY *= scale;
         }
-        // Cap lead distance to 40% of current distance
-        double maxLead = dist * 0.4;
+        // Lead distance: full time-to-intercept lead, capped at 60% of range
+        double maxLead = dist * 0.6;
         double leadTime = Math.min(timeToIntercept, maxLead / Math.max(velMag, 0.1));
 
         double interceptX = targetX + cappedVelX * leadTime;
         double interceptY = targetY + cappedVelY * leadTime;
 
-        // ── Proportional Navigation (PN) steering ──
-        // Instead of pointing at the intercept point, we steer to keep the
-        // line-of-sight rate near zero (constant bearing = collision course).
+        // ── Steering ──
+        // Bearing to intercept point
         double idx = interceptX - pos.x();
         double idy = interceptY - pos.y();
         double bearingToIntercept = Math.atan2(idx, idy);
         if (bearingToIntercept < 0) bearingToIntercept += 2 * Math.PI;
 
-        double headingError = bearingToIntercept - heading;
-        while (headingError > Math.PI) headingError -= 2 * Math.PI;
-        while (headingError < -Math.PI) headingError += 2 * Math.PI;
+        // Bearing directly to target (for PN guidance)
+        double bearingToTarget = Math.atan2(dx, dy);
+        if (bearingToTarget < 0) bearingToTarget += 2 * Math.PI;
 
-        if (phase == Phase.TERMINAL && dist < 100) {
-            // Very final approach: commit to course (oscillation at this range is fatal)
-            output.setRudder(Math.clamp(headingError * 0.5, -0.3, 0.3));
-        } else if (phase == Phase.TERMINAL) {
-            // Terminal: aggressive turning at reduced speed (good turn radius)
-            output.setRudder(Math.clamp(headingError * 3.0, -1, 1));
+        if (phase == Phase.TERMINAL) {
+            // True Proportional Navigation: steer proportional to LOS rate.
+            // a_cmd = N * V_closing * (dLOS/dt)
+            // This naturally leads the target without explicit intercept geometry.
+            double dt = input.deltaTimeSeconds();
+            double rudderCmd;
+
+            if (!Double.isNaN(prevBearingToTarget) && prevBearingTick >= 0) {
+                double dtBearing = (input.tick() - prevBearingTick) / 50.0;
+                if (dtBearing > 0.01) {
+                    double dBearing = bearingToTarget - prevBearingToTarget;
+                    while (dBearing > Math.PI) dBearing -= 2 * Math.PI;
+                    while (dBearing < -Math.PI) dBearing += 2 * Math.PI;
+                    double losRate = dBearing / dtBearing; // rad/s
+
+                    // PN gain N=4 (aggressive: typical range 3-5)
+                    double closingSpeed = Math.max(torpSpeed - velMag * 0.5, 5);
+                    double pnAccel = 4.0 * closingSpeed * losRate;
+                    // Convert lateral acceleration to rudder command
+                    // At speed v, rudder 1.0 gives ~v/turnRadius lateral accel
+                    rudderCmd = Math.clamp(pnAccel * 0.08, -1, 1);
+
+                    // Blend with pursuit guidance at very close range
+                    // (PN can oscillate when LOS rate is noisy at close range)
+                    if (dist < 150) {
+                        double headErr = bearingToIntercept - heading;
+                        while (headErr > Math.PI) headErr -= 2 * Math.PI;
+                        while (headErr < -Math.PI) headErr += 2 * Math.PI;
+                        double pursuit = Math.clamp(headErr * 3.0, -1, 1);
+                        double blend = Math.clamp((dist - 50) / 100.0, 0, 1);
+                        rudderCmd = rudderCmd * blend + pursuit * (1 - blend);
+                    }
+                } else {
+                    // No valid dt, fall back to pursuit
+                    double headErr = bearingToIntercept - heading;
+                    while (headErr > Math.PI) headErr -= 2 * Math.PI;
+                    while (headErr < -Math.PI) headErr += 2 * Math.PI;
+                    rudderCmd = Math.clamp(headErr * 3.0, -1, 1);
+                }
+            } else {
+                // First tick in terminal, use pursuit
+                double headErr = bearingToIntercept - heading;
+                while (headErr > Math.PI) headErr -= 2 * Math.PI;
+                while (headErr < -Math.PI) headErr += 2 * Math.PI;
+                rudderCmd = Math.clamp(headErr * 3.0, -1, 1);
+            }
+
+            prevBearingToTarget = bearingToTarget;
+            prevBearingTick = input.tick();
+            output.setRudder(rudderCmd);
         } else {
-            output.setRudder(Math.clamp(headingError * 2.0, -1, 1));
+            // Transit/Acquisition: aim at intercept point
+            double headingError = bearingToIntercept - heading;
+            while (headingError > Math.PI) headingError -= 2 * Math.PI;
+            while (headingError < -Math.PI) headingError += 2 * Math.PI;
+            output.setRudder(Math.clamp(headingError * 2.5, -1, 1));
         }
 
         // ── Depth control (PID) ──
@@ -288,19 +352,28 @@ public class ClaudeTorpedoController implements TorpedoController {
 
         // Pick the loudest forward contact (likely our target)
         SonarContact best = pickForwardContact(input.sonarContacts(), heading);
-        if (best != null && best.signalExcess() > 3) {
-            // Blend passive bearing into our target estimate.
-            // Passive gives bearing only, so project at current estimated range.
-            double dx = targetX - pos.x();
-            double dy = targetY - pos.y();
-            double currentDist = Math.sqrt(dx * dx + dy * dy);
+        if (best != null && best.signalExcess() > 0) {
+            // Passive gives bearing only (no range). Use it two ways:
+            // 1. Gently nudge target position estimate (bearing is good, range is our guess)
+            // 2. Feed the PN bearing tracker for continuous LOS rate computation
+            double pdx = targetX - pos.x();
+            double pdy = targetY - pos.y();
+            double currentDist = Math.sqrt(pdx * pdx + pdy * pdy);
 
             double passiveX = pos.x() + Math.sin(best.bearing()) * currentDist;
             double passiveY = pos.y() + Math.cos(best.bearing()) * currentDist;
 
-            // Gentle blend: passive bearing is good, range is just our estimate
-            targetX = targetX * 0.9 + passiveX * 0.1;
-            targetY = targetY * 0.9 + passiveY * 0.1;
+            // Gentle position blend (noisy bearings + estimated range = don't trust too much)
+            targetX = targetX * 0.95 + passiveX * 0.05;
+            targetY = targetY * 0.95 + passiveY * 0.05;
+
+            // Update PN bearing tracker from passive (much faster than waiting for active pings)
+            if (phase == Phase.TERMINAL || phase == Phase.ACQUISITION) {
+                double passiveBearing = best.bearing();
+                if (passiveBearing < 0) passiveBearing += 2 * Math.PI;
+                prevBearingToTarget = passiveBearing;
+                prevBearingTick = input.tick();
+            }
         }
     }
 
@@ -338,12 +411,13 @@ public class ClaudeTorpedoController implements TorpedoController {
         }
     }
 
-    /** Pick the active/passive return that's most forward of our heading. */
+    /** Pick the best non-torpedo contact forward of our heading. */
     private SonarContact pickForwardContact(java.util.List<SonarContact> returns, double heading) {
         SonarContact best = null;
         double bestScore = Double.NEGATIVE_INFINITY;
         for (var c : returns) {
             if (c.range() <= 0 && c.isActive()) continue; // skip zero-range active
+            if (c.classification() == se.hirt.searobots.api.SonarContact.Classification.TORPEDO) continue;
             double angleDiff = c.bearing() - heading;
             while (angleDiff > Math.PI) angleDiff -= 2 * Math.PI;
             while (angleDiff < -Math.PI) angleDiff += 2 * Math.PI;

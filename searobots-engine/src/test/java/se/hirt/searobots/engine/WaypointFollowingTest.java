@@ -5,11 +5,10 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import se.hirt.searobots.api.*;
 
-import java.awt.Color;
-import java.util.ArrayList;
+import java.awt.*;
 import java.util.List;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Measures how accurately the autopilot follows waypoints at various

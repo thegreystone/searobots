@@ -1,9 +1,10 @@
 package se.hirt.searobots.engine;
 
 import org.junit.jupiter.api.Test;
-import se.hirt.searobots.api.*;
+import se.hirt.searobots.api.Vec3;
+import se.hirt.searobots.api.VehicleConfig;
 
-import java.awt.Color;
+import java.awt.*;
 
 /**
  * Measures steady-state depth change rates at 1 m/s increments from 1 to 15 m/s,

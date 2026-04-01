@@ -26,7 +26,11 @@ public final class TestHelpers {
         public String status;
         public final ArrayList<Waypoint> waypoints = new ArrayList<>();
         public final ArrayList<Waypoint> strategicWaypoints = new ArrayList<>();
+        public final ArrayList<Purpose> strategicPurposes = new ArrayList<>();
         public final ArrayList<ContactEstimate> contactEstimates = new ArrayList<>();
+        public TorpedoLaunchCommand launchedTorpedo;
+        public int launchedTorpedoCount;
+        public boolean engineClutchEngaged = true;
 
         @Override public void setRudder(double value) { rudder = value; }
         @Override public void setSternPlanes(double value) { sternPlanes = value; }
@@ -35,8 +39,16 @@ public final class TestHelpers {
         @Override public void activeSonarPing() { pinged = true; }
         @Override public void setStatus(String s) { status = s; }
         @Override public void publishWaypoint(Waypoint wp) { waypoints.add(wp); }
-        @Override public void publishStrategicWaypoint(Waypoint wp, Purpose purpose) { strategicWaypoints.add(wp); }
+        @Override public void publishStrategicWaypoint(Waypoint wp, Purpose purpose) {
+            strategicWaypoints.add(wp);
+            strategicPurposes.add(purpose);
+        }
         @Override public void publishContactEstimate(ContactEstimate e) { contactEstimates.add(e); }
+        @Override public void launchTorpedo(TorpedoLaunchCommand command) {
+            launchedTorpedo = command;
+            launchedTorpedoCount++;
+        }
+        @Override public void setEngineClutch(boolean engaged) { engineClutchEngaged = engaged; }
     }
 
     public static TestInput makeInput(long tick, SubmarineEntity entity,

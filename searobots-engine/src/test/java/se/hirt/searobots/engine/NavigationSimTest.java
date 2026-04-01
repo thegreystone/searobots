@@ -27,17 +27,18 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 package se.hirt.searobots.engine;
-import se.hirt.searobots.engine.ships.*;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import se.hirt.searobots.api.*;
-import static se.hirt.searobots.api.VehicleConfig.submarine;
+import se.hirt.searobots.engine.ships.DefaultAttackSub;
+import se.hirt.searobots.engine.ships.SubmarineDrone;
 
 import java.util.ArrayList;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static se.hirt.searobots.api.VehicleConfig.submarine;
 
 /**
  * Tests for submarine navigation planning around islands and terrain,

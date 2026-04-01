@@ -5,18 +5,12 @@
 package se.hirt.searobots.viewer;
 
 import com.jme3.app.SimpleApplication;
-import com.jme3.font.BitmapText;
-import com.jme3.post.FilterPostProcessor;
-import com.jme3.post.filters.FogFilter;
-import com.jme3.post.filters.LightScatteringFilter;
-import com.jme3.water.WaterFilter;
 import com.jme3.effect.ParticleEmitter;
 import com.jme3.effect.ParticleMesh;
+import com.jme3.font.BitmapText;
+import com.jme3.input.KeyInput;
 import com.jme3.input.MouseInput;
-import com.jme3.input.controls.ActionListener;
-import com.jme3.input.controls.AnalogListener;
-import com.jme3.input.controls.MouseAxisTrigger;
-import com.jme3.input.controls.MouseButtonTrigger;
+import com.jme3.input.controls.*;
 import com.jme3.light.AmbientLight;
 import com.jme3.light.DirectionalLight;
 import com.jme3.material.Material;
@@ -25,12 +19,11 @@ import com.jme3.math.ColorRGBA;
 import com.jme3.math.FastMath;
 import com.jme3.math.Quaternion;
 import com.jme3.math.Vector3f;
+import com.jme3.post.FilterPostProcessor;
+import com.jme3.post.filters.FogFilter;
+import com.jme3.post.filters.LightScatteringFilter;
 import com.jme3.renderer.queue.RenderQueue;
-import com.jme3.scene.Geometry;
-import com.jme3.scene.Mesh;
-import com.jme3.scene.Node;
-import com.jme3.scene.Spatial;
-import com.jme3.scene.VertexBuffer;
+import com.jme3.scene.*;
 import com.jme3.scene.control.BillboardControl;
 import com.jme3.scene.shape.Box;
 import com.jme3.scene.shape.Quad;
@@ -41,13 +34,11 @@ import com.jme3.texture.TextureCubeMap;
 import com.jme3.texture.image.ColorSpace;
 import com.jme3.util.BufferUtils;
 import com.jme3.util.SkyFactory;
+import com.jme3.water.WaterFilter;
 import se.hirt.searobots.api.TerrainMap;
 import se.hirt.searobots.api.Vec3;
 import se.hirt.searobots.api.Waypoint;
 import se.hirt.searobots.engine.GeneratedWorld;
-
-import com.jme3.input.KeyInput;
-import com.jme3.input.controls.KeyTrigger;
 import se.hirt.searobots.engine.SubmarineSnapshot;
 import se.hirt.searobots.engine.TorpedoSnapshot;
 
@@ -55,7 +46,6 @@ import java.nio.ByteBuffer;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
  * 3D submarine scene using jMonkeyEngine. Standalone application with
@@ -90,8 +80,9 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
     private static final float EXPLOSION_MAX_RADIUS = 80f;
 
     // Torpedo collision cylinder dimensions (visual, shrunk from physical hull)
-    private static final float TORP_HALF_LENGTH = 1.98f;
-    private static final float TORP_RADIUS = 0.22f;
+    // Torpedo visual cylinder matches physics: VehicleConfig.torpedo() hullHalfLength/hullHalfBeam
+    private static final float TORP_HALF_LENGTH = 2.5f;   // 5m total (matches physics)
+    private static final float TORP_RADIUS = 0.25f;       // 0.5m diameter (matches physics)
     private final java.util.Set<Integer> knownTorpedoIds3D = new java.util.HashSet<>();
     // Torpedo intercept marker (3D diamond at published target)
     private Geometry interceptMarker;
@@ -363,9 +354,9 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
         torpedoModelNode = new Node("torpedoTemplate");
         try {
             Spatial torpHull = assetManager.loadModel("models/torpedo.obj");
-            torpHull.setLocalScale(0.15f); // slightly exaggerated for visibility
-            // Center the model: Y origin is at 1.57, shift it to geometric center
-            torpHull.setLocalTranslation(0, -1.57f * 0.15f, 0);
+            torpHull.setLocalScale(0.19f); // scaled to match physics (5m length)
+            // Center the model: Y origin is at 1.57 in model units, shift to geometric center
+            torpHull.setLocalTranslation(0, -1.57f * 0.19f, 0);
             // Disable backface culling on all geometries (propeller visible from both sides)
             torpHull.depthFirstTraversal(spatial -> {
                 if (spatial instanceof Geometry g) {

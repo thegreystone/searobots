@@ -1,6 +1,8 @@
 package se.hirt.searobots.engine;
+
 import org.junit.jupiter.api.Test;
-import se.hirt.searobots.api.*;
+import se.hirt.searobots.api.MatchConfig;
+import se.hirt.searobots.api.PathPlanner;
 class CheckGrid {
     @Test void check() {
         var world = new WorldGenerator().generate(MatchConfig.withDefaults(55555));

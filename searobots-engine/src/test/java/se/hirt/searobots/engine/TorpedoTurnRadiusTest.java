@@ -1,9 +1,10 @@
 package se.hirt.searobots.engine;
 
 import org.junit.jupiter.api.Test;
-import se.hirt.searobots.api.*;
+import se.hirt.searobots.api.Vec3;
+import se.hirt.searobots.api.VehicleConfig;
 
-import java.awt.Color;
+import java.awt.*;
 
 /**
  * Measures torpedo turn radius and pitch rate at different speeds.
@@ -22,7 +23,7 @@ class TorpedoTurnRadiusTest {
                 "Speed", "Yaw Radius", "Yaw Rate", "Pitch Rate", "Pitch Radius");
         System.out.println("-".repeat(60));
 
-        for (int speed = 5; speed <= 25; speed += 5) {
+        for (int speed = 5; speed <= 23; speed += 5) {
             double[] yawResult = measureYawTurn(speed);
             double[] pitchResult = measurePitchTurn(speed);
             System.out.printf("%4d m/s  %8.0fm     %6.2f°/s    %6.2f°/s     %8.0fm%n",
@@ -32,7 +33,7 @@ class TorpedoTurnRadiusTest {
         // Also test intermediate speeds for the controller
         System.out.println("\n=== Fine-grained yaw turn radius ===");
         System.out.printf("%-8s %-12s %-12s%n", "Speed", "Yaw Radius", "Yaw Rate");
-        for (int speed = 3; speed <= 25; speed++) {
+        for (int speed = 3; speed <= 23; speed++) {
             double[] r = measureYawTurn(speed);
             System.out.printf("%4d m/s  %8.0fm     %6.2f°/s%n", speed, r[0], r[1]);
         }

@@ -28,10 +28,9 @@
  */
 package se.hirt.searobots.engine;
 
+import se.hirt.searobots.api.BattleArea;
 import se.hirt.searobots.api.CurrentField;
 import se.hirt.searobots.api.TerrainMap;
-import se.hirt.searobots.api.BattleArea;
-import se.hirt.searobots.api.VehicleConfig;
 
 /**
  * Simplified submarine physics based on Fossen's 6-DOF formulation.
@@ -68,6 +67,16 @@ public final class SubmarinePhysics {
 
         var cfg = sub.vehicleConfig();
 
+        // ── Damage model: HP loss degrades performance ──
+        // hpRatio: 1.0 = undamaged, 0.0 = dead
+        // damageEffect: gentle at first, severe at low HP.
+        // At 75% HP: 94% performance. At 50%: 75%. At 25%: 44%. At 10%: 16%.
+        double hpRatio = sub.maxHp() > 0 ? (double) sub.hp() / sub.maxHp() : 1.0;
+        double damageEffect = hpRatio * hpRatio; // quadratic: light damage barely matters
+        double thrustFactor = 0.3 + 0.7 * damageEffect;       // 30-100% thrust
+        double controlFactor = 0.4 + 0.6 * damageEffect;      // 40-100% rudder/planes
+        double damageNoiseDb = (1.0 - hpRatio) * 10.0;        // up to +10 dB from hull damage
+
         // 1. Thrust lag: actual throttle tracks commanded with slew limit
         double commandedThrottle = sub.throttle();
         double actualThrottle = sub.actualThrottle();
@@ -86,10 +95,9 @@ public final class SubmarinePhysics {
             // Clutch disengaged: prop freewheels, no thrust, no engine braking
             thrust = 0;
         } else if (actualThrottle >= 0) {
-            thrust = cfg.maxThrust() * actualThrottle;
+            thrust = cfg.maxThrust() * actualThrottle * thrustFactor;
         } else {
-            // Reverse thrust is weaker; props are optimized for forward
-            thrust = cfg.maxThrust() * cfg.reverseThrustFactor() * actualThrottle;
+            thrust = cfg.maxThrust() * cfg.reverseThrustFactor() * actualThrottle * thrustFactor;
         }
         double speed = sub.speed();
         double drag = cfg.dragCoeff() * speed * Math.abs(speed);
@@ -132,7 +140,7 @@ public final class SubmarinePhysics {
         double rudderAngle = actualRudder * Math.PI / 4;  // -1..1 maps to -45..+45 deg
         double rudderCl = liftCoefficient(rudderAngle, cfg.stallAngle());
         double rudderMoment = 0.5 * WATER_DENSITY * speed * Math.abs(speed)
-                * cfg.rudderArea() * rudderCl * cfg.rudderArm();
+                * cfg.rudderArea() * rudderCl * cfg.rudderArm() * controlFactor;
 
         // Effective inertia increases with v² (centrifugal resistance at high speed).
         // Higher coefficient = bigger difference between slow-speed and flank-speed turning.
@@ -165,7 +173,7 @@ public final class SubmarinePhysics {
             double planesAngle = actualPlanes * Math.PI / 4;
             double planesCl = liftCoefficient(planesAngle, cfg.stallAngle());
             double pitchMoment = 0.5 * WATER_DENSITY * speed * Math.abs(speed)
-                    * cfg.planesArea() * planesCl * cfg.planesArm();
+                    * cfg.planesArea() * planesCl * cfg.planesArm() * controlFactor;
             // Hydrostatic restoring moment (metacentric height ~1.0m)
             double restoringMoment = cfg.dryMass() * 9.81 * 1.0 * Math.sin(sub.pitch());
 
@@ -412,6 +420,9 @@ public final class SubmarinePhysics {
         if (sub.launchTransientTicks() > 0) {
             sl = Math.max(sl, 120.0); // ~120 dB transient, louder than normal ops
         }
+
+        // Hull damage noise: cracked hull, bent machinery, flooding sounds
+        sl += damageNoiseDb;
 
         sub.setSourceLevelDb(sl);
 

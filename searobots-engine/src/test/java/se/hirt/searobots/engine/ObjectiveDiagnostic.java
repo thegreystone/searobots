@@ -1,6 +1,7 @@
 package se.hirt.searobots.engine;
 
-import se.hirt.searobots.api.*;
+import se.hirt.searobots.api.MatchConfig;
+import se.hirt.searobots.api.PathPlanner;
 
 public class ObjectiveDiagnostic {
     public static void main(String[] args) {

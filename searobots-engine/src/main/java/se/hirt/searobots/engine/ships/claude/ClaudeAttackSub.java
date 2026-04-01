@@ -68,6 +68,7 @@ public final class ClaudeAttackSub implements SubmarineController {
     private double lastCombatTargetX = Double.NaN, lastCombatTargetY = Double.NaN;
     private long lastTorpedoLaunchTick = Long.MIN_VALUE / 4;
     private static final long TORPEDO_REFIRE_COOLDOWN = 750; // 15 seconds between launches (2 tubes)
+    private boolean outOfTorpedoes; // set when all torpedoes expended
 
     // Public accessors for tests
     public enum State { PATROL, TRACKING, CHASE, RAM, EVADE }
@@ -381,7 +382,11 @@ public final class ClaudeAttackSub implements SubmarineController {
         long sinceFix = tick - trackedLastFixTick;
 
         boolean shouldPing = false;
-        if (!hasTrackedContact) {
+        if (outOfTorpedoes) {
+            // Out of torpedoes: go completely silent. No pinging.
+            // We still track passively (free), but never reveal our position.
+            shouldPing = false;
+        } else if (!hasTrackedContact) {
             // Patrol: ping rarely to avoid revealing position
             shouldPing = since >= PATROL_PING_INTERVAL;
         } else if (mode == Mode.CHASE) {
@@ -400,15 +405,17 @@ public final class ClaudeAttackSub implements SubmarineController {
     // ── Firing solution ─────────────────────────────────────────────
 
     private void publishFiringSolution(SubmarineOutput output, Vec3 pos, long tick) {
-        if (!hasTrackedContact || contactAlive < 0.30) return;
-        double dist = ClaudeAutopilot.hdist(pos.x(), pos.y(), trackedX, trackedY);
-        long sinceFix = tick - trackedLastFixTick;
-        boolean fresh = rangeConfirmedByActive && sinceFix < 350;
-        boolean behind = isBehindTarget(pos.x(), pos.y());
-        // Relax precision when behind target (better geometry = more confident)
-        double precisionLimit = fresh ? (behind ? 320 : 280) : (behind ? 180 : 140);
-        if (uncertaintyRadius > precisionLimit || dist < 150 || dist > FIRING_RANGE) return;
+        // The hair cross means "I would fire right now if I could."
+        // Same gates as launchTorpedoIfReady, minus the torpedo count and cooldown checks.
+        if (!hasTrackedContact || contactAlive < 0.50) return;
+        if (mode != Mode.CHASE) return;
 
+        double dist = ClaudeAutopilot.hdist(pos.x(), pos.y(), trackedX, trackedY);
+        if (dist < 800 || dist > FIRING_RANGE) return;
+        if (!rangeConfirmedByActive && uncertaintyRadius > 300) return;
+        if (uncertaintyRadius > 400) return;
+
+        boolean behind = isBehindTarget(pos.x(), pos.y());
         double bonus = behind ? 0.20 : 0;
         double quality = Math.clamp(contactAlive * (1 - uncertaintyRadius / 350 + bonus), 0.1, 1.0);
         output.publishFiringSolution(new FiringSolution(
@@ -418,7 +425,10 @@ public final class ClaudeAttackSub implements SubmarineController {
 
     private void launchTorpedoIfReady(SubmarineInput input, SubmarineOutput output,
                                       Vec3 pos, long tick) {
-        if (input.self().torpedoesRemaining() <= 0) return;
+        if (input.self().torpedoesRemaining() <= 0) {
+            outOfTorpedoes = true;
+            return;
+        }
         if (tick < 500) return; // don't fire in the first 10 seconds
         if (tick - lastTorpedoLaunchTick < TORPEDO_REFIRE_COOLDOWN) return;
         if (!hasTrackedContact) return;
@@ -470,7 +480,7 @@ public final class ClaudeAttackSub implements SubmarineController {
         if (Math.abs(headingError) > Math.toRadians(20)) return;
 
         output.launchTorpedo(new TorpedoLaunchCommand(
-                leadBearing, 0, 20.0, missionData));
+                leadBearing, 0, 7.0, missionData));
         lastTorpedoLaunchTick = tick;
         System.out.printf("[Claude] Torpedo launched at tick %d, target=(%.0f,%.0f) dist=%.0fm hdgErr=%.1f°%n",
                 tick, leadX, leadY, dist, Math.toDegrees(headingError));
@@ -489,6 +499,30 @@ public final class ClaudeAttackSub implements SubmarineController {
                                                   double heading, double speed) {
         double dist = ClaudeAutopilot.hdist(x, y, trackedX, trackedY);
         double cruiseDepth = autopilot.cruiseDepth();
+
+        // ── Out of torpedoes: disengage, go deep, go quiet, run away ──
+        if (outOfTorpedoes) {
+            // Move away from the enemy toward deep water near arena center
+            double awayBearing = ClaudeAutopilot.norm(
+                    Math.atan2(x - trackedX, y - trackedY));
+            // Bias toward center to stay in deep water and away from boundaries
+            double toCenterBearing = Math.atan2(-x, -y);
+            if (toCenterBearing < 0) toCenterBearing += 2 * Math.PI;
+            double blended = ClaudeAutopilot.norm(
+                    awayBearing + 0.3 * ClaudeAutopilot.adiff(toCenterBearing, awayBearing));
+            double evadeDist = Math.clamp(dist * 0.5 + 1500, 2000, 4000);
+            double tx = x + Math.sin(blended) * evadeDist;
+            double ty = y + Math.cos(blended) * evadeDist;
+            // Clamp to arena
+            if (battleArea.distanceToBoundary(tx, ty) < PATROL_MARGIN) {
+                tx = x + Math.sin(toCenterBearing) * 2000;
+                ty = y + Math.cos(toCenterBearing) * 2000;
+            }
+            double depth = safeDepth(tx, ty, Math.min(cruiseDepth, -250));
+            return new StrategicWaypoint(tx, ty, depth, Purpose.EVADE,
+                    NoisePolicy.QUIET, MovementPattern.SPRINT_DRIFT, 500, 7.0);
+        }
+
         double tx = trackedX, ty = trackedY;
         double depth = safeDepth(tx, ty, Math.min(cruiseDepth, -160));
         Purpose purpose = Purpose.INTERCEPT;

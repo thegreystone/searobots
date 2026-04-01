@@ -10,9 +10,6 @@ import com.jme3.scene.VertexBuffer;
 import com.jme3.util.BufferUtils;
 import se.hirt.searobots.api.TerrainMap;
 
-import java.nio.FloatBuffer;
-import java.nio.IntBuffer;
-
 /**
  * Builds a jMonkeyEngine {@link Mesh} from a {@link TerrainMap} heightmap,
  * with downsampled vertices, smooth normals, and depth-based vertex colours.

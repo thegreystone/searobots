@@ -27,17 +27,19 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 package se.hirt.searobots.engine;
-import se.hirt.searobots.engine.ships.*;
 
 import org.junit.jupiter.api.Test;
 import se.hirt.searobots.api.*;
-import static se.hirt.searobots.api.VehicleConfig.submarine;
+import se.hirt.searobots.engine.ships.DefaultAttackSub;
+import se.hirt.searobots.engine.ships.TargetDrone;
 
-import java.awt.Color;
+import java.awt.*;
 import java.util.ArrayList;
 import java.util.List;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static se.hirt.searobots.api.VehicleConfig.submarine;
 
 /**
  * Diagnostic tests for passive sonar tracking at close range, with

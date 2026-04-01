@@ -15,7 +15,9 @@ import com.simsilica.lemur.component.SpringGridLayout;
 import com.simsilica.lemur.style.ElementId;
 import se.hirt.searobots.api.SubmarineController;
 import se.hirt.searobots.api.VehicleConfig;
-import se.hirt.searobots.engine.ships.*;
+import se.hirt.searobots.engine.ships.DefaultAttackSub;
+import se.hirt.searobots.engine.ships.SubmarineDrone;
+import se.hirt.searobots.engine.ships.TargetDrone;
 import se.hirt.searobots.engine.ships.claude.ClaudeAttackSub;
 import se.hirt.searobots.engine.ships.codex.CodexAttackSub;
 

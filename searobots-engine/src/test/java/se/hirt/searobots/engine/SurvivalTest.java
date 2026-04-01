@@ -1,12 +1,12 @@
 package se.hirt.searobots.engine;
 
 import org.junit.jupiter.api.Test;
-import se.hirt.searobots.api.*;
-import se.hirt.searobots.engine.ships.*;
+import se.hirt.searobots.api.MatchConfig;
+import se.hirt.searobots.api.SubmarineController;
+import se.hirt.searobots.api.VehicleConfig;
+import se.hirt.searobots.engine.ships.SubmarineDrone;
 
-import java.util.*;
-
-import static org.junit.jupiter.api.Assertions.*;
+import java.util.List;
 
 /**
  * Tests that any submarine controller survives terrain across multiple seeds.

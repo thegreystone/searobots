@@ -28,8 +28,6 @@
  */
 package se.hirt.searobots.engine.ships;
 
-import se.hirt.searobots.engine.*;
-
 import se.hirt.searobots.api.*;
 
 /**

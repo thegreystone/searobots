@@ -7,7 +7,7 @@ import se.hirt.searobots.engine.*;
 import java.util.ArrayList;
 import java.util.List;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Verifies that ClaudeAttackSub follows mandatory objectives in order

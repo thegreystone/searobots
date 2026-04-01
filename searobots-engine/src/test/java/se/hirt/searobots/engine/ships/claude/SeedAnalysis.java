@@ -1,11 +1,14 @@
 package se.hirt.searobots.engine.ships.claude;
-import se.hirt.searobots.engine.*;
-import se.hirt.searobots.engine.ships.*;
 
 import org.junit.jupiter.api.Test;
-import se.hirt.searobots.api.*;
-import java.util.List;
+import se.hirt.searobots.api.MatchConfig;
+import se.hirt.searobots.api.MatchContext;
+import se.hirt.searobots.api.SubmarineController;
+import se.hirt.searobots.api.VehicleConfig;
+import se.hirt.searobots.engine.*;
+
 import java.util.ArrayList;
+import java.util.List;
 
 class SeedAnalysis {
     @Test

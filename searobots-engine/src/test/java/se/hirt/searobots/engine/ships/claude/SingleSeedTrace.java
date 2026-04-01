@@ -1,10 +1,17 @@
 package se.hirt.searobots.engine.ships.claude;
-import se.hirt.searobots.engine.*;
-import se.hirt.searobots.engine.ships.*;
 
 import org.junit.jupiter.api.Test;
-import se.hirt.searobots.api.*;
-import java.util.*;
+import se.hirt.searobots.api.MatchConfig;
+import se.hirt.searobots.api.PathPlanner;
+import se.hirt.searobots.api.SubmarineController;
+import se.hirt.searobots.api.VehicleConfig;
+import se.hirt.searobots.engine.SimulationListener;
+import se.hirt.searobots.engine.SimulationLoop;
+import se.hirt.searobots.engine.SubmarineSnapshot;
+import se.hirt.searobots.engine.WorldGenerator;
+import se.hirt.searobots.engine.ships.SubmarineDrone;
+
+import java.util.List;
 
 class SingleSeedTrace {
 

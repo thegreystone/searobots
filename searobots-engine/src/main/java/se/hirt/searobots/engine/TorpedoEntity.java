@@ -5,7 +5,7 @@ package se.hirt.searobots.engine;
 
 import se.hirt.searobots.api.*;
 
-import java.awt.Color;
+import java.awt.*;
 
 /**
  * A torpedo entity in the simulation. Autonomous after launch: controlled
@@ -18,7 +18,7 @@ import java.awt.Color;
  */
 public final class TorpedoEntity {
 
-    private static final double DEFAULT_FUEL_SECONDS = 180.0; // 3 minutes of powered run
+    private static final double DEFAULT_FUEL_SECONDS = 240.0; // 4 minutes of powered run
     private static final double MINIMUM_SPEED = 3.0; // below this, torpedo sinks
     private static final double SINK_ACCELERATION = 2.0; // m/s^2 downward when stalled
 

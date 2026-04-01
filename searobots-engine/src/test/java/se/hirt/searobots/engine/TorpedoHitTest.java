@@ -1,13 +1,14 @@
 package se.hirt.searobots.engine;
 
+import org.junit.jupiter.api.Test;
 import se.hirt.searobots.api.*;
 import se.hirt.searobots.engine.ships.SubmarineDrone;
 import se.hirt.searobots.engine.ships.claude.ClaudeAttackSub;
-import org.junit.jupiter.api.Test;
-import static org.junit.jupiter.api.Assertions.*;
 
-import java.util.List;
 import java.util.ArrayList;
+import java.util.List;
+
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Test that torpedoes can actually hit targets on flat deep ocean.
@@ -66,7 +67,7 @@ public class TorpedoHitTest {
         var torp = new TorpedoEntity(999, 0, VehicleConfig.torpedo(), torpCtrl,
                 new Vec3(0, 0, -100), 0, 0, 30.0, // heading=0 (north), fuse=30m
                 java.awt.Color.GREEN);
-        torp.setSpeed(25.0);
+        torp.setSpeed(23.0);
 
         // Target at (0, 500, -100) = 500m north
         torpCtrl.onLaunch(new TorpedoLaunchContext(

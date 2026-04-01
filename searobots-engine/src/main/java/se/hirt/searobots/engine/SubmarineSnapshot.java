@@ -30,7 +30,7 @@ package se.hirt.searobots.engine;
 
 import se.hirt.searobots.api.*;
 
-import java.awt.Color;
+import java.awt.*;
 import java.util.List;
 
 public record SubmarineSnapshot(int id, String name, Pose pose, Velocity velocity, double speed,

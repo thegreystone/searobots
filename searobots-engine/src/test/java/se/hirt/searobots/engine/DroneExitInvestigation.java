@@ -1,9 +1,13 @@
 package se.hirt.searobots.engine;
-import se.hirt.searobots.engine.ships.*;
 
 import org.junit.jupiter.api.Test;
-import se.hirt.searobots.api.*;
-import java.util.*;
+import se.hirt.searobots.api.MatchConfig;
+import se.hirt.searobots.api.SubmarineController;
+import se.hirt.searobots.api.VehicleConfig;
+import se.hirt.searobots.engine.ships.DefaultAttackSub;
+import se.hirt.searobots.engine.ships.SubmarineDrone;
+
+import java.util.List;
 
 class DroneExitInvestigation {
 

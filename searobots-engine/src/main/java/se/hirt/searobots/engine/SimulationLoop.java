@@ -30,7 +30,7 @@ package se.hirt.searobots.engine;
 
 import se.hirt.searobots.api.*;
 
-import java.awt.Color;
+import java.awt.*;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
@@ -282,7 +282,13 @@ public final class SimulationLoop {
                         if (sub.hp() <= 0 || sub.forfeited()) continue;
                         // Skip owner during first 5 seconds (250 ticks) to let torpedo clear
                         if (sub.id() == torp.ownerId() && tick - torp.launchTick() < 250) continue;
-                        double hullDist = distanceToHullSurface(torp, sub);
+                        // Use torpedo bow (nose) point: warhead is in the front
+                        double hullDist = HullGeometry.bowDistanceToHull(
+                                torp.x(), torp.y(), torp.z(),
+                                torp.heading(), torp.pitch(),
+                                torp.vehicleConfig().hullHalfLength(),
+                                sub.x(), sub.y(), sub.z(),
+                                sub.heading(), sub.pitch());
                         if (hullDist < torp.fuseRadius()) {
                             System.out.printf("[Torpedo %d] PROXIMITY FUSE at tick %d, hull dist=%.1fm to sub %d (%s)%n",
                                     torp.id(), tick, hullDist, sub.id(), sub.controller().name());
@@ -354,44 +360,9 @@ public final class SimulationLoop {
         }
     }
 
-    /**
-     * Distance from a torpedo to the nearest point on a sub's hull ellipsoid.
-     * Returns 0 if the torpedo is inside the ellipsoid.
-     */
+    /** Distance from a torpedo to the nearest point on a sub's hull ellipsoid. */
     private static double distanceToHullSurface(TorpedoEntity torp, SubmarineEntity sub) {
-        // Sub's local frame (same as collision system)
-        double sinH = Math.sin(sub.heading()), cosH = Math.cos(sub.heading());
-        double sinP = Math.sin(sub.pitch()), cosP = Math.cos(sub.pitch());
-        double fwdX = sinH * cosP, fwdY = cosH * cosP, fwdZ = sinP;
-        double rightX = cosH, rightY = -sinH;
-        double upX = -sinH * sinP, upY = -cosH * sinP, upZ = cosP;
-
-        // Offset sub center aft (same as collision system)
-        double cx = sub.x() + fwdX * COLLISION_AFT_OFFSET;
-        double cy = sub.y() + fwdY * COLLISION_AFT_OFFSET;
-        double cz = sub.z() + fwdZ * COLLISION_AFT_OFFSET;
-
-        // Delta from sub center to torpedo
-        double dx = torp.x() - cx, dy = torp.y() - cy, dz = torp.z() - cz;
-
-        // Project into sub's local frame
-        double localFwd = dx * fwdX + dy * fwdY + dz * fwdZ;
-        double localRight = dx * rightX + dy * rightY;
-        double localUp = dx * upX + dy * upY + dz * upZ;
-
-        // Normalize by ellipsoid semi-axes
-        double normFwd = localFwd / COLLISION_SEMI_LENGTH;
-        double normRight = localRight / COLLISION_SEMI_BEAM;
-        double normUp = localUp / COLLISION_SEMI_HEIGHT;
-        double normDist = Math.sqrt(normFwd * normFwd + normRight * normRight + normUp * normUp);
-
-        if (normDist <= 1.0) return 0; // inside ellipsoid
-
-        // Distance from torpedo to ellipsoid surface along the line from center
-        // Approximate: actual distance = center-to-torp distance - ellipsoid radius in that direction
-        double centerDist = Math.sqrt(dx * dx + dy * dy + dz * dz);
-        double ellipsoidRadius = centerDist / normDist; // radius in the direction of the torpedo
-        return centerDist - ellipsoidRadius;
+        return HullGeometry.distanceToHull(torp, sub);
     }
 
     // ── Torpedo explosion ────────────────────────────────────────────
@@ -405,15 +376,24 @@ public final class SimulationLoop {
         torp.setExplosionProcessed();
         double blastRadius = config.blastRadius();
 
+        // Blast center is at the torpedo's bow (warhead in the nose)
+        double cosP = Math.cos(torp.pitch()), sinP = Math.sin(torp.pitch());
+        double halfLen = torp.vehicleConfig().hullHalfLength();
+        double blastX = torp.x() + Math.sin(torp.heading()) * cosP * halfLen;
+        double blastY = torp.y() + Math.cos(torp.heading()) * cosP * halfLen;
+        double blastZ = torp.z() + sinP * halfLen;
+
         for (var sub : subs) {
             if (sub.hp() <= 0 || sub.forfeited()) continue;
-            double dx = sub.x() - torp.x();
-            double dy = sub.y() - torp.y();
-            double dz = sub.z() - torp.z();
+            double dx = sub.x() - blastX;
+            double dy = sub.y() - blastY;
+            double dz = sub.z() - blastZ;
             double centerDist = Math.sqrt(dx * dx + dy * dy + dz * dz);
 
-            // Use hull surface distance for damage (closer to hull = more damage)
-            double hullDist = distanceToHullSurface(torp, sub);
+            // Use hull surface distance from blast point for damage
+            double hullDist = HullGeometry.distanceToHull(
+                    blastX, blastY, blastZ,
+                    sub.x(), sub.y(), sub.z(), sub.heading(), sub.pitch());
             if (hullDist < blastRadius) {
                 // Quadratic falloff based on distance to hull surface
                 double falloff = (1.0 - hullDist / blastRadius);
@@ -507,13 +487,6 @@ public final class SimulationLoop {
      * (center, bow, stern) of each sub against the other's ellipsoid.
      * No Minkowski expansion needed: direct point-in-ellipsoid checks.
      */
-    // Collision ellipsoid tuned to match visual (B key debug overlay):
-    // semiLength=38m, semiBeam=5.5m, semiHeight=4.5m, center 2m aft
-    private static final double COLLISION_SEMI_LENGTH = 38.0;
-    private static final double COLLISION_SEMI_BEAM = 5.5;
-    private static final double COLLISION_SEMI_HEIGHT = 4.5;
-    private static final double COLLISION_AFT_OFFSET = -2.0;
-
     static boolean ellipsoidsOverlap(SubmarineEntity a, SubmarineEntity b) {
         // Sample 3 points on each sub: bow tip, center, stern tip
         double[][] pointsA = hullSamplePoints(a);
@@ -537,14 +510,14 @@ public final class SimulationLoop {
         double fwdX = sinH * cosP, fwdY = cosH * cosP, fwdZ = sinP;
 
         // Center (with aft offset)
-        double cx = sub.x() + fwdX * COLLISION_AFT_OFFSET;
-        double cy = sub.y() + fwdY * COLLISION_AFT_OFFSET;
-        double cz = sub.z() + fwdZ * COLLISION_AFT_OFFSET;
+        double cx = sub.x() + fwdX * HullGeometry.AFT_OFFSET;
+        double cy = sub.y() + fwdY * HullGeometry.AFT_OFFSET;
+        double cz = sub.z() + fwdZ * HullGeometry.AFT_OFFSET;
 
         return new double[][] {
             {cx, cy, cz},                                                                     // center
-            {cx + fwdX * COLLISION_SEMI_LENGTH, cy + fwdY * COLLISION_SEMI_LENGTH, cz + fwdZ * COLLISION_SEMI_LENGTH},  // bow
-            {cx - fwdX * COLLISION_SEMI_LENGTH, cy - fwdY * COLLISION_SEMI_LENGTH, cz - fwdZ * COLLISION_SEMI_LENGTH},  // stern
+            {cx + fwdX * HullGeometry.SEMI_LENGTH, cy + fwdY * HullGeometry.SEMI_LENGTH, cz + fwdZ * HullGeometry.SEMI_LENGTH},  // bow
+            {cx - fwdX * HullGeometry.SEMI_LENGTH, cy - fwdY * HullGeometry.SEMI_LENGTH, cz - fwdZ * HullGeometry.SEMI_LENGTH},  // stern
         };
     }
 
@@ -558,9 +531,9 @@ public final class SimulationLoop {
         double upX = -sinH * sinP, upY = -cosH * sinP, upZ = cosP;
 
         // Ellipsoid center (with aft offset)
-        double cx = sub.x() + fwdX * COLLISION_AFT_OFFSET;
-        double cy = sub.y() + fwdY * COLLISION_AFT_OFFSET;
-        double cz = sub.z() + fwdZ * COLLISION_AFT_OFFSET;
+        double cx = sub.x() + fwdX * HullGeometry.AFT_OFFSET;
+        double cy = sub.y() + fwdY * HullGeometry.AFT_OFFSET;
+        double cz = sub.z() + fwdZ * HullGeometry.AFT_OFFSET;
 
         double dx = pt[0] - cx, dy = pt[1] - cy, dz = pt[2] - cz;
 
@@ -568,9 +541,9 @@ public final class SimulationLoop {
         double localRight = dx * rightX + dy * rightY + dz * rightZ;
         double localUp = dx * upX + dy * upY + dz * upZ;
 
-        double norm = (localFwd * localFwd) / (COLLISION_SEMI_LENGTH * COLLISION_SEMI_LENGTH)
-                + (localRight * localRight) / (COLLISION_SEMI_BEAM * COLLISION_SEMI_BEAM)
-                + (localUp * localUp) / (COLLISION_SEMI_HEIGHT * COLLISION_SEMI_HEIGHT);
+        double norm = (localFwd * localFwd) / (HullGeometry.SEMI_LENGTH * HullGeometry.SEMI_LENGTH)
+                + (localRight * localRight) / (HullGeometry.SEMI_BEAM * HullGeometry.SEMI_BEAM)
+                + (localUp * localUp) / (HullGeometry.SEMI_HEIGHT * HullGeometry.SEMI_HEIGHT);
         return norm <= 1.0;
     }
 

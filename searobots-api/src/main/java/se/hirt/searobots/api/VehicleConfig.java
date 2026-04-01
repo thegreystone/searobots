@@ -73,6 +73,8 @@ public record VehicleConfig(
     double ballastNoiseDb,
     // Engine dynamics
     double thrustSlewRate,
+    // Sonar receiver
+    double sonarSelfNoiseOffsetDb,  // how well the hydrophone is isolated from own noise
     // Vehicle type flags
     boolean surfaceLocked,
     boolean hasBallast
@@ -130,6 +132,7 @@ public record VehicleConfig(
             5.0,                        // surfaceNoiseDb
             5.0,                        // ballastNoiseDb
             0.25,                       // thrustSlewRate (full power in 4 seconds)
+            35.0,                       // sonarSelfNoiseOffsetDb (hull-mounted hydrophones)
             false,                      // surfaceLocked
             true                        // hasBallast
         );
@@ -137,18 +140,19 @@ public record VehicleConfig(
 
     /**
      * Torpedo: 5m length, 0.5m diameter, ~300 kg.
-     * Max speed ~20 m/s (~39 knots). Highly maneuverable at speed,
+     * Max speed ~23 m/s (~45 knots). Highly maneuverable at speed,
      * loses all control authority below ~3 m/s. Slightly negatively
      * buoyant: relies on hydrodynamic lift to maintain depth.
-     * Very loud (~115 dB base), making passive sonar nearly useless
-     * but trivially detectable by targets.
+     * Loud propulsion (~101 dB base), easily detectable by targets.
+     * Directional bow-mounted hydrophone (62 dB isolation) enables
+     * passive tracking of moderate-speed targets at 1-2 km.
      */
     public static VehicleConfig torpedo() {
         double mass = 300;               // 300 kg
         // Low drag for streamlined body: coasts for ~30-40s after fuel runs out.
         // v_max = sqrt(thrust/drag) = 23 m/s (~45 knots).
         double drag = 3.0;              // very low drag, torpedo-shaped
-        double vMax = 25.0;             // ~49 knots
+        double vMax = 23.0;             // ~45 knots
         return new VehicleConfig(
             mass,                           // dryMass
             100,                            // addedMassSurge (slender body)
@@ -175,7 +179,7 @@ public record VehicleConfig(
             10.0,                           // collisionDamageFactor (torpedo is fragile)
             0.0,                            // bounceSpeed (destroyed on terrain hit)
             0.0,                            // propDragFactor
-            115.0,                      // baseSlDb (very loud propulsion)
+            101.0,                      // baseSlDb (loud but not deafening)
             5.0,                        // clutchDisengagedSlReduction
             1.0,                        // speedNoiseDbPerMs
             8.0,                        // baseCavitationSpeed
@@ -186,6 +190,7 @@ public record VehicleConfig(
             3.0,                        // surfaceNoiseDb
             0,                          // ballastNoiseDb
             0.5,                        // thrustSlewRate (fast spool-up)
+            62.0,                       // sonarSelfNoiseOffsetDb (directional bow hydrophone)
             false,                      // surfaceLocked
             false                       // hasBallast
         );
@@ -233,6 +238,7 @@ public record VehicleConfig(
             8.0,                        // surfaceNoiseDb (always at surface)
             0,                          // ballastNoiseDb
             0.5,                        // thrustSlewRate (full power in 2 seconds, bigger engines)
+            35.0,                       // sonarSelfNoiseOffsetDb
             true,                       // surfaceLocked
             false                       // hasBallast
         );

@@ -3,7 +3,9 @@
  */
 package se.hirt.searobots.engine;
 
-import se.hirt.searobots.api.*;
+import se.hirt.searobots.api.BattleArea;
+import se.hirt.searobots.api.CurrentField;
+import se.hirt.searobots.api.TerrainMap;
 
 /**
  * Physics model for torpedoes. Simplified relative to submarine physics:

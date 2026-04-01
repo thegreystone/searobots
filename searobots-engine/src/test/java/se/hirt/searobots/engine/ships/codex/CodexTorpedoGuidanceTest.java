@@ -1,20 +1,12 @@
 package se.hirt.searobots.engine.ships.codex;
 
 import org.junit.jupiter.api.Test;
-import se.hirt.searobots.api.MatchConfig;
-import se.hirt.searobots.api.Pose;
-import se.hirt.searobots.api.SonarContact;
-import se.hirt.searobots.api.TorpedoInput;
-import se.hirt.searobots.api.TorpedoLaunchContext;
-import se.hirt.searobots.api.TorpedoOutput;
-import se.hirt.searobots.api.Vec3;
-import se.hirt.searobots.api.VehicleConfig;
-import se.hirt.searobots.api.Velocity;
+import se.hirt.searobots.api.*;
 import se.hirt.searobots.engine.GeneratedWorld;
 import se.hirt.searobots.engine.TorpedoEntity;
 import se.hirt.searobots.engine.TorpedoPhysics;
 
-import java.awt.Color;
+import java.awt.*;
 import java.util.List;
 import java.util.Locale;
 
@@ -82,6 +74,21 @@ class CodexTorpedoGuidanceTest {
     }
 
     @Test
+    void deepMissionTargetStaysShallowerAtLongRange() {
+        var outcome = runTerminalApproach(
+                new Vec3(0.0, 2_200.0, -320.0),
+                -320.0,
+                0.0,
+                4_500,
+                false);
+
+        assertTrue(outcome.depthAt1200m > -200.0,
+                "Long-range shots should cruise noticeably shallower before terminal. " + outcome);
+        assertTrue(outcome.depthAt300m < -220.0,
+                "The torpedo still needs to dive hard once it reaches terminal range. " + outcome);
+    }
+
+    @Test
     void lateDeepActiveFixStillClosesDepthGap() {
         var outcome = runTerminalApproach(
                 new Vec3(0.0, 1_000.0, -280.0),
@@ -94,6 +101,50 @@ class CodexTorpedoGuidanceTest {
                 "A late accurate active depth fix should still produce a meaningful pre-terminal dive. " + outcome);
         assertTrue(outcome.bestDistance < 60.0,
                 "Accurate active terminal fixes should produce a near-lethal close approach. " + outcome);
+    }
+
+    @Test
+    void classifiedSubmarineActiveReturnBeatsClassifiedTorpedo() {
+        var controller = new CodexTorpedoController();
+        var world = GeneratedWorld.deepFlat();
+        controller.onLaunch(new TorpedoLaunchContext(
+                MatchConfig.withDefaults(0L),
+                world.terrain(),
+                new Vec3(0.0, -600.0, -120.0),
+                0.0,
+                0.0,
+                "0;1500;-120;0;0"));
+
+        controller.onTick(new FixedInput(
+                        0L,
+                        new Pose(new Vec3(0.0, -600.0, -120.0), 0.0, 0.0, 0.0),
+                        Velocity.ZERO,
+                        25.0,
+                        120.0,
+                        List.of(),
+                        List.of(),
+                        0),
+                new CapturingOutput());
+
+        var output = new CapturingOutput();
+        controller.onTick(new FixedInput(
+                        400L,
+                        new Pose(new Vec3(0.0, 100.0, -120.0), 0.0, 0.0, 0.0),
+                        Velocity.ZERO,
+                        25.0,
+                        120.0,
+                        List.of(),
+                        List.of(
+                                activeContact(Math.toRadians(9.0), 520.0, -120.0,
+                                        SonarContact.Classification.TORPEDO, 25.0, 24.0),
+                                activeContact(0.0, 920.0, -140.0,
+                                        SonarContact.Classification.SUBMARINE, 8.0, 18.0)),
+                        0),
+                output);
+
+        assertTrue(Math.abs(output.publishedTargetX) < 80.0 && output.publishedTargetY > 900.0,
+                "The torpedo should keep the submarine as target, got ("
+                        + output.publishedTargetX + ", " + output.publishedTargetY + ")");
     }
 
     private TerminalOutcome runTerminalApproach(Vec3 target,
@@ -113,7 +164,7 @@ class CodexTorpedoGuidanceTest {
                 0.0,
                 30.0,
                 Color.GREEN);
-        torpedo.setSpeed(25.0);
+        torpedo.setSpeed(23.0);
         controller.onLaunch(new TorpedoLaunchContext(
                 MatchConfig.withDefaults(0L),
                 world.terrain(),
@@ -124,6 +175,7 @@ class CodexTorpedoGuidanceTest {
 
         var physics = new TorpedoPhysics();
         double bestDistance = Double.POSITIVE_INFINITY;
+        double depthAt1200m = Double.NaN;
         double depthAt300m = Double.NaN;
         double bestDepthGap = Double.POSITIVE_INFINITY;
 
@@ -159,27 +211,40 @@ class CodexTorpedoGuidanceTest {
             double depthGap = Math.abs(torpedo.z() - target.z());
             bestDistance = Math.min(bestDistance, currentDistance);
             bestDepthGap = Math.min(bestDepthGap, depthGap);
+            if (Double.isNaN(depthAt1200m) && steppedHorizontalRange <= 1_200.0) {
+                depthAt1200m = torpedo.z();
+            }
             if (Double.isNaN(depthAt300m) && steppedHorizontalRange <= 300.0) {
                 depthAt300m = torpedo.z();
             }
         }
 
-        return new TerminalOutcome(bestDistance, bestDepthGap, depthAt300m, torpedo.z());
+        return new TerminalOutcome(bestDistance, bestDepthGap, depthAt1200m, depthAt300m, torpedo.z());
     }
 
     private static SonarContact activeContact(double bearing, double range, double depth) {
+        return activeContact(bearing, range, depth, SonarContact.Classification.UNKNOWN, 0.0, 35.0);
+    }
+
+    private static SonarContact activeContact(double bearing,
+                                              double range,
+                                              double depth,
+                                              SonarContact.Classification classification,
+                                              double estimatedSpeed,
+                                              double signalExcess) {
         return new SonarContact(
                 bearing,
-                35.0,
+                signalExcess,
                 range,
                 true,
-                0.0,
+                estimatedSpeed,
                 Math.toRadians(0.3),
                 Math.max(2.0, range * 0.02),
                 220.0,
                 0.95,
                 Double.NaN,
-                depth);
+                depth,
+                classification);
     }
 
     private static double bearingTo(Vec3 from, Vec3 to) {
@@ -189,13 +254,14 @@ class CodexTorpedoGuidanceTest {
 
     private record TerminalOutcome(double bestDistance,
                                    double bestDepthGap,
+                                   double depthAt1200m,
                                    double depthAt300m,
                                    double finalDepth) {
         @Override
         public String toString() {
             return String.format(Locale.US,
-                    "bestDistance=%.1f bestDepthGap=%.1f depthAt300m=%.1f finalDepth=%.1f",
-                    bestDistance, bestDepthGap, depthAt300m, finalDepth);
+                    "bestDistance=%.1f bestDepthGap=%.1f depthAt1200m=%.1f depthAt300m=%.1f finalDepth=%.1f",
+                    bestDistance, bestDepthGap, depthAt1200m, depthAt300m, finalDepth);
         }
     }
 
@@ -216,6 +282,8 @@ class CodexTorpedoGuidanceTest {
     private static final class CapturingOutput implements TorpedoOutput {
         private double sternPlanes;
         private double throttle = Double.NaN;
+        private double publishedTargetX = Double.NaN;
+        private double publishedTargetY = Double.NaN;
         private double publishedTargetZ = Double.NaN;
 
         @Override
@@ -234,6 +302,8 @@ class CodexTorpedoGuidanceTest {
 
         @Override
         public void publishTarget(double x, double y, double z) {
+            publishedTargetX = x;
+            publishedTargetY = y;
             publishedTargetZ = z;
         }
     }

@@ -1,8 +1,9 @@
 package se.hirt.searobots.engine;
 
-import se.hirt.searobots.api.*;
+import se.hirt.searobots.api.Vec3;
+import se.hirt.searobots.api.VehicleConfig;
 
-import java.awt.Color;
+import java.awt.*;
 
 /**
  * Comprehensive turn circle matrix at various depths.

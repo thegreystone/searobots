@@ -1,13 +1,13 @@
 package se.hirt.searobots.engine;
-import se.hirt.searobots.engine.ships.*;
 
 import org.junit.jupiter.api.Test;
 import se.hirt.searobots.api.*;
 
-import java.awt.Color;
+import java.awt.*;
 import java.util.List;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Basic autopilot routing exercises in flat deep water (no terrain).

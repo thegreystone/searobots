@@ -1,15 +1,6 @@
 package se.hirt.searobots.engine.ships.codex;
 
-import se.hirt.searobots.api.BattleArea;
-import se.hirt.searobots.api.MatchContext;
-import se.hirt.searobots.api.PathPlanner;
-import se.hirt.searobots.api.StrategicWaypoint;
-import se.hirt.searobots.api.SubmarineInput;
-import se.hirt.searobots.api.SubmarineOutput;
-import se.hirt.searobots.api.TerrainMap;
-import se.hirt.searobots.api.ThermalLayer;
-import se.hirt.searobots.api.Vec3;
-import se.hirt.searobots.api.Waypoint;
+import se.hirt.searobots.api.*;
 
 import java.util.ArrayList;
 import java.util.List;

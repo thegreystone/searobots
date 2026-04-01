@@ -1,10 +1,12 @@
 package se.hirt.searobots.engine;
-import se.hirt.searobots.engine.ships.*;
 
 import org.junit.jupiter.api.Test;
 import se.hirt.searobots.api.*;
-import java.awt.Color;
-import java.util.*;
+import se.hirt.searobots.engine.ships.DefaultAttackSub;
+
+import java.awt.*;
+import java.util.Arrays;
+import java.util.List;
 
 class TurnRadiusExperiment {
 

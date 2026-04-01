@@ -6,7 +6,7 @@ package se.hirt.searobots.engine;
 import se.hirt.searobots.api.Pose;
 import se.hirt.searobots.api.Velocity;
 
-import java.awt.Color;
+import java.awt.*;
 
 /**
  * Immutable snapshot of a torpedo's state for viewer rendering and replay.

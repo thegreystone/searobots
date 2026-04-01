@@ -2,12 +2,14 @@ package se.hirt.searobots.engine;
 
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
-import se.hirt.searobots.api.*;
-import static se.hirt.searobots.api.VehicleConfig.submarine;
+import se.hirt.searobots.api.MatchConfig;
+import se.hirt.searobots.api.SubmarineController;
+import se.hirt.searobots.api.VehicleConfig;
 
 import java.util.List;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static se.hirt.searobots.api.VehicleConfig.submarine;
 
 /**
  * Tests that any submarine controller can safely navigate generated terrain

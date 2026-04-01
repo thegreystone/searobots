@@ -27,16 +27,17 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 package se.hirt.searobots.engine;
-import se.hirt.searobots.engine.ships.*;
 
 import org.junit.jupiter.api.Test;
 import se.hirt.searobots.api.Vec3;
-import static se.hirt.searobots.api.VehicleConfig.submarine;
+import se.hirt.searobots.engine.ships.DefaultAttackSub;
 
-import java.awt.Color;
+import java.awt.*;
 import java.util.List;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static se.hirt.searobots.api.VehicleConfig.submarine;
 
 class SubCollisionTest {
 

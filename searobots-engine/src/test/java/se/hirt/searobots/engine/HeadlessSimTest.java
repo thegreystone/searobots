@@ -3,19 +3,19 @@
  * Not a permanent test, just for development validation.
  */
 package se.hirt.searobots.engine;
-import se.hirt.searobots.engine.ships.*;
 
 import org.junit.jupiter.api.Test;
 import se.hirt.searobots.api.MatchConfig;
 import se.hirt.searobots.api.SubmarineController;
 import se.hirt.searobots.api.VehicleConfig;
+import se.hirt.searobots.engine.ships.DefaultAttackSub;
 
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 
 class HeadlessSimTest {
 

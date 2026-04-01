@@ -2,8 +2,6 @@ package se.hirt.searobots.engine;
 
 import se.hirt.searobots.api.SubmarineController;
 
-import java.util.function.Supplier;
-
 /**
  * Base class for tests that should run with any SubmarineController implementation.
  * Subclasses provide the controller factory; the test methods exercise general

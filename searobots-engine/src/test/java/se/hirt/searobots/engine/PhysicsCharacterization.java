@@ -2,7 +2,7 @@ package se.hirt.searobots.engine;
 
 import se.hirt.searobots.api.*;
 
-import java.awt.Color;
+import java.awt.*;
 
 /**
  * Physics characterization: systematic verification of submarine behavior

@@ -1,17 +1,19 @@
 package se.hirt.searobots.engine.ships.claude;
-import se.hirt.searobots.engine.*;
-import se.hirt.searobots.engine.ships.*;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import se.hirt.searobots.api.*;
+import se.hirt.searobots.engine.SubmarineEntity;
+import se.hirt.searobots.engine.SubmarinePhysics;
+import se.hirt.searobots.engine.TestHelpers;
+import se.hirt.searobots.engine.WorldGenerator;
 
-import java.awt.Color;
+import java.awt.*;
 import java.util.LinkedHashMap;
 import java.util.List;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Tests that the autopilot can plan and follow a route toward the first

@@ -1,13 +1,11 @@
 package se.hirt.searobots.engine;
 
-import se.hirt.searobots.api.*;
-import se.hirt.searobots.engine.ships.SubmarineDrone;
 import org.junit.jupiter.api.Test;
+import se.hirt.searobots.api.*;
 
 import java.util.List;
-import java.util.concurrent.atomic.AtomicReference;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Tests that passive TMA (Target Motion Analysis) behaves realistically:

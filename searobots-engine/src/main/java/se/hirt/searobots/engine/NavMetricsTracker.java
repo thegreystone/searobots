@@ -3,7 +3,8 @@
  */
 package se.hirt.searobots.engine;
 
-import se.hirt.searobots.api.*;
+import se.hirt.searobots.api.Waypoint;
+
 import java.util.List;
 
 /**

@@ -28,7 +28,10 @@
  */
 package se.hirt.searobots.engine;
 
-import se.hirt.searobots.api.*;
+import se.hirt.searobots.api.SonarContact;
+import se.hirt.searobots.api.TerrainMap;
+import se.hirt.searobots.api.ThermalLayer;
+import se.hirt.searobots.api.Vec3;
 
 import java.util.*;
 
@@ -77,6 +80,34 @@ public final class SonarModel {
                        int cooldownTicks) {}
 
     /**
+     * Classify a sonar contact from its acoustic signature.
+     * Requires sufficient signal excess to classify; faint contacts are UNKNOWN.
+     *
+     * Classification rules (modelling blade-rate tonal analysis):
+     * - TORPEDO: high speed (>18 m/s) = small fast high-RPM prop
+     * - SURFACE_SHIP: loud (SL>108) + moderate speed (<12) = big slow prop
+     * - SUBMARINE: submerged, moderate noise, moderate speed
+     * - UNKNOWN: insufficient signal excess to classify (<8 dB)
+     */
+    private static SonarContact.Classification classify(double signalExcess,
+                                                         double estimatedSpeed,
+                                                         double estimatedSL) {
+        // Need enough signal to analyse the tonal structure
+        if (signalExcess < 8) return SonarContact.Classification.UNKNOWN;
+
+        // High blade rate + fast = torpedo (very distinctive signature)
+        if (estimatedSpeed > 18) return SonarContact.Classification.TORPEDO;
+
+        // Very loud + moderate speed = surface ship (big slow prop, machinery noise)
+        if (estimatedSL > 108 && estimatedSpeed >= 0 && estimatedSpeed < 12) {
+            return SonarContact.Classification.SURFACE_SHIP;
+        }
+
+        // Default: submarine
+        return SonarContact.Classification.SUBMARINE;
+    }
+
+    /**
      * Compute all sonar contacts for each entity this tick.
      * Returns a map from entity ID to its sonar result.
      */
@@ -104,8 +135,9 @@ public final class SonarModel {
                 if (!torp.alive()) continue;
                 var contact = passiveDetect(listener.x(), listener.y(), listener.z(),
                         listener.heading(), listener.sourceLevelDb(),
+                        listener.vehicleConfig().sonarSelfNoiseOffsetDb(),
                         torp.x(), torp.y(), torp.z(), torp.sourceLevelDb(),
-                        torp.pingRequested(), terrain, thermalLayers);
+                        torp.speed(), torp.pingRequested(), terrain, thermalLayers);
                 if (contact != null) extraPassive.add(contact);
             }
 
@@ -120,13 +152,14 @@ public final class SonarModel {
             var passive = new ArrayList<SonarContact>();
             var active = new ArrayList<SonarContact>();
 
-            // Torpedo passive: hear submarines (marginal due to high self-noise)
+            // Torpedo passive: bow hydrophone has good isolation (62 dB offset)
+            double torpSonarOffset = torp.vehicleConfig().sonarSelfNoiseOffsetDb();
             for (var source : entities) {
                 if (source.forfeited() || source.hp() <= 0) continue;
                 var contact = passiveDetect(torp.x(), torp.y(), torp.z(),
-                        torp.heading(), torp.sourceLevelDb(),
+                        torp.heading(), torp.sourceLevelDb(), torpSonarOffset,
                         source.x(), source.y(), source.z(), source.sourceLevelDb(),
-                        source.pingRequested(), terrain, thermalLayers);
+                        source.speed(), source.pingRequested(), terrain, thermalLayers);
                 if (contact != null) passive.add(contact);
             }
 
@@ -135,7 +168,8 @@ public final class SonarModel {
                 for (var source : entities) {
                     if (source.forfeited() || source.hp() <= 0) continue;
                     var ret = activeDetect(torp.x(), torp.y(), torp.z(),
-                            torp.sourceLevelDb(), source.x(), source.y(), source.z(),
+                            torp.sourceLevelDb(), torpSonarOffset,
+                            source.x(), source.y(), source.z(), source.speed(),
                             terrain, thermalLayers);
                     if (ret != null) active.add(ret);
                 }
@@ -160,8 +194,9 @@ public final class SonarModel {
 
     /** Passive detection: can listener hear source? Returns contact or null. */
     private SonarContact passiveDetect(double lx, double ly, double lz, double lHeading, double lSLdB,
+                                        double lSonarOffset,
                                         double sx, double sy, double sz, double sSLdB,
-                                        boolean sPinged,
+                                        double sSpeed, boolean sPinged,
                                         TerrainMap terrain, List<ThermalLayer> thermalLayers) {
         double distance = Math.sqrt((sx-lx)*(sx-lx) + (sy-ly)*(sy-ly) + (sz-lz)*(sz-lz));
         if (distance < 1.0) distance = 1.0;
@@ -174,7 +209,7 @@ public final class SonarModel {
         double sl = sSLdB;
         if (sPinged) sl = Math.max(sl, ACTIVE_PING_SL_DB);
 
-        double selfNoiseDb = lSLdB - SELF_NOISE_OFFSET_DB;
+        double selfNoiseDb = lSLdB - lSonarOffset;
         double nl = Math.max(AMBIENT_NOISE_DB, selfNoiseDb);
         if (isInBaffles(lHeading, trueBearing)) nl += BAFFLE_PENALTY_DB;
 
@@ -183,15 +218,19 @@ public final class SonarModel {
             double bearingError = bearingStdDev(se);
             double noisyBearing = trueBearing + bearingError * rng.nextGaussian();
             noisyBearing = ((noisyBearing % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
-            return new SonarContact(noisyBearing, se, 0, false, -1,
-                    bearingError, 0, sl, 0, Double.NaN);
+            // Speed estimate from blade-rate analysis (noisy)
+            double estSpd = sSpeed > 0 ? sSpeed + rng.nextGaussian() * 2 : -1;
+            return new SonarContact(noisyBearing, se, 0, false, estSpd,
+                    bearingError, 0, sl, 0, Double.NaN,
+                    Double.NaN, classify(se, estSpd, sl));
         }
         return null;
     }
 
     /** Active sonar return: does the ping illuminate the target? Returns contact or null. */
     private SonarContact activeDetect(double lx, double ly, double lz, double lSLdB,
-                                       double sx, double sy, double sz,
+                                       double lSonarOffset,
+                                       double sx, double sy, double sz, double sSpeed,
                                        TerrainMap terrain, List<ThermalLayer> thermalLayers) {
         double distance = Math.sqrt((sx-lx)*(sx-lx) + (sy-ly)*(sy-ly) + (sz-lz)*(sz-lz));
         if (distance < 1.0) distance = 1.0;
@@ -202,7 +241,7 @@ public final class SonarModel {
         double tl = transmissionLossDb(distance, new Vec3(lx, ly, lz), new Vec3(sx, sy, sz),
                 terrain, thermalLayers);
 
-        double selfNoiseDb = lSLdB - SELF_NOISE_OFFSET_DB;
+        double selfNoiseDb = lSLdB - lSonarOffset;
         double nl = Math.max(AMBIENT_NOISE_DB, selfNoiseDb);
         double activeSe = ACTIVE_PING_SL_DB - 2 * tl + TARGET_STRENGTH_DB - nl;
 
@@ -219,9 +258,10 @@ public final class SonarModel {
             double depthNoiseRms = Math.max(5.0, distance * 0.05); // 5% depth noise, min 5m
             double estimatedDepth = lz + trueDepthDiff + depthNoiseRms * rng.nextGaussian();
 
-            return new SonarContact(noisyBearing, activeSe, noisyRange, true, -1,
+            double estSpd = sSpeed > 0 ? sSpeed + rng.nextGaussian() * 2 : -1;
+            return new SonarContact(noisyBearing, activeSe, noisyRange, true, estSpd,
                     bearingError, rangeRmsNoise, ACTIVE_PING_SL_DB, 0, Double.NaN,
-                    estimatedDepth);
+                    estimatedDepth, classify(activeSe, estSpd, ACTIVE_PING_SL_DB));
         }
         return null;
     }
@@ -248,7 +288,7 @@ public final class SonarModel {
             var listenerPos = new Vec3(listener.x(), listener.y(), listener.z());
 
             // Self-noise: radiated SL minus isolation offset (hydrophones don't hear all own noise)
-            double selfNoiseDb = listener.sourceLevelDb() - SELF_NOISE_OFFSET_DB;
+            double selfNoiseDb = listener.sourceLevelDb() - listener.vehicleConfig().sonarSelfNoiseOffsetDb();
             double nlBase = Math.max(AMBIENT_NOISE_DB, selfNoiseDb);
 
             // Track which source IDs were observed this tick (for decay)
@@ -308,7 +348,8 @@ public final class SonarModel {
 
                     passive.add(new SonarContact(reportedBearing, se, tracker.estimatedRange(), false, estSpeed,
                             brgStdDev, tracker.rangeUncertainty(), estSL,
-                            tracker.solutionQuality(), tracker.estimatedHeading()));
+                            tracker.solutionQuality(), tracker.estimatedHeading(),
+                            Double.NaN, classify(se, estSpeed, estSL)));
                 }
 
                 // --- Active sonar returns (for the listener's own ping) ---
@@ -336,7 +377,7 @@ public final class SonarModel {
                         active.add(new SonarContact(reportedBearing, activeSe, reportedRange, true,
                                 estSpeed, activeBrgStdDev, rangeRmsNoise, estSL,
                                 tracker.solutionQuality(), tracker.estimatedHeading(),
-                                estimatedDepth));
+                                estimatedDepth, classify(activeSe, estSpeed, estSL)));
                     }
                 }
             }

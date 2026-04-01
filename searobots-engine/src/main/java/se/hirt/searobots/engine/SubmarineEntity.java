@@ -30,7 +30,7 @@ package se.hirt.searobots.engine;
 
 import se.hirt.searobots.api.*;
 
-import java.awt.Color;
+import java.awt.*;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -196,6 +196,7 @@ public final class SubmarineEntity implements SubmarineOutput {
     public double speed() { return speed; }
     public double verticalSpeed() { return verticalSpeed; }
     public int hp() { return hp; }
+    public int maxHp() { return maxHp; }
     public boolean forfeited() { return forfeited; }
     public double noiseLevel() { return noiseLevel; }
     public double sourceLevelDb() { return sourceLevelDb; }

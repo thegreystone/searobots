@@ -28,21 +28,18 @@
  */
 package se.hirt.searobots.viewer;
 
-import se.hirt.searobots.api.*;
+import se.hirt.searobots.api.BattleArea;
+import se.hirt.searobots.api.TerrainMap;
+import se.hirt.searobots.api.Vec3;
 import se.hirt.searobots.engine.GeneratedWorld;
 import se.hirt.searobots.engine.SubmarineSnapshot;
 
 import java.awt.*;
-import java.awt.geom.AffineTransform;
-import java.awt.geom.Ellipse2D;
-import java.awt.geom.Line2D;
-import java.awt.geom.Path2D;
-import java.awt.geom.Rectangle2D;
+import java.awt.geom.*;
 import java.awt.image.BufferedImage;
 import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.List;
-import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
  * Top-down 2D rendering of the underwater terrain and overlays.

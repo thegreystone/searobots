@@ -1,11 +1,12 @@
 package se.hirt.searobots.engine;
 
-import se.hirt.searobots.api.*;
 import org.junit.jupiter.api.Test;
+import se.hirt.searobots.api.Vec3;
+import se.hirt.searobots.api.VehicleConfig;
 
 import java.util.List;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Verifies passive sonar detection ranges under ideal conditions
@@ -18,7 +19,7 @@ import static org.junit.jupiter.api.Assertions.*;
  *   <li>Patrol (3 m/s) heard by patrol (3 m/s): ~1.0 km</li>
  *   <li>Moderate (5 m/s) heard by slow (1 m/s): ~6.3 km</li>
  *   <li>Sprinting (10 m/s) heard by patrol (3 m/s): arena-wide</li>
- *   <li>Torpedo heard by anyone: arena-wide</li>
+ *   <li>Torpedo heard by patrol (same layer, ideal): 8+ km</li>
  * </ul>
  */
 public class PassiveDetectionRangeTest {
@@ -28,12 +29,17 @@ public class PassiveDetectionRangeTest {
      * SE = SL_target - 10*log10(R) - NL > threshold
      * R_max = 10^((SL_target - NL - threshold) / spreading)
      */
-    private static double theoreticalRange(double targetSL, double listenerSL) {
-        double selfNoise = listenerSL - SonarModel.SELF_NOISE_OFFSET_DB;
+    private static double theoreticalRange(double targetSL, double listenerSL, double sonarOffset) {
+        double selfNoise = listenerSL - sonarOffset;
         double nl = Math.max(SonarModel.AMBIENT_NOISE_DB, selfNoise);
         double headroom = targetSL - nl - SonarModel.DETECTION_THRESHOLD_DB;
         if (headroom <= 0) return 0;
         return Math.pow(10, headroom / SonarModel.SPREADING_COEFFICIENT);
+    }
+
+    /** Sub-to-sub theoretical range (35 dB offset). */
+    private static double theoreticalRange(double targetSL, double listenerSL) {
+        return theoreticalRange(targetSL, listenerSL, VehicleConfig.submarine().sonarSelfNoiseOffsetDb());
     }
 
     private static double subSL(double speed) {
@@ -114,10 +120,30 @@ public class PassiveDetectionRangeTest {
     }
 
     @Test
-    void torpedoDetectedAcrossArena() {
-        double range = theoreticalRange(torpSL(25), subSL(3));
-        System.out.printf("Torpedo heard by patrol: %.0fm%n", range);
-        assertTrue(range > 14000, "Torpedo should be detectable across entire arena, got " + range);
+    void torpedoDetectedAtLongRange() {
+        // Sub at 3 m/s hearing a torpedo at 23 m/s (same thermal layer)
+        double range = theoreticalRange(torpSL(23), subSL(3));
+        System.out.printf("Torpedo (101dB base) heard by patrol (ideal, same layer): %.0fm%n", range);
+        assertTrue(range > 4000, "Torpedo should be detectable at long range in same layer, got " + range);
+    }
+
+    @Test
+    void torpedoPassiveDetectsModerateTarget() {
+        // Torpedo at 23 m/s passively detecting a 5 m/s sub (using torpedo's 62 dB offset)
+        double torpOffset = VehicleConfig.torpedo().sonarSelfNoiseOffsetDb();
+        double range = theoreticalRange(subSL(5), torpSL(23), torpOffset);
+        System.out.printf("Torpedo passive range vs 5m/s sub: %.0fm%n", range);
+        assertTrue(range > 1500 && range < 4000,
+                "Torpedo should passively detect 5m/s sub at 1.5-4km, got " + range);
+    }
+
+    @Test
+    void torpedoCannotPassivelyDetectQuietSub() {
+        // Torpedo at 23 m/s should NOT passively detect a 1 m/s sub
+        double torpOffset = VehicleConfig.torpedo().sonarSelfNoiseOffsetDb();
+        double range = theoreticalRange(subSL(1), torpSL(23), torpOffset);
+        System.out.printf("Torpedo passive range vs 1m/s sub: %.0fm%n", range);
+        assertTrue(range < 500, "Torpedo should barely detect quiet sub, got " + range);
     }
 
     @Test
