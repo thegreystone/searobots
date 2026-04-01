@@ -390,10 +390,9 @@ public class ClaudeTorpedoController implements TorpedoController {
         // Estimate target velocity from consecutive fixes
         if (!Double.isNaN(prevFixX) && prevFixTick >= 0) {
             double dtFix = (input.tick() - prevFixTick) / 50.0;
-            if (dtFix > 0.5 && dtFix < 20) {
+            if (dtFix > 0.2 && dtFix < 20) {
                 double rawVX = (fixX - prevFixX) / dtFix;
                 double rawVY = (fixY - prevFixY) / dtFix;
-                // Smooth: trust new data more once we have active fixes
                 estVelX = estVelX * 0.3 + rawVX * 0.7;
                 estVelY = estVelY * 0.3 + rawVY * 0.7;
             }

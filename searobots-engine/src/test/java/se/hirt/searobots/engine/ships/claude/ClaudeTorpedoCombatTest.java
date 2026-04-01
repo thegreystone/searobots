@@ -255,4 +255,54 @@ public class ClaudeTorpedoCombatTest {
                 (double) totalClaudeDmg / seeds.length, (double) totalCodexDmg / seeds.length);
         System.out.printf("Win rate: %.1f%%%n", 100.0 * claudeWins / seeds.length);
     }
+
+    @Test
+    void claudeVsCodex50b() {
+        // Different seed set: 0xDEAD0000 + i * 0x7331
+        long[] seeds = new long[50];
+        for (int i = 0; i < 50; i++) {
+            seeds[i] = 0xDEAD0000L + (long)(i + 1) * 0x7331;
+        }
+
+        int claudeWins = 0, codexWins = 0, draws = 0;
+        int claudeKills = 0, codexKills = 0;
+        int claudeTorps = 0, codexTorps = 0;
+        int totalClaudeDmg = 0, totalCodexDmg = 0;
+
+        System.out.println("=== Claude vs Codex: 50-Match Batch B ===");
+        System.out.printf("%-12s  %10s  %10s  %7s  %7s  %6s  %s%n",
+                "Seed", "Claude HP", "Codex HP", "C Torps", "X Torps", "Tick", "Result");
+        System.out.println("-".repeat(80));
+
+        for (long seed : seeds) {
+            var r = runCombat(ClaudeAttackSub::new, CodexAttackSub::new, seed, TICKS_10MIN);
+            int claudeDmg = 1000 - r.hpB;
+            int codexDmg = 1000 - r.hpA;
+            totalClaudeDmg += claudeDmg;
+            totalCodexDmg += codexDmg;
+            claudeTorps += r.torpsAFired;
+            codexTorps += r.torpsBFired;
+            if (r.aKilledB()) claudeKills++;
+            if (r.hpA <= 0) codexKills++;
+
+            String outcome;
+            if (r.hpB <= 0 && r.hpA > 0) { outcome = "CLAUDE WIN"; claudeWins++; }
+            else if (r.hpA <= 0 && r.hpB > 0) { outcome = "CODEX WIN"; codexWins++; }
+            else if (r.hpA <= 0 && r.hpB <= 0) { outcome = "MUTUAL KILL"; draws++; }
+            else if (claudeDmg > codexDmg) { outcome = "Claude dmg+" + (claudeDmg - codexDmg); claudeWins++; }
+            else if (codexDmg > claudeDmg) { outcome = "Codex dmg+" + (codexDmg - claudeDmg); codexWins++; }
+            else { outcome = "DRAW"; draws++; }
+
+            System.out.printf("0x%08x  %10d  %10d  %7d  %7d  %6d  %s%n",
+                    seed, r.hpA, r.hpB, r.torpsAFired, r.torpsBFired, r.endTick, outcome);
+        }
+
+        System.out.println("-".repeat(80));
+        System.out.printf("Claude wins: %d / %d (%.0f%%)%n", claudeWins, seeds.length, 100.0 * claudeWins / seeds.length);
+        System.out.printf("Codex  wins: %d / %d%n", codexWins, seeds.length);
+        System.out.printf("Draws:       %d / %d%n", draws, seeds.length);
+        System.out.printf("Claude kills: %d,  Codex kills: %d%n", claudeKills, codexKills);
+        System.out.printf("Claude torps: %d,  Codex torps: %d%n", claudeTorps, codexTorps);
+        System.out.printf("Dmg dealt: Claude %d,  Codex %d%n", totalClaudeDmg, totalCodexDmg);
+    }
 }

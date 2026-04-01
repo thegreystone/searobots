@@ -51,7 +51,8 @@ public final class SonarModel {
 
     // Active sonar
     static final double ACTIVE_PING_SL_DB = 220.0;
-    static final int ACTIVE_PING_COOLDOWN_TICKS = 250;
+    static final int ACTIVE_PING_COOLDOWN_TICKS = 250;     // subs: 5 seconds
+    static final int TORPEDO_PING_COOLDOWN_TICKS = 50;    // torpedoes: 1 second (small transducer, fast cycle)
     static final double TARGET_STRENGTH_DB = 20.0;
     static final double RANGE_NOISE_FRACTION = 0.02; // 2% RMS range noise on active returns
 
@@ -173,9 +174,9 @@ public final class SonarModel {
                             terrain, thermalLayers);
                     if (ret != null) active.add(ret);
                 }
-                // Clear ping and set cooldown (same as submarine ping handling)
+                // Clear ping and set cooldown (torpedoes cycle faster than subs)
                 torp.clearPingRequested();
-                torp.setActiveSonarCooldown(ACTIVE_PING_COOLDOWN_TICKS);
+                torp.setActiveSonarCooldown(TORPEDO_PING_COOLDOWN_TICKS);
             }
 
             results.put(torp.id(), new SonarResult(passive, active, torp.activeSonarCooldown()));
@@ -255,7 +256,7 @@ public final class SonarModel {
             // Estimate target depth from vertical angle + range
             // True depth = listener depth + vertical component of range
             double trueDepthDiff = sz - lz; // positive = target above listener
-            double depthNoiseRms = Math.max(5.0, distance * 0.05); // 5% depth noise, min 5m
+            double depthNoiseRms = Math.max(0.5, distance * 0.02); // 2% of range, min 0.5m
             double estimatedDepth = lz + trueDepthDiff + depthNoiseRms * rng.nextGaussian();
 
             double estSpd = sSpeed > 0 ? sSpeed + rng.nextGaussian() * 2 : -1;
