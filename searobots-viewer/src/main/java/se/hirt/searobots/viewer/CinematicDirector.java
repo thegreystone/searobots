@@ -737,8 +737,7 @@ final class CinematicDirector {
     private void computeTorpedoTerminal(float tpf, List<SubmarineSnapshot> subs,
                                         List<TorpedoSnapshot> torps,
                                         Vector3f outPos, Vector3f outLookAt) {
-        // Elliptical orbit around the torpedo-target pair, keeping both in view.
-        // The orbit is tighter near the torpedo, wider near the target.
+        // Circular orbit around the midpoint of torpedo and target, keeping both in view.
         Node torpNode = torpedoNodes.get(currentShot.subjectId);
         Node targetNode = currentShot.secondaryId >= 0 ? subNodes.get(currentShot.secondaryId) : null;
 
@@ -747,40 +746,20 @@ final class CinematicDirector {
         Vector3f torpPos = torpNode.getLocalTranslation();
         Vector3f targetPos = targetNode != null ? targetNode.getLocalTranslation() : torpPos;
 
-        // Midpoint weighted toward the torpedo (camera stays closer to the action)
-        float torpWeight = 0.65f;
-        Vector3f focus = new Vector3f(
-                torpPos.x * torpWeight + targetPos.x * (1 - torpWeight),
-                torpPos.y * torpWeight + targetPos.y * (1 - torpWeight),
-                torpPos.z * torpWeight + targetPos.z * (1 - torpWeight));
+        // Orbit center at the midpoint so both entities are equidistant from the look-at point.
+        Vector3f center = torpPos.add(targetPos).multLocal(0.5f);
 
-        // Separation between torpedo and target
+        // Circular orbit radius: just outside both entities (half-separation + margin).
         float separation = torpPos.distance(targetPos);
-        float orbitRadius = Math.max(separation * 0.5f + 30f, 80f);
+        float orbitRadius = Math.max(separation * 0.5f + 50f, 80f);
 
-        // Orbit around the focus point. Use the torpedo-target axis to define
-        // the ellipse orientation (wider perpendicular to the chase axis).
-        float axisX = targetPos.x - torpPos.x;
-        float axisZ = targetPos.z - torpPos.z;
-        float axisLen = FastMath.sqrt(axisX * axisX + axisZ * axisZ);
-        if (axisLen > 0.01f) { axisX /= axisLen; axisZ /= axisLen; }
-        else { axisX = 1; axisZ = 0; }
-        float perpX = -axisZ, perpZ = axisX; // perpendicular to chase axis
-
-        // Slow orbit: ~0.4 rad/s
+        // Slow circular orbit at 0.4 rad/s in the horizontal plane.
         idleOrbitAngle += 0.4f * tpf;
-        float cosA = FastMath.cos(idleOrbitAngle);
-        float sinA = FastMath.sin(idleOrbitAngle);
-
-        // Elliptical: wider perpendicular (1.0x), narrower along chase (0.5x)
-        float offAlongAxis = orbitRadius * 0.5f * cosA;
-        float offPerpAxis = orbitRadius * sinA;
-
         outPos.set(
-                focus.x + axisX * offAlongAxis + perpX * offPerpAxis,
-                focus.y + 20f + orbitRadius * 0.15f, // slightly above
-                focus.z + axisZ * offAlongAxis + perpZ * offPerpAxis);
-        outLookAt.set(focus);
+                center.x + FastMath.sin(idleOrbitAngle) * orbitRadius,
+                center.y + 20f,
+                center.z + FastMath.cos(idleOrbitAngle) * orbitRadius);
+        outLookAt.set(center);
     }
 
     private void computeChaseShot(List<SubmarineSnapshot> subs,
