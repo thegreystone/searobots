@@ -123,8 +123,11 @@ final class CinematicDirector {
     // 1.0 = fully visible (normal), 0.0 = fully transparent/disabled
     private float waterOpacity = 1f;
     private float waterOpacityTarget = 1f;
-    private static final float WATER_FADE_OUT_SPEED = 0.6f;  // ~1.7s to go transparent
-    private static final float WATER_FADE_IN_SPEED = 0.3f;   // ~3.3s to go opaque (slower = smoother re-entry)
+    private float descentHoldTimer = 0f; // holds camera above surface while water fades in
+    private static final float WATER_FADE_OUT_SPEED = 0.6f;         // ~1.7s to go transparent
+    private static final float WATER_FADE_IN_SPEED = 0.3f;          // ~3.3s to go opaque (underwater-to-underwater)
+    private static final float WATER_FADE_IN_DESCENT_SPEED = 1.5f;  // ~0.67s when descending from overhead
+    private static final float DESCENT_HOLD_DURATION = 0.8f;        // hold above surface while water fades in
 
     // ── Opening fly-around state ──
 
@@ -206,10 +209,16 @@ final class CinematicDirector {
             // Fading out (going transparent): normal speed
             waterOpacity = Math.max(waterOpacity - WATER_FADE_OUT_SPEED * tpf, waterOpacityTarget);
         } else if (waterOpacity < waterOpacityTarget) {
-            // Fading in (becoming opaque): only start after the camera transition
-            // is mostly done, then fade slowly for a smooth splash-back effect.
-            boolean transitionDone = transitionTimer <= 0.3f;
-            if (transitionDone) {
+            // Fading in (becoming opaque). Two cases:
+            // 1. Descending from overhead: fade in immediately and fast so water is fully
+            //    opaque before the camera crosses the surface — the reverse of the fade-out
+            //    delay used when rising from below.
+            // 2. Transitioning between underwater shots: wait until nearly done to avoid
+            //    popping water in while the spline briefly arcs through the surface.
+            boolean descendingFromOverhead = fromPos.y > 10f;
+            if (descendingFromOverhead) {
+                waterOpacity = Math.min(waterOpacity + WATER_FADE_IN_DESCENT_SPEED * tpf, waterOpacityTarget);
+            } else if (transitionTimer <= 0.3f) {
                 waterOpacity = Math.min(waterOpacity + WATER_FADE_IN_SPEED * tpf, waterOpacityTarget);
             }
         }
@@ -274,7 +283,10 @@ final class CinematicDirector {
             fromPos.interpolateLocal(outPos, absorb);
             fromLookAt.interpolateLocal(outLookAt, absorb);
 
-            transitionTimer = Math.max(0, transitionTimer - tpf);
+            descentHoldTimer = Math.max(0, descentHoldTimer - tpf);
+            if (descentHoldTimer <= 0) {
+                transitionTimer = Math.max(0, transitionTimer - tpf);
+            }
         }
 
         // Terrain avoidance: don't go below terrain
@@ -505,6 +517,7 @@ final class CinematicDirector {
             shot = new Shot(shot.type, shot.subjectId, shot.secondaryId,
                     shot.duration, shot.minDuration, TransitionType.SLOW_DESCENT);
         }
+        descentHoldTimer = (leavingOverhead && isUnderwaterShot(shot.type)) ? DESCENT_HOLD_DURATION : 0f;
 
         // Capture the actual camera position from last frame as the transition start
         fromPos.set(lastCamPos);
