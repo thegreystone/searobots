@@ -61,6 +61,27 @@
         </dependency>
     </dependencies>
 
+    <profiles>
+        <profile>
+            <id>mac</id>
+            <activation>
+                <os><family>mac</family></os>
+            </activation>
+            <properties>
+                <exec.jvmArgs>-XstartOnFirstThread</exec.jvmArgs>
+            </properties>
+        </profile>
+        <profile>
+            <id>non-mac</id>
+            <activation>
+                <os><family>!mac</family></os>
+            </activation>
+            <properties>
+                <exec.jvmArgs>-Ddummy=true</exec.jvmArgs>
+            </properties>
+        </profile>
+    </profiles>
+
     <build>
         <plugins>
             <plugin>
@@ -68,7 +89,13 @@
                 <artifactId>exec-maven-plugin</artifactId>
                 <version>3.5.0</version>
                 <configuration>
-                    <mainClass>se.hirt.searobots.viewer.SubmarineScene3D</mainClass>
+                    <executable>java</executable>
+                    <arguments>
+                        <argument>${exec.jvmArgs}</argument>
+                        <argument>-cp</argument>
+                        <classpath/>
+                        <argument>se.hirt.searobots.viewer.SubmarineScene3D</argument>
+                    </arguments>
                 </configuration>
             </plugin>
             <plugin>

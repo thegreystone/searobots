@@ -57,6 +57,9 @@ mvn clean install
 [latest release](https://github.com/thegreystone/searobots/releases/latest) and run:
 
 ```bash
+# macOS
+java -XstartOnFirstThread -jar searobots-viewer-<version>.jar
+# Linux / Windows
 java -jar searobots-viewer-<version>.jar
 ```
 
@@ -64,7 +67,7 @@ java -jar searobots-viewer-<version>.jar
 
 ```bash
 mvn clean install -DskipTests
-mvn exec:java -pl searobots-viewer -Dexec.mainClass=se.hirt.searobots.viewer.SubmarineScene3D
+mvn exec:exec -pl searobots-viewer
 ```
 
 #### Viewer Controls
