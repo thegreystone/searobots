@@ -1,6 +1,30 @@
 /*
  * Copyright (C) 2026 Marcus Hirt
- *                    (see TerrainViewer.java for full license text)
+ *
+ * This software is free:
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ * 3. The name of the author may not be used to endorse or promote products
+ *    derived from this software without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESSED OR
+ * IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
+ * OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
+ * IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT,
+ * INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
+ * NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
+ * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 package se.hirt.searobots.viewer;
 
@@ -552,8 +576,8 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
                 return sim != null ? sim.getState() : se.hirt.searobots.engine.SimulationLoop.State.STOPPED;
             });
             standaloneSimManager.addListener(mapRenderer);
-            var mapViewState = new MapViewState(mapRenderer);
-            stateManager.attach(mapViewState);
+            var nativeMapState = new NativeMapState(mapRenderer);
+            stateManager.attach(nativeMapState);
 
             // Register Lemur GUI AppStates (disabled by default, toggled by keys)
             var simConfigState = new SimConfigState(this::restartSim);
@@ -579,6 +603,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
             palette.onFlatOcean = () -> {
                 standaloneWorld = se.hirt.searobots.engine.GeneratedWorld.deepFlat();
                 enqueue(() -> { setWorld(standaloneWorld); return null; });
+                if (standaloneMapRenderer != null) standaloneMapRenderer.setWorld(standaloneWorld);
                 standaloneSimManager.stop();
                 standaloneSimManager.setWorld(standaloneWorld);
                 var c = SimConfigState.currentControllers();
@@ -591,6 +616,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
             palette.onLIsland = () -> {
                 standaloneWorld = se.hirt.searobots.engine.GeneratedWorld.lIslandRecovery();
                 enqueue(() -> { setWorld(standaloneWorld); return null; });
+                if (standaloneMapRenderer != null) standaloneMapRenderer.setWorld(standaloneWorld);
                 standaloneSimManager.stop();
                 standaloneSimManager.setWorld(standaloneWorld);
                 var c = SimConfigState.currentControllers();
@@ -742,7 +768,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
         inputManager.addMapping("MapZoomOut", new KeyTrigger(KeyInput.KEY_MINUS));
         inputManager.addListener((ActionListener) (name, isPressed, tpf) -> {
             if (!isPressed) return;
-            var mapState = stateManager.getState(MapViewState.class);
+            var mapState = stateManager.getState(NativeMapState.class);
             if (mapState != null && mapState.isMapVisible()) {
                 var c = inputManager.getCursorPosition();
                 mapState.zoomAt(name.equals("MapZoomIn") ? 1.3 : 1 / 1.3, c.x, c.y);
@@ -834,6 +860,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
             } catch (Exception e) { /* ignore */ }
             return null;
         });
+        if (standaloneMapRenderer != null) standaloneMapRenderer.setWorld(world);
         standaloneSimManager.stop();
         standaloneSimManager.setWorld(world);
         var controllers = SimConfigState.currentControllers();
@@ -2440,7 +2467,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
                 case "ToggleEllipsoids" -> showCollisionEllipsoids = !showCollisionEllipsoids;
                 case "ToggleDetails" -> { showCompetitionDetails = !showCompetitionDetails; updateDetailHud(); }
                 case "ToggleMap" -> {
-                    var mapState = standalone ? stateManager.getState(MapViewState.class) : null;
+                    var mapState = standalone ? stateManager.getState(NativeMapState.class) : null;
                     if (mapState != null) mapState.toggle();
                 }
             }
@@ -2460,9 +2487,9 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 
         inputManager.addListener((AnalogListener) (name, value, tpf) -> {
             // When 2D map is visible, redirect mouse events to map
-            var mapState = standalone ? stateManager.getState(MapViewState.class) : null;
-            if (mapState != null && mapState.isMapVisible()) {
-                var cursor = inputManager.getCursorPosition();
+            var mapState = standalone ? stateManager.getState(NativeMapState.class) : null;
+            var cursor = inputManager.getCursorPosition();
+            if (mapState != null && mapState.wantsMouseInput(cursor.x, cursor.y)) {
                 switch (name) {
                     case "ZoomIn" -> mapState.zoomAt(1.20, cursor.x, cursor.y);
                     case "ZoomOut" -> mapState.zoomAt(1.0 / 1.20, cursor.x, cursor.y);

@@ -69,15 +69,15 @@ final class MapRenderer implements se.hirt.searobots.engine.SimulationListener {
 
     // submarine rendering
     private static final int MAX_TRAIL_LENGTH = 300; // ~30 seconds at 10 samples/sec
-    private volatile List<SubmarineSnapshot> submarines = List.of();
+    volatile List<SubmarineSnapshot> submarines = List.of();
     @SuppressWarnings("unchecked")
-    private Deque<Vec3>[] trails = new Deque[0];
+    Deque<Vec3>[] trails = new Deque[0];
     @SuppressWarnings("unchecked")
-    private List<Vec3>[] routes = new List[0];
+    List<Vec3>[] routes = new List[0];
     private static final int ROUTE_SAMPLE_INTERVAL = 25; // record route every N ticks
-    private volatile long simTick;
-    private volatile java.util.function.BooleanSupplier simPausedSupplier = () -> false;
-    private volatile java.util.function.DoubleSupplier simSpeedSupplier = () -> 1.0;
+    volatile long simTick;
+    volatile java.util.function.BooleanSupplier simPausedSupplier = () -> false;
+    volatile java.util.function.DoubleSupplier simSpeedSupplier = () -> 1.0;
 
     // Loading spinner: reads state from sim loop via supplier
     private volatile java.util.function.Supplier<se.hirt.searobots.engine.SimulationLoop.State> simStateSupplier = () -> se.hirt.searobots.engine.SimulationLoop.State.RUNNING;
@@ -88,23 +88,23 @@ final class MapRenderer implements se.hirt.searobots.engine.SimulationListener {
     }
 
     // Competition results overlay
-    private final java.util.concurrent.CopyOnWriteArrayList<String> competitionResults =
+    final java.util.concurrent.CopyOnWriteArrayList<String> competitionResults =
             new java.util.concurrent.CopyOnWriteArrayList<>();
-    private volatile String competitionPhase = "";
+    volatile String competitionPhase = "";
 
     public void setCompetitionPhase(String phase) { this.competitionPhase = phase; }
     public void addCompetitionResult(String result) { competitionResults.add(result); }
     public void clearCompetitionResults() { competitionResults.clear(); competitionPhase = ""; }
 
     // Competition objectives (nav waypoint targets)
-    private volatile java.util.List<se.hirt.searobots.api.StrategicWaypoint> competitionObjectives;
+    volatile java.util.List<se.hirt.searobots.api.StrategicWaypoint> competitionObjectives;
     public void setCompetitionObjectives(java.util.List<se.hirt.searobots.api.StrategicWaypoint> obj) {
         this.competitionObjectives = obj;
     }
 
     // Ping animations
-    private record PingAnimation(double x, double y, long startTick, Color color, int sourceId) {}
-    private final java.util.concurrent.CopyOnWriteArrayList<PingAnimation> pingAnimations =
+    record PingAnimation(double x, double y, long startTick, Color color, int sourceId) {}
+    final java.util.concurrent.CopyOnWriteArrayList<PingAnimation> pingAnimations =
             new java.util.concurrent.CopyOnWriteArrayList<>();
     private static final double PING_VISUAL_SPEED = 1500.0; // m/s — realistic sound speed in water
     private static final double PING_MAX_RADIUS = 10000.0; // covers full battle area diameter
@@ -112,8 +112,8 @@ final class MapRenderer implements se.hirt.searobots.engine.SimulationListener {
     private static final double PING_FLASH_RADIUS = 150.0;  // meters
 
     // Detection highlights: when a ping ring sweeps over another sub
-    private record DetectionHighlight(double x, double y, long startTick, Color color) {}
-    private final java.util.ArrayList<DetectionHighlight> detectionHighlights = new java.util.ArrayList<>();
+    record DetectionHighlight(double x, double y, long startTick, Color color) {}
+    final java.util.ArrayList<DetectionHighlight> detectionHighlights = new java.util.ArrayList<>();
     private static final double DETECTION_HIGHLIGHT_DURATION = 1.5; // seconds
     private static final double DETECTION_HIGHLIGHT_RADIUS = 80.0;  // meters
 
@@ -145,12 +145,12 @@ final class MapRenderer implements se.hirt.searobots.engine.SimulationListener {
     }
 
     // Torpedo state
-    private volatile List<se.hirt.searobots.engine.TorpedoSnapshot> torpedoSnapshots = List.of();
+    volatile List<se.hirt.searobots.engine.TorpedoSnapshot> torpedoSnapshots = List.of();
     private final java.util.Set<Integer> knownTorpedoIds = new java.util.HashSet<>();
 
     // Explosion animations
-    private record ExplosionAnimation(double x, double y, double z, long startTick, Color color) {}
-    private final java.util.concurrent.CopyOnWriteArrayList<ExplosionAnimation> explosionAnimations =
+    record ExplosionAnimation(double x, double y, double z, long startTick, Color color) {}
+    final java.util.concurrent.CopyOnWriteArrayList<ExplosionAnimation> explosionAnimations =
             new java.util.concurrent.CopyOnWriteArrayList<>();
     private static final double EXPLOSION_DURATION = 2.0; // seconds
     private static final double EXPLOSION_MAX_RADIUS = 50.0; // matches MatchConfig.blastRadius
