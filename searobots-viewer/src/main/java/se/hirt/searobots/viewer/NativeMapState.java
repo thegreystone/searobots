@@ -65,7 +65,9 @@ import java.util.List;
 
 /**
  * jME3-native tactical map overlay. Renders the 2D map using GPU-accelerated
- * geometry in an offscreen viewport, eliminating the Java2D freeze from
+ * geometry in an offscreen viewport, eliminating the Java2D freeze that would
+ * happen on Mac when trying to use the Map.
+ *
  * {@link MapViewState}.
  */
 final class NativeMapState extends BaseAppState {
@@ -1259,10 +1261,6 @@ final class NativeMapState extends BaseAppState {
         return new ColorRGBA(r / 255f, g / 255f, b / 255f, 0.78f);
     }
 
-    // ═══════════════════════════════════════════════════════════════
-    //  Terrain texture generation
-    // ═══════════════════════════════════════════════════════════════
-
     private Texture2D renderTerrainTexture(GeneratedWorld world) {
         var terrain = world.terrain();
         int w = terrain.getCols(), h = terrain.getRows();
@@ -1346,10 +1344,6 @@ final class NativeMapState extends BaseAppState {
         g.setQueueBucket(RenderQueue.Bucket.Transparent);
         return g;
     }
-
-    // ═══════════════════════════════════════════════════════════════
-    //  Pool management + float list helper
-    // ═══════════════════════════════════════════════════════════════
 
     private void ensurePool(List<Geometry> pool, int needed,
                              java.util.function.Supplier<Geometry> factory) {
