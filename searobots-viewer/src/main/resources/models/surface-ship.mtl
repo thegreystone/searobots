@@ -1,0 +1,35 @@
+# Surface warship materials
+#
+newmtl hull_grey
+Ka  0.15 0.15 0.15
+Kd  0.55 0.56 0.54
+Ks  0.60 0.60 0.60
+d   1.0
+Ns  18.0
+illum 2
+#
+newmtl superstructure_grey
+Ka  0.20 0.20 0.20
+Kd  0.65 0.65 0.63
+Ks  0.70 0.70 0.70
+d   1.0
+Ns  22.0
+illum 2
+#
+newmtl metal_dark
+Ka  0.05 0.05 0.05
+Kd  0.20 0.20 0.20
+Ks  0.50 0.50 0.50
+d   1.0
+Ns  10.0
+illum 2
+#
+newmtl Metal_Chrome
+Ka  0.40 0.40 0.40
+Kd  0.40 0.40 0.40
+Ks  0.90 0.90 0.90
+d   1.0
+Ns  15.0
+illum 2
+#
+# EOF

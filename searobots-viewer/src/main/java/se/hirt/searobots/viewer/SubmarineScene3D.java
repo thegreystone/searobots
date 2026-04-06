@@ -53,7 +53,8 @@ import java.util.Map;
  */
 public final class SubmarineScene3D extends SimpleApplication implements se.hirt.searobots.engine.SimulationListener {
 
-    private Node modelNode; // template, loaded at init
+    private Node modelNode;      // submarine template, loaded at init
+    private Node shipModelNode;  // surface ship template, loaded at init
     private Geometry terrainGeometry;
     private Spatial sky;
     private Geometry sunBillboard;
@@ -349,6 +350,24 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
         // Rotate so it faces along Z (model is built along Y axis)
         modelNode.setLocalRotation(new Quaternion().fromAngles(-FastMath.HALF_PI, 0, 0));
         // modelNode is a template for cloning - don't attach to rootNode
+
+        // Load surface ship model template
+        shipModelNode = new Node("surfaceShipTemplate");
+        try {
+            Spatial shipHull = assetManager.loadModel("models/surface-ship.obj");
+            generateSmoothNormals(shipHull);
+            disableBackFaceCulling(shipHull);
+            shipModelNode.attachChild(shipHull);
+            System.out.println("Loaded surface-ship.obj");
+        } catch (Exception e) {
+            System.err.println("Failed to load surface ship model: " + e.getMessage());
+            var ph = new Geometry("shipFallback", new com.jme3.scene.shape.Box(15f, 3f, 75f));
+            Material mat = new Material(assetManager, "Common/MatDefs/Misc/Unshaded.j3md");
+            mat.setColor("Color", ColorRGBA.Gray);
+            ph.setMaterial(mat);
+            shipModelNode.attachChild(ph);
+        }
+        shipModelNode.setLocalRotation(new Quaternion().fromAngles(-FastMath.HALF_PI, 0, 0));
 
         // Load torpedo model template (scaled to ~5m, sub is ~75m so torpedo is ~1/15th)
         torpedoModelNode = new Node("torpedoTemplate");
@@ -1802,8 +1821,9 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
                     -FastMath.HALF_PI - pitch, heading, roll);
 
             if (subNode == null) {
-                // Create a new sub model by cloning the template
-                subNode = (Node) modelNode.deepClone();
+                // Create a new vehicle model by cloning the appropriate template
+                Node template = snap.surfaceLocked() ? shipModelNode : modelNode;
+                subNode = (Node) template.deepClone();
                 subNode.setName("sub-" + snap.id());
                 subNodes.put(snap.id(), subNode);
                 rootNode.attachChild(subNode);

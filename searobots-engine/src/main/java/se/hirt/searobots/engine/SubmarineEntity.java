@@ -272,7 +272,8 @@ public final class SubmarineEntity implements SubmarineOutput {
                 forfeited, hp, noiseLevel, sourceLevelDb,
                 throttle, rudder, sternPlanes, status, pingRequested,
                 torpedoesRemaining,
-                contactEstimates(), waypoints(), strategicWaypoints(), firingSolution);
+                contactEstimates(), waypoints(), strategicWaypoints(), firingSolution,
+                vehicleConfig.surfaceLocked());
     }
 
     public SubmarineState state() {
