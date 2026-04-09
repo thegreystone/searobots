@@ -79,7 +79,7 @@ public final class ClaudeAttackSub implements SubmarineController {
     // Combat state
     private Mode mode = Mode.PATROL, prevMode = Mode.PATROL;
     private boolean hasTrackedContact;
-    private double trackedX = Double.NaN, trackedY = Double.NaN;
+    private double trackedX = Double.NaN, trackedY = Double.NaN, trackedZ = Double.NaN;
     private double trackedHeading = Double.NaN, trackedSpeed = 5.0;
     private double contactAlive = 0, uncertaintyRadius = 0, refUncertainty = 400;
     private double estimatedRange = Double.POSITIVE_INFINITY;
@@ -92,6 +92,7 @@ public final class ClaudeAttackSub implements SubmarineController {
     private long lastPingTick = Long.MIN_VALUE / 4;
     private double lastCombatTargetX = Double.NaN, lastCombatTargetY = Double.NaN;
     private long lastTorpedoLaunchTick = Long.MIN_VALUE / 4;
+    private long lastConfirmedHitTick = Long.MIN_VALUE / 4;
     private static final long TORPEDO_REFIRE_COOLDOWN = 750; // 15 seconds between launches (2 tubes)
     private boolean outOfTorpedoes; // set when all torpedoes expended
 
@@ -159,6 +160,33 @@ public final class ClaudeAttackSub implements SubmarineController {
         double heading = self.pose().heading();
         double speed = self.velocity().speed();
         long tick = input.tick();
+
+        // ── Explosion feedback ──
+        for (var ev : input.explosionEvents()) {
+            double exX = pos.x() + ev.rangeMetres() * Math.sin(ev.bearing());
+            double exY = pos.y() + ev.rangeMetres() * Math.cos(ev.bearing());
+            if (ev.ownTorpedo()) {
+                String kind = ev.submarineHit() ? "HIT sub" : "terrain/miss";
+                System.out.printf("[Claude] Torpedo %d %s at (%.0f,%.0f) range=%.0fm bearing=%.0f°%n",
+                        ev.torpedoId(), kind, exX, exY, ev.rangeMetres(), Math.toDegrees(ev.bearing()));
+                if (ev.submarineHit()) {
+                    // Explosion position is a precise fix on where the enemy was
+                    trackedX = exX;
+                    trackedY = exY;
+                    hasTrackedContact = true;
+                    uncertaintyRadius = 60;
+                    refUncertainty = 60;
+                    rangeConfirmedByActive = true;
+                    trackedLastFixTick = tick;
+                    contactAlive = 1.0;
+                    lastConfirmedHitTick = tick;
+                }
+            } else {
+                String kind = ev.submarineHit() ? "enemy hit us" : "terrain";
+                System.out.printf("[Claude] Explosion heard: bearing=%.0f° range=%.0fm (%s)%n",
+                        Math.toDegrees(ev.bearing()), ev.rangeMetres(), kind);
+            }
+        }
 
         // ── Combat: track contacts ──
         SonarContact best = pickBestContact(input.sonarContacts(), input.activeSonarReturns());
@@ -360,6 +388,7 @@ public final class ClaudeAttackSub implements SubmarineController {
             uncertaintyRadius = Math.max(80, contact.rangeUncertainty() > 0
                     ? contact.rangeUncertainty() * 2 : 90);
             refUncertainty = uncertaintyRadius;
+            if (!Double.isNaN(contact.estimatedDepth())) trackedZ = contact.estimatedDepth();
         } else {
             double spread = Math.max(450,
                     range * Math.max(contact.bearingUncertainty(), Math.toRadians(6)) * 2);
@@ -387,7 +416,7 @@ public final class ClaudeAttackSub implements SubmarineController {
 
     private void clearTrack() {
         hasTrackedContact = false;
-        trackedX = trackedY = trackedHeading = Double.NaN;
+        trackedX = trackedY = trackedZ = trackedHeading = Double.NaN;
         trackedSpeed = 5; contactAlive = 0; uncertaintyRadius = 0;
         estimatedRange = Double.POSITIVE_INFINITY;
         rangeConfirmedByActive = false; consecutiveContactTicks = 0;
@@ -419,7 +448,10 @@ public final class ClaudeAttackSub implements SubmarineController {
             boolean needFix = dist < 2000 && uncertaintyRadius > 150 && sinceFix > 250;
             boolean lostTrack = sinceFix > 500 && uncertaintyRadius > 600;
             boolean longShadow = dist < 1500 && since > 600; // ping every 12s when shadowing close
-            shouldPing = needFix || lostTrack || longShadow;
+            // Long-range fix: when target is beyond 2000m, uncertainty still grows and
+            // we need a fix before the target closes to firing range.
+            boolean longRangeFix = uncertaintyRadius > 250 && !rangeConfirmedByActive && sinceFix > 400;
+            shouldPing = needFix || lostTrack || longShadow || longRangeFix;
         } else {
             // Tracking: ping to confirm contact, but not too often
             shouldPing = since >= PATROL_PING_INTERVAL;
@@ -454,23 +486,20 @@ public final class ClaudeAttackSub implements SubmarineController {
             outOfTorpedoes = true;
             return;
         }
-        if (tick < 500) return; // don't fire in the first 10 seconds
+        if (tick < 500) return;
         if (tick - lastTorpedoLaunchTick < TORPEDO_REFIRE_COOLDOWN) return;
         if (!hasTrackedContact) return;
         if (contactAlive < 0.50) return;
         if (mode != Mode.CHASE) return;
 
         double dist = ClaudeAutopilot.hdist(pos.x(), pos.y(), trackedX, trackedY);
-        // Close before firing: 800-2000m is the sweet spot.
-        // Too close = arming risk. Too far = torpedo can't catch maneuvering target.
         if (dist < 800 || dist > 2000) return;
-        // Need good track: either active fix or decent TMA solution
         if (!rangeConfirmedByActive && uncertaintyRadius > 300) return;
         if (uncertaintyRadius > 400) return;
-        // Conserve torpedoes: fire in pairs, with 45-second assessment between salvos.
         int torpsRemaining = input.self().torpedoesRemaining();
         int torpsFired = config.torpedoCount() - torpsRemaining;
-        if (torpsFired >= 2 && tick - lastTorpedoLaunchTick < 2250) return; // 45s between salvos
+        boolean recentHit = tick - lastConfirmedHitTick < 1500; // bypass salvo gap 30s after confirmed hit
+        if (torpsFired >= 2 && tick - lastTorpedoLaunchTick < 2250 && !recentHit) return;
 
         // Compute bearing to target
         double bearing = Math.atan2(trackedX - pos.x(), trackedY - pos.y());
@@ -491,7 +520,7 @@ public final class ClaudeAttackSub implements SubmarineController {
         if (leadBearing < 0) leadBearing += 2 * Math.PI;
 
         // Build mission data with target info and estimated velocity
-        double targetDepth = -100; // conservative depth estimate
+        double targetDepth = Double.isNaN(trackedZ) ? -100 : trackedZ;
         String missionData = String.format("%.0f,%.0f,%.0f,%.4f,%.1f",
                 leadX, leadY, targetDepth,
                 Double.isNaN(trackedHeading) ? 0 : trackedHeading,
@@ -505,7 +534,7 @@ public final class ClaudeAttackSub implements SubmarineController {
         if (Math.abs(headingError) > Math.toRadians(20)) return;
 
         output.launchTorpedo(new TorpedoLaunchCommand(
-                leadBearing, 0, 7.0, missionData));
+                leadBearing, 0, 15.0, missionData));
         lastTorpedoLaunchTick = tick;
         System.out.printf("[Claude] Torpedo launched at tick %d, target=(%.0f,%.0f) dist=%.0fm hdgErr=%.1f°%n",
                 tick, leadX, leadY, dist, Math.toDegrees(headingError));

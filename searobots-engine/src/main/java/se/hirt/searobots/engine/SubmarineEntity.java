@@ -85,6 +85,9 @@ public final class SubmarineEntity implements SubmarineOutput {
     // firing solution (published by controller, cleared each tick)
     private FiringSolution firingSolution;
 
+    // explosion events (written by SimulationLoop, drained and delivered to controller next tick)
+    private final List<ExplosionEvent> pendingExplosionEvents = new ArrayList<>();
+
     // torpedo state
     private int torpedoesRemaining;
     private TorpedoLaunchCommand pendingTorpedoLaunch;
@@ -231,6 +234,14 @@ public final class SubmarineEntity implements SubmarineOutput {
     public void clearStrategicWaypoints() { strategicWaypoints.clear(); }
     public FiringSolution firingSolution() { return firingSolution; }
     public void clearFiringSolution() { firingSolution = null; }
+
+    public void addExplosionEvent(ExplosionEvent event) { pendingExplosionEvents.add(event); }
+    public List<ExplosionEvent> drainExplosionEvents() {
+        if (pendingExplosionEvents.isEmpty()) return List.of();
+        var result = List.copyOf(pendingExplosionEvents);
+        pendingExplosionEvents.clear();
+        return result;
+    }
 
     public void setX(double x) { this.x = x; }
     public void setY(double y) { this.y = y; }

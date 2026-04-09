@@ -28,23 +28,14 @@
  */
 package se.hirt.searobots.api;
 
-import java.util.List;
-
-public interface SubmarineInput {
-    long tick();
-    double deltaTimeSeconds();
-    SubmarineState self();
-    EnvironmentSnapshot environment();
-
-    /** Passive sonar detections this tick (bearing + signal excess, no range). */
-    default List<SonarContact> sonarContacts() { return List.of(); }
-
-    /** Active sonar returns from own ping, if any (bearing + range). */
-    default List<SonarContact> activeSonarReturns() { return List.of(); }
-
-    /** Ticks until next active ping is allowed. 0 = ready. */
-    default int activeSonarCooldownTicks() { return 0; }
-
-    /** Explosions heard this tick (detonations that occurred on the previous tick). */
-    default List<ExplosionEvent> explosionEvents() { return List.of(); }
-}
+/**
+ * An explosion heard by a submarine, delivered via {@link SubmarineInput#explosionEvents()}
+ * on the tick following the detonation.
+ *
+ * @param bearing        bearing from this submarine to the explosion, in radians (0=north, clockwise)
+ * @param rangeMetres    distance to the explosion centre, in metres
+ * @param ownTorpedo     true if this submarine fired the torpedo that detonated
+ * @param torpedoId      ID of the torpedo that detonated
+ * @param submarineHit   true if the proximity fuse triggered on a submarine hull (vs terrain/fuel/manual)
+ */
+public record ExplosionEvent(double bearing, double rangeMetres, boolean ownTorpedo, int torpedoId, boolean submarineHit) {}

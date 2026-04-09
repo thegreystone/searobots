@@ -160,6 +160,7 @@ public final class SimulationLoop {
 
                     var sr = sonarResults.getOrDefault(entity.id(),
                             new SonarModel.SonarResult(List.of(), List.of(), 0));
+                    var explosionEvs = entity.drainExplosionEvents();
                     var input = new SubmarineInput() {
                         @Override public long tick() { return currentTick; }
                         @Override public double deltaTimeSeconds() { return dt; }
@@ -168,6 +169,7 @@ public final class SimulationLoop {
                         @Override public List<SonarContact> sonarContacts() { return sr.passiveContacts(); }
                         @Override public List<SonarContact> activeSonarReturns() { return sr.activeReturns(); }
                         @Override public int activeSonarCooldownTicks() { return sr.cooldownTicks(); }
+                        @Override public List<ExplosionEvent> explosionEvents() { return explosionEvs; }
                     };
 
                     entity.controller().onTick(input, entity);
@@ -240,7 +242,7 @@ public final class SimulationLoop {
 
                     // Manual detonation request
                     if (torp.detonateRequested()) {
-                        handleDetonation(torp, entities, config);
+                        handleDetonation(torp, entities, config, false);
                         continue;
                     }
 
@@ -264,7 +266,7 @@ public final class SimulationLoop {
 
                     // Check detonation request from controller
                     if (torp.detonateRequested()) {
-                        handleDetonation(torp, entities, config);
+                        handleDetonation(torp, entities, config, false);
                         continue;
                     }
 
@@ -292,7 +294,7 @@ public final class SimulationLoop {
                         if (hullDist < torp.fuseRadius()) {
                             System.out.printf("[Torpedo %d] PROXIMITY FUSE at tick %d, hull dist=%.1fm to sub %d (%s)%n",
                                     torp.id(), tick, hullDist, sub.id(), sub.controller().name());
-                            handleDetonation(torp, entities, config);
+                            handleDetonation(torp, entities, config, true);
                             break;
                         }
                     }
@@ -302,7 +304,7 @@ public final class SimulationLoop {
                 // (terrain impact, manual detonation, stall)
                 for (var t : torpedoes) {
                     if (t.detonated() && !t.explosionProcessed()) {
-                        handleDetonation(t, entities, config);
+                        handleDetonation(t, entities, config, false);
                     }
                 }
 
@@ -371,7 +373,7 @@ public final class SimulationLoop {
     private static final double EXPLOSION_IMPULSE = 15.0; // m/s velocity change at zero range (before mass division)
 
     private static void handleDetonation(TorpedoEntity torp, List<SubmarineEntity> subs,
-                                          MatchConfig config) {
+                                          MatchConfig config, boolean submarineHit) {
         torp.detonate();
         torp.setExplosionProcessed();
         double blastRadius = config.blastRadius();
@@ -382,6 +384,18 @@ public final class SimulationLoop {
         double blastX = torp.x() + Math.sin(torp.heading()) * cosP * halfLen;
         double blastY = torp.y() + Math.cos(torp.heading()) * cosP * halfLen;
         double blastZ = torp.z() + sinP * halfLen;
+
+        // Queue explosion events for all living submarines (delivered next tick)
+        for (var sub : subs) {
+            if (sub.hp() <= 0 || sub.forfeited()) continue;
+            double edx = blastX - sub.x();
+            double edy = blastY - sub.y();
+            double edz = blastZ - sub.z();
+            double eRange = Math.sqrt(edx * edx + edy * edy + edz * edz);
+            double eBearing = Math.atan2(edx, edy);
+            if (eBearing < 0) eBearing += 2 * Math.PI;
+            sub.addExplosionEvent(new ExplosionEvent(eBearing, eRange, sub.id() == torp.ownerId(), torp.id(), submarineHit));
+        }
 
         for (var sub : subs) {
             if (sub.hp() <= 0 || sub.forfeited()) continue;
