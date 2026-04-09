@@ -12,7 +12,9 @@
 SeaRobots is a competitive autonomous underwater combat simulator inspired by
 the classic [C-Robots](https://en.wikipedia.org/wiki/Crobots) (1985). The idea
 was simple: what if you did Crobots, but in a vastly more complex environment?
-It could be submarines, because then it would be SeaRobots (lol). 
+It could be submarines, because then it would be SeaRobots (lol).
+
+https://github.com/user-attachments/assets/3afa7f28-3f54-4e36-a25e-546bfa7c95e3
 
 Based on an idea and implementation from 2004, it will eventually be revised so
 that submarines can participate in a language-agnostic manner and untrusted code
