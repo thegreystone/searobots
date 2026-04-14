@@ -308,6 +308,8 @@ searobots/
 
 ### Writing a New Controller
 
+For now, submarines have to be implemented in Java. In a later version, a network protocol will be introduced so that submarines can be implemented in any language. 
+
 1. Create a class implementing `SubmarineController` in a new subpackage
    under `se.hirt.searobots.engine.ships`.
 2. Implement `name()`, `onMatchStart()`, and `onTick()`.
