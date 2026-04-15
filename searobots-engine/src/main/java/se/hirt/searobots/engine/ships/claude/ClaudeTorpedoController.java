@@ -158,6 +158,12 @@ public class ClaudeTorpedoController implements TorpedoController {
         // Take the max: never sacrifice closing speed, but slow for turns when we can.
         double goalSpeed = Math.clamp(Math.max(turnSpeed, closingFloor), 12.0, 23.0);
         if (phase == Phase.TRANSIT) goalSpeed = 23.0;
+        // Terminal slow-down: reduce speed inside 100m when turning hard (crossing shots).
+        // Slower speed = tighter turn radius. Only apply for large heading errors
+        // to avoid slowing down in tail chases where speed is needed.
+        if (phase == Phase.TERMINAL && dist < 100 && absErr > Math.toRadians(25)) {
+            goalSpeed = Math.min(goalSpeed, 14.0);
+        }
         double speedError = goalSpeed - input.speed();
         double throttle = Math.clamp(speedError * 0.15 + 0.5, 0.1, 1.0);
         output.setThrottle(throttle);
@@ -170,10 +176,10 @@ public class ClaudeTorpedoController implements TorpedoController {
         usePassiveContacts(input, pos, heading);
         double activeRange = processActiveReturns(input, pos, heading);
 
-        // Manual detonation: if active sonar shows target within 25m, detonate.
+        // Manual detonation: if active sonar shows target within 30m, detonate.
         // The proximity fuse may miss in crossing shots; manual detonation ensures
         // the warhead goes off when we're close enough.
-        if (activeRange < 25 && phase == Phase.TERMINAL) {
+        if (activeRange < 30 && phase == Phase.TERMINAL) {
             output.detonate();
             return;
         }
@@ -253,7 +259,7 @@ public class ClaudeTorpedoController implements TorpedoController {
                         double headErr = bearingToTarget - heading;
                         while (headErr > Math.PI) headErr -= 2 * Math.PI;
                         while (headErr < -Math.PI) headErr += 2 * Math.PI;
-                        double pursuit = Math.clamp(headErr * 3.0, -1, 1);
+                        double pursuit = Math.clamp(headErr * 4.0, -1, 1);
                         double blend = Math.clamp((dist - 50) / 100.0, 0, 1);
                         rudderCmd = rudderCmd * blend + pursuit * (1 - blend);
                     }
@@ -262,7 +268,7 @@ public class ClaudeTorpedoController implements TorpedoController {
                     double headErr = bearingToTarget - heading;
                     while (headErr > Math.PI) headErr -= 2 * Math.PI;
                     while (headErr < -Math.PI) headErr += 2 * Math.PI;
-                    rudderCmd = Math.clamp(headErr * 3.0, -1, 1);
+                    rudderCmd = Math.clamp(headErr * 4.0, -1, 1);
                 }
             } else {
                 // First tick in terminal, use pursuit on target
