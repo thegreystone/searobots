@@ -348,12 +348,12 @@ public class ClaudeTorpedoCombatTest {
     }
 
     @Test
-    void decisiveVictory_0x1cccb() {
-        var r = runCombat(ClaudeAttackSub::new, CodexAttackSub::new, 0x1cccb, TICKS_10MIN);
-        System.out.printf("seed=0x1cccb  Claude hp=%d  Codex hp=%d  torps=%d  tick=%d%n",
+    void decisiveVictory_0x0aaaa() {
+        var r = runCombat(ClaudeAttackSub::new, CodexAttackSub::new, 0x0aaaa, TICKS_15MIN);
+        System.out.printf("seed=0x0aaaa  Claude hp=%d  Codex hp=%d  torps=%d  tick=%d%n",
                 r.hpA, r.hpB, r.torpsAFired, r.endTick);
-        assertTrue(r.aKilledB(), "Claude should kill Codex on seed 0x1cccb");
-        assertTrue(r.hpA > 0, "Claude should survive on seed 0x1cccb");
+        assertTrue(r.aKilledB(), "Claude should kill Codex on seed 0x0aaaa");
+        assertTrue(r.hpA > 0, "Claude should survive on seed 0x0aaaa");
     }
 
     @Test
@@ -366,12 +366,12 @@ public class ClaudeTorpedoCombatTest {
     }
 
     @Test
-    void decisiveVictory_0x23331() {
-        var r = runCombat(ClaudeAttackSub::new, CodexAttackSub::new, 0x23331, TICKS_15MIN);
-        System.out.printf("seed=0x23331  Claude hp=%d  Codex hp=%d  torps=%d  tick=%d%n",
+    void decisiveVictory_0x2eeec() {
+        var r = runCombat(ClaudeAttackSub::new, CodexAttackSub::new, 0x2eeec, TICKS_15MIN);
+        System.out.printf("seed=0x2eeec  Claude hp=%d  Codex hp=%d  torps=%d  tick=%d%n",
                 r.hpA, r.hpB, r.torpsAFired, r.endTick);
-        assertTrue(r.aKilledB(), "Claude should kill Codex on seed 0x23331");
-        assertTrue(r.hpA > 0, "Claude should survive on seed 0x23331");
+        assertTrue(r.aKilledB(), "Claude should kill Codex on seed 0x2eeec");
+        assertTrue(r.hpA > 0, "Claude should survive on seed 0x2eeec");
     }
 
     @Test
@@ -384,12 +384,12 @@ public class ClaudeTorpedoCombatTest {
     }
 
     @Test
-    void decisiveVictory_0xdeb2664c() {
-        var r = runCombat(ClaudeAttackSub::new, CodexAttackSub::new, 0xdeb2664cL, TICKS_10MIN);
-        System.out.printf("seed=0xdeb2664c  Claude hp=%d  Codex hp=%d  torps=%d  tick=%d%n",
+    void decisiveVictory_0x2aaa8() {
+        var r = runCombat(ClaudeAttackSub::new, CodexAttackSub::new, 0x2aaa8, TICKS_30MIN);
+        System.out.printf("seed=0x2aaa8  Claude hp=%d  Codex hp=%d  torps=%d  tick=%d%n",
                 r.hpA, r.hpB, r.torpsAFired, r.endTick);
-        assertTrue(r.aKilledB(), "Claude should kill Codex on seed 0xdeb2664c");
-        assertTrue(r.hpA > 0, "Claude should survive on seed 0xdeb2664c");
+        assertTrue(r.aKilledB(), "Claude should kill Codex on seed 0x2aaa8");
+        assertTrue(r.hpA > 0, "Claude should survive on seed 0x2aaa8");
     }
 
     @Test

@@ -741,8 +741,8 @@ public final class ClaudeAttackSub implements SubmarineController {
 
     private double safeDepth(double x, double y, double cruiseDepth) {
         double floor = terrain.elevationAt(x, y);
-        double target = Math.max(cruiseDepth, floor + 40); // 40m clearance (aggressive but safe)
-        return Math.clamp(target, config.crushDepth() + 50, -40); // never shallower than -40m
+        double target = Math.max(cruiseDepth, floor + 45); // 45m clearance (match autopilot)
+        return Math.clamp(target, config.crushDepth() + 50, -50); // never shallower than -50m
     }
 
     private double polylineLength(List<Vec3> path) {

@@ -92,7 +92,8 @@ public final class SonarModel {
      */
     private static SonarContact.Classification classify(double signalExcess,
                                                          double estimatedSpeed,
-                                                         double estimatedSL) {
+                                                         double estimatedSL,
+                                                         double estimatedDepth) {
         // Need enough signal to analyse the tonal structure
         if (signalExcess < 8) return SonarContact.Classification.UNKNOWN;
 
@@ -100,7 +101,9 @@ public final class SonarModel {
         if (estimatedSpeed > 18) return SonarContact.Classification.TORPEDO;
 
         // Very loud + moderate speed = surface ship (big slow prop, machinery noise)
-        if (estimatedSL > 108 && estimatedSpeed >= 0 && estimatedSpeed < 12) {
+        // But only if near the surface: anything deeper than -30m is submerged.
+        if (estimatedSL > 108 && estimatedSpeed >= 0 && estimatedSpeed < 12
+                && (Double.isNaN(estimatedDepth) || estimatedDepth > -30)) {
             return SonarContact.Classification.SURFACE_SHIP;
         }
 
@@ -223,7 +226,7 @@ public final class SonarModel {
             double estSpd = sSpeed > 0 ? sSpeed + rng.nextGaussian() * 2 : -1;
             return new SonarContact(noisyBearing, se, 0, false, estSpd,
                     bearingError, 0, sl, 0, Double.NaN,
-                    Double.NaN, classify(se, estSpd, sl));
+                    Double.NaN, classify(se, estSpd, sl, Double.NaN));
         }
         return null;
     }
@@ -260,9 +263,12 @@ public final class SonarModel {
             double estimatedDepth = lz + trueDepthDiff + depthNoiseRms * rng.nextGaussian();
 
             double estSpd = sSpeed > 0 ? sSpeed + rng.nextGaussian() * 2 : -1;
+            // Active sonar reflects off the target; the "source level" is the echo
+            // strength, not the target's own noise. Pass 0 for estimatedSL so
+            // classification relies on speed and depth instead of acoustic signature.
             return new SonarContact(noisyBearing, activeSe, noisyRange, true, estSpd,
-                    bearingError, rangeRmsNoise, ACTIVE_PING_SL_DB, 0, Double.NaN,
-                    estimatedDepth, classify(activeSe, estSpd, ACTIVE_PING_SL_DB));
+                    bearingError, rangeRmsNoise, 0, 0, Double.NaN,
+                    estimatedDepth, classify(activeSe, estSpd, 0, estimatedDepth));
         }
         return null;
     }
@@ -350,7 +356,7 @@ public final class SonarModel {
                     passive.add(new SonarContact(reportedBearing, se, tracker.estimatedRange(), false, estSpeed,
                             brgStdDev, tracker.rangeUncertainty(), estSL,
                             tracker.solutionQuality(), tracker.estimatedHeading(),
-                            Double.NaN, classify(se, estSpeed, estSL)));
+                            Double.NaN, classify(se, estSpeed, estSL, Double.NaN)));
                 }
 
                 // --- Active sonar returns (for the listener's own ping) ---
@@ -378,7 +384,7 @@ public final class SonarModel {
                         active.add(new SonarContact(reportedBearing, activeSe, reportedRange, true,
                                 estSpeed, activeBrgStdDev, rangeRmsNoise, estSL,
                                 tracker.solutionQuality(), tracker.estimatedHeading(),
-                                estimatedDepth, classify(activeSe, estSpeed, estSL)));
+                                estimatedDepth, classify(activeSe, estSpeed, estSL, estimatedDepth)));
                     }
                 }
             }
