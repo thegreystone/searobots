@@ -498,7 +498,7 @@ public final class ClaudeAttackSub implements SubmarineController {
         if (uncertaintyRadius > 400) return;
         int torpsRemaining = input.self().torpedoesRemaining();
         int torpsFired = config.torpedoCount() - torpsRemaining;
-        boolean recentHit = tick - lastConfirmedHitTick < 1500; // bypass salvo gap 30s after confirmed hit
+        boolean recentHit = tick - lastConfirmedHitTick < 1500; // bypass salvo gap after confirmed hit
         if (torpsFired >= 2 && tick - lastTorpedoLaunchTick < 2250 && !recentHit) return;
 
         // Compute bearing to target
@@ -531,7 +531,7 @@ public final class ClaudeAttackSub implements SubmarineController {
         double headingError = leadBearing - input.self().pose().heading();
         while (headingError > Math.PI) headingError -= 2 * Math.PI;
         while (headingError < -Math.PI) headingError += 2 * Math.PI;
-        if (Math.abs(headingError) > Math.toRadians(20)) return;
+        if (Math.abs(headingError) > Math.toRadians(25)) return;
 
         output.launchTorpedo(new TorpedoLaunchCommand(
                 leadBearing, 0, 15.0, missionData));

@@ -25,4 +25,22 @@ public interface TorpedoOutput {
 
     /** Publish current target position for viewer visualization. */
     default void publishTarget(double x, double y, double z) {}
+
+    /**
+     * Publish torpedo guidance diagnostics for analysis.
+     *
+     * @param estX       estimated target X (where we think the target is)
+     * @param estY       estimated target Y
+     * @param estZ       estimated target Z (depth)
+     * @param estHeading estimated target heading (radians, NaN if unknown)
+     * @param estSpeed   estimated target speed (m/s)
+     * @param intX       intercept point X (where we're steering toward)
+     * @param intY       intercept point Y
+     * @param intZ       intercept point Z
+     * @param phase      guidance phase name (e.g. "TRANSIT", "ACQUISITION", "TERMINAL")
+     */
+    default void publishDiagnostics(double estX, double estY, double estZ,
+                                     double estHeading, double estSpeed,
+                                     double intX, double intY, double intZ,
+                                     String phase) {}
 }

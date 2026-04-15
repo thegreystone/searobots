@@ -87,6 +87,12 @@ public final class TorpedoEntity {
     // Published target (for viewer visualization)
     private double pubTargetX = Double.NaN, pubTargetY = Double.NaN, pubTargetZ = Double.NaN;
 
+    // Guidance diagnostics (for analysis)
+    private double diagEstX = Double.NaN, diagEstY = Double.NaN, diagEstZ = Double.NaN;
+    private double diagEstHeading = Double.NaN, diagEstSpeed = Double.NaN;
+    private double diagIntX = Double.NaN, diagIntY = Double.NaN, diagIntZ = Double.NaN;
+    private String diagPhase = "";
+
     // Pending launch command output (used by TorpedoOutput impl)
     private double cmdRudder, cmdSternPlanes, cmdThrottle = 1.0;
 
@@ -196,12 +202,32 @@ public final class TorpedoEntity {
             @Override public void publishTarget(double x, double y, double z) {
                 pubTargetX = x; pubTargetY = y; pubTargetZ = z;
             }
+            @Override public void publishDiagnostics(double estX, double estY, double estZ,
+                                                      double estHeading, double estSpeed,
+                                                      double intX, double intY, double intZ,
+                                                      String phase) {
+                diagEstX = estX; diagEstY = estY; diagEstZ = estZ;
+                diagEstHeading = estHeading; diagEstSpeed = estSpeed;
+                diagIntX = intX; diagIntY = intY; diagIntZ = intZ;
+                diagPhase = phase;
+            }
         };
     }
 
     public double publishedTargetX() { return pubTargetX; }
     public double publishedTargetY() { return pubTargetY; }
     public double publishedTargetZ() { return pubTargetZ; }
+
+    // Guidance diagnostics
+    public double diagEstX() { return diagEstX; }
+    public double diagEstY() { return diagEstY; }
+    public double diagEstZ() { return diagEstZ; }
+    public double diagEstHeading() { return diagEstHeading; }
+    public double diagEstSpeed() { return diagEstSpeed; }
+    public double diagIntX() { return diagIntX; }
+    public double diagIntY() { return diagIntY; }
+    public double diagIntZ() { return diagIntZ; }
+    public String diagPhase() { return diagPhase; }
 
     public double cmdRudder() { return cmdRudder; }
     public double cmdSternPlanes() { return cmdSternPlanes; }
@@ -227,7 +253,9 @@ public final class TorpedoEntity {
         return new TorpedoSnapshot(
                 id, ownerId, pose(), velocity(), speed, color,
                 fuelRemaining, detonated, alive, sourceLevelDb, pingRequested,
-                pubTargetX, pubTargetY, pubTargetZ);
+                pubTargetX, pubTargetY, pubTargetZ,
+                diagEstX, diagEstY, diagEstZ, diagEstHeading, diagEstSpeed,
+                diagIntX, diagIntY, diagIntZ, diagPhase);
     }
 
     // ── Constants ──────────────────────────────────────────────────

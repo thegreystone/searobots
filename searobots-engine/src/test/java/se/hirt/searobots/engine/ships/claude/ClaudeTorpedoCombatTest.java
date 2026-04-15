@@ -333,4 +333,53 @@ public class ClaudeTorpedoCombatTest {
         System.out.printf("Claude torps: %d,  Codex torps: %d%n", claudeTorps, codexTorps);
         System.out.printf("Dmg dealt: Claude %d,  Codex %d%n", totalClaudeDmg, totalCodexDmg);
     }
+
+    // ── Decisive victory regression tests ──
+    // These seeds produce decisive Claude torpedo kills against Codex.
+    // If any of these fail, the torpedo controller has regressed.
+
+    @Test
+    void decisiveVictory_0x1bbba() {
+        var r = runCombat(ClaudeAttackSub::new, CodexAttackSub::new, 0x1bbba, TICKS_10MIN);
+        System.out.printf("seed=0x1bbba  Claude hp=%d  Codex hp=%d  torps=%d  tick=%d%n",
+                r.hpA, r.hpB, r.torpsAFired, r.endTick);
+        assertTrue(r.aKilledB(), "Claude should kill Codex on seed 0x1bbba");
+        assertTrue(r.hpA > 0, "Claude should survive on seed 0x1bbba");
+    }
+
+    @Test
+    void decisiveVictory_0x1cccb() {
+        var r = runCombat(ClaudeAttackSub::new, CodexAttackSub::new, 0x1cccb, TICKS_10MIN);
+        System.out.printf("seed=0x1cccb  Claude hp=%d  Codex hp=%d  torps=%d  tick=%d%n",
+                r.hpA, r.hpB, r.torpsAFired, r.endTick);
+        assertTrue(r.aKilledB(), "Claude should kill Codex on seed 0x1cccb");
+        assertTrue(r.hpA > 0, "Claude should survive on seed 0x1cccb");
+    }
+
+    @Test
+    void decisiveVictory_0x2110f() {
+        var r = runCombat(ClaudeAttackSub::new, CodexAttackSub::new, 0x2110f, TICKS_15MIN);
+        System.out.printf("seed=0x2110f  Claude hp=%d  Codex hp=%d  torps=%d  tick=%d%n",
+                r.hpA, r.hpB, r.torpsAFired, r.endTick);
+        assertTrue(r.aKilledB(), "Claude should kill Codex on seed 0x2110f");
+        assertTrue(r.hpA > 0, "Claude should survive on seed 0x2110f");
+    }
+
+    @Test
+    void decisiveVictory_0x23331() {
+        var r = runCombat(ClaudeAttackSub::new, CodexAttackSub::new, 0x23331, TICKS_15MIN);
+        System.out.printf("seed=0x23331  Claude hp=%d  Codex hp=%d  torps=%d  tick=%d%n",
+                r.hpA, r.hpB, r.torpsAFired, r.endTick);
+        assertTrue(r.aKilledB(), "Claude should kill Codex on seed 0x23331");
+        assertTrue(r.hpA > 0, "Claude should survive on seed 0x23331");
+    }
+
+    @Test
+    void decisiveVictory_0x3221f() {
+        var r = runCombat(ClaudeAttackSub::new, CodexAttackSub::new, 0x3221f, TICKS_30MIN);
+        System.out.printf("seed=0x3221f  Claude hp=%d  Codex hp=%d  torps=%d  tick=%d%n",
+                r.hpA, r.hpB, r.torpsAFired, r.endTick);
+        assertTrue(r.aKilledB(), "Claude should kill Codex on seed 0x3221f");
+        assertTrue(r.hpA > 0, "Claude should survive on seed 0x3221f");
+    }
 }

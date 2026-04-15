@@ -54,6 +54,7 @@ public class ClaudeTorpedoController implements TorpedoController {
     private double prevFixX = Double.NaN, prevFixY = Double.NaN;
     private long prevFixTick = -1;
     private double estVelX = 0, estVelY = 0;
+    private double lastActiveRange = Double.MAX_VALUE; // closest active return range
 
     // Phase management
     private enum Phase { TRANSIT, ACQUISITION, TERMINAL }
@@ -62,7 +63,6 @@ public class ClaudeTorpedoController implements TorpedoController {
     private static final double MIN_TERRAIN_CLEARANCE = 30;
     private static final double ACQUISITION_RANGE = 2500;
     private static final double TERMINAL_RANGE = 800;
-
     // Proportional navigation: track bearing rate to target
     private double prevBearingToTarget = Double.NaN;
     private long prevBearingTick = -1;
@@ -168,7 +168,15 @@ public class ClaudeTorpedoController implements TorpedoController {
         // Between pings, passive tracking keeps the PN guidance fed with
         // fresh bearing data instead of flying on stale predictions.
         usePassiveContacts(input, pos, heading);
-        processActiveReturns(input, pos, heading);
+        double activeRange = processActiveReturns(input, pos, heading);
+
+        // Manual detonation: if active sonar shows target within 25m, detonate.
+        // The proximity fuse may miss in crossing shots; manual detonation ensures
+        // the warhead goes off when we're close enough.
+        if (activeRange < 25 && phase == Phase.TERMINAL) {
+            output.detonate();
+            return;
+        }
 
         // Active ping scheduling
         switch (phase) {
@@ -231,16 +239,18 @@ public class ClaudeTorpedoController implements TorpedoController {
                     double losRate = dBearing / dtBearing; // rad/s
 
                     // PN gain N=4 (aggressive: typical range 3-5)
-                    double closingSpeed = Math.max(torpSpeed - velMag * 0.5, 5);
+                    // Closing speed: torpedo speed minus target's speed along our bearing
+                    double closingSpeed = Math.max(
+                            torpSpeed - (cappedVelX * bearingX + cappedVelY * bearingY), 5);
                     double pnAccel = 4.0 * closingSpeed * losRate;
                     // Convert lateral acceleration to rudder command
                     // At speed v, rudder 1.0 gives ~v/turnRadius lateral accel
                     rudderCmd = Math.clamp(pnAccel * 0.08, -1, 1);
 
-                    // Blend with pursuit guidance at very close range
-                    // (PN can oscillate when LOS rate is noisy at close range)
+                    // Blend with pursuit guidance at very close range.
+                    // Use direct bearing to target (not intercept point) for pure pursuit.
                     if (dist < 150) {
-                        double headErr = bearingToIntercept - heading;
+                        double headErr = bearingToTarget - heading;
                         while (headErr > Math.PI) headErr -= 2 * Math.PI;
                         while (headErr < -Math.PI) headErr += 2 * Math.PI;
                         double pursuit = Math.clamp(headErr * 3.0, -1, 1);
@@ -248,15 +258,15 @@ public class ClaudeTorpedoController implements TorpedoController {
                         rudderCmd = rudderCmd * blend + pursuit * (1 - blend);
                     }
                 } else {
-                    // No valid dt, fall back to pursuit
-                    double headErr = bearingToIntercept - heading;
+                    // No valid dt, fall back to pursuit on target
+                    double headErr = bearingToTarget - heading;
                     while (headErr > Math.PI) headErr -= 2 * Math.PI;
                     while (headErr < -Math.PI) headErr += 2 * Math.PI;
                     rudderCmd = Math.clamp(headErr * 3.0, -1, 1);
                 }
             } else {
-                // First tick in terminal, use pursuit
-                double headErr = bearingToIntercept - heading;
+                // First tick in terminal, use pursuit on target
+                double headErr = bearingToTarget - heading;
                 while (headErr > Math.PI) headErr -= 2 * Math.PI;
                 while (headErr < -Math.PI) headErr += 2 * Math.PI;
                 rudderCmd = Math.clamp(headErr * 3.0, -1, 1);
@@ -328,7 +338,7 @@ public class ClaudeTorpedoController implements TorpedoController {
 
         // PID controller with distance-dependent gains.
         // Far away: soft P, strong D (stay smooth, go shallow for clearance).
-        // Close in: aggressive P, less D (commit to target depth for the kill).
+        // Close in: aggressive P, extra planes for last-second depth corrections.
         double dt = input.deltaTimeSeconds();
         double depthError = goalZ - pos.z();
         depthIntegral += depthError * dt;
@@ -338,27 +348,28 @@ public class ClaudeTorpedoController implements TorpedoController {
 
         // Urgency ramps from 0 (far) to 1 (close)
         double urgency = Math.clamp(1.0 - dist / 1500.0, 0, 1);
-        double kP = 0.0015 + urgency * 0.008;   // 0.0015 far -> 0.0095 close
-        double kI = 0.0002 + urgency * 0.0008; // very gentle integral
-        // D term: extra damping when ascending (prevents overshoot past target depth)
+        // Vertical rate for overshoot detection and surface avoidance
+        double vRate = input.speed() * Math.sin(input.self().pitch());
+
+        // Terminal boost: gentle extra authority in the last 200m
+        double termBoost = Math.clamp(1.0 - dist / 200.0, 0, 1);
+        double kP = 0.0015 + urgency * 0.008 + termBoost * 0.004;
+        double kI = 0.0002 + urgency * 0.0008;
+        // D term: extra damping when vertical rate opposes the correction
         double basekD = 0.05 - urgency * 0.02;
-        double kD = depthDerivative > 0 ? basekD * 2.0 : basekD; // double D when rising
-        double maxPlanes = 0.10 + urgency * 0.15;
+        boolean overshooting = (vRate > 0 && depthError < -2) || (vRate < 0 && depthError > 2);
+        double kD = overshooting ? basekD * 3.0 : (depthDerivative > 0 ? basekD * 2.0 : basekD);
+        double maxPlanes = 0.10 + urgency * 0.15 + termBoost * 0.10;
 
         double planes = kP * depthError + kI * depthIntegral + kD * depthDerivative;
-
-        // Surface avoidance: predictive + hard limit.
-        // At speed s and pitch p, vertical rate is s*sin(p).
-        double vRate = input.speed() * Math.sin(input.self().pitch());
         double predictedZ = pos.z() + vRate * 4; // where we'll be in 4 seconds
 
-        // If predicted to be above -40m, start braking now
+        // Surface avoidance: predictive + hard limit.
         if (predictedZ > -40 && vRate > 0) {
             double brakeUrgency = Math.max(0, (predictedZ + 40) * 0.03 + vRate * 0.05);
             planes = Math.min(planes, -brakeUrgency);
             depthIntegral = Math.min(depthIntegral, 0);
         }
-        // Hard floor at -45m
         if (pos.z() > -45) {
             double surfaceUrgency = (pos.z() + 45) * 0.08;
             planes = Math.min(planes, -surfaceUrgency - 0.10);
@@ -369,6 +380,13 @@ public class ClaudeTorpedoController implements TorpedoController {
 
         // Publish intercept point for viewer
         output.publishTarget(interceptX, interceptY, targetZ);
+
+        // Publish full diagnostics for analysis
+        double estHdg = Math.atan2(estVelX, estVelY);
+        if (estHdg < 0) estHdg += 2 * Math.PI;
+        double estSpd = Math.sqrt(estVelX * estVelX + estVelY * estVelY);
+        output.publishDiagnostics(targetX, targetY, targetZ, estHdg, estSpd,
+                interceptX, interceptY, targetZ, phase.name());
     }
 
     /** Use passive sonar during transit to refine bearing to target. */
@@ -392,22 +410,22 @@ public class ClaudeTorpedoController implements TorpedoController {
             targetX = targetX * 0.95 + passiveX * 0.05;
             targetY = targetY * 0.95 + passiveY * 0.05;
 
-            // Update PN bearing tracker from passive (much faster than waiting for active pings)
-            if (phase == Phase.TERMINAL || phase == Phase.ACQUISITION) {
-                double passiveBearing = best.bearing();
-                if (passiveBearing < 0) passiveBearing += 2 * Math.PI;
-                prevBearingToTarget = passiveBearing;
-                prevBearingTick = input.tick();
-            }
+            // DO NOT overwrite the PN bearing tracker (prevBearingToTarget) with
+            // passive bearings. The PN guidance computes LOS rate from consecutive
+            // bearing samples; injecting noisy passive data every tick destroys the
+            // rate signal and causes erratic steering. Let the PN tracker update
+            // naturally from the recomputed bearingToTarget in the main loop.
         }
     }
 
-    /** Process active sonar returns for precise targeting. */
-    private void processActiveReturns(TorpedoInput input, Vec3 pos, double heading) {
-        if (input.activeSonarReturns().isEmpty()) return;
+    /** Process active sonar returns for precise targeting. Returns closest active range. */
+    private double processActiveReturns(TorpedoInput input, Vec3 pos, double heading) {
+        if (input.activeSonarReturns().isEmpty()) return Double.MAX_VALUE;
 
         SonarContact best = pickForwardContact(input.activeSonarReturns(), heading);
-        if (best == null) return;
+        if (best == null) return Double.MAX_VALUE;
+
+        double closestRange = best.range();
 
         double fixX = pos.x() + Math.sin(best.bearing()) * best.range();
         double fixY = pos.y() + Math.cos(best.bearing()) * best.range();
@@ -433,15 +451,18 @@ public class ClaudeTorpedoController implements TorpedoController {
         if (!Double.isNaN(best.estimatedDepth())) {
             targetZ = best.estimatedDepth();
         }
+        lastActiveRange = closestRange;
+        return closestRange;
     }
 
     /** Pick the best non-torpedo contact forward of our heading. */
-    private SonarContact pickForwardContact(java.util.List<SonarContact> returns, double heading) {
+    private SonarContact pickForwardContact(java.util.List<SonarContact> returns,
+                                             double heading) {
         SonarContact best = null;
         double bestScore = Double.NEGATIVE_INFINITY;
         for (var c : returns) {
             if (c.range() <= 0 && c.isActive()) continue; // skip zero-range active
-            if (c.classification() == se.hirt.searobots.api.SonarContact.Classification.TORPEDO) continue;
+            if (c.classification() == SonarContact.Classification.TORPEDO) continue;
             double angleDiff = c.bearing() - heading;
             while (angleDiff > Math.PI) angleDiff -= 2 * Math.PI;
             while (angleDiff < -Math.PI) angleDiff += 2 * Math.PI;

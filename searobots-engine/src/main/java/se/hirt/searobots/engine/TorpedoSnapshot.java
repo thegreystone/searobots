@@ -50,5 +50,15 @@ public record TorpedoSnapshot(
         boolean pingRequested,
         double targetX,
         double targetY,
-        double targetZ
+        double targetZ,
+        // Guidance diagnostics (NaN if not published by controller)
+        double diagEstX,
+        double diagEstY,
+        double diagEstZ,
+        double diagEstHeading,
+        double diagEstSpeed,
+        double diagIntX,
+        double diagIntY,
+        double diagIntZ,
+        String diagPhase
 ) {}
