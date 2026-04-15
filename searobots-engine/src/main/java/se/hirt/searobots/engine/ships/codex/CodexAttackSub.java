@@ -50,6 +50,7 @@ public final class CodexAttackSub implements SubmarineController {
     private static final long ACTIVE_TRACK_MEMORY_TICKS = 900L;
     private static final long TORPEDO_THREAT_MEMORY_TICKS = 450L;
     private static final long TORPEDO_THREAT_PING_INTERVAL = 150L;
+    private static final double ACTIVE_MEMORY_REACQUIRE_RANGE = 7_000.0;
     private static final double CHASE_RANGE = 3_500.0;
     private static final double FIRING_RANGE = 2_100.0;
     private static final double TMA_SETUP_QUALITY = 0.55;
@@ -77,6 +78,14 @@ public final class CodexAttackSub implements SubmarineController {
     private static final double TORPEDO_MAX_UNCERTAINTY = 280.0;
     private static final double TORPEDO_SALVO_RESET_DISTANCE = 850.0;
     private static final double TORPEDO_ALIGNMENT_LIMIT = Math.toRadians(75.0);
+    private static final double TORPEDO_DEFAULT_FUSE_RADIUS = 22.0;
+    private static final double TORPEDO_CLOSE_FUSE_RADIUS = 16.0;
+    private static final double TORPEDO_FINISHER_FUSE_RADIUS = 12.0;
+    private static final double TORPEDO_COMMIT_FUSE_RADIUS = 10.0;
+    private static final double TORPEDO_DEFAULT_DETONATE_RANGE = 14.0;
+    private static final double TORPEDO_CLOSE_DETONATE_RANGE = 12.0;
+    private static final double TORPEDO_FINISHER_DETONATE_RANGE = 10.0;
+    private static final double TORPEDO_COMMIT_DETONATE_RANGE = 9.0;
     private static final int TORPEDO_OPENING_SALVO_LIMIT = 4;
     private static final int TORPEDO_FINISHER_SALVO_LIMIT = 6;
     private static final double EGRESS_STANDOFF_RANGE = 2_850.0;
@@ -521,20 +530,40 @@ public final class CodexAttackSub implements SubmarineController {
         SonarContact best = null;
         double bestScore = Double.NEGATIVE_INFINITY;
         for (SonarContact contact : active) {
-            double score = 1_000.0 + contact.signalExcess();
+            double score = trackContactScore(contact, true);
             if (score > bestScore) {
                 best = contact;
                 bestScore = score;
             }
         }
         for (SonarContact contact : passive) {
-            double score = contact.signalExcess();
+            double score = trackContactScore(contact, false);
             if (score > bestScore) {
                 best = contact;
                 bestScore = score;
             }
         }
         return best;
+    }
+
+    private double trackContactScore(SonarContact contact, boolean active) {
+        return switch (contact.classification()) {
+            case TORPEDO -> Double.NEGATIVE_INFINITY;
+            case SUBMARINE -> (active ? 1_000.0 : 0.0)
+                    + contact.signalExcess()
+                    + 180.0
+                    + Math.max(contact.solutionQuality(), 0.0) * 120.0;
+            case SURFACE_SHIP -> (active ? 1_000.0 : 0.0)
+                    + contact.signalExcess()
+                    + Math.max(contact.solutionQuality(), 0.0) * 40.0;
+            case UNKNOWN -> (active ? 1_000.0 : 0.0)
+                    + contact.signalExcess()
+                    + Math.max(contact.solutionQuality(), 0.0) * 60.0;
+        };
+    }
+
+    private boolean isTrackContact(SonarContact contact) {
+        return contact.classification() != SonarContact.Classification.TORPEDO;
     }
 
     private void updateTrackedContact(SonarContact bestContact, Vec3 pos, long tick) {
@@ -619,9 +648,21 @@ public final class CodexAttackSub implements SubmarineController {
                     range * Math.max(bestContact.bearingUncertainty(), Math.toRadians(6.0)) * 2.5);
             passiveSpread = Math.max(passiveSpread,
                     range * (1.0 - Math.clamp(bestContact.solutionQuality(), 0.05, 0.95)) * 0.55);
-            uncertaintyRadius = hasTrackedContact
-                    ? Math.max(250.0, uncertaintyRadius * 0.7 + passiveSpread * 0.3)
-                    : passiveSpread;
+            boolean recentActiveTrack = hasRecentActiveTrack(tick, ACTIVE_TRACK_MEMORY_TICKS)
+                    && isTrackContact(bestContact);
+            if (recentActiveTrack) {
+                double secondsSinceFix = Math.max(0.0, tick - trackedLastFixTick) / 50.0;
+                double activeMemorySpread = Math.max(250.0,
+                        refUncertainty + config.maxSubSpeed() * secondsSinceFix * 1.25);
+                passiveSpread = Math.min(passiveSpread, Math.max(activeMemorySpread, refUncertainty));
+                uncertaintyRadius = hasTrackedContact
+                        ? Math.min(passiveSpread, Math.max(uncertaintyRadius, activeMemorySpread))
+                        : passiveSpread;
+            } else {
+                uncertaintyRadius = hasTrackedContact
+                        ? Math.max(250.0, uncertaintyRadius * 0.7 + passiveSpread * 0.3)
+                        : passiveSpread;
+            }
         }
 
         if (uncertaintyRadius > LOST_TRACK_RADIUS) {
@@ -638,7 +679,11 @@ public final class CodexAttackSub implements SubmarineController {
         long ticksSinceContact = tick - lastContactTick;
         double trackedDist = CodexAutopilot.hdist(pos.x(), pos.y(), trackedX, trackedY);
         boolean freshActiveFix = hasFreshActiveFix(tick, 300L);
+        boolean recentActiveTrack = hasRecentActiveTrack(tick, ACTIVE_TRACK_MEMORY_TICKS);
         if (freshActiveFix
+                || (recentActiveTrack
+                && trackedDist < ACTIVE_MEMORY_REACQUIRE_RANGE
+                && uncertaintyRadius < 900.0)
                 || trackedSolutionQuality > TMA_SETUP_QUALITY
                 || (trackedSolutionQuality > 0.42 && trackedDist < CHASE_RANGE && ticksSinceContact < 400)
                 || (uncertaintyRadius < 425.0 && ticksSinceContact < 300)) {
@@ -917,8 +962,8 @@ public final class CodexAttackSub implements SubmarineController {
             boolean firingSetup = trackedSolutionQuality > TMA_SETUP_QUALITY || uncertaintyRadius < 500.0;
             boolean closePassiveTrack = trackedSolutionQuality > 0.42 && trackedDist < TORPEDO_MAX_RANGE + 600.0;
             boolean chaseReacquire = recentActiveTrack
-                    && trackedDist < TORPEDO_MAX_RANGE + 900.0
-                    && uncertaintyRadius > 550.0;
+                    && trackedDist < ACTIVE_MEMORY_REACQUIRE_RANGE
+                    && uncertaintyRadius > Math.max(refUncertainty + 120.0, 380.0);
             boolean contactCooling = tick - lastContactTick > 300L;
             shouldPing = (sincePing >= TRACK_PING_INTERVAL && (firingSetup || closePassiveTrack || chaseReacquire))
                     || (contactCooling && sincePing >= PATROL_PING_INTERVAL);
@@ -1258,13 +1303,16 @@ public final class CodexAttackSub implements SubmarineController {
         double targetDepth = Double.isNaN(shotDepth) || shotDepth > -15.0
                 ? -90.0
                 : Math.clamp(shotDepth, config.crushDepth() + 70.0, -40.0);
-        String missionData = String.format(Locale.US, "%.1f;%.1f;%.1f;%.6f;%.2f",
+        double fuseRadius = selectFuseRadius(trackedDist, behind, finisherWindow, commitWindow, shotUncertainty);
+        double detonationRange = selectDetonationRange(fuseRadius, trackedDist, behind, finisherWindow, commitWindow);
+        String missionData = String.format(Locale.US, "%.1f;%.1f;%.1f;%.6f;%.2f;%.1f",
                 leadX, leadY, targetDepth,
                 Double.isNaN(shotHeading) ? ownHeading : shotHeading,
-                Math.max(shotSpeed, 0.0));
+                Math.max(shotSpeed, 0.0),
+                detonationRange);
 
         output.launchTorpedo(new TorpedoLaunchCommand(
-                bearingToTarget, 0.0, config.maxFuseRadius(), missionData));
+                bearingToTarget, 0.0, fuseRadius, missionData));
         lastTorpedoLaunchTick = tick;
         torpedoSalvoShots++;
         torpedoSalvoTick = tick;
@@ -1330,6 +1378,38 @@ public final class CodexAttackSub implements SubmarineController {
             limit++;
         }
         return limit;
+    }
+
+    private double selectFuseRadius(double trackedDist, boolean behind,
+                                    boolean finisherWindow, boolean commitWindow,
+                                    double shotUncertainty) {
+        double fuseRadius = TORPEDO_DEFAULT_FUSE_RADIUS;
+        if (trackedDist < TORPEDO_CLOSE_RANGE || behind) {
+            fuseRadius = TORPEDO_CLOSE_FUSE_RADIUS;
+        }
+        if (finisherWindow || (trackedDist < TORPEDO_FINISH_RANGE && shotUncertainty <= 210.0)) {
+            fuseRadius = TORPEDO_FINISHER_FUSE_RADIUS;
+        }
+        if (commitWindow) {
+            fuseRadius = TORPEDO_COMMIT_FUSE_RADIUS;
+        }
+        return Math.clamp(fuseRadius, config.minFuseRadius(), config.maxFuseRadius());
+    }
+
+    private double selectDetonationRange(double fuseRadius, double trackedDist,
+                                         boolean behind, boolean finisherWindow,
+                                         boolean commitWindow) {
+        double detonationRange = TORPEDO_DEFAULT_DETONATE_RANGE;
+        if (trackedDist < TORPEDO_CLOSE_RANGE || behind) {
+            detonationRange = TORPEDO_CLOSE_DETONATE_RANGE;
+        }
+        if (finisherWindow) {
+            detonationRange = TORPEDO_FINISHER_DETONATE_RANGE;
+        }
+        if (commitWindow) {
+            detonationRange = TORPEDO_COMMIT_DETONATE_RANGE;
+        }
+        return Math.min(Math.max(config.minFuseRadius(), detonationRange), Math.max(config.minFuseRadius(), fuseRadius - 1.0));
     }
 
     private void resetTorpedoFireControl() {

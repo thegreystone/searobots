@@ -75,6 +75,7 @@ public final class CodexTorpedoController implements TorpedoController {
     private double pitchErrorIntegral = 0.0;
     private double lastPitch = 0.0;
     private boolean hasLastPitchSample;
+    private double detonationRange = 12.0;
 
     @Override
     public void onLaunch(TorpedoLaunchContext context) {
@@ -105,6 +106,9 @@ public final class CodexTorpedoController implements TorpedoController {
                         estVelX = Math.sin(heading) * speed;
                         estVelY = Math.cos(heading) * speed;
                     }
+                }
+                if (parts.length >= 6) {
+                    detonationRange = Math.clamp(Double.parseDouble(parts[5].trim()), 5.0, 20.0);
                 }
                 hasTarget = true;
             }
@@ -207,7 +211,7 @@ public final class CodexTorpedoController implements TorpedoController {
         output.setThrottle(computeThrottle(input, targetDist, headingError, desiredZ, straightRun));
         output.setSternPlanes(computeSternPlanes(input, desiredZ, targetDist));
 
-        if (fix != null && fix.range() < 12.0) {
+        if (fix != null && fix.range() < detonationRange) {
             output.detonate();
         }
         output.publishTarget(guidanceX, guidanceY, targetZ);
