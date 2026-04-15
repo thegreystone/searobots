@@ -54,7 +54,7 @@ public class SeedScannerTest {
 
     private void runMatchups(String nameA, Supplier<SubmarineController> factoryA,
                              String nameB, Supplier<SubmarineController> factoryB) {
-        int combat10min = 30_000;
+        int combat30min = 90_000;
         long[] seeds = new long[10];
         for (int i = 0; i < seeds.length; i++) {
             seeds[i] = 0x2000 + i * 6311L;
@@ -84,14 +84,14 @@ public class SeedScannerTest {
                         torpsA[0] = config.torpedoCount() - subs.get(0).torpedoesRemaining();
                         torpsB[0] = config.torpedoCount() - subs.get(1).torpedoesRemaining();
                     }
-                    if (tick >= combat10min) sim.stop();
+                    if (tick >= combat30min) sim.stop();
                 }
                 @Override public void onMatchEnd() {}
             };
 
             var thread = new Thread(() -> sim.run(world, controllers, configs, listener));
             thread.start();
-            try { thread.join(30_000); } catch (InterruptedException e) {}
+            try { thread.join(60_000); } catch (InterruptedException e) {}
             sim.stop();
             try { thread.join(3000); } catch (InterruptedException e) {}
 

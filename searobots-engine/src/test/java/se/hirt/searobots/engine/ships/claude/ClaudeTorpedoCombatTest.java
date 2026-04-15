@@ -155,7 +155,7 @@ public class ClaudeTorpedoCombatTest {
         int gotHit = 0;
 
         for (long seed : seeds) {
-            var result = runCombat(ClaudeAttackSub::new, CodexAttackSub::new, seed, TICKS_10MIN);
+            var result = runCombat(ClaudeAttackSub::new, CodexAttackSub::new, seed, TICKS_30MIN);
             torpsFired += result.torpsAFired;
             if (result.aHitB()) hits++;
             if (result.aKilledB()) kills++;
@@ -188,7 +188,7 @@ public class ClaudeTorpedoCombatTest {
         System.out.println("──────────────────────────────────────────────────────────────────────────────");
 
         for (long seed : seeds) {
-            var r = runCombat(ClaudeAttackSub::new, CodexAttackSub::new, seed, TICKS_10MIN);
+            var r = runCombat(ClaudeAttackSub::new, CodexAttackSub::new, seed, TICKS_30MIN);
             int claudeDmg = 1000 - r.hpB;  // damage Claude dealt to Codex
             int codexDmg = 1000 - r.hpA;   // damage Codex dealt to Claude
             totalClaudeDmg += claudeDmg;
@@ -246,7 +246,7 @@ public class ClaudeTorpedoCombatTest {
         System.out.println("──────────────────────────────────────────────────────────────────────────────");
 
         for (long seed : seeds) {
-            var r = runCombat(ClaudeAttackSub::new, CodexAttackSub::new, seed, TICKS_10MIN);
+            var r = runCombat(ClaudeAttackSub::new, CodexAttackSub::new, seed, TICKS_30MIN);
             int claudeDmg = 1000 - r.hpB;  // damage Claude dealt to Codex
             int codexDmg = 1000 - r.hpA;   // damage Codex dealt to Claude
             totalClaudeDmg += claudeDmg;
@@ -303,7 +303,7 @@ public class ClaudeTorpedoCombatTest {
         System.out.println("-".repeat(80));
 
         for (long seed : seeds) {
-            var r = runCombat(ClaudeAttackSub::new, CodexAttackSub::new, seed, TICKS_10MIN);
+            var r = runCombat(ClaudeAttackSub::new, CodexAttackSub::new, seed, TICKS_30MIN);
             int claudeDmg = 1000 - r.hpB;
             int codexDmg = 1000 - r.hpA;
             totalClaudeDmg += claudeDmg;
