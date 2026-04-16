@@ -295,25 +295,22 @@ public class ClaudeTorpedoController implements TorpedoController {
         // terrain early and reaches the target's depth for the kill.
         double minDepth = -20; // never breach
 
-        // Depth profile depends on range:
-        // Close range (<800m): go straight for target depth (no time to be strategic)
-        // Long range (>800m): cruise slightly above target for terrain clearance,
-        //   then blend down as we close.
+        // Depth profile: blend from cruise altitude to target depth over a long
+        // range so the torpedo arrives at the right depth. Starting the descent
+        // early (from 1500m) gives the PID enough distance to converge, even
+        // with gentle pitch rates.
         double goalZ;
-        if (dist < 800) {
-            // Close: direct approach to target depth
-            goalZ = targetZ;
+        // Cruise altitude: slightly above target depth for terrain clearance.
+        // Never climb above launch depth: if we're already deep enough, stay deep.
+        double cruiseZ = Math.min(targetZ + 30, -60);
+        if (!Double.isNaN(launchDepth)) {
+            cruiseZ = Math.min(cruiseZ, launchDepth);
+        }
+        if (dist > 1500) {
+            goalZ = cruiseZ;
         } else {
-            // Far: cruise above target depth for terrain clearance.
-            // Limit the climb: never more than 150m above launch depth
-            // (prevents extreme climbs that breach the surface).
-            double cruiseZ = Math.min(targetZ + 30, -60);
-            if (!Double.isNaN(launchDepth)) {
-                double maxClimb = launchDepth + 150;
-                cruiseZ = Math.min(cruiseZ, maxClimb);
-            }
-            // Blend from cruise to target over the 800-2000m range
-            double t = Math.clamp((dist - 800) / 1200.0, 0, 1); // 1 at 2000m, 0 at 800m
+            // Smooth blend from cruise to target depth over 1500m to 0m
+            double t = dist / 1500.0; // 1 at 1500m, 0 at target
             goalZ = targetZ + (cruiseZ - targetZ) * t;
         }
 
@@ -329,18 +326,14 @@ public class ClaudeTorpedoController implements TorpedoController {
             if (goalZ < safeZ) goalZ = safeZ;
         }
         goalZ = Math.min(goalZ, minDepth);
-        // Depth floor ramps based on distance:
-        // Far (>800m): floor at -60m (terrain clearance, lob over ridges)
-        // Close (<200m): floor at targetZ (must reach the target, even if shallow)
-        // Between: smooth blend
-        if (dist > 800) {
+        // Depth floor: prevent going too shallow during far approach.
+        // Relaxes as we get closer so the torpedo can match shallow targets.
+        if (dist > 500) {
             goalZ = Math.min(goalZ, -60);
-        } else if (dist > 200) {
-            double t = (dist - 200) / 600.0; // 1 at 800m, 0 at 200m
-            double floor = targetZ + (-60 - targetZ) * t;
-            goalZ = Math.min(goalZ, floor);
+        } else if (dist > 100) {
+            double t = (dist - 100) / 400.0;
+            goalZ = Math.min(goalZ, targetZ + (-60 - targetZ) * t);
         }
-        // Below 200m: no floor, goalZ = targetZ from the close-range path
 
         // PID controller with distance-dependent gains.
         // Far away: soft P, strong D (stay smooth, go shallow for clearance).
@@ -357,15 +350,20 @@ public class ClaudeTorpedoController implements TorpedoController {
         // Vertical rate for overshoot detection and surface avoidance
         double vRate = input.speed() * Math.sin(input.self().pitch());
 
-        // Terminal boost: gentle extra authority in the last 200m
-        double termBoost = Math.clamp(1.0 - dist / 200.0, 0, 1);
-        double kP = 0.0015 + urgency * 0.008 + termBoost * 0.004;
+        // Terminal boost: scale with both range (close = more) and depth error
+        // (large error = more). This avoids boosting when already at the right
+        // depth (prevents oscillation) while aggressively correcting large gaps.
+        double termRange = Math.clamp(1.0 - dist / 400.0, 0, 1);
+        double depthNeed = Math.clamp(Math.abs(depthError) / 30.0, 0, 1);
+        double termBoost = termRange * depthNeed;
+        double kP = 0.0015 + urgency * 0.008 + termBoost * 0.012;
         double kI = 0.0002 + urgency * 0.0008;
         // D term: extra damping when vertical rate opposes the correction
-        double basekD = 0.05 - urgency * 0.02;
+        double basekD = 0.05 - urgency * 0.02 + termBoost * 0.02;
         boolean overshooting = (vRate > 0 && depthError < -2) || (vRate < 0 && depthError > 2);
         double kD = overshooting ? basekD * 3.0 : (depthDerivative > 0 ? basekD * 2.0 : basekD);
-        double maxPlanes = 0.10 + urgency * 0.15 + termBoost * 0.10;
+        // More planes authority when depth error is large at close range
+        double maxPlanes = 0.10 + urgency * 0.15 + termBoost * 0.25;
 
         double planes = kP * depthError + kI * depthIntegral + kD * depthDerivative;
         double predictedZ = pos.z() + vRate * 4; // where we'll be in 4 seconds
