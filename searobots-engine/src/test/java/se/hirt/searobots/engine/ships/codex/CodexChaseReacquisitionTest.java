@@ -81,6 +81,37 @@ class CodexChaseReacquisitionTest {
                 "Codex should reping to rebuild a decaying chase track instead of drifting on passive.");
     }
 
+    @Test
+    void decentLongRangePassiveTrackRepingsForRangeFix() {
+        var world = GeneratedWorld.deepFlat();
+        var controller = new CodexAttackSub();
+        controller.onMatchStart(new MatchContext(
+                MatchConfig.withDefaults(0L),
+                world.terrain(),
+                world.thermalLayers(),
+                new CurrentField(List.of())));
+
+        var self = submarineState(new Vec3(0.0, 0.0, -140.0), 0.0, 7.5);
+
+        TestHelpers.CapturedOutput finalOutput = null;
+        for (long tick = 0; tick <= 600; tick++) {
+            var output = new TestHelpers.CapturedOutput();
+            controller.onTick(new TestHelpers.TestInput(
+                    tick,
+                    DT,
+                    self,
+                    environment(world),
+                    List.of(passiveContact(0.0, 0.34)),
+                    List.of(),
+                    tick == 600 ? 0 : 250),
+                    output);
+            finalOutput = output;
+        }
+
+        assertTrue(finalOutput != null && finalOutput.pinged,
+                "Codex should reping on a decent long-range passive chase track instead of waiting indefinitely.");
+    }
+
     private static EnvironmentSnapshot environment(GeneratedWorld world) {
         return new EnvironmentSnapshot(world.terrain(), world.thermalLayers(), world.currentField());
     }
@@ -107,6 +138,10 @@ class CodexChaseReacquisitionTest {
     }
 
     private static SonarContact passiveContact(double bearing) {
+        return passiveContact(bearing, 0.34);
+    }
+
+    private static SonarContact passiveContact(double bearing, double solutionQuality) {
         return new SonarContact(
                 bearing,
                 12.0,
@@ -116,7 +151,7 @@ class CodexChaseReacquisitionTest {
                 Math.toRadians(2.0),
                 0.0,
                 145.0,
-                0.34,
+                solutionQuality,
                 0.0,
                 Double.NaN);
     }
