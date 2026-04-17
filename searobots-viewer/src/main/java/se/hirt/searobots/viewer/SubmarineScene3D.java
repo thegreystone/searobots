@@ -29,6 +29,7 @@
 package se.hirt.searobots.viewer;
 
 import com.jme3.app.SimpleApplication;
+import com.jme3.app.state.ScreenshotAppState;
 import com.jme3.effect.ParticleEmitter;
 import com.jme3.effect.ParticleMesh;
 import com.jme3.font.BitmapText;
@@ -78,10 +79,17 @@ import java.util.Map;
 public final class SubmarineScene3D extends SimpleApplication implements se.hirt.searobots.engine.SimulationListener {
 
     private Node modelNode; // template, loaded at init
-    private Geometry terrainGeometry;
+    private Spatial terrainGeometry;
     private Spatial sky;
     private Geometry sunBillboard;
     private volatile GeneratedWorld pendingWorld;
+    // Auto-screenshot: enabled with -Dscreenshots=true
+    private static final boolean AUTO_SCREENSHOTS = Boolean.getBoolean("screenshots");
+    private static final int SCREENSHOT_COUNT = 9;
+    private ScreenshotAppState screenshotState;
+    private int screenshotCountdown = -1;
+    private int screenshotsTaken = 0;
+    private boolean screenshotTacticalMode = false;
 
     // Vehicle tracking
     private final Map<Integer, Node> subNodes = new HashMap<>();
@@ -320,8 +328,8 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
         waterFilter.setWaveScale(0.003f);
         waterFilter.setMaxAmplitude(1.5f);
         waterFilter.setWaterColor(new ColorRGBA(0.0f, 0.18f, 0.60f, 1f));
-        waterFilter.setDeepWaterColor(new ColorRGBA(0.0f, 0.14f, 0.42f, 1f));
-        waterFilter.setWaterTransparency(0.09f);
+        waterFilter.setDeepWaterColor(new ColorRGBA(0.0f, 0.09f, 0.42f, 1f));
+        waterFilter.setWaterTransparency(0.11f);
         waterFilter.setColorExtinction(new Vector3f(10f, 30f, 60f));
         waterFilter.setSunScale(3f);
         waterFilter.setLightDirection(sun.getDirection());
@@ -546,6 +554,14 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 
         cam.setLocation(new Vector3f(0, 15, 60));
         cam.lookAt(Vector3f.ZERO, Vector3f.UNIT_Y);
+
+        // Auto-screenshot: attach only when enabled via -Dscreenshots=true
+        if (AUTO_SCREENSHOTS) {
+            screenshotState = new ScreenshotAppState("", "SeaRobots");
+            stateManager.attach(screenshotState);
+            System.out.println("Auto-screenshot mode enabled");
+        }
+
         System.out.println("simpleInitApp: PHASE 1 DONE");
 
         // Standalone mode: auto-start simulation and register Lemur AppStates
@@ -997,6 +1013,68 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
                 pendingWorld = null;
                 attachTerrain(w);
             }
+            // Auto-screenshot camera tour (only when -Dscreenshots=true)
+            if (AUTO_SCREENSHOTS && screenshotCountdown > 0 && screenshotsTaken < SCREENSHOT_COUNT) {
+                screenshotCountdown--;
+                if (screenshotCountdown == 0) {
+                    // Restore water/fog after tactical top-down shot
+                    if (screenshotTacticalMode) {
+                        screenshotTacticalMode = false;
+                    }
+                    screenshotState.takeScreenshot();
+                    screenshotsTaken++;
+                    System.out.println("Auto-screenshot " + screenshotsTaken + "/" + SCREENSHOT_COUNT + " saved");
+                    if (screenshotsTaken < SCREENSHOT_COUNT) {
+                        int delay = 20;
+                        switch (screenshotsTaken) {
+                            case 1 -> { // Coastline from sea level
+                                orbitElevation = 0.05f;
+                                orbitDistance = 300f;
+                                orbitAzimuth = 0.8f;
+                            }
+                            case 2 -> { // Island from above, close
+                                orbitElevation = 0.7f;
+                                orbitDistance = 800f;
+                                orbitAzimuth = 1.5f;
+                            }
+                            case 3 -> { // Beach/sand detail
+                                orbitElevation = 0.2f;
+                                orbitDistance = 200f;
+                                orbitAzimuth = 2.2f;
+                            }
+                            case 4 -> { // Wide view showing multiple islands
+                                orbitElevation = 0.5f;
+                                orbitDistance = 4000f;
+                                orbitAzimuth = 3.0f;
+                            }
+                            case 5 -> { // Underwater looking at seabed
+                                orbitElevation = -0.2f;
+                                orbitDistance = 250f;
+                                orbitAzimuth = 4.0f;
+                            }
+                            case 6 -> { // Cliff face close-up
+                                orbitElevation = 0.1f;
+                                orbitDistance = 150f;
+                                orbitAzimuth = 5.0f;
+                            }
+                            case 7 -> { // Tactical top-down: water/fog off to see terrain
+                                orbitElevation = 1.5f;
+                                orbitDistance = 8000f;
+                                orbitAzimuth = 0f;
+                                screenshotTacticalMode = true;
+                                System.out.println("Tactical mode ON for next screenshot");
+                            }
+                            case 8 -> { // 2D tactical map overlay
+                                var ms = stateManager.getState(NativeMapState.class);
+                                if (ms != null) ms.toggle();
+                                delay = 40; // extra frames for cross-fade
+                            }
+                        }
+                        screenshotCountdown = delay;
+                    }
+                }
+            }
+
             updateVehicles();
             updateCamera(tpf);
             updateHud();
@@ -1121,7 +1199,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
     }
 
     private void attachTerrain(GeneratedWorld world) {
-        System.out.println("attachTerrain: building mesh...");
+        System.out.println("attachTerrain: building TerrainQuad...");
 
         // Remove previous terrain
         if (terrainGeometry != null) {
@@ -1130,12 +1208,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
         }
 
         TerrainMap terrain = world.terrain();
-        Mesh mesh = TerrainMeshBuilder.build(terrain, 2);
-
-        terrainGeometry = new Geometry("terrain", mesh);
-        Material mat = new Material(assetManager, "Common/MatDefs/Light/Lighting.j3md");
-        mat.setBoolean("UseVertexColor", true);
-        terrainGeometry.setMaterial(mat);
+        terrainGeometry = TerrainQuadBuilder.build(terrain, assetManager, cam);
         rootNode.attachChild(terrainGeometry);
 
         // Read start time from config
@@ -1168,6 +1241,29 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
         orbitElevation = 0.4f;
 
         System.out.println("attachTerrain: done, worldWidth=" + worldW);
+
+        // Auto-screenshot: orbit around the highest terrain point
+        if (AUTO_SCREENSHOTS) {
+            TerrainMap t = world.terrain();
+            double peakX = 0, peakY = 0, peakE = t.getMinElevation();
+            for (int r = 0; r < t.getRows(); r += 10) {
+                for (int c = 0; c < t.getCols(); c += 10) {
+                    double e = t.elevationAtGrid(c, r);
+                    if (e > peakE) {
+                        peakE = e;
+                        peakX = t.getOriginX() + c * t.getCellSize();
+                        peakY = t.getOriginY() + r * t.getCellSize();
+                    }
+                }
+            }
+            orbitCenter.set((float) peakX, (float) peakE * 0.3f, (float) -peakY);
+            System.out.printf("Screenshot orbit center: peak at (%.0f, %.0f) elev=%.0f%n", peakX, peakY, peakE);
+            orbitElevation = 1.0f;
+            orbitDistance = 3000f;
+            orbitAzimuth = 0.3f;
+            screenshotCountdown = 30;
+            screenshotsTaken = 0;
+        }
     }
 
     // ---- atmosphere ----
@@ -1230,7 +1326,8 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
         // No transparency manipulation (it causes visual glitches).
         boolean directorHidesWater = cameraMode == CameraMode.DIRECTOR
                 && cinematicDirector != null && cinematicDirector.waterOpacity() < 0.5f;
-        waterFilter.setEnabled(!directorHidesWater);
+        waterFilter.setEnabled(!directorHidesWater && !screenshotTacticalMode);
+        if (screenshotTacticalMode) fogFilter.setEnabled(false);
 
         if (!atmosphereEnabled) {
             // Full flat lighting, no fog, but still track sun direction

@@ -68,10 +68,9 @@ public final class WorldGenerator {
         double baseFreq = 1.0 / 1600.0;
 
         double minZ = config.maxSeaFloorZ();
-        double maxZ = 150.0;
-        double range = maxZ - minZ;
-        // Bias midpoint upward: most terrain is moderate depth, deep
-        // trenches are the exception rather than the average.
+        // Use the original noise range so island frequency stays the same.
+        // Peaks are no longer clamped but the noise distribution is unchanged.
+        double range = 150.0 - minZ;
         double mid = minZ + range * 0.6;
 
         for (int row = 0; row < gridSize; row++) {
@@ -108,7 +107,7 @@ public final class WorldGenerator {
                     elevation -= trench * trench * 1200;
                 }
 
-                elevation = Math.max(minZ, Math.min(maxZ, elevation));
+                elevation = Math.max(minZ, elevation);
                 elevations[row * gridSize + col] = elevation;
             }
         }
