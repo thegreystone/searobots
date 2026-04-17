@@ -41,6 +41,11 @@
         </dependency>
         <dependency>
             <groupId>org.jmonkeyengine</groupId>
+            <artifactId>jme3-terrain</artifactId>
+            <version>${jme.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.jmonkeyengine</groupId>
             <artifactId>jme3-testdata</artifactId>
             <version>${jme.version}</version>
         </dependency>
