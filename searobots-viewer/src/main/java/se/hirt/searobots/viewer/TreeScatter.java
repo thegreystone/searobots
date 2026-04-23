@@ -53,7 +53,7 @@ import java.util.Random;
 final class TreeScatter {
 
     private static final int MAX_TREES = 500000;
-    private static final float MIN_ELEVATION = 3f;
+    private static final float MIN_ELEVATION = 8f;
     private static final float MAX_SLOPE_DEG = 35f;
     private static final float BASE_SPACING = 4f;
 
@@ -111,7 +111,8 @@ final class TreeScatter {
 
                 // Elevation-based type selection
                 int type;
-                if (elev < 15) {
+                if (elev < 20) {
+                    // Coastal zone: palms and bushes along the beach edge
                     type = rng.nextFloat() < 0.65f ? 2 : 3;
                 } else if (elev < 50) {
                     float roll = rng.nextFloat();
