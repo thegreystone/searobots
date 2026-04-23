@@ -240,11 +240,11 @@ final class TerrainQuadBuilder {
                 float slopeDeg = (float) Math.toDegrees(
                         Math.atan(Math.sqrt(dzdx * dzdx + dzdy * dzdy)));
 
-                // Elevation-based biome weights following real ocean depth zones:
-                // < -200m: deep sediment (midnight zone, dark)
-                // -200 to -18m: rocky shelf (twilight zone, no red light)
-                // -18 to +3m: sandy shallows and beach (photic zone)
-                // > +3m: vegetation/forest
+                // Elevation-based biome weights for tropical island terrain:
+                // < -200m: deep sediment
+                // -200 to -20m: rocky shelf
+                // -20 to +10m: sandy shallows and wide beach
+                // > +10m: vegetation/forest
                 float wDeep = 0, wShelf = 0, wSand = 0, wForest = 0;
 
                 if (elev < -300) {
@@ -253,25 +253,26 @@ final class TerrainQuadBuilder {
                     float t = smoothstep(-300, -150, elev);
                     wDeep = 1 - t;
                     wShelf = t;
-                } else if (elev < -18) {
+                } else if (elev < -20) {
                     wShelf = 1;
-                } else if (elev < 3) {
-                    // Sandy shallows (photic zone, -18m to +3m above)
-                    float t = smoothstep(-18, -8, elev);
+                } else if (elev < 10) {
+                    // Wide sandy zone: underwater sandy shelf through beach
+                    // Gradual transition from rock to sand starting at -20m
+                    float t = smoothstep(-20, -5, elev);
                     wShelf = 1 - t;
                     wSand = t;
-                } else if (elev < 8) {
-                    // Sand to forest transition
-                    float t = smoothstep(3, 8, elev);
+                } else if (elev < 13) {
+                    // Sharp treeline: sand to forest over just 3m
+                    float t = smoothstep(10, 13, elev);
                     wSand = 1 - t;
                     wForest = t;
                 } else {
                     wForest = 1;
                 }
 
-                // Sand only on flat ground (beaches and sandy shelves)
-                if (slopeDeg > 12 && wSand > 0) {
-                    float slopeReduce = smoothstep(12, 30, slopeDeg);
+                // Sand only on flat ground (beaches are flat, cliffs are rocky)
+                if (slopeDeg > 8 && wSand > 0) {
+                    float slopeReduce = smoothstep(8, 25, slopeDeg);
                     float removed = wSand * slopeReduce;
                     wSand -= removed;
                     if (elev < 0) wShelf += removed;
