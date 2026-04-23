@@ -23,6 +23,7 @@ public class TerrainPlateauTest {
 
         int worstPlateau = 0;
         long worstSeed = 0;
+        double worstPct = 0;
         int seedsWithIslands = 0;
 
         System.out.println("=== Terrain Plateau Detection ===");
@@ -42,22 +43,17 @@ public class TerrainPlateauTest {
                     seed, result.aboveWaterCells, result.maxElevation,
                     result.plateauCells, pct, result.plateauBandCenter, status);
 
+            if (pct > worstPct) {
+                worstPct = pct;
+                worstSeed = seed;
+            }
             if (result.plateauCells > worstPlateau) {
                 worstPlateau = result.plateauCells;
-                worstSeed = seed;
             }
         }
 
         System.out.printf("%nSeeds with islands: %d / %d%n", seedsWithIslands, seeds.length);
         if (seedsWithIslands > 0) {
-            double worstPct = 0;
-            for (long seed : seeds) {
-                var r = analyzePlateau(seed);
-                if (r.aboveWaterCells >= 100) {
-                    double pct = 100.0 * r.plateauCells / r.aboveWaterCells;
-                    worstPct = Math.max(worstPct, pct);
-                }
-            }
             assertTrue(worstPct < 25,
                     String.format("Worst plateau: %.1f%% of above-water cells in one band (seed 0x%x). " +
                             "Should be < 25%%.", worstPct, worstSeed));
@@ -69,6 +65,9 @@ public class TerrainPlateauTest {
     void noLargeFlatRegions() {
         long[] seeds = new long[10];
         for (int i = 0; i < 10; i++) seeds[i] = 0xF1A70000L + i * 0x1337;
+
+        int worstBiggestFlat = 0;
+        long worstFlatSeed = 0;
 
         System.out.println("\n=== Local Flatness Detection ===");
         System.out.printf("%-14s %8s %8s %8s %8s  %s%n",
@@ -119,7 +118,16 @@ public class TerrainPlateauTest {
 
             System.out.printf("0x%08x %8d %8d %8d %7.1f%%  %s (biggest=%.0fm²)%n",
                     seed, aboveWater, flatCells, biggestFlat, flatPct, status, bigFlatArea);
+
+            if (biggestFlat > worstBiggestFlat) {
+                worstBiggestFlat = biggestFlat;
+                worstFlatSeed = seed;
+            }
         }
+
+        assertTrue(worstBiggestFlat < 5000,
+                String.format("Largest contiguous flat region: %d cells (seed 0x%x). Should be < 5000.",
+                        worstBiggestFlat, worstFlatSeed));
     }
 
     private int floodFill(boolean[][] isFlat, boolean[][] visited, int r, int c, int rows, int cols) {
