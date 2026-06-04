@@ -57,7 +57,7 @@ public class SubmarineCompetition {
     // Standard competition format
     public static final int STANDARD_NAV_SEEDS = 5;
     public static final int STANDARD_NAV_DURATION_SECONDS = 2400; // 40 minutes per nav
-    public static final int STANDARD_COMBAT_DURATION_SECONDS = 1800; // 30 minutes per combat
+    public static final int STANDARD_COMBAT_DURATION_SECONDS = 3600; // 60 minutes per combat
 
     /**
      * A competition format: fully determined by a single master seed.
