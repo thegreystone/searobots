@@ -76,6 +76,7 @@ public final class CodexAttackSub implements SubmarineController {
     private static final double TORPEDO_CLOSE_RANGE = 2_800.0;
     private static final double TORPEDO_FINISH_RANGE = 1_800.0;
     private static final double TORPEDO_COMMIT_RANGE = 1_200.0;
+    private static final double TORPEDO_THREAT_SNAPSHOT_RANGE = 1_600.0;
     private static final double TORPEDO_MIN_RANGE = 550.0;
     private static final double TORPEDO_MAX_RANGE = 3_600.0;
     private static final double TORPEDO_MAX_UNCERTAINTY = 280.0;
@@ -100,6 +101,11 @@ public final class CodexAttackSub implements SubmarineController {
     private static final double EGRESS_STERN_ANGLE = Math.toRadians(35.0);
     private static final double SHADOW_RANGE = 2_000.0;
     private static final double SHADOW_MIN_RANGE = 1_150.0;
+    private static final double KILL_LANE_RANGE = 1_950.0;
+    private static final double KILL_LANE_MIN_RANGE = 1_450.0;
+    private static final double KILL_LANE_MAX_RANGE = 2_450.0;
+    private static final double KILL_LANE_FLANK_ANGLE = Math.toRadians(28.0);
+    private static final double KILL_LANE_CENTER_PULL = 550.0;
     private static final double SEARCH_TRANSIT_RADIUS = 2_700.0;
     private static final double SEARCH_RING_RADIUS = 1_850.0;
     private static final double SEARCH_RING_AHEAD_ANGLE = Math.toRadians(55.0);
@@ -722,7 +728,6 @@ public final class CodexAttackSub implements SubmarineController {
         if (egress != null) {
             return egress;
         }
-
         if (mode == Mode.TRACK && !rangeConfirmedByActive) {
             double bearing = !Double.isNaN(lastContactBearing)
                     ? lastContactBearing
@@ -776,13 +781,19 @@ public final class CodexAttackSub implements SubmarineController {
                     arrivalRadius = 220.0;
                 }
             } else if (dist < TORPEDO_MAX_RANGE) {
-                double sternOffset = dist < SHADOW_RANGE ? STERN_OFFSET + 250.0 : STERN_OFFSET;
-                double sternX = targetX - Math.sin(trackedHeading) * sternOffset;
-                double sternY = targetY - Math.cos(trackedHeading) * sternOffset;
-                if (battleArea.distanceToBoundary(sternX, sternY) > PATROL_MARGIN / 2.0
-                        && pathPlanner.isSafe(sternX, sternY)) {
-                    targetX = sternX;
-                    targetY = sternY;
+                double[] killLane = chooseKillLanePosition(x, y, heading, cruiseDepth, targetX, targetY);
+                if (killLane != null) {
+                    targetX = killLane[0];
+                    targetY = killLane[1];
+                } else {
+                    double sternOffset = dist < SHADOW_RANGE ? STERN_OFFSET + 250.0 : STERN_OFFSET;
+                    double sternX = targetX - Math.sin(trackedHeading) * sternOffset;
+                    double sternY = targetY - Math.cos(trackedHeading) * sternOffset;
+                    if (battleArea.distanceToBoundary(sternX, sternY) > PATROL_MARGIN / 2.0
+                            && pathPlanner.isSafe(sternX, sternY)) {
+                        targetX = sternX;
+                        targetY = sternY;
+                    }
                 }
                 noise = NoisePolicy.QUIET;
                 targetSpeed = dist > 1_800.0 ? 6.8 : 6.2;
@@ -983,8 +994,11 @@ public final class CodexAttackSub implements SubmarineController {
                     && (firingSetup || closePassiveTrack || chaseReacquire || longRangeFix))
                     || (contactCooling && sincePing >= PATROL_PING_INTERVAL);
         } else {
+            boolean urgentCloseFix = trackedDist < TORPEDO_THREAT_SNAPSHOT_RANGE
+                    && (ticksSinceFix > 80L || uncertaintyRadius > 220.0 || tick - lastDamageTakenTick < 240L);
             shouldPing = (!postLaunchEgress && sincePing >= TRACK_PING_INTERVAL)
                     || trackedDist < FIRING_RANGE + 200.0
+                    || urgentCloseFix
                     || ticksSinceFix > STALE_CONTACT_TICKS
                     || uncertaintyRadius > 450.0;
         }
@@ -1287,9 +1301,7 @@ public final class CodexAttackSub implements SubmarineController {
         if (input.self().torpedoesRemaining() <= 0 || tick < TORPEDO_ARMING_DELAY_TICKS) {
             return;
         }
-        if (hasTorpedoThreat(tick)) {
-            return;
-        }
+        boolean torpedoThreatActive = hasTorpedoThreat(tick);
         if (!hasTrackedContact || mode != Mode.CHASE || contactAlive < 0.3) {
             return;
         }
@@ -1370,6 +1382,16 @@ public final class CodexAttackSub implements SubmarineController {
         boolean commitWindow = trackedDist <= TORPEDO_COMMIT_RANGE
                 && absLeadHeadingError <= (behind ? Math.toRadians(22.0) : Math.toRadians(14.0))
                 && shotUncertainty <= (behind ? 200.0 : 140.0);
+        boolean threatSnapshotWindow = torpedoThreatActive
+                && trackedDist <= TORPEDO_THREAT_SNAPSHOT_RANGE
+                && (commitWindow
+                || finisherWindow
+                || (behind
+                && absLeadHeadingError <= Math.toRadians(24.0)
+                && shotUncertainty <= 190.0));
+        if (torpedoThreatActive && !threatSnapshotWindow) {
+            return;
+        }
         long ticksRemaining = Math.max(0L, (long) config.matchDurationTicks() - tick);
         boolean lateMatch = ticksRemaining <= TORPEDO_LATE_MATCH_TICKS;
         boolean recentConfirmedHit = tick - lastConfirmedHitTick <= CONFIRMED_HIT_MEMORY_TICKS;
@@ -1518,6 +1540,91 @@ public final class CodexAttackSub implements SubmarineController {
         torpedoSalvoTick = Long.MIN_VALUE / 4;
         torpedoSalvoTargetX = Double.NaN;
         torpedoSalvoTargetY = Double.NaN;
+    }
+
+    private double[] chooseKillLanePosition(double ownX, double ownY, double ownHeading,
+                                            double cruiseDepth, double anchorX, double anchorY) {
+        if (Double.isNaN(trackedHeading)) {
+            return null;
+        }
+
+        double centerBearing = CodexAutopilot.norm(Math.atan2(-anchorX, -anchorY));
+        double sternBearing = CodexAutopilot.norm(trackedHeading + Math.PI);
+        double desiredRange = Math.clamp(KILL_LANE_RANGE, KILL_LANE_MIN_RANGE, KILL_LANE_MAX_RANGE);
+
+        var candidateBearings = new ArrayList<Double>();
+        candidateBearings.add(sternBearing);
+        candidateBearings.add(CodexAutopilot.norm(sternBearing + KILL_LANE_FLANK_ANGLE));
+        candidateBearings.add(CodexAutopilot.norm(sternBearing - KILL_LANE_FLANK_ANGLE));
+        candidateBearings.add(centerBearing);
+        candidateBearings.add(CodexAutopilot.norm(centerBearing + Math.toRadians(22.0)));
+        candidateBearings.add(CodexAutopilot.norm(centerBearing - Math.toRadians(22.0)));
+
+        double bestScore = Double.NEGATIVE_INFINITY;
+        double bestX = Double.NaN;
+        double bestY = Double.NaN;
+
+        for (double candidateBearing : candidateBearings) {
+            double tx = anchorX + Math.sin(candidateBearing) * desiredRange;
+            double ty = anchorY + Math.cos(candidateBearing) * desiredRange;
+
+            if (Math.abs(CodexAutopilot.adiff(candidateBearing, sternBearing)) > KILL_LANE_FLANK_ANGLE * 0.95) {
+                tx += Math.sin(centerBearing) * KILL_LANE_CENTER_PULL;
+                ty += Math.cos(centerBearing) * KILL_LANE_CENTER_PULL;
+            }
+
+            double boundary = battleArea.distanceToBoundary(tx, ty);
+            if (boundary < PATROL_MARGIN / 2.0 || !pathPlanner.isSafe(tx, ty)) {
+                continue;
+            }
+
+            double depth = safeDepth(tx, ty, Math.min(cruiseDepth, -180.0));
+            var path = pathPlanner.findPath(
+                    ownX, ownY, tx, ty, depth,
+                    CodexAutopilot.depthChangeRatio(6.8),
+                    CodexAutopilot.turnRadiusAtSpeed(6.8));
+            if (path.isEmpty()) {
+                continue;
+            }
+
+            double direct = CodexAutopilot.hdist(ownX, ownY, tx, ty);
+            double routeLen = polylineLength(path);
+            double pathRatio = routeLen / Math.max(direct, 1.0);
+            if (pathRatio > 1.75) {
+                continue;
+            }
+
+            double finalRange = CodexAutopilot.hdist(tx, ty, anchorX, anchorY);
+            if (finalRange < KILL_LANE_MIN_RANGE || finalRange > KILL_LANE_MAX_RANGE) {
+                continue;
+            }
+
+            double routeBearing = CodexAutopilot.norm(Math.atan2(tx - ownX, ty - ownY));
+            double floorDepth = Math.abs(terrain.elevationAt(tx, ty));
+            double sternAspect = 1.0 + Math.cos(CodexAutopilot.adiff(candidateBearing, sternBearing));
+            double centerAspect = 1.0 + Math.cos(CodexAutopilot.adiff(candidateBearing, centerBearing));
+            double turnPenalty = Math.abs(CodexAutopilot.adiff(routeBearing, ownHeading));
+            double standoffPenalty = Math.abs(finalRange - desiredRange);
+
+            double score = sternAspect * 210.0
+                    + centerAspect * 150.0
+                    + Math.min(boundary, 2_000.0) * 0.18
+                    + Math.min(floorDepth, 650.0) * 0.70
+                    - standoffPenalty * 0.20
+                    - (pathRatio - 1.0) * 900.0
+                    - turnPenalty * 110.0;
+
+            if (score > bestScore) {
+                bestScore = score;
+                bestX = tx;
+                bestY = ty;
+            }
+        }
+
+        if (Double.isNaN(bestX) || Double.isNaN(bestY)) {
+            return null;
+        }
+        return new double[]{bestX, bestY};
     }
 
     private boolean isBehindTargetEstimate(double ownX, double ownY) {
