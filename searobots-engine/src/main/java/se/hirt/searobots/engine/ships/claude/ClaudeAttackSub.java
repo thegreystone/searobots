@@ -57,6 +57,11 @@ public final class ClaudeAttackSub implements SubmarineController {
     private static final double FIRING_RANGE = 2000.0;      // fire from further
     private static final double STERN_OFFSET = 450.0;       // wider stern approach
 
+    // Torpedo evasion
+    private static final double TORPEDO_EVADE_RANGE = 900.0;  // evade inbound torpedoes within this range
+    private static final long EVADE_DURATION = 2500;          // 50 seconds of evasive manoeuvring
+    private static final double NEAR_MISS_RANGE = 350.0;      // close enemy terrain explosion = near miss
+
     private enum Mode { PATROL, TRACK, CHASE }
 
     private MatchConfig config;
@@ -95,6 +100,10 @@ public final class ClaudeAttackSub implements SubmarineController {
     private long lastConfirmedHitTick = Long.MIN_VALUE / 4;
     private static final long TORPEDO_REFIRE_COOLDOWN = 750; // 15 seconds between launches (2 tubes)
     private boolean outOfTorpedoes; // set when all torpedoes expended
+
+    // Evasion state
+    private long evadeUntilTick = Long.MIN_VALUE / 4;
+    private double torpedoWarningBearing = Double.NaN;
 
     // Public accessors for tests
     public enum State { PATROL, TRACKING, CHASE, RAM, EVADE }
@@ -185,8 +194,17 @@ public final class ClaudeAttackSub implements SubmarineController {
                 String kind = ev.submarineHit() ? "enemy hit us" : "terrain";
                 System.out.printf("[Claude] Explosion heard: bearing=%.0f° range=%.0fm (%s)%n",
                         Math.toDegrees(ev.bearing()), ev.rangeMetres(), kind);
+                // Near-miss: Codex torpedo just detonated very close — evade immediately
+                if (!ev.submarineHit() && ev.rangeMetres() < NEAR_MISS_RANGE) {
+                    torpedoWarningBearing = ClaudeAutopilot.norm(ev.bearing() + Math.PI);
+                    evadeUntilTick = tick + EVADE_DURATION;
+                }
             }
         }
+
+        // ── Incoming torpedo detection ──
+        detectIncomingTorpedoes(input, tick);
+        boolean evading = tick < evadeUntilTick;
 
         // ── Combat: track contacts ──
         SonarContact best = pickBestContact(input.sonarContacts(), input.activeSonarReturns());
@@ -228,8 +246,11 @@ public final class ClaudeAttackSub implements SubmarineController {
             }
         } else if (mode != Mode.PATROL && hasTrackedContact) {
             // ── Combat waypoint planning ──
+            // If we just entered evasion, force a replan so the autopilot gets the evade waypoint
+            boolean switchedToEvade = evading && !strategicWaypoints.isEmpty()
+                    && strategicWaypoints.getFirst().purpose() != Purpose.EVADE;
             boolean needPlan = modeChanged || strategicWaypoints.isEmpty()
-                    || autopilot.isBlocked() || autopilot.hasArrived();
+                    || autopilot.isBlocked() || autopilot.hasArrived() || switchedToEvade;
 
             if (!needPlan && !Double.isNaN(lastCombatTargetX)) {
                 double moved = ClaudeAutopilot.hdist(trackedX, trackedY,
@@ -240,7 +261,7 @@ public final class ClaudeAttackSub implements SubmarineController {
             }
 
             if (needPlan) {
-                var wp = planCombatWaypoint(pos.x(), pos.y(), pos.z(), heading, speed);
+                var wp = planCombatWaypoint(pos.x(), pos.y(), pos.z(), heading, speed, evading);
                 strategicWaypoints = List.of(wp);
                 autopilot.setWaypoints(strategicWaypoints,
                         pos.x(), pos.y(), pos.z(), heading, speed);
@@ -422,6 +443,60 @@ public final class ClaudeAttackSub implements SubmarineController {
         rangeConfirmedByActive = false; consecutiveContactTicks = 0;
     }
 
+    // ── Torpedo evasion ─────────────────────────────────────────────
+
+    private void detectIncomingTorpedoes(SubmarineInput input, long tick) {
+        if (tick < evadeUntilTick) return; // already evading — don't extend on every tick
+        // Only use active sonar returns: they give a precise range so we know the torpedo is close.
+        // Passive contacts cannot reliably distinguish close from distant torpedoes via SE alone.
+        for (var c : input.activeSonarReturns()) {
+            if (c.classification() == SonarContact.Classification.TORPEDO
+                    && c.range() > 0 && c.range() < TORPEDO_EVADE_RANGE) {
+                torpedoWarningBearing = c.bearing();
+                evadeUntilTick = tick + EVADE_DURATION;
+                System.out.printf("[Claude] TORPEDO WARNING: bearing=%.0f° range=%.0fm (active)%n",
+                        Math.toDegrees(c.bearing()), c.range());
+                return;
+            }
+        }
+    }
+
+    private StrategicWaypoint planEvadeWaypoint(double x, double y, double z, double heading) {
+        double cruiseDepth = autopilot.cruiseDepth();
+        double evadeDist = 1500;
+
+        double perp1 = ClaudeAutopilot.norm(torpedoWarningBearing + Math.PI / 2);
+        double perp2 = ClaudeAutopilot.norm(torpedoWarningBearing - Math.PI / 2);
+        double x1 = x + Math.sin(perp1) * evadeDist, y1 = y + Math.cos(perp1) * evadeDist;
+        double x2 = x + Math.sin(perp2) * evadeDist, y2 = y + Math.cos(perp2) * evadeDist;
+
+        boolean ok1 = battleArea.distanceToBoundary(x1, y1) > PATROL_MARGIN && pathPlanner.isSafe(x1, y1);
+        boolean ok2 = battleArea.distanceToBoundary(x2, y2) > PATROL_MARGIN && pathPlanner.isSafe(x2, y2);
+
+        double tx, ty;
+        if (ok1 && ok2) {
+            // Prefer deeper water
+            double d1 = -terrain.elevationAt(x1, y1), d2 = -terrain.elevationAt(x2, y2);
+            tx = d1 >= d2 ? x1 : x2;
+            ty = d1 >= d2 ? y1 : y2;
+        } else if (ok1) {
+            tx = x1; ty = y1;
+        } else if (ok2) {
+            tx = x2; ty = y2;
+        } else {
+            // Last resort: sprint toward center
+            double center = Math.atan2(-x, -y);
+            tx = x + Math.sin(center) * evadeDist;
+            ty = y + Math.cos(center) * evadeDist;
+        }
+
+        // Go as deep as possible during evasion — harder to track and terrain may shield
+        double depth = safeDepth(tx, ty, Math.min(cruiseDepth - 80, -250));
+        return new StrategicWaypoint(tx, ty, depth, Purpose.EVADE,
+                NoisePolicy.SPRINT, MovementPattern.DIRECT, 400, 12.0);
+    }
+
+
     private double estimatePassiveRange(SonarContact c) {
         return Math.clamp(2600 - Math.min(c.signalExcess(), 20) * 85, 700, 2600);
     }
@@ -486,6 +561,7 @@ public final class ClaudeAttackSub implements SubmarineController {
             outOfTorpedoes = true;
             return;
         }
+        if (tick < evadeUntilTick) return; // never fire while evading
         if (tick < 500) return;
         if (tick - lastTorpedoLaunchTick < TORPEDO_REFIRE_COOLDOWN) return;
         if (!hasTrackedContact) return;
@@ -550,9 +626,14 @@ public final class ClaudeAttackSub implements SubmarineController {
     // ── Combat waypoint planning ────────────────────────────────────
 
     private StrategicWaypoint planCombatWaypoint(double x, double y, double z,
-                                                  double heading, double speed) {
+                                                  double heading, double speed, boolean evading) {
         double dist = ClaudeAutopilot.hdist(x, y, trackedX, trackedY);
         double cruiseDepth = autopilot.cruiseDepth();
+
+        // ── Evasion: inbound torpedo detected — manoeuvre perpendicular and deep ──
+        if (evading && !Double.isNaN(torpedoWarningBearing)) {
+            return planEvadeWaypoint(x, y, z, heading);
+        }
 
         // ── Out of torpedoes: disengage, go deep, go quiet, run away ──
         if (outOfTorpedoes) {
