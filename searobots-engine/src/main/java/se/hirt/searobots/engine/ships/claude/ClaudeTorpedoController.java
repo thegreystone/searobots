@@ -314,15 +314,19 @@ public class ClaudeTorpedoController implements TorpedoController {
             goalZ = targetZ + (cruiseZ - targetZ) * t;
         }
 
-        // Terrain avoidance
+        // Terrain avoidance: check multiple distances ahead so ridges well before impact
+        // are detected in time for the PID to respond.
         if (terrain != null) {
             double floor = terrain.elevationAt(pos.x(), pos.y());
             double safeZ = floor + MIN_TERRAIN_CLEARANCE;
-            double lookAhead = input.speed() * 3;
-            double aheadFloor = terrain.elevationAt(
-                    pos.x() + Math.sin(heading) * lookAhead,
-                    pos.y() + Math.cos(heading) * lookAhead);
-            safeZ = Math.max(safeZ, aheadFloor + MIN_TERRAIN_CLEARANCE + 10);
+            double sinH = Math.sin(heading), cosH = Math.cos(heading);
+            for (int seconds = 2; seconds <= 10; seconds += 2) {
+                double d = input.speed() * seconds;
+                double aheadFloor = terrain.elevationAt(pos.x() + sinH * d, pos.y() + cosH * d);
+                // Extra clearance for far detections — more time to climb, but ridge can be tall
+                double extra = Math.max(0, (10 - seconds) * 4); // 32m at 2s, 8m at 8s, 0 at 10s
+                safeZ = Math.max(safeZ, aheadFloor + MIN_TERRAIN_CLEARANCE + extra);
+            }
             if (goalZ < safeZ) goalZ = safeZ;
         }
         goalZ = Math.min(goalZ, minDepth);

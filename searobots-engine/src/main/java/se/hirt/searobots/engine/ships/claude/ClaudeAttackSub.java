@@ -528,8 +528,10 @@ public final class ClaudeAttackSub implements SubmarineController {
             boolean longRangeFix = uncertaintyRadius > 250 && !rangeConfirmedByActive && sinceFix > 400;
             shouldPing = needFix || lostTrack || longShadow || longRangeFix;
         } else {
-            // Tracking: ping to confirm contact, but not too often
-            shouldPing = since >= PATROL_PING_INTERVAL;
+            // Tracking: ping more frequently when we don't have a range fix yet —
+            // range confirmation is the gate to CHASE mode and firing.
+            long trackInterval = rangeConfirmedByActive ? PATROL_PING_INTERVAL : 300;
+            shouldPing = since >= trackInterval;
         }
         if (shouldPing) { output.activeSonarPing(); lastPingTick = tick; }
     }
