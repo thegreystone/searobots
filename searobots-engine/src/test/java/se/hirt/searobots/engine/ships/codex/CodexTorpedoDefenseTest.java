@@ -52,7 +52,7 @@ class CodexTorpedoDefenseTest {
     private static final double DT = 1.0 / 50.0;
 
     @Test
-    void classifiedTorpedoThreatOverridesShotWithEvadePosture() {
+    void classifiedTorpedoThreatTakesSnapshotShotWithEvadePosture() {
         var world = GeneratedWorld.deepFlat();
         var controller = new CodexAttackSub();
         controller.onMatchStart(new MatchContext(
@@ -81,8 +81,8 @@ class CodexTorpedoDefenseTest {
                 "Codex should publish a strategic response to the torpedo threat.");
         assertEquals(Purpose.EVADE, output.strategicPurposes.get(output.strategicPurposes.size() - 1),
                 "Torpedo threat should override combat planning with an evade waypoint.");
-        assertEquals(0, output.launchedTorpedoCount,
-                "Codex should suppress torpedo launch while handling an incoming torpedo.");
+        assertEquals(1, output.launchedTorpedoCount,
+                "Codex should take a point-blank snapshot shot while evading an incoming torpedo.");
         assertTrue(output.throttle >= 0.56,
                 "Torpedo defense should command decisive throttle, got " + output.throttle);
     }
