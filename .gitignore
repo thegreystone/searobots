@@ -31,3 +31,7 @@ dependency-reduced-pom.xml
 # JMonkeyEngine asset cache
 *.j3o
 /experiments/
+
+# Debug files
+SeaRobots*.png
+Batch*.txt
