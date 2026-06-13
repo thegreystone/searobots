@@ -78,12 +78,13 @@ public final class SonarModel {
 
     record SonarResult(List<SonarContact> passiveContacts,
                        List<SonarContact> activeReturns,
-                       int cooldownTicks) {}
+                       int cooldownTicks) {
+    }
 
     /**
      * Classify a sonar contact from its acoustic signature.
      * Requires sufficient signal excess to classify; faint contacts are UNKNOWN.
-     *
+     * <p>
      * Classification rules (modelling blade-rate tonal analysis):
      * - TORPEDO: high speed (>18 m/s) = small fast high-RPM prop
      * - SURFACE_SHIP: loud (SL>108) + moderate speed (<12) = big slow prop
@@ -91,9 +92,9 @@ public final class SonarModel {
      * - UNKNOWN: insufficient signal excess to classify (<8 dB)
      */
     private static SonarContact.Classification classify(double signalExcess,
-                                                         double estimatedSpeed,
-                                                         double estimatedSL,
-                                                         double estimatedDepth) {
+                                                        double estimatedSpeed,
+                                                        double estimatedSL,
+                                                        double estimatedDepth) {
         // Need enough signal to analyse the tonal structure
         if (signalExcess < 8) return SonarContact.Classification.UNKNOWN;
 
@@ -196,13 +197,15 @@ public final class SonarModel {
         return computeContacts(tick, entities, List.of(), terrain, thermalLayers);
     }
 
-    /** Passive detection: can listener hear source? Returns contact or null. */
+    /**
+     * Passive detection: can listener hear source? Returns contact or null.
+     */
     private SonarContact passiveDetect(double lx, double ly, double lz, double lHeading, double lSLdB,
-                                        double lSonarOffset,
-                                        double sx, double sy, double sz, double sSLdB,
-                                        double sSpeed, boolean sPinged,
-                                        TerrainMap terrain, List<ThermalLayer> thermalLayers) {
-        double distance = Math.sqrt((sx-lx)*(sx-lx) + (sy-ly)*(sy-ly) + (sz-lz)*(sz-lz));
+                                       double lSonarOffset,
+                                       double sx, double sy, double sz, double sSLdB,
+                                       double sSpeed, boolean sPinged,
+                                       TerrainMap terrain, List<ThermalLayer> thermalLayers) {
+        double distance = Math.sqrt((sx - lx) * (sx - lx) + (sy - ly) * (sy - ly) + (sz - lz) * (sz - lz));
         if (distance < 1.0) distance = 1.0;
 
         double trueBearing = Math.atan2(sx - lx, sy - ly);
@@ -231,12 +234,14 @@ public final class SonarModel {
         return null;
     }
 
-    /** Active sonar return: does the ping illuminate the target? Returns contact or null. */
+    /**
+     * Active sonar return: does the ping illuminate the target? Returns contact or null.
+     */
     private SonarContact activeDetect(double lx, double ly, double lz, double lSLdB,
-                                       double lSonarOffset,
-                                       double sx, double sy, double sz, double sSpeed,
-                                       TerrainMap terrain, List<ThermalLayer> thermalLayers) {
-        double distance = Math.sqrt((sx-lx)*(sx-lx) + (sy-ly)*(sy-ly) + (sz-lz)*(sz-lz));
+                                      double lSonarOffset,
+                                      double sx, double sy, double sz, double sSpeed,
+                                      TerrainMap terrain, List<ThermalLayer> thermalLayers) {
+        double distance = Math.sqrt((sx - lx) * (sx - lx) + (sy - ly) * (sy - ly) + (sz - lz) * (sz - lz));
         if (distance < 1.0) distance = 1.0;
 
         double trueBearing = Math.atan2(sx - lx, sy - ly);

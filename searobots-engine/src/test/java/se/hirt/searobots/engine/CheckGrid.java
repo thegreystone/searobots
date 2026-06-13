@@ -31,8 +31,10 @@ package se.hirt.searobots.engine;
 import org.junit.jupiter.api.Test;
 import se.hirt.searobots.api.MatchConfig;
 import se.hirt.searobots.api.PathPlanner;
+
 class CheckGrid {
-    @Test void check() {
+    @Test
+    void check() {
         var world = new WorldGenerator().generate(MatchConfig.withDefaults(55555));
         var planner = new PathPlanner(world.terrain(), -80, 200, 75);
         // Check death location and surroundings

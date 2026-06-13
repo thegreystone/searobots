@@ -50,7 +50,8 @@ public final class CodexCombatInvestigation {
     };
     private static final int MATCH_TICKS = 600 * 50;
 
-    private CodexCombatInvestigation() {}
+    private CodexCombatInvestigation() {
+    }
 
     public static void main(String[] args) {
         long[] seeds = args.length == 0 ? DEFAULT_SEEDS : parseSeeds(args);

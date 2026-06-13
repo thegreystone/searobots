@@ -26,4 +26,5 @@ public record TorpedoLaunchCommand(
         double pitch,
         double fuseRadius,
         String missionData
-) {}
+) {
+}

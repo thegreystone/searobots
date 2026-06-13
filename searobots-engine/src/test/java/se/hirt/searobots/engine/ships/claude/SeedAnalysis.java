@@ -116,27 +116,36 @@ class SeedAnalysis {
                     double wpDist = Math.sqrt(Math.pow(activeX - pos.x(), 2) + Math.pow(activeY - pos.y(), 2));
 
                     log.add(String.format(
-                        "t=%5d pos=(%.0f,%.0f,%.0f) floor=%.0f gap=%.0f hdg=%.1f spd=%.1f " +
-                        "thr=%.2f rud=%.2f hp=%d status=%s " +
-                        "wp[%d]=(%.0f,%.0f,%.0f) wpDist=%.0f",
-                        tick, pos.x(), pos.y(), pos.z(), floor, gap,
-                        Math.toDegrees(s.pose().heading()), s.speed(),
-                        s.throttle(), s.rudder(), s.hp(), s.status(),
-                        activeIdx, activeX, activeY, activeZ, wpDist));
+                            "t=%5d pos=(%.0f,%.0f,%.0f) floor=%.0f gap=%.0f hdg=%.1f spd=%.1f " +
+                                    "thr=%.2f rud=%.2f hp=%d status=%s " +
+                                    "wp[%d]=(%.0f,%.0f,%.0f) wpDist=%.0f",
+                            tick, pos.x(), pos.y(), pos.z(), floor, gap,
+                            Math.toDegrees(s.pose().heading()), s.speed(),
+                            s.throttle(), s.rudder(), s.hp(), s.status(),
+                            activeIdx, activeX, activeY, activeZ, wpDist));
                 }
 
                 if (s.hp() <= 0 || tick >= 15000) {
                     sim.stop();
                 }
             }
-            @Override public void onMatchEnd() {}
+
+            @Override
+            public void onMatchEnd() {
+            }
         };
 
         var thread = new Thread(() -> sim.run(world, controllers, configs, listener));
         thread.start();
-        try { thread.join(60_000); } catch (InterruptedException e) {}
+        try {
+            thread.join(60_000);
+        } catch (InterruptedException e) {
+        }
         sim.stop();
-        try { thread.join(5000); } catch (InterruptedException e) {}
+        try {
+            thread.join(5000);
+        } catch (InterruptedException e) {
+        }
 
         System.out.println("\n=== Simulation Trace (sub 0) ===");
         for (var line : log) {

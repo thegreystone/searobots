@@ -29,24 +29,13 @@
 package se.hirt.searobots.engine.ships.codex;
 
 import org.junit.jupiter.api.Test;
-import se.hirt.searobots.api.CurrentField;
-import se.hirt.searobots.api.EnvironmentSnapshot;
-import se.hirt.searobots.api.MatchConfig;
-import se.hirt.searobots.api.MatchContext;
-import se.hirt.searobots.api.Pose;
-import se.hirt.searobots.api.Purpose;
-import se.hirt.searobots.api.SonarContact;
-import se.hirt.searobots.api.SubmarineState;
-import se.hirt.searobots.api.Vec3;
-import se.hirt.searobots.api.Velocity;
+import se.hirt.searobots.api.*;
 import se.hirt.searobots.engine.GeneratedWorld;
 import se.hirt.searobots.engine.TestHelpers;
 
 import java.util.List;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.*;
 
 class CodexTorpedoDefenseTest {
     private static final double DT = 1.0 / 50.0;
@@ -64,15 +53,15 @@ class CodexTorpedoDefenseTest {
         var self = submarineState(new Vec3(0.0, 0.0, -140.0), 0.0, 7.5);
         var output = new TestHelpers.CapturedOutput();
         controller.onTick(new TestHelpers.TestInput(
-                700L,
-                DT,
-                self,
-                environment(world),
-                List.of(),
-                List.of(
-                        activeSubmarine(0.0, 1_000.0),
-                        activeTorpedo(Math.toRadians(24.0), 700.0)),
-                250),
+                        700L,
+                        DT,
+                        self,
+                        environment(world),
+                        List.of(),
+                        List.of(
+                                activeSubmarine(0.0, 1_000.0),
+                                activeTorpedo(Math.toRadians(24.0), 700.0)),
+                        250),
                 output);
 
         assertTrue(output.status != null && output.status.startsWith("!"),
@@ -99,24 +88,24 @@ class CodexTorpedoDefenseTest {
 
         var self = submarineState(new Vec3(0.0, 0.0, -140.0), 0.0, 7.5);
         controller.onTick(new TestHelpers.TestInput(
-                700L,
-                DT,
-                self,
-                environment(world),
-                List.of(passiveTorpedo(Math.toRadians(18.0), 4.0)),
-                List.of(activeSubmarine(0.0, 1_000.0)),
-                250),
+                        700L,
+                        DT,
+                        self,
+                        environment(world),
+                        List.of(passiveTorpedo(Math.toRadians(18.0), 4.0)),
+                        List.of(activeSubmarine(0.0, 1_000.0)),
+                        250),
                 new TestHelpers.CapturedOutput());
 
         var output = new TestHelpers.CapturedOutput();
         controller.onTick(new TestHelpers.TestInput(
-                701L,
-                DT,
-                self,
-                environment(world),
-                List.of(passiveTorpedo(Math.toRadians(18.0), 4.0)),
-                List.of(activeSubmarine(0.0, 1_000.0)),
-                250),
+                        701L,
+                        DT,
+                        self,
+                        environment(world),
+                        List.of(passiveTorpedo(Math.toRadians(18.0), 4.0)),
+                        List.of(activeSubmarine(0.0, 1_000.0)),
+                        250),
                 output);
 
         assertTrue(output.status != null && output.status.startsWith("!"),
@@ -140,13 +129,13 @@ class CodexTorpedoDefenseTest {
         var self = submarineState(new Vec3(0.0, 0.0, -140.0), 0.0, 7.5);
         var output = new TestHelpers.CapturedOutput();
         controller.onTick(new TestHelpers.TestInput(
-                700L,
-                DT,
-                self,
-                environment(world),
-                List.of(passiveTorpedo(Math.toRadians(18.0), 4.0)),
-                List.of(activeSubmarine(0.0, 2_600.0)),
-                250),
+                        700L,
+                        DT,
+                        self,
+                        environment(world),
+                        List.of(passiveTorpedo(Math.toRadians(18.0), 4.0)),
+                        List.of(activeSubmarine(0.0, 2_600.0)),
+                        250),
                 output);
 
         assertTrue(output.status != null && !output.status.startsWith("!"),
@@ -166,13 +155,13 @@ class CodexTorpedoDefenseTest {
         var self = submarineState(new Vec3(0.0, 0.0, -140.0), 0.0, 7.5);
         var launchOutput = new TestHelpers.CapturedOutput();
         controller.onTick(new TestHelpers.TestInput(
-                700L,
-                DT,
-                self,
-                environment(world),
-                List.of(),
-                List.of(activeSubmarine(0.0, 1_000.0)),
-                250),
+                        700L,
+                        DT,
+                        self,
+                        environment(world),
+                        List.of(),
+                        List.of(activeSubmarine(0.0, 1_000.0)),
+                        250),
                 launchOutput);
 
         assertEquals(1, launchOutput.launchedTorpedoCount,
@@ -181,13 +170,13 @@ class CodexTorpedoDefenseTest {
         double ownTorpedoBearing = launchOutput.launchedTorpedo.bearing();
         var output = new TestHelpers.CapturedOutput();
         controller.onTick(new TestHelpers.TestInput(
-                701L,
-                DT,
-                self,
-                environment(world),
-                List.of(passiveTorpedo(ownTorpedoBearing, 8.0)),
-                List.of(activeSubmarine(0.0, 1_000.0)),
-                250),
+                        701L,
+                        DT,
+                        self,
+                        environment(world),
+                        List.of(passiveTorpedo(ownTorpedoBearing, 8.0)),
+                        List.of(activeSubmarine(0.0, 1_000.0)),
+                        250),
                 output);
 
         assertTrue(output.status != null && !output.status.startsWith("!"),
@@ -208,13 +197,13 @@ class CodexTorpedoDefenseTest {
         var self = submarineState(position, 0.0, 7.5);
         var output = new TestHelpers.CapturedOutput();
         controller.onTick(new TestHelpers.TestInput(
-                700L,
-                DT,
-                self,
-                environment(world),
-                List.of(),
-                List.of(activeSubmarine(0.0, 1_500.0, Math.toRadians(90.0), 12.0)),
-                250),
+                        700L,
+                        DT,
+                        self,
+                        environment(world),
+                        List.of(),
+                        List.of(activeSubmarine(0.0, 1_500.0, Math.toRadians(90.0), 12.0)),
+                        250),
                 output);
 
         assertEquals(1, output.launchedTorpedoCount,

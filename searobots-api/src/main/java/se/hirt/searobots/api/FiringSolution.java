@@ -37,15 +37,15 @@ package se.hirt.searobots.api;
  * criteria (range, uncertainty, environment, target geometry, etc.).
  * Different controllers may use different criteria.
  *
- * @param targetX         estimated target world X coordinate (meters)
- * @param targetY         estimated target world Y coordinate (meters)
- * @param targetHeading   estimated target heading in radians [0, 2pi), or NaN if unknown
- * @param targetSpeed     estimated target speed in m/s, or -1 if unknown
- * @param quality         solution quality 0.0 (marginal) to 1.0 (excellent)
+ * @param targetX       estimated target world X coordinate (meters)
+ * @param targetY       estimated target world Y coordinate (meters)
+ * @param targetHeading estimated target heading in radians [0, 2pi), or NaN if unknown
+ * @param targetSpeed   estimated target speed in m/s, or -1 if unknown
+ * @param quality       solution quality 0.0 (marginal) to 1.0 (excellent)
  */
 public record FiringSolution(double targetX, double targetY,
-                              double targetHeading, double targetSpeed,
-                              double quality) {
+                             double targetHeading, double targetSpeed,
+                             double quality) {
     public FiringSolution {
         quality = Math.clamp(quality, 0.0, 1.0);
     }

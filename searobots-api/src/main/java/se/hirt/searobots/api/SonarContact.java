@@ -63,34 +63,46 @@ public record SonarContact(double bearing, double signalExcess, double range, bo
      * faint contacts can only be classified as UNKNOWN.
      */
     public enum Classification {
-        /** Too faint to classify (low signal excess). */
+        /**
+         * Too faint to classify (low signal excess).
+         */
         UNKNOWN,
-        /** Submarine: moderate noise, moderate speed, submerged. */
+        /**
+         * Submarine: moderate noise, moderate speed, submerged.
+         */
         SUBMARINE,
-        /** Surface ship: high broadband noise, slow large prop, at surface depth. */
+        /**
+         * Surface ship: high broadband noise, slow large prop, at surface depth.
+         */
         SURFACE_SHIP,
-        /** Torpedo: very high blade rate, high speed, small signature. */
+        /**
+         * Torpedo: very high blade rate, high speed, small signature.
+         */
         TORPEDO
     }
 
-    /** Constructor without classification (defaults to UNKNOWN). */
+    /**
+     * Constructor without classification (defaults to UNKNOWN).
+     */
     public SonarContact(double bearing, double signalExcess, double range, boolean isActive,
                         double estimatedSpeed, double bearingUncertainty,
                         double rangeUncertainty, double estimatedSourceLevel,
                         double solutionQuality, double estimatedHeading,
                         double estimatedDepth) {
         this(bearing, signalExcess, range, isActive, estimatedSpeed, bearingUncertainty,
-             rangeUncertainty, estimatedSourceLevel, solutionQuality, estimatedHeading,
-             estimatedDepth, Classification.UNKNOWN);
+                rangeUncertainty, estimatedSourceLevel, solutionQuality, estimatedHeading,
+                estimatedDepth, Classification.UNKNOWN);
     }
 
-    /** Constructor without depth or classification. */
+    /**
+     * Constructor without depth or classification.
+     */
     public SonarContact(double bearing, double signalExcess, double range, boolean isActive,
                         double estimatedSpeed, double bearingUncertainty,
                         double rangeUncertainty, double estimatedSourceLevel,
                         double solutionQuality, double estimatedHeading) {
         this(bearing, signalExcess, range, isActive, estimatedSpeed, bearingUncertainty,
-             rangeUncertainty, estimatedSourceLevel, solutionQuality, estimatedHeading,
-             Double.NaN, Classification.UNKNOWN);
+                rangeUncertainty, estimatedSourceLevel, solutionQuality, estimatedHeading,
+                Double.NaN, Classification.UNKNOWN);
     }
 }

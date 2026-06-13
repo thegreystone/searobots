@@ -43,7 +43,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * in controlled geometry. Each scenario places a launcher at a specific
  * position and angle relative to the target, fires one torpedo, and
  * checks if it hits.
- *
+ * <p>
  * Geometry: launcher is always at origin (0,0), target is placed at
  * (distance, 0) heading in the specified direction. Launcher faces
  * the target. This gives clean control over approach angle and aspect.
@@ -52,11 +52,14 @@ public class ClaudeTorpedoTrackingTest {
 
     private static final long MAX_TICKS = 30_000; // 10 min max
 
-    record TrackResult(boolean hit, int damage, double closestApproach, long endTick) {}
+    record TrackResult(boolean hit, int damage, double closestApproach, long endTick) {
+    }
 
     // ── World builder ──
 
-    /** Flat 1000m ocean with two spawn points at specified positions. */
+    /**
+     * Flat 1000m ocean with two spawn points at specified positions.
+     */
     private static GeneratedWorld controlledWorld(Vec3 launcherPos, Vec3 targetPos) {
         var config = MatchConfig.withDefaults(0);
         double halfSize = config.battleArea() instanceof BattleArea.Circular c
@@ -75,7 +78,9 @@ public class ClaudeTorpedoTrackingTest {
 
     // ── Controllers ──
 
-    /** Launcher: faces target, pings, fires as soon as aligned and sonar confirms. */
+    /**
+     * Launcher: faces target, pings, fires as soon as aligned and sonar confirms.
+     */
     static class AlignedLauncher implements SubmarineController {
         private boolean fired = false;
         private double targetBearing = Double.NaN;
@@ -88,7 +93,10 @@ public class ClaudeTorpedoTrackingTest {
             this.estTargetSpeed = estTargetSpeed;
         }
 
-        @Override public String name() { return "Launcher"; }
+        @Override
+        public String name() {
+            return "Launcher";
+        }
 
         @Override
         public TorpedoController createTorpedoController() {
@@ -140,7 +148,9 @@ public class ClaudeTorpedoTrackingTest {
         }
     }
 
-    /** Scripted target: drives at given throttle/depth, steers to given heading. */
+    /**
+     * Scripted target: drives at given throttle/depth, steers to given heading.
+     */
     static class ScriptedTarget implements SubmarineController {
         private final String name;
         private final double throttle;
@@ -160,7 +170,10 @@ public class ClaudeTorpedoTrackingTest {
             this.maneuver = maneuver;
         }
 
-        @Override public String name() { return name; }
+        @Override
+        public String name() {
+            return name;
+        }
 
         @Override
         public void onMatchStart(MatchContext context) {
@@ -241,14 +254,23 @@ public class ClaudeTorpedoTrackingTest {
                     sim.stop();
                 }
             }
-            @Override public void onMatchEnd() {}
+
+            @Override
+            public void onMatchEnd() {
+            }
         };
 
         var thread = new Thread(() -> sim.run(world, controllers, configs, headings, listener));
         thread.start();
-        try { thread.join(60_000); } catch (InterruptedException e) {}
+        try {
+            thread.join(60_000);
+        } catch (InterruptedException e) {
+        }
         sim.stop();
-        try { thread.join(3000); } catch (InterruptedException e) {}
+        try {
+            thread.join(3000);
+        } catch (InterruptedException e) {
+        }
 
         int damage = 1000 - targetHp[0];
         return new TrackResult(damage > 0, damage, closest[0], endTick[0]);
@@ -256,7 +278,9 @@ public class ClaudeTorpedoTrackingTest {
 
     // ── Convenience: compute geometry ──
 
-    /** Place launcher behind the target (in its baffles). */
+    /**
+     * Place launcher behind the target (in its baffles).
+     */
     private TrackResult bafflesShot(double range, double launcherDepth, double targetDepth,
                                     double targetSpeed, double targetHeading, boolean maneuver) {
         // Target at origin heading in targetHeading direction
@@ -276,9 +300,11 @@ public class ClaudeTorpedoTrackingTest {
                 launcher, target, VehicleConfig.submarine());
     }
 
-    /** Place launcher to the side (beam shot). */
+    /**
+     * Place launcher to the side (beam shot).
+     */
     private TrackResult beamShot(double range, double launcherDepth, double targetDepth,
-                                  double targetSpeed, double targetHeading, boolean maneuver) {
+                                 double targetSpeed, double targetHeading, boolean maneuver) {
         // Target at origin heading in targetHeading direction
         // Launcher perpendicular to target's course
         double sideAngle = targetHeading + Math.PI / 2;
@@ -297,7 +323,9 @@ public class ClaudeTorpedoTrackingTest {
                 launcher, target, VehicleConfig.submarine());
     }
 
-    /** Surface ship target (uses surfaceShip config and TargetDrone controller). */
+    /**
+     * Surface ship target (uses surfaceShip config and TargetDrone controller).
+     */
     private TrackResult surfaceShipShot(double range, double launcherDepth, boolean maneuver) {
         // Surface ship at origin heading north, launcher south of it
         double targetHeading = 0;
@@ -315,7 +343,8 @@ public class ClaudeTorpedoTrackingTest {
 
     // ── The big scenario table ──
 
-    record Scenario(String name, java.util.function.Supplier<TrackResult> run) {}
+    record Scenario(String name, java.util.function.Supplier<TrackResult> run) {
+    }
 
     @Test
     void trackingScenarioTable() {
@@ -325,61 +354,61 @@ public class ClaudeTorpedoTrackingTest {
         System.out.println("-".repeat(65));
 
         var scenarios = new Scenario[]{
-            // ── Surface ship ──
-            new Scenario("Surface ship straight 1500m",
-                    () -> surfaceShipShot(1500, -100, false)),
-            new Scenario("Surface ship maneuver 1500m",
-                    () -> surfaceShipShot(1500, -100, true)),
+                // ── Surface ship ──
+                new Scenario("Surface ship straight 1500m",
+                        () -> surfaceShipShot(1500, -100, false)),
+                new Scenario("Surface ship maneuver 1500m",
+                        () -> surfaceShipShot(1500, -100, true)),
 
-            // ── Baffles approach, same depth ──
-            new Scenario("Baffles 1500m same depth 5m/s",
-                    () -> bafflesShot(1500, -100, -100, 5, 0, false)),
-            new Scenario("Baffles 1500m same depth 8m/s",
-                    () -> bafflesShot(1500, -100, -100, 8, 0, false)),
-            new Scenario("Baffles 1500m same depth 12m/s",
-                    () -> bafflesShot(1500, -100, -100, 12, 0, false)),
+                // ── Baffles approach, same depth ──
+                new Scenario("Baffles 1500m same depth 5m/s",
+                        () -> bafflesShot(1500, -100, -100, 5, 0, false)),
+                new Scenario("Baffles 1500m same depth 8m/s",
+                        () -> bafflesShot(1500, -100, -100, 8, 0, false)),
+                new Scenario("Baffles 1500m same depth 12m/s",
+                        () -> bafflesShot(1500, -100, -100, 12, 0, false)),
 
-            // ── Baffles approach, depth delta ──
-            new Scenario("Baffles 1500m deep->shallow",
-                    () -> bafflesShot(1500, -200, -80, 5, 0, false)),
-            new Scenario("Baffles 1500m shallow->deep",
-                    () -> bafflesShot(1500, -80, -200, 5, 0, false)),
-            new Scenario("Baffles 1500m big depth delta",
-                    () -> bafflesShot(1500, -300, -80, 5, 0, false)),
+                // ── Baffles approach, depth delta ──
+                new Scenario("Baffles 1500m deep->shallow",
+                        () -> bafflesShot(1500, -200, -80, 5, 0, false)),
+                new Scenario("Baffles 1500m shallow->deep",
+                        () -> bafflesShot(1500, -80, -200, 5, 0, false)),
+                new Scenario("Baffles 1500m big depth delta",
+                        () -> bafflesShot(1500, -300, -80, 5, 0, false)),
 
-            // ── Baffles approach, various ranges ──
-            new Scenario("Baffles 800m same depth 5m/s",
-                    () -> bafflesShot(800, -100, -100, 5, 0, false)),
-            new Scenario("Baffles 2000m same depth 5m/s",
-                    () -> bafflesShot(2000, -100, -100, 5, 0, false)),
-            new Scenario("Baffles 3000m same depth 5m/s",
-                    () -> bafflesShot(3000, -100, -100, 5, 0, false)),
+                // ── Baffles approach, various ranges ──
+                new Scenario("Baffles 800m same depth 5m/s",
+                        () -> bafflesShot(800, -100, -100, 5, 0, false)),
+                new Scenario("Baffles 2000m same depth 5m/s",
+                        () -> bafflesShot(2000, -100, -100, 5, 0, false)),
+                new Scenario("Baffles 3000m same depth 5m/s",
+                        () -> bafflesShot(3000, -100, -100, 5, 0, false)),
 
-            // ── Baffles with maneuvering target ──
-            new Scenario("Baffles 1500m maneuver 5m/s",
-                    () -> bafflesShot(1500, -100, -100, 5, 0, true)),
-            new Scenario("Baffles 1500m maneuver 8m/s",
-                    () -> bafflesShot(1500, -100, -100, 8, 0, true)),
+                // ── Baffles with maneuvering target ──
+                new Scenario("Baffles 1500m maneuver 5m/s",
+                        () -> bafflesShot(1500, -100, -100, 5, 0, true)),
+                new Scenario("Baffles 1500m maneuver 8m/s",
+                        () -> bafflesShot(1500, -100, -100, 8, 0, true)),
 
-            // ── Full speed target (15 m/s) from baffles at various ranges ──
-            new Scenario("Baffles 800m full speed 15m/s",
-                    () -> bafflesShot(800, -100, -100, 15, 0, false)),
-            new Scenario("Baffles 1000m full speed 15m/s",
-                    () -> bafflesShot(1000, -100, -100, 15, 0, false)),
-            new Scenario("Baffles 1200m full speed 15m/s",
-                    () -> bafflesShot(1200, -100, -100, 15, 0, false)),
-            new Scenario("Baffles 1500m full speed 15m/s",
-                    () -> bafflesShot(1500, -100, -100, 15, 0, false)),
+                // ── Full speed target (15 m/s) from baffles at various ranges ──
+                new Scenario("Baffles 800m full speed 15m/s",
+                        () -> bafflesShot(800, -100, -100, 15, 0, false)),
+                new Scenario("Baffles 1000m full speed 15m/s",
+                        () -> bafflesShot(1000, -100, -100, 15, 0, false)),
+                new Scenario("Baffles 1200m full speed 15m/s",
+                        () -> bafflesShot(1200, -100, -100, 15, 0, false)),
+                new Scenario("Baffles 1500m full speed 15m/s",
+                        () -> bafflesShot(1500, -100, -100, 15, 0, false)),
 
-            // ── Beam (crossing) shots ──
-            new Scenario("Beam 1500m same depth 5m/s",
-                    () -> beamShot(1500, -100, -100, 5, 0, false)),
-            new Scenario("Beam 1500m same depth 8m/s",
-                    () -> beamShot(1500, -100, -100, 8, 0, false)),
-            new Scenario("Beam 1500m depth delta 5m/s",
-                    () -> beamShot(1500, -200, -80, 5, 0, false)),
-            new Scenario("Beam 1500m maneuver 8m/s",
-                    () -> beamShot(1500, -100, -100, 8, 0, true)),
+                // ── Beam (crossing) shots ──
+                new Scenario("Beam 1500m same depth 5m/s",
+                        () -> beamShot(1500, -100, -100, 5, 0, false)),
+                new Scenario("Beam 1500m same depth 8m/s",
+                        () -> beamShot(1500, -100, -100, 8, 0, false)),
+                new Scenario("Beam 1500m depth delta 5m/s",
+                        () -> beamShot(1500, -200, -80, 5, 0, false)),
+                new Scenario("Beam 1500m maneuver 8m/s",
+                        () -> beamShot(1500, -100, -100, 8, 0, true)),
         };
 
         int hits = 0;

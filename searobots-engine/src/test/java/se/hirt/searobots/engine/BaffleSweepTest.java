@@ -12,18 +12,19 @@ import se.hirt.searobots.engine.ships.DefaultAttackSub;
 import java.awt.*;
 import java.util.List;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static se.hirt.searobots.api.VehicleConfig.submarine;
 
 /**
  * Diagnostic sweep: verifies that the baffle zone is correctly oriented
  * relative to the listener's heading, and maps detection across the full
  * 360° arc.
- *
+ * <p>
  * Coordinate convention:
- *   bearing  0  = north (+Y)
- *   bearing  90 = east  (+X)
- *   heading  0  = sub pointing north (bow toward +Y)
+ * bearing  0  = north (+Y)
+ * bearing  90 = east  (+X)
+ * heading  0  = sub pointing north (bow toward +Y)
  */
 class BaffleSweepTest {
 
@@ -46,7 +47,9 @@ class BaffleSweepTest {
         return sub;
     }
 
-    /** Direct baffle check sweep — no randomness, tests the pure geometry. */
+    /**
+     * Direct baffle check sweep — no randomness, tests the pure geometry.
+     */
     @Test
     void baffleGeometrySweep() {
         System.out.println("\n=== Baffle geometry: isInBaffles(listenerHeading, bearingToSource) ===");
@@ -66,27 +69,29 @@ class BaffleSweepTest {
             if (relDeg > 180) relDeg -= 360;
             if (relDeg < -180) relDeg += 360;
             String meaning = deg == 0 ? "dead ahead" : deg == 90 ? "starboard beam" :
-                             deg == 180 ? "dead astern" : deg == 270 ? "port beam" :
-                             deg < 180 ? "starboard" : "port";
+                    deg == 180 ? "dead astern" : deg == 270 ? "port beam" :
+                            deg < 180 ? "starboard" : "port";
             System.out.printf("%-20s %-15s %-15s %-10s%n",
                     deg + "°", String.format("%.0f°", relDeg),
                     baffled ? "BAFFLED" : "clear", meaning);
         }
 
         // Verify key angles
-        assertFalse(SonarModel.isInBaffles(0, 0),               "Dead ahead must NOT be baffled");
-        assertFalse(SonarModel.isInBaffles(0, Math.PI / 2),     "Starboard beam must NOT be baffled");
-        assertFalse(SonarModel.isInBaffles(0, -Math.PI / 2),    "Port beam must NOT be baffled");
-        assertTrue (SonarModel.isInBaffles(0, Math.PI),         "Dead astern MUST be baffled");
+        assertFalse(SonarModel.isInBaffles(0, 0), "Dead ahead must NOT be baffled");
+        assertFalse(SonarModel.isInBaffles(0, Math.PI / 2), "Starboard beam must NOT be baffled");
+        assertFalse(SonarModel.isInBaffles(0, -Math.PI / 2), "Port beam must NOT be baffled");
+        assertTrue(SonarModel.isInBaffles(0, Math.PI), "Dead astern MUST be baffled");
 
         // Exact boundary: 130° is the cutoff
         assertFalse(SonarModel.isInBaffles(0, Math.toRadians(129)), "129° should NOT be baffled");
-        assertTrue (SonarModel.isInBaffles(0, Math.toRadians(131)), "131° MUST be baffled");
+        assertTrue(SonarModel.isInBaffles(0, Math.toRadians(131)), "131° MUST be baffled");
         assertFalse(SonarModel.isInBaffles(0, Math.toRadians(-129)), "-129° should NOT be baffled");
-        assertTrue (SonarModel.isInBaffles(0, Math.toRadians(-131)), "-131° MUST be baffled");
+        assertTrue(SonarModel.isInBaffles(0, Math.toRadians(-131)), "-131° MUST be baffled");
     }
 
-    /** Heading-varying baffle check: rotate the listener, verify bow always leads. */
+    /**
+     * Heading-varying baffle check: rotate the listener, verify bow always leads.
+     */
     @Test
     void baffleRotatesWithHeading() {
         System.out.println("\n=== Baffle follows heading: listener at various headings, source 500m due north ===");
@@ -109,13 +114,13 @@ class BaffleSweepTest {
         }
 
         // Sub heading north: source north → clear (ahead)
-        assertFalse(SonarModel.isInBaffles(0,          0), "N heading, N source: ahead = clear");
+        assertFalse(SonarModel.isInBaffles(0, 0), "N heading, N source: ahead = clear");
         // Sub heading south: source north → 180° relative = astern = baffled
-        assertTrue (SonarModel.isInBaffles(Math.PI,    0), "S heading, N source: astern = baffled");
+        assertTrue(SonarModel.isInBaffles(Math.PI, 0), "S heading, N source: astern = baffled");
         // Sub heading east: source north → -90° relative = port bow = clear
-        assertFalse(SonarModel.isInBaffles(Math.PI/2,  0), "E heading, N source: port bow = clear");
+        assertFalse(SonarModel.isInBaffles(Math.PI / 2, 0), "E heading, N source: port bow = clear");
         // Sub heading west: source north → +90° relative = stbd bow = clear
-        assertFalse(SonarModel.isInBaffles(3*Math.PI/2, 0), "W heading, N source: stbd bow = clear");
+        assertFalse(SonarModel.isInBaffles(3 * Math.PI / 2, 0), "W heading, N source: stbd bow = clear");
     }
 
     /**
@@ -134,7 +139,7 @@ class BaffleSweepTest {
         double listenerHdg = 0;
         double sl = 100;
         double tl = 10 * Math.log10(1000); // ~30 dB at 1000m
-        double nlClear   = Math.max(55, 80 - 35); // = 55 (ambient dominates for quiet listener)
+        double nlClear = Math.max(55, 80 - 35); // = 55 (ambient dominates for quiet listener)
         double nlBaffled = nlClear + SonarModel.BAFFLE_PENALTY_DB;
 
         for (int deg = 0; deg < 360; deg += 15) {
@@ -171,8 +176,8 @@ class BaffleSweepTest {
         // B heading south, A is south of B (A is AHEAD of B, NOT in B's baffles!)
         // When subs head TOWARD each other they are in each other's forward arcs.
 
-        boolean aHearB = !SonarModel.isInBaffles(0,        0);       // A heading N, B at bearing 0 (north)
-        boolean bHearA = !SonarModel.isInBaffles(Math.PI,  Math.PI); // B heading S, A at bearing 180° (south)
+        boolean aHearB = !SonarModel.isInBaffles(0, 0);       // A heading N, B at bearing 0 (north)
+        boolean bHearA = !SonarModel.isInBaffles(Math.PI, Math.PI); // B heading S, A at bearing 180° (south)
 
         System.out.printf("A can hear B (B ahead of A): %b%n", aHearB);
         System.out.printf("B can hear A (A ahead of B): %b%n", bHearA);
@@ -185,9 +190,9 @@ class BaffleSweepTest {
         System.out.println("Sub B: heading south (180°), A is now 1000m NORTH of B");
 
         // A heading north, B is now SOUTH of A → bearing from A to B = 180° = dead astern
-        boolean aHearBAfter = !SonarModel.isInBaffles(0,        Math.PI);       // A heading N, B at south = 180°
+        boolean aHearBAfter = !SonarModel.isInBaffles(0, Math.PI);       // A heading N, B at south = 180°
         // B heading south, A is now NORTH of B → bearing from B to A = 0° = dead astern of south-heading B
-        boolean bHearAAfter = !SonarModel.isInBaffles(Math.PI,  0);             // B heading S, A at north = 0°
+        boolean bHearAAfter = !SonarModel.isInBaffles(Math.PI, 0);             // B heading S, A at north = 0°
 
         System.out.printf("A can hear B (B astern of A): %b%n", aHearBAfter);
         System.out.printf("B can hear A (A astern of B): %b%n", bHearAAfter);
@@ -218,7 +223,7 @@ class BaffleSweepTest {
         System.out.printf("B can hear A (A ahead of B):  %b  ← A is in B's forward arc%n", bHearA);
 
         assertFalse(aHearB, "After overtaking: B is behind A, should be baffled");
-        assertTrue (bHearA, "After overtaking: A is ahead of B, should be heard");
+        assertTrue(bHearA, "After overtaking: A is ahead of B, should be heard");
 
         System.out.println();
         System.out.println("CONCLUSION: B gets a live contact on A (A is ahead of B).");
@@ -228,8 +233,14 @@ class BaffleSweepTest {
 
     private static String headingName(int deg) {
         return switch (deg) {
-            case 0 -> "N"; case 45 -> "NE"; case 90 -> "E"; case 135 -> "SE";
-            case 180 -> "S"; case 225 -> "SW"; case 270 -> "W"; case 315 -> "NW";
+            case 0 -> "N";
+            case 45 -> "NE";
+            case 90 -> "E";
+            case 135 -> "SE";
+            case 180 -> "S";
+            case 225 -> "SW";
+            case 270 -> "W";
+            case 315 -> "NW";
             default -> "?";
         };
     }

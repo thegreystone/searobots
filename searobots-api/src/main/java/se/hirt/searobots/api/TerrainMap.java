@@ -72,7 +72,9 @@ public final class TerrainMap {
         return elevations[row * cols + col];
     }
 
-    /** Bilinear interpolation of sea floor elevation at world coordinates. */
+    /**
+     * Bilinear interpolation of sea floor elevation at world coordinates.
+     */
     public double elevationAt(double worldX, double worldY) {
         double gx = (worldX - originX) / cellSize;
         double gy = (worldY - originY) / cellSize;
@@ -93,14 +95,39 @@ public final class TerrainMap {
         return ex0 + (ex1 - ex0) * fy;
     }
 
-    public int getCols() { return cols; }
-    public int getRows() { return rows; }
-    public double getOriginX() { return originX; }
-    public double getOriginY() { return originY; }
-    public double getCellSize() { return cellSize; }
-    public double getMinElevation() { return minElevation; }
-    public double getMaxElevation() { return maxElevation; }
+    public int getCols() {
+        return cols;
+    }
 
-    public double worldWidth() { return (cols - 1) * cellSize; }
-    public double worldHeight() { return (rows - 1) * cellSize; }
+    public int getRows() {
+        return rows;
+    }
+
+    public double getOriginX() {
+        return originX;
+    }
+
+    public double getOriginY() {
+        return originY;
+    }
+
+    public double getCellSize() {
+        return cellSize;
+    }
+
+    public double getMinElevation() {
+        return minElevation;
+    }
+
+    public double getMaxElevation() {
+        return maxElevation;
+    }
+
+    public double worldWidth() {
+        return (cols - 1) * cellSize;
+    }
+
+    public double worldHeight() {
+        return (rows - 1) * cellSize;
+    }
 }

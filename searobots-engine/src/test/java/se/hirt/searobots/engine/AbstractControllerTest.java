@@ -37,9 +37,13 @@ import se.hirt.searobots.api.SubmarineController;
  */
 public abstract class AbstractControllerTest {
 
-    /** Creates a fresh instance of the controller under test. */
+    /**
+     * Creates a fresh instance of the controller under test.
+     */
     protected abstract SubmarineController createController();
 
-    /** Display name for the controller (used in test output). */
+    /**
+     * Display name for the controller (used in test output).
+     */
     protected abstract String controllerName();
 }

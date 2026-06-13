@@ -38,7 +38,7 @@ import java.awt.*;
  * Measures steady-state depth change rates at 1 m/s increments from 1 to 15 m/s,
  * using stern planes, ballast, and combined. Results feed into the autopilot's
  * depth control tables.
- *
+ * <p>
  * Conventions: z is negative underwater. Positive depth rate = ascending (toward surface).
  * Stern planes: +1 = full rise (nose up), -1 = full dive (nose down).
  * Ballast: 0.0 = full flood (heavy, sink), 0.5 = neutral, 1.0 = full blow (light, rise).
@@ -241,7 +241,10 @@ class DepthRateTableTest {
             for (double plane : planeSettings) {
                 double[] r = measureDepthRate(throttle, -plane, 0.5, -200);
                 System.out.printf("%+6.2f ", r[0]);
-                if (r[0] < bestRate) { bestRate = r[0]; bestPlane = plane; }
+                if (r[0] < bestRate) {
+                    bestRate = r[0];
+                    bestPlane = plane;
+                }
             }
             System.out.printf("  best=%.0f%% (%.2f m/s)%n", bestPlane * 100, bestRate);
         }
@@ -255,7 +258,10 @@ class DepthRateTableTest {
             for (double plane : planeSettings) {
                 double[] r = measureDepthRate(throttle, plane, 0.5, -200);
                 System.out.printf("%+6.2f ", r[0]);
-                if (r[0] > bestRate) { bestRate = r[0]; bestPlane = plane; }
+                if (r[0] > bestRate) {
+                    bestRate = r[0];
+                    bestPlane = plane;
+                }
             }
             System.out.printf("  best=%.0f%% (%.2f m/s)%n", bestPlane * 100, bestRate);
         }

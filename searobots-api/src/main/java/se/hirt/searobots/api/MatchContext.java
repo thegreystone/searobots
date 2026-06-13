@@ -31,4 +31,5 @@ package se.hirt.searobots.api;
 import java.util.List;
 
 public record MatchContext(MatchConfig config, TerrainMap terrain,
-                           List<ThermalLayer> thermalLayers, CurrentField currentField) {}
+                           List<ThermalLayer> thermalLayers, CurrentField currentField) {
+}

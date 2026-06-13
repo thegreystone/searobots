@@ -39,14 +39,16 @@ import java.util.List;
  */
 public final class TestHelpers {
 
-    private TestHelpers() {}
+    private TestHelpers() {
+    }
 
     public record TestInput(long tick, double deltaTimeSeconds,
                             SubmarineState self, EnvironmentSnapshot environment,
                             List<SonarContact> sonarContacts,
                             List<SonarContact> activeSonarReturns,
                             int activeSonarCooldownTicks)
-            implements SubmarineInput {}
+            implements SubmarineInput {
+    }
 
     public static final class CapturedOutput implements SubmarineOutput {
         public double rudder, sternPlanes, throttle, ballast;
@@ -60,33 +62,72 @@ public final class TestHelpers {
         public int launchedTorpedoCount;
         public boolean engineClutchEngaged = true;
 
-        @Override public void setRudder(double value) { rudder = value; }
-        @Override public void setSternPlanes(double value) { sternPlanes = value; }
-        @Override public void setThrottle(double value) { throttle = value; }
-        @Override public void setBallast(double value) { ballast = value; }
-        @Override public void activeSonarPing() { pinged = true; }
-        @Override public void setStatus(String s) { status = s; }
-        @Override public void publishWaypoint(Waypoint wp) { waypoints.add(wp); }
-        @Override public void publishStrategicWaypoint(Waypoint wp, Purpose purpose) {
+        @Override
+        public void setRudder(double value) {
+            rudder = value;
+        }
+
+        @Override
+        public void setSternPlanes(double value) {
+            sternPlanes = value;
+        }
+
+        @Override
+        public void setThrottle(double value) {
+            throttle = value;
+        }
+
+        @Override
+        public void setBallast(double value) {
+            ballast = value;
+        }
+
+        @Override
+        public void activeSonarPing() {
+            pinged = true;
+        }
+
+        @Override
+        public void setStatus(String s) {
+            status = s;
+        }
+
+        @Override
+        public void publishWaypoint(Waypoint wp) {
+            waypoints.add(wp);
+        }
+
+        @Override
+        public void publishStrategicWaypoint(Waypoint wp, Purpose purpose) {
             strategicWaypoints.add(wp);
             strategicPurposes.add(purpose);
         }
-        @Override public void publishContactEstimate(ContactEstimate e) { contactEstimates.add(e); }
-        @Override public void launchTorpedo(TorpedoLaunchCommand command) {
+
+        @Override
+        public void publishContactEstimate(ContactEstimate e) {
+            contactEstimates.add(e);
+        }
+
+        @Override
+        public void launchTorpedo(TorpedoLaunchCommand command) {
             launchedTorpedo = command;
             launchedTorpedoCount++;
         }
-        @Override public void setEngineClutch(boolean engaged) { engineClutchEngaged = engaged; }
+
+        @Override
+        public void setEngineClutch(boolean engaged) {
+            engineClutchEngaged = engaged;
+        }
     }
 
     public static TestInput makeInput(long tick, SubmarineEntity entity,
-                                       TerrainMap terrain, CurrentField currentField) {
+                                      TerrainMap terrain, CurrentField currentField) {
         var pose = new Pose(new Vec3(entity.x(), entity.y(), entity.z()),
                 entity.heading(), entity.pitch(), 0);
         var vel = new Velocity(
                 new Vec3(entity.speed() * Math.sin(entity.heading()),
-                         entity.speed() * Math.cos(entity.heading()),
-                         entity.verticalSpeed()),
+                        entity.speed() * Math.cos(entity.heading()),
+                        entity.verticalSpeed()),
                 Vec3.ZERO);
         var state = new SubmarineState(pose, vel, entity.hp(), 0);
         var env = new EnvironmentSnapshot(terrain, List.of(), currentField);

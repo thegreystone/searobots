@@ -38,23 +38,17 @@ import com.jme3.material.RenderState;
 import com.jme3.math.ColorRGBA;
 import com.jme3.math.Quaternion;
 import com.jme3.math.Vector3f;
-import com.jme3.renderer.ViewPort;
 import com.jme3.renderer.Camera;
+import com.jme3.renderer.ViewPort;
 import com.jme3.renderer.queue.RenderQueue;
-import com.jme3.scene.Geometry;
-import com.jme3.scene.Mesh;
-import com.jme3.scene.Node;
-import com.jme3.scene.Spatial;
-import com.jme3.scene.VertexBuffer;
+import com.jme3.scene.*;
 import com.jme3.scene.shape.Quad;
 import com.jme3.texture.FrameBuffer;
 import com.jme3.texture.Image;
 import com.jme3.texture.Texture;
 import com.jme3.texture.Texture2D;
 import com.jme3.texture.image.ColorSpace;
-
 import se.hirt.searobots.api.BattleArea;
-import se.hirt.searobots.api.TerrainMap;
 import se.hirt.searobots.api.Vec3;
 import se.hirt.searobots.engine.GeneratedWorld;
 
@@ -67,13 +61,14 @@ import java.util.List;
  * jME3-native tactical map overlay. Renders the 2D map using GPU-accelerated
  * geometry in an offscreen viewport, eliminating the Java2D freeze that would
  * happen on Mac when trying to use the Map.
- *
+ * <p>
  * {@link MapViewState}.
  */
 final class NativeMapState extends BaseAppState {
 
     // ── Map display modes ──
-    enum MapMode { HIDDEN, MINIMAP, FULLSCREEN }
+    enum MapMode {HIDDEN, MINIMAP, FULLSCREEN}
+
     private static final float MINIMAP_SCALE = 0.28f;
     private static final float MINIMAP_MARGIN = 15f;
     private static final float MINIMAP_ALPHA = 0.9f;
@@ -84,21 +79,21 @@ final class NativeMapState extends BaseAppState {
     private static final float ZOOM_LERP_SPEED = 12f;
 
     // ── Z-layers (higher = rendered on top) ──
-    private static final float Z_TERRAIN     = 0f;
-    private static final float Z_CONTOURS    = 0.1f;
+    private static final float Z_TERRAIN = 0f;
+    private static final float Z_CONTOURS = 0.1f;
     private static final float Z_BATTLE_AREA = 0.2f;
-    private static final float Z_SPAWN       = 0.3f;
-    private static final float Z_ROUTES      = 1.0f;
-    private static final float Z_TRAILS      = 1.5f;
-    private static final float Z_COMP_OBJ    = 2.0f;
-    private static final float Z_WAYPOINTS   = 2.5f;
-    private static final float Z_SUBS        = 3.0f;
-    private static final float Z_TORPS       = 3.5f;
-    private static final float Z_CONTACTS    = 4.0f;
-    private static final float Z_FIRING_SOL  = 5.0f;
-    private static final float Z_PINGS       = 6.0f;
-    private static final float Z_EXPLOSIONS  = 7.0f;
-    private static final float Z_DETECTION   = 8.0f;
+    private static final float Z_SPAWN = 0.3f;
+    private static final float Z_ROUTES = 1.0f;
+    private static final float Z_TRAILS = 1.5f;
+    private static final float Z_COMP_OBJ = 2.0f;
+    private static final float Z_WAYPOINTS = 2.5f;
+    private static final float Z_SUBS = 3.0f;
+    private static final float Z_TORPS = 3.5f;
+    private static final float Z_CONTACTS = 4.0f;
+    private static final float Z_FIRING_SOL = 5.0f;
+    private static final float Z_PINGS = 6.0f;
+    private static final float Z_EXPLOSIONS = 7.0f;
+    private static final float Z_DETECTION = 8.0f;
 
     private static final int CIRCLE_SEGMENTS = 64;
 
@@ -126,7 +121,7 @@ final class NativeMapState extends BaseAppState {
     private Geometry terrainGeom;
     private Geometry contourGeom;
     private Geometry battleAreaGeom;
-    private final List<Geometry> subGeoms  = new ArrayList<>();
+    private final List<Geometry> subGeoms = new ArrayList<>();
     private final List<Geometry> torpGeoms = new ArrayList<>();
     private final List<Geometry> trailGeoms = new ArrayList<>();
     private final List<Geometry> routeGeoms = new ArrayList<>();
@@ -183,13 +178,15 @@ final class NativeMapState extends BaseAppState {
         if (data.getWorld() != null) worldChanged(data.getWorld());
     }
 
-    @Override protected void onEnable() {
+    @Override
+    protected void onEnable() {
         var sa = (SimpleApplication) getApplication();
         sa.getGuiNode().attachChild(displayQuad);
         sa.getGuiNode().attachChild(hudNode);
     }
 
-    @Override protected void onDisable() {
+    @Override
+    protected void onDisable() {
         displayQuad.removeFromParent();
         hudNode.removeFromParent();
         mode = MapMode.HIDDEN;
@@ -198,7 +195,8 @@ final class NativeMapState extends BaseAppState {
         mapViewPort.setEnabled(false);
     }
 
-    @Override protected void cleanup(Application app) {
+    @Override
+    protected void cleanup(Application app) {
         app.getRenderManager().removePreView(mapViewPort);
     }
 
@@ -212,7 +210,10 @@ final class NativeMapState extends BaseAppState {
                 mode = MapMode.MINIMAP;
                 alphaTarget = MINIMAP_ALPHA;
                 computeMinimapTarget();
-                quadX = tgtX; quadY = tgtY; quadW = tgtW; quadH = tgtH;
+                quadX = tgtX;
+                quadY = tgtY;
+                quadW = tgtW;
+                quadH = tgtH;
                 displayQuad.setMesh(minimapMesh);
             }
             case MINIMAP -> {
@@ -228,18 +229,28 @@ final class NativeMapState extends BaseAppState {
         }
     }
 
-    /** True when the map is rendering (minimap or fullscreen). */
-    boolean isMapVisible() { return mode != MapMode.HIDDEN || currentAlpha > 0; }
+    /**
+     * True when the map is rendering (minimap or fullscreen).
+     */
+    boolean isMapVisible() {
+        return mode != MapMode.HIDDEN || currentAlpha > 0;
+    }
 
-    /** True when the map covers the full screen. */
-    boolean isFullscreen() { return mode == MapMode.FULLSCREEN; }
+    /**
+     * True when the map covers the full screen.
+     */
+    boolean isFullscreen() {
+        return mode == MapMode.FULLSCREEN;
+    }
 
-    /** True when mouse input should be redirected to the map (fullscreen, or cursor over minimap). */
+    /**
+     * True when mouse input should be redirected to the map (fullscreen, or cursor over minimap).
+     */
     boolean wantsMouseInput(float cursorX, float cursorY) {
         if (mode == MapMode.FULLSCREEN) return true;
         if (mode == MapMode.MINIMAP) {
             return cursorX >= quadX && cursorX <= quadX + quadW
-                && cursorY >= quadY && cursorY <= quadY + quadH;
+                    && cursorY >= quadY && cursorY <= quadY + quadH;
         }
         return false;
     }
@@ -257,8 +268,8 @@ final class NativeMapState extends BaseAppState {
         int h = getApplication().getCamera().getHeight();
 
         double basePpm = zooming ? targetPpm : pixelsPerMeter;
-        double baseVX  = zooming ? targetViewX : viewX;
-        double baseVY  = zooming ? targetViewY : viewY;
+        double baseVX = zooming ? targetViewX : viewX;
+        double baseVY = zooming ? targetViewY : viewY;
 
         double newPpm = Math.max(0.01, Math.min(10.0, basePpm * factor));
         targetPpm = newPpm;
@@ -290,7 +301,10 @@ final class NativeMapState extends BaseAppState {
     private void computeFullscreenTarget() {
         int w = getApplication().getCamera().getWidth();
         int h = getApplication().getCamera().getHeight();
-        tgtW = w; tgtH = h; tgtX = 0; tgtY = 0;
+        tgtW = w;
+        tgtH = h;
+        tgtX = 0;
+        tgtY = 0;
     }
 
     void worldChanged(GeneratedWorld world) {
@@ -308,8 +322,8 @@ final class NativeMapState extends BaseAppState {
         rebuildBattleArea(world);
         lastContourInterval = effectiveContourInterval();
 
-        for (var g : subGeoms)   g.setCullHint(Spatial.CullHint.Always);
-        for (var g : torpGeoms)  g.setCullHint(Spatial.CullHint.Always);
+        for (var g : subGeoms) g.setCullHint(Spatial.CullHint.Always);
+        for (var g : torpGeoms) g.setCullHint(Spatial.CullHint.Always);
         for (var g : trailGeoms) g.setCullHint(Spatial.CullHint.Always);
         for (var g : routeGeoms) g.setCullHint(Spatial.CullHint.Always);
         waypointNode.detachAllChildren();
@@ -333,7 +347,8 @@ final class NativeMapState extends BaseAppState {
 
         // Fully hidden: disable viewport and bail
         if (mode == MapMode.HIDDEN && currentAlpha <= 0f) {
-            mapViewPort.setEnabled(false); return;
+            mapViewPort.setEnabled(false);
+            return;
         }
         mapViewPort.setEnabled(true);
 
@@ -365,7 +380,9 @@ final class NativeMapState extends BaseAppState {
             viewX += (targetViewX - viewX) * t;
             viewY += (targetViewY - viewY) * t;
             if (Math.abs(pixelsPerMeter - targetPpm) < 0.0001) {
-                pixelsPerMeter = targetPpm; viewX = targetViewX; viewY = targetViewY;
+                pixelsPerMeter = targetPpm;
+                viewX = targetViewX;
+                viewY = targetViewY;
                 zooming = false;
             }
         }
@@ -380,7 +397,10 @@ final class NativeMapState extends BaseAppState {
 
         // Contour interval may change with zoom
         double ci = effectiveContourInterval();
-        if (ci != lastContourInterval) { rebuildContours(world); lastContourInterval = ci; }
+        if (ci != lastContourInterval) {
+            rebuildContours(world);
+            lastContourInterval = ci;
+        }
 
         // Contour visibility toggle
         if (contourGeom != null) {
@@ -391,7 +411,10 @@ final class NativeMapState extends BaseAppState {
         frameCount++;
         updateSubmarines();
         updateTorpedoes();
-        if (frameCount % 10 == 0) { updateTrails(); updateRoutes(); }
+        if (frameCount % 10 == 0) {
+            updateTrails();
+            updateRoutes();
+        }
         updateWaypoints();
         updateContacts();
         updateFiringSolution();
@@ -408,7 +431,8 @@ final class NativeMapState extends BaseAppState {
     // ═══════════════════════════════════════════════════════════════
 
     private void createOffscreenTarget(Application app, int w, int h) {
-        fbWidth = w; fbHeight = h;
+        fbWidth = w;
+        fbHeight = h;
         mapCam = new Camera(w, h);
         mapCam.setParallelProjection(true);
         mapCam.setLocation(new Vector3f(0, 0, 10));
@@ -459,7 +483,7 @@ final class NativeMapState extends BaseAppState {
     }
 
     private void updateCameraFrustum() {
-        float halfW = (float) (fbWidth  / (2.0 * pixelsPerMeter));
+        float halfW = (float) (fbWidth / (2.0 * pixelsPerMeter));
         float halfH = (float) (fbHeight / (2.0 * pixelsPerMeter));
         mapCam.setFrustum(0.1f, 100f, -halfW, halfW, halfH, -halfH);
     }
@@ -482,22 +506,30 @@ final class NativeMapState extends BaseAppState {
         displayQuad.setLocalScale(w, h, 1);
     }
 
-    /** Quad mesh with UVs cropped to the center square of the framebuffer. */
+    /**
+     * Quad mesh with UVs cropped to the center square of the framebuffer.
+     */
     private Mesh buildMinimapMesh() {
         float aspect = (float) fbWidth / fbHeight;
         float uMin, uMax, vMin, vMax;
         if (aspect >= 1f) {
             float crop = (1f - 1f / aspect) / 2f;
-            uMin = crop; uMax = 1f - crop; vMin = 0; vMax = 1;
+            uMin = crop;
+            uMax = 1f - crop;
+            vMin = 0;
+            vMax = 1;
         } else {
             float crop = (1f - aspect) / 2f;
-            uMin = 0; uMax = 1; vMin = crop; vMax = 1f - crop;
+            uMin = 0;
+            uMax = 1;
+            vMin = crop;
+            vMax = 1f - crop;
         }
         var m = new Mesh();
         m.setBuffer(VertexBuffer.Type.Position, 3, new float[]{
-                0, 0, 0,  1, 0, 0,  1, 1, 0,  0, 1, 0});
+                0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0});
         m.setBuffer(VertexBuffer.Type.TexCoord, 2, new float[]{
-                uMin, vMin,  uMax, vMin,  uMax, vMax,  uMin, vMax});
+                uMin, vMin, uMax, vMin, uMax, vMax, uMin, vMax});
         m.setBuffer(VertexBuffer.Type.Index, 1, new short[]{0, 1, 2, 0, 2, 3});
         m.updateBound();
         return m;
@@ -507,11 +539,11 @@ final class NativeMapState extends BaseAppState {
         mapRoot = new Node("MapRoot");
         mapViewPort.attachScene(mapRoot);
 
-        waypointNode  = new Node("Waypoints");
-        contactNode   = new Node("Contacts");
+        waypointNode = new Node("Waypoints");
+        contactNode = new Node("Contacts");
         animationNode = new Node("Animations");
         firingSolNode = new Node("FiringSolution");
-        compObjNode   = new Node("CompObjectives");
+        compObjNode = new Node("CompObjectives");
         mapRoot.attachChild(waypointNode);
         mapRoot.attachChild(contactNode);
         mapRoot.attachChild(animationNode);
@@ -525,9 +557,9 @@ final class NativeMapState extends BaseAppState {
         hudNode.setLocalTranslation(0, 0, 6);
         hudNode.setCullHint(Spatial.CullHint.Always);
 
-        infoText   = makeBitmapText(new ColorRGBA(0.78f, 0.86f, 1f, 1f));
+        infoText = makeBitmapText(new ColorRGBA(0.78f, 0.86f, 1f, 1f));
         subHudText = makeBitmapText(ColorRGBA.White);
-        compText   = makeBitmapText(new ColorRGBA(0.75f, 0.82f, 0.9f, 1f));
+        compText = makeBitmapText(new ColorRGBA(0.75f, 0.82f, 0.9f, 1f));
         hudNode.attachChild(infoText);
         hudNode.attachChild(subHudText);
         hudNode.attachChild(compText);
@@ -583,7 +615,7 @@ final class NativeMapState extends BaseAppState {
     private void rebuildBattleArea(GeneratedWorld world) {
         if (battleAreaGeom != null) battleAreaGeom.removeFromParent();
         Mesh mesh = switch (world.config().battleArea()) {
-            case BattleArea.Circular(var r)        -> makeCircleMesh((float) r, 128);
+            case BattleArea.Circular(var r) -> makeCircleMesh((float) r, 128);
             case BattleArea.Rectangular(var hw, var hh) -> makeRectMesh((float) hw, (float) hh);
         };
         battleAreaGeom = new Geometry("BattleArea", mesh);
@@ -624,14 +656,14 @@ final class NativeMapState extends BaseAppState {
                     double ce = Math.max(c0, c1) * interval;
                     double t = (ce - e00) / (e10 - e00);
                     contourSegH(v, col, row, ox + (col + t) * cell, oy + row * cell,
-                                cell, ox, oy, interval, e00, e10, e01, e11);
+                            cell, ox, oy, interval, e00, e10, e01, e11);
                 }
                 long c2 = (long) Math.floor(e01 / interval);
                 if (c0 != c2) {
                     double ce = Math.max(c0, c2) * interval;
                     double t = (ce - e00) / (e01 - e00);
                     contourSegV(v, col, row, ox + col * cell, oy + (row + t) * cell,
-                                cell, ox, oy, interval, e00, e10, e01, e11);
+                            cell, ox, oy, interval, e00, e10, e01, e11);
                 }
             }
         }
@@ -644,17 +676,23 @@ final class NativeMapState extends BaseAppState {
     }
 
     private void contourSegH(FloatList v, int col, int row,
-                              double cx, double cy, double cell,
-                              double ox, double oy, double interval,
-                              double e00, double e10, double e01, double e11) {
+                             double cx, double cy, double cell,
+                             double ox, double oy, double interval,
+                             double e00, double e10, double e01, double e11) {
         double ce = Math.max(Math.floor(e00 / interval), Math.floor(e10 / interval)) * interval;
         if (crosses(e01, e11, interval)) {
             double t = (ce - e01) / (e11 - e01);
-            if (t >= 0 && t <= 1) { v.addLine(cx, cy, ox + (col + t) * cell, oy + (row + 1) * cell, 0); return; }
+            if (t >= 0 && t <= 1) {
+                v.addLine(cx, cy, ox + (col + t) * cell, oy + (row + 1) * cell, 0);
+                return;
+            }
         }
         if (crosses(e00, e01, interval)) {
             double t = (ce - e00) / (e01 - e00);
-            if (t >= 0 && t <= 1) { v.addLine(cx, cy, ox + col * cell, oy + (row + t) * cell, 0); return; }
+            if (t >= 0 && t <= 1) {
+                v.addLine(cx, cy, ox + col * cell, oy + (row + t) * cell, 0);
+                return;
+            }
         }
         if (crosses(e10, e11, interval)) {
             double t = (ce - e10) / (e11 - e10);
@@ -663,17 +701,23 @@ final class NativeMapState extends BaseAppState {
     }
 
     private void contourSegV(FloatList v, int col, int row,
-                              double cx, double cy, double cell,
-                              double ox, double oy, double interval,
-                              double e00, double e10, double e01, double e11) {
+                             double cx, double cy, double cell,
+                             double ox, double oy, double interval,
+                             double e00, double e10, double e01, double e11) {
         double ce = Math.max(Math.floor(e00 / interval), Math.floor(e01 / interval)) * interval;
         if (crosses(e10, e11, interval)) {
             double t = (ce - e10) / (e11 - e10);
-            if (t >= 0 && t <= 1) { v.addLine(cx, cy, ox + (col + 1) * cell, oy + (row + t) * cell, 0); return; }
+            if (t >= 0 && t <= 1) {
+                v.addLine(cx, cy, ox + (col + 1) * cell, oy + (row + t) * cell, 0);
+                return;
+            }
         }
         if (crosses(e01, e11, interval)) {
             double t = (ce - e01) / (e11 - e01);
-            if (t >= 0 && t <= 1) { v.addLine(cx, cy, ox + (col + t) * cell, oy + (row + 1) * cell, 0); return; }
+            if (t >= 0 && t <= 1) {
+                v.addLine(cx, cy, ox + (col + t) * cell, oy + (row + 1) * cell, 0);
+                return;
+            }
         }
         if (crosses(e00, e10, interval)) {
             double t = (ce - e00) / (e10 - e00);
@@ -746,22 +790,33 @@ final class NativeMapState extends BaseAppState {
             var trail = data.trails[i];
             var g = trailGeoms.get(i);
             if (trail == null || trail.size() < 2) {
-                g.setCullHint(Spatial.CullHint.Always); continue;
+                g.setCullHint(Spatial.CullHint.Always);
+                continue;
             }
             Vec3[] pts;
-            try { pts = trail.toArray(new Vec3[0]); } catch (Exception e) { continue; }
+            try {
+                pts = trail.toArray(new Vec3[0]);
+            } catch (Exception e) {
+                continue;
+            }
             var c = subs.get(i).color();
             float cr = c.getRed() / 255f, cg = c.getGreen() / 255f, cb = c.getBlue() / 255f;
-            var vb = new FloatList(); var cb2 = new FloatList();
+            var vb = new FloatList();
+            var cb2 = new FloatList();
             for (int j = 1; j < pts.length; j++) {
                 if (pts[j - 1] == null || pts[j] == null) continue;
                 float a = (float) j / pts.length * 0.6f;
-                vb.add3((float) pts[j-1].x(), (float) pts[j-1].y(), Z_TRAILS);
-                vb.add3((float) pts[j].x(),   (float) pts[j].y(),   Z_TRAILS);
-                cb2.add4(cr, cg, cb, a); cb2.add4(cr, cg, cb, a);
+                vb.add3((float) pts[j - 1].x(), (float) pts[j - 1].y(), Z_TRAILS);
+                vb.add3((float) pts[j].x(), (float) pts[j].y(), Z_TRAILS);
+                cb2.add4(cr, cg, cb, a);
+                cb2.add4(cr, cg, cb, a);
             }
-            if (vb.size == 0) { g.setCullHint(Spatial.CullHint.Always); continue; }
-            var m = new Mesh(); m.setMode(Mesh.Mode.Lines);
+            if (vb.size == 0) {
+                g.setCullHint(Spatial.CullHint.Always);
+                continue;
+            }
+            var m = new Mesh();
+            m.setMode(Mesh.Mode.Lines);
             m.setBuffer(VertexBuffer.Type.Position, 3, vb.toArray());
             m.setBuffer(VertexBuffer.Type.Color, 4, cb2.toArray());
             m.updateBound();
@@ -788,16 +843,19 @@ final class NativeMapState extends BaseAppState {
             var route = data.routes[i];
             var g = routeGeoms.get(i);
             if (route == null || route.size() < 2) {
-                g.setCullHint(Spatial.CullHint.Always); continue;
+                g.setCullHint(Spatial.CullHint.Always);
+                continue;
             }
             var c = subs.get(i).color();
             var vb = new FloatList();
             for (int j = 1; j < route.size(); j++) {
-                var p0 = route.get(j - 1); var p1 = route.get(j);
+                var p0 = route.get(j - 1);
+                var p1 = route.get(j);
                 vb.add3((float) p0.x(), (float) p0.y(), Z_ROUTES);
                 vb.add3((float) p1.x(), (float) p1.y(), Z_ROUTES);
             }
-            var m = new Mesh(); m.setMode(Mesh.Mode.Lines);
+            var m = new Mesh();
+            m.setMode(Mesh.Mode.Lines);
             m.setBuffer(VertexBuffer.Type.Position, 3, vb.toArray());
             m.updateBound();
             g.setMesh(m);
@@ -824,7 +882,8 @@ final class NativeMapState extends BaseAppState {
             if (wps.size() >= 2) {
                 var vb = new FloatList();
                 for (int i = 0; i < wps.size() - 1; i++) {
-                    var a = wps.get(i); var b = wps.get(i + 1);
+                    var a = wps.get(i);
+                    var b = wps.get(i + 1);
                     vb.add3((float) a.x(), (float) a.y(), 0);
                     vb.add3((float) b.x(), (float) b.y(), 0);
                 }
@@ -1025,7 +1084,7 @@ final class NativeMapState extends BaseAppState {
     }
 
     private void addRing(Node parent, float x, float y, float radius,
-                          ColorRGBA color, float z, float lineWidth) {
+                         ColorRGBA color, float z, float lineWidth) {
         var g = new Geometry("Ring", makeCircleMesh(radius, CIRCLE_SEGMENTS));
         g.setLocalTranslation(x, y, z);
         var mat = makeSolidMat(color);
@@ -1036,7 +1095,7 @@ final class NativeMapState extends BaseAppState {
     }
 
     private void addFilledCircle(Node parent, float x, float y, float radius,
-                                  ColorRGBA color, float z) {
+                                 ColorRGBA color, float z) {
         var g = new Geometry("Disc", makeFilledCircleMesh(radius, 32));
         g.setLocalTranslation(x, y, z);
         g.setMaterial(makeSolidMat(color));
@@ -1126,10 +1185,10 @@ final class NativeMapState extends BaseAppState {
         short[] idx = new short[segments * 2];
         for (int i = 0; i < segments; i++) {
             double a = 2 * Math.PI * i / segments;
-            verts[i * 3]     = (float) (Math.cos(a) * radius);
+            verts[i * 3] = (float) (Math.cos(a) * radius);
             verts[i * 3 + 1] = (float) (Math.sin(a) * radius);
             verts[i * 3 + 2] = 0;
-            idx[i * 2]     = (short) i;
+            idx[i * 2] = (short) i;
             idx[i * 2 + 1] = (short) ((i + 1) % segments);
         }
         var m = new Mesh();
@@ -1143,17 +1202,19 @@ final class NativeMapState extends BaseAppState {
     private static Mesh makeFilledCircleMesh(float radius, int segments) {
         float[] verts = new float[(segments + 1) * 3];
         // Center vertex
-        verts[0] = 0; verts[1] = 0; verts[2] = 0;
+        verts[0] = 0;
+        verts[1] = 0;
+        verts[2] = 0;
         for (int i = 0; i < segments; i++) {
             double a = 2 * Math.PI * i / segments;
             int vi = (i + 1) * 3;
-            verts[vi]     = (float) (Math.cos(a) * radius);
+            verts[vi] = (float) (Math.cos(a) * radius);
             verts[vi + 1] = (float) (Math.sin(a) * radius);
             verts[vi + 2] = 0;
         }
         short[] idx = new short[segments * 3];
         for (int i = 0; i < segments; i++) {
-            idx[i * 3]     = 0;
+            idx[i * 3] = 0;
             idx[i * 3 + 1] = (short) (i + 1);
             idx[i * 3 + 2] = (short) ((i < segments - 1) ? i + 2 : 1);
         }
@@ -1169,7 +1230,7 @@ final class NativeMapState extends BaseAppState {
         var m = new Mesh();
         m.setMode(Mesh.Mode.Triangles);
         m.setBuffer(VertexBuffer.Type.Position, 3, new float[]{
-                0, size, 0,   size * 0.6f, 0, 0,   0, -size, 0,   -size * 0.6f, 0, 0
+                0, size, 0, size * 0.6f, 0, 0, 0, -size, 0, -size * 0.6f, 0, 0
         });
         m.setBuffer(VertexBuffer.Type.Index, 1, new short[]{0, 3, 1, 1, 3, 2});
         m.updateBound();
@@ -1180,7 +1241,7 @@ final class NativeMapState extends BaseAppState {
         var m = new Mesh();
         m.setMode(Mesh.Mode.Lines);
         m.setBuffer(VertexBuffer.Type.Position, 3, new float[]{
-                -size, 0, 0,  size, 0, 0,   0, -size, 0,  0, size, 0
+                -size, 0, 0, size, 0, 0, 0, -size, 0, 0, size, 0
         });
         m.setBuffer(VertexBuffer.Type.Index, 1, new short[]{0, 1, 2, 3});
         m.updateBound();
@@ -1191,8 +1252,8 @@ final class NativeMapState extends BaseAppState {
         var m = new Mesh();
         m.setMode(Mesh.Mode.Lines);
         m.setBuffer(VertexBuffer.Type.Position, 3, new float[]{
-                -halfW, -halfH, 0,  halfW, -halfH, 0,
-                 halfW,  halfH, 0, -halfW,  halfH, 0
+                -halfW, -halfH, 0, halfW, -halfH, 0,
+                halfW, halfH, 0, -halfW, halfH, 0
         });
         m.setBuffer(VertexBuffer.Type.Index, 1, new short[]{0, 1, 1, 2, 2, 3, 3, 0});
         m.updateBound();
@@ -1203,18 +1264,22 @@ final class NativeMapState extends BaseAppState {
         // Crosshair gap + outer circle
         var v = new FloatList();
         // Horizontal gap crosshair
-        v.add3(-r2, 0, 0); v.add3(-r1, 0, 0);
-        v.add3( r1, 0, 0); v.add3( r2, 0, 0);
+        v.add3(-r2, 0, 0);
+        v.add3(-r1, 0, 0);
+        v.add3(r1, 0, 0);
+        v.add3(r2, 0, 0);
         // Vertical gap crosshair
-        v.add3(0, -r2, 0); v.add3(0, -r1, 0);
-        v.add3(0,  r1, 0); v.add3(0,  r2, 0);
+        v.add3(0, -r2, 0);
+        v.add3(0, -r1, 0);
+        v.add3(0, r1, 0);
+        v.add3(0, r2, 0);
         // Circle at r2
         int seg = 48;
         for (int i = 0; i < seg; i++) {
             double a1 = 2 * Math.PI * i / seg;
             double a2 = 2 * Math.PI * ((i + 1) % seg) / seg;
-            v.add3((float)(Math.cos(a1)*r2), (float)(Math.sin(a1)*r2), 0);
-            v.add3((float)(Math.cos(a2)*r2), (float)(Math.sin(a2)*r2), 0);
+            v.add3((float) (Math.cos(a1) * r2), (float) (Math.sin(a1) * r2), 0);
+            v.add3((float) (Math.cos(a2) * r2), (float) (Math.sin(a2) * r2), 0);
         }
         var m = new Mesh();
         m.setMode(Mesh.Mode.Lines);
@@ -1237,27 +1302,40 @@ final class NativeMapState extends BaseAppState {
 
     private static ColorRGBA toColor(java.awt.Color c, float alpha) {
         return new ColorRGBA(c.getRed() / 255f, c.getGreen() / 255f,
-                             c.getBlue() / 255f, alpha);
+                c.getBlue() / 255f, alpha);
     }
 
-    /** Darker shade (multiply RGB by darkFactor). */
+    /**
+     * Darker shade (multiply RGB by darkFactor).
+     */
     private static ColorRGBA toColor(java.awt.Color c, float alpha, float darkFactor) {
         return new ColorRGBA(c.getRed() / 255f * darkFactor,
-                             c.getGreen() / 255f * darkFactor,
-                             c.getBlue() / 255f * darkFactor, alpha);
+                c.getGreen() / 255f * darkFactor,
+                c.getBlue() / 255f * darkFactor, alpha);
     }
 
     private static ColorRGBA waypointDepthColor(double z) {
         double depth = -z;
         int r, g, b;
-        if (depth <= 20)       { r = 150; g = 220; b = 255; }
-        else if (depth <= 200) {
+        if (depth <= 20) {
+            r = 150;
+            g = 220;
+            b = 255;
+        } else if (depth <= 200) {
             double t = (depth - 20) / 180.0;
-            r = (int)(150 + t * -100); g = (int)(220 + t * -120); b = (int)(255 + t * -35);
+            r = (int) (150 + t * -100);
+            g = (int) (220 + t * -120);
+            b = (int) (255 + t * -35);
         } else if (depth <= 500) {
             double t = (depth - 200) / 300.0;
-            r = (int)(50 + t * 30); g = (int)(100 + t * -60); b = (int)(220 + t * -40);
-        } else { r = 80; g = 40; b = 180; }
+            r = (int) (50 + t * 30);
+            g = (int) (100 + t * -60);
+            b = (int) (220 + t * -40);
+        } else {
+            r = 80;
+            g = 40;
+            b = 180;
+        }
         return new ColorRGBA(r / 255f, g / 255f, b / 255f, 0.78f);
     }
 
@@ -1275,10 +1353,14 @@ final class NativeMapState extends BaseAppState {
                 int r, g, b;
                 if (elev >= 0) {
                     double t = Math.min(elev / Math.max(1, maxE), 1.0);
-                    r = (int)(50 + t * 90); g = (int)(100 + t * 155); b = (int)(30 + t * 40);
+                    r = (int) (50 + t * 90);
+                    g = (int) (100 + t * 155);
+                    b = (int) (30 + t * 40);
                 } else {
                     double t = (elev - minE) / rangeE;
-                    r = (int)(15 + t * 70); g = (int)(25 + t * 155); b = (int)(70 + t * 130);
+                    r = (int) (15 + t * 70);
+                    g = (int) (25 + t * 155);
+                    b = (int) (70 + t * 130);
                 }
                 buf.put((byte) r).put((byte) g).put((byte) b).put((byte) 0xFF);
             }
@@ -1346,7 +1428,7 @@ final class NativeMapState extends BaseAppState {
     }
 
     private void ensurePool(List<Geometry> pool, int needed,
-                             java.util.function.Supplier<Geometry> factory) {
+                            java.util.function.Supplier<Geometry> factory) {
         while (pool.size() < needed) {
             var g = factory.get();
             pool.add(g);
@@ -1363,14 +1445,26 @@ final class NativeMapState extends BaseAppState {
             data[size++] = v;
         }
 
-        void add3(float x, float y, float z) { add(x); add(y); add(z); }
-        void add4(float r, float g, float b, float a) { add(r); add(g); add(b); add(a); }
+        void add3(float x, float y, float z) {
+            add(x);
+            add(y);
+            add(z);
+        }
+
+        void add4(float r, float g, float b, float a) {
+            add(r);
+            add(g);
+            add(b);
+            add(a);
+        }
 
         void addLine(double x1, double y1, double x2, double y2, float z) {
             add3((float) x1, (float) y1, z);
             add3((float) x2, (float) y2, z);
         }
 
-        float[] toArray() { return Arrays.copyOf(data, size); }
+        float[] toArray() {
+            return Arrays.copyOf(data, size);
+        }
     }
 }

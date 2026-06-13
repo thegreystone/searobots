@@ -65,14 +65,14 @@ class TrackingAccuracyTest {
                 var s1 = submarines.get(1);
                 var p0 = s0.pose().position();
                 var p1 = s1.pose().position();
-                double actualDist = Math.sqrt(Math.pow(p0.x()-p1.x(),2) + Math.pow(p0.y()-p1.y(),2));
+                double actualDist = Math.sqrt(Math.pow(p0.x() - p1.x(), 2) + Math.pow(p0.y() - p1.y(), 2));
 
                 var contacts = s0.contactEstimates();
                 if (contacts == null || contacts.isEmpty()) return;
                 var ce = contacts.getFirst();
 
-                double posErr = Math.sqrt(Math.pow(ce.x()-p1.x(),2) + Math.pow(ce.y()-p1.y(),2));
-                double estDist = Math.sqrt(Math.pow(ce.x()-p0.x(),2) + Math.pow(ce.y()-p0.y(),2));
+                double posErr = Math.sqrt(Math.pow(ce.x() - p1.x(), 2) + Math.pow(ce.y() - p1.y(), 2));
+                double estDist = Math.sqrt(Math.pow(ce.x() - p0.x(), 2) + Math.pow(ce.y() - p0.y(), 2));
 
                 String hdg = Double.isNaN(ce.estimatedHeading()) ? "n/a" :
                         String.format("%.0f", Math.toDegrees(ce.estimatedHeading()));
@@ -83,16 +83,25 @@ class TrackingAccuracyTest {
 
                 if (actualDist < 3000) {
                     System.out.printf("%-8.0f %-8.0f %-8.0f %-8.0f %-8s %-8s %-10s%n",
-                            tick/50.0, actualDist, estDist, posErr, hdg, spd, status);
+                            tick / 50.0, actualDist, estDist, posErr, hdg, spd, status);
                 }
             }
-            @Override public void onMatchEnd() {}
+
+            @Override
+            public void onMatchEnd() {
+            }
         };
 
         var thread = new Thread(() -> sim.run(world, controllers, configs, listener));
         thread.start();
-        try { thread.join(60_000); } catch (InterruptedException e) {}
+        try {
+            thread.join(60_000);
+        } catch (InterruptedException e) {
+        }
         sim.stop();
-        try { thread.join(5000); } catch (InterruptedException e) {}
+        try {
+            thread.join(5000);
+        } catch (InterruptedException e) {
+        }
     }
 }

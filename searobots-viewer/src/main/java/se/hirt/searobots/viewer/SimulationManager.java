@@ -191,7 +191,10 @@ final class SimulationManager {
         var t = currentThread;
         if (t != null) {
             t.interrupt();
-            try { t.join(2000); } catch (InterruptedException ignored) {}
+            try {
+                t.join(2000);
+            } catch (InterruptedException ignored) {
+            }
         }
         currentLoop = null;
         currentThread = null;
@@ -213,7 +216,9 @@ final class SimulationManager {
         }
     }
 
-    /** Set up sim state supplier on all viewers that support it. */
+    /**
+     * Set up sim state supplier on all viewers that support it.
+     */
     void configureStateSupplier(java.util.function.Supplier<SimulationLoop.State> supplier) {
         for (var l : listeners) {
             if (l instanceof SubmarineScene3D s3d) s3d.setSimStateSupplier(supplier);
@@ -232,12 +237,16 @@ final class SimulationManager {
         }
     }
 
-    /** Returns the current SimulationLoop, or null if not running. */
+    /**
+     * Returns the current SimulationLoop, or null if not running.
+     */
     SimulationLoop currentLoop() {
         return currentLoop;
     }
 
-    /** Returns true if a simulation is actively running. */
+    /**
+     * Returns true if a simulation is actively running.
+     */
     boolean isRunning() {
         return currentThread != null && currentThread.isAlive();
     }

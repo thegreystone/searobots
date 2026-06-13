@@ -228,7 +228,7 @@ class PassiveSonarTrackingTest {
         System.out.println("  Approximate max passive detection range for SL="
                 + targetSL + " dB target: "
                 + (detected[2] ? "> 2000m" :
-                   detected[1] ? "1000-2000m" : "< 1000m"));
+                detected[1] ? "1000-2000m" : "< 1000m"));
     }
 
     // ====================================================================
@@ -293,7 +293,8 @@ class PassiveSonarTrackingTest {
             }
 
             @Override
-            public void onMatchEnd() {}
+            public void onMatchEnd() {
+            }
         };
 
         var thread = new Thread(() -> sim.run(world, controllers, List.of(VehicleConfig.submarine(), VehicleConfig.surfaceShip()), listener));
@@ -304,7 +305,10 @@ class PassiveSonarTrackingTest {
             Thread.currentThread().interrupt();
         }
         sim.stop();
-        try { thread.join(5000); } catch (InterruptedException e) {}
+        try {
+            thread.join(5000);
+        } catch (InterruptedException e) {
+        }
 
         assertTrue(ticked[0], "Simulation should have produced ticks");
 
@@ -386,7 +390,8 @@ class PassiveSonarTrackingTest {
             }
 
             @Override
-            public void onMatchEnd() {}
+            public void onMatchEnd() {
+            }
         };
 
         var thread = new Thread(() -> sim.run(world, controllers, List.of(VehicleConfig.submarine(), VehicleConfig.surfaceShip()), listener));
@@ -397,7 +402,10 @@ class PassiveSonarTrackingTest {
             Thread.currentThread().interrupt();
         }
         sim.stop();
-        try { thread.join(5000); } catch (InterruptedException e) {}
+        try {
+            thread.join(5000);
+        } catch (InterruptedException e) {
+        }
 
         assertTrue(ticked[0], "Simulation should have produced ticks");
 
@@ -572,7 +580,8 @@ class PassiveSonarTrackingTest {
             }
 
             @Override
-            public void onMatchEnd() {}
+            public void onMatchEnd() {
+            }
         };
 
         var thread = new Thread(() -> sim.run(world, controllers, List.of(VehicleConfig.submarine(), VehicleConfig.surfaceShip()), listener));
@@ -583,7 +592,10 @@ class PassiveSonarTrackingTest {
             Thread.currentThread().interrupt();
         }
         sim.stop();
-        try { thread.join(5000); } catch (InterruptedException e) {}
+        try {
+            thread.join(5000);
+        } catch (InterruptedException e) {
+        }
 
         assertTrue(ticked[0], "Simulation should have produced ticks");
 

@@ -30,29 +30,35 @@ package se.hirt.searobots.api;
 
 public interface SubmarineOutput {
     void setRudder(double value);
+
     void setSternPlanes(double value);
+
     void setThrottle(double value);
+
     void setBallast(double value);
 
     /**
      * Sets a short status string for debugging and match display (e.g. current
      * state machine state). Truncated to 40 characters by the engine.
      */
-    default void setStatus(String status) {}
+    default void setStatus(String status) {
+    }
 
     /**
      * Emits an active sonar ping (~220 dB). Returns bearing + range for all
      * detected contacts, but reveals your position to everyone on the map.
      * Subject to cooldown (250 ticks / 5 seconds).
      */
-    default void activeSonarPing() {}
+    default void activeSonarPing() {
+    }
 
     /**
      * Publishes an estimated contact position for viewer visualization and
      * replay recording. May be called multiple times per tick for multiple
      * contacts. Has no effect on the simulation.
      */
-    default void publishContactEstimate(ContactEstimate estimate) {}
+    default void publishContactEstimate(ContactEstimate estimate) {
+    }
 
     /**
      * Publishes a navigation waypoint for viewer visualization.
@@ -60,7 +66,8 @@ public interface SubmarineOutput {
      * depth-colored circles with connecting lines. Has no effect on
      * the simulation.
      */
-    default void publishWaypoint(Waypoint waypoint) {}
+    default void publishWaypoint(Waypoint waypoint) {
+    }
 
     /**
      * Publishes a torpedo firing solution for viewer visualization and
@@ -70,7 +77,8 @@ public interface SubmarineOutput {
      * <p>The controller decides its own criteria for what constitutes a
      * valid firing solution (range, uncertainty, target geometry, environment).
      */
-    default void publishFiringSolution(FiringSolution solution) {}
+    default void publishFiringSolution(FiringSolution solution) {
+    }
 
     /**
      * Launches a torpedo. The torpedo is autonomous after launch: no
@@ -82,14 +90,16 @@ public interface SubmarineOutput {
      * <p>Requires torpedoesRemaining > 0. Ignored if no torpedoes left.
      * Creates a launch noise transient on the submarine.
      */
-    default void launchTorpedo(TorpedoLaunchCommand command) {}
+    default void launchTorpedo(TorpedoLaunchCommand command) {
+    }
 
     /**
      * Engages or disengages the engine clutch. When disengaged, the prop
      * freewheels: no thrust, no engine braking, minimal machinery noise.
      * This gives the longest coast and quietest operation while moving.
      */
-    default void setEngineClutch(boolean engaged) {}
+    default void setEngineClutch(boolean engaged) {
+    }
 
     /**
      * Publishes a strategic waypoint for viewer visualization.
@@ -97,8 +107,9 @@ public interface SubmarineOutput {
      * while regular waypoints represent the A* navigation route (how).
      * Has no effect on the simulation.
      *
-     * @param waypoint  the waypoint position and active flag
-     * @param purpose   the tactical purpose (e.g. PATROL, INTERCEPT, EVADE)
+     * @param waypoint the waypoint position and active flag
+     * @param purpose  the tactical purpose (e.g. PATROL, INTERCEPT, EVADE)
      */
-    default void publishStrategicWaypoint(Waypoint waypoint, Purpose purpose) {}
+    default void publishStrategicWaypoint(Waypoint waypoint, Purpose purpose) {
+    }
 }

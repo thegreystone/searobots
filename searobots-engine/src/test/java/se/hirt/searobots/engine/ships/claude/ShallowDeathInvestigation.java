@@ -104,14 +104,23 @@ class ShallowDeathInvestigation {
                     }
                 }
             }
-            @Override public void onMatchEnd() {}
+
+            @Override
+            public void onMatchEnd() {
+            }
         };
 
         var thread = new Thread(() -> sim.run(world, controllers, configs, listener));
         thread.start();
-        try { thread.join(60_000); } catch (InterruptedException e) {}
+        try {
+            thread.join(60_000);
+        } catch (InterruptedException e) {
+        }
         sim.stop();
-        try { thread.join(5000); } catch (InterruptedException e) {}
+        try {
+            thread.join(5000);
+        } catch (InterruptedException e) {
+        }
 
         if (deathTick[0] > 0) {
             System.out.printf("  Terrain around death [%.0f, %.0f]:%n", deathX[0], deathY[0]);

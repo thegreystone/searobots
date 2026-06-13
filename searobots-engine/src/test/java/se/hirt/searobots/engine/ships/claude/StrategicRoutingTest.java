@@ -63,7 +63,8 @@ class StrategicRoutingTest {
             int finalHp,
             int maxHp,
             String topStatus
-    ) {}
+    ) {
+    }
 
     /**
      * Runs a full simulation with ClaudeAttackSub on a generated map for the
@@ -99,8 +100,8 @@ class StrategicRoutingTest {
                     entity.heading(), entity.pitch(), 0);
             var vel = new Velocity(
                     new Vec3(entity.speed() * Math.sin(entity.heading()),
-                             entity.speed() * Math.cos(entity.heading()),
-                             entity.verticalSpeed()),
+                            entity.speed() * Math.cos(entity.heading()),
+                            entity.verticalSpeed()),
                     Vec3.ZERO);
             var state = new SubmarineState(pose, vel, entity.hp(), 0);
             var env = new EnvironmentSnapshot(terrain, List.of(), world.currentField());
@@ -201,7 +202,7 @@ class StrategicRoutingTest {
         // (at least 10% closer, or within arrival radius)
         assertTrue(progressPercent > 10 || r.distToStrategicWp < 300,
                 String.format("Sub should make progress toward strategic WP. " +
-                        "Initial dist=%.0fm, final=%.0fm (%.0f%% progress)",
+                                "Initial dist=%.0fm, final=%.0fm (%.0f%% progress)",
                         initialDist, r.distToStrategicWp, progressPercent));
     }
 
@@ -288,8 +289,8 @@ class StrategicRoutingTest {
                     entity.heading(), entity.pitch(), 0);
             var vel = new Velocity(
                     new Vec3(entity.speed() * Math.sin(entity.heading()),
-                             entity.speed() * Math.cos(entity.heading()),
-                             entity.verticalSpeed()),
+                            entity.speed() * Math.cos(entity.heading()),
+                            entity.verticalSpeed()),
                     Vec3.ZERO);
             var state = new SubmarineState(pose, vel, entity.hp(), 0);
             var env = new EnvironmentSnapshot(terrain, List.of(), world.currentField());

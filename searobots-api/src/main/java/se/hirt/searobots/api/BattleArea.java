@@ -30,9 +30,11 @@ package se.hirt.searobots.api;
 
 public sealed interface BattleArea {
 
-    record Circular(double radius) implements BattleArea {}
+    record Circular(double radius) implements BattleArea {
+    }
 
-    record Rectangular(double halfWidth, double halfHeight) implements BattleArea {}
+    record Rectangular(double halfWidth, double halfHeight) implements BattleArea {
+    }
 
     default boolean contains(double x, double y) {
         return switch (this) {

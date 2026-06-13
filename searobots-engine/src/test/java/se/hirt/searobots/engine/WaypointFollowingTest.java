@@ -61,12 +61,13 @@ class WaypointFollowingTest {
             double finalDepth,        // depth when closest
             double maxCrossTrack,     // max perpendicular deviation from direct line (m)
             int finalHp
-    ) {}
+    ) {
+    }
 
     FollowResult runWaypointFollow(double startX, double startY, double startZ,
-                                    double startHeading, double startSpeed,
-                                    double wpX, double wpY, double wpZ,
-                                    int maxTicks) {
+                                   double startHeading, double startSpeed,
+                                   double wpX, double wpY, double wpZ,
+                                   int maxTicks) {
         var config = MatchConfig.withDefaults(0);
         var context = new MatchContext(config, world.terrain(), List.of(), world.currentField());
         var autopilot = new SubmarineAutopilot(context);
@@ -114,8 +115,8 @@ class WaypointFollowingTest {
                     entity.heading(), entity.pitch(), 0);
             var vel = new Velocity(
                     new Vec3(entity.speed() * Math.sin(entity.heading()),
-                             entity.speed() * Math.cos(entity.heading()),
-                             entity.verticalSpeed()),
+                            entity.speed() * Math.cos(entity.heading()),
+                            entity.verticalSpeed()),
                     Vec3.ZERO);
             var state = new SubmarineState(pose, vel, entity.hp(), 0);
             var env = new EnvironmentSnapshot(world.terrain(), List.of(), world.currentField());
@@ -322,8 +323,8 @@ class WaypointFollowingTest {
                     entity.heading(), entity.pitch(), 0);
             var vel = new Velocity(
                     new Vec3(entity.speed() * Math.sin(entity.heading()),
-                             entity.speed() * Math.cos(entity.heading()),
-                             entity.verticalSpeed()),
+                            entity.speed() * Math.cos(entity.heading()),
+                            entity.verticalSpeed()),
                     Vec3.ZERO);
             var state = new SubmarineState(pose, vel, entity.hp(), 0);
             var env = new EnvironmentSnapshot(world.terrain(), List.of(), world.currentField());

@@ -40,7 +40,8 @@ import se.hirt.searobots.api.TerrainMap;
  */
 final class TerrainMeshBuilder {
 
-    private TerrainMeshBuilder() {}
+    private TerrainMeshBuilder() {
+    }
 
     /**
      * Build a terrain mesh from the given map.

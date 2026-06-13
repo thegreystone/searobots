@@ -67,11 +67,11 @@ public final class PathPlanner {
     /**
      * Creates a path planner for the given terrain.
      *
-     * @param terrain        the sea floor heightmap
-     * @param minFloorDepth  floor elevation above which cells are blocked (e.g. -80)
-     * @param safetyMargin   distance in meters to keep from blocked cells;
-     *                       cells within this distance have increased traversal cost
-     * @param gridStep       navigation grid resolution in meters (e.g. 50-100)
+     * @param terrain       the sea floor heightmap
+     * @param minFloorDepth floor elevation above which cells are blocked (e.g. -80)
+     * @param safetyMargin  distance in meters to keep from blocked cells;
+     *                      cells within this distance have increased traversal cost
+     * @param gridStep      navigation grid resolution in meters (e.g. 50-100)
      */
     public PathPlanner(TerrainMap terrain, double minFloorDepth, double safetyMargin, double gridStep) {
         this(terrain, minFloorDepth, safetyMargin, gridStep, 300.0, 3.0);
@@ -80,8 +80,8 @@ public final class PathPlanner {
     /**
      * Creates a path planner with configurable depth preference.
      *
-     * @param depthComfort  cells deeper than this (absolute meters) get minimum cost
-     * @param depthPenalty  maximum cost multiplier for cells at the blocking threshold
+     * @param depthComfort cells deeper than this (absolute meters) get minimum cost
+     * @param depthPenalty maximum cost multiplier for cells at the blocking threshold
      */
     public PathPlanner(TerrainMap terrain, double minFloorDepth, double safetyMargin,
                        double gridStep, double depthComfort, double depthPenalty) {
@@ -123,10 +123,10 @@ public final class PathPlanner {
      * @return list of waypoints (may be empty if no path found)
      */
     public List<Vec3> findPath(double startX, double startY,
-                                double goalX, double goalY,
-                                double operatingDepth,
-                                double depthChangeRatio,
-                                double turnRadius) {
+                               double goalX, double goalY,
+                               double operatingDepth,
+                               double depthChangeRatio,
+                               double turnRadius) {
         int sc = worldToCol(startX);
         int sr = worldToRow(startY);
         int gc = worldToCol(goalX);
@@ -142,12 +142,14 @@ public final class PathPlanner {
         if (costGrid[sr * gridCols + sc] == 0) {
             int[] safe = findNearestSafe(sc, sr);
             if (safe == null) return List.of();
-            sc = safe[0]; sr = safe[1];
+            sc = safe[0];
+            sr = safe[1];
         }
         if (costGrid[gr * gridCols + gc] == 0) {
             int[] safe = findNearestSafe(gc, gr);
             if (safe == null) return List.of();
-            gc = safe[0]; gr = safe[1];
+            gc = safe[0];
+            gr = safe[1];
         }
 
         // A* search
@@ -222,8 +224,8 @@ public final class PathPlanner {
      * Uses conservative values: depth ratio 1:10, turn radius 250m.
      */
     public List<Vec3> findPath(double startX, double startY,
-                                double goalX, double goalY,
-                                double operatingDepth) {
+                               double goalX, double goalY,
+                               double operatingDepth) {
         return findPath(startX, startY, goalX, goalY, operatingDepth, 0.10, 250);
     }
 
@@ -231,7 +233,8 @@ public final class PathPlanner {
      * A 2D corridor waypoint with terrain metadata. Used by the trajectory
      * projector to plan physically-feasible 3D routes through the corridor.
      */
-    public record CorridorPoint(double x, double y, double floorElevation) {}
+    public record CorridorPoint(double x, double y, double floorElevation) {
+    }
 
     /**
      * Finds a 2D corridor from start to goal through safe deep water.
@@ -240,7 +243,7 @@ public final class PathPlanner {
      * feasibility using the sub's kinematic state.
      */
     public List<CorridorPoint> findCorridor(double startX, double startY,
-                                             double goalX, double goalY) {
+                                            double goalX, double goalY) {
         var gridPath = runAstar(startX, startY, goalX, goalY);
         if (gridPath == null) return List.of();
 
@@ -266,9 +269,11 @@ public final class PathPlanner {
         return result;
     }
 
-    /** Runs A* and returns the raw grid path, or null if no path found. */
+    /**
+     * Runs A* and returns the raw grid path, or null if no path found.
+     */
     private List<int[]> runAstar(double startX, double startY,
-                                  double goalX, double goalY) {
+                                 double goalX, double goalY) {
         int sc = worldToCol(startX);
         int sr = worldToRow(startY);
         int gc = worldToCol(goalX);
@@ -282,12 +287,14 @@ public final class PathPlanner {
         if (costGrid[sr * gridCols + sc] == 0) {
             int[] safe = findNearestSafe(sc, sr);
             if (safe == null) return null;
-            sc = safe[0]; sr = safe[1];
+            sc = safe[0];
+            sr = safe[1];
         }
         if (costGrid[gr * gridCols + gc] == 0) {
             int[] safe = findNearestSafe(gc, gr);
             if (safe == null) return null;
-            gc = safe[0]; gr = safe[1];
+            gc = safe[0];
+            gr = safe[1];
         }
 
         int startIdx = sr * gridCols + sc;
@@ -351,7 +358,9 @@ public final class PathPlanner {
         return gridPath;
     }
 
-    /** Floor elevation at a world position. */
+    /**
+     * Floor elevation at a world position.
+     */
     public double floorAt(double worldX, double worldY) {
         return terrain.elevationAt(worldX, worldY);
     }
@@ -447,7 +456,7 @@ public final class PathPlanner {
         for (int deg = 0; deg < 360; deg += 90) {
             double brg = Math.toRadians(deg);
             double f = terrain.elevationAt(wx + Math.sin(brg) * radius,
-                                           wy + Math.cos(brg) * radius);
+                    wy + Math.cos(brg) * radius);
             if (f > worst) worst = f;
         }
         return worst;
@@ -476,7 +485,7 @@ public final class PathPlanner {
     }
 
     private List<Vec3> simplifyPath(List<int[]> gridPath, double operatingDepth,
-                                     double depthChangeRatio, double turnRadius) {
+                                    double depthChangeRatio, double turnRadius) {
         if (gridPath.size() <= 2) {
             // Short path: still apply depth lookahead by scanning terrain
             // between start and end for the worst floor
@@ -692,8 +701,14 @@ public final class PathPlanner {
             if (cost == 0 || cost > depthThreshold || cost > proximityThreshold) return false;
             if (c0 == c1 && r0 == r1) break;
             int e2 = 2 * err;
-            if (e2 > -dr) { err -= dr; c0 += sc; }
-            if (e2 < dc) { err += dc; r0 += sr; }
+            if (e2 > -dr) {
+                err -= dr;
+                c0 += sc;
+            }
+            if (e2 < dc) {
+                err += dc;
+                r0 += sr;
+            }
         }
         return true;
     }
@@ -703,8 +718,19 @@ public final class PathPlanner {
         return Math.max(dc, dr) + 0.414f * Math.min(dc, dr); // octile distance
     }
 
-    private int worldToCol(double wx) { return (int) Math.round((wx - gridOriginX) / gridStep); }
-    private int worldToRow(double wy) { return (int) Math.round((wy - gridOriginY) / gridStep); }
-    private double colToWorldX(int c) { return gridOriginX + c * gridStep; }
-    private double rowToWorldY(int r) { return gridOriginY + r * gridStep; }
+    private int worldToCol(double wx) {
+        return (int) Math.round((wx - gridOriginX) / gridStep);
+    }
+
+    private int worldToRow(double wy) {
+        return (int) Math.round((wy - gridOriginY) / gridStep);
+    }
+
+    private double colToWorldX(int c) {
+        return gridOriginX + c * gridStep;
+    }
+
+    private double rowToWorldY(int r) {
+        return gridOriginY + r * gridStep;
+    }
 }

@@ -120,8 +120,8 @@ final class ClaudeAutopilot {
      * backward pass so the sub transitions smoothly between waypoints.
      */
     void setWaypointsChain(List<StrategicWaypoint> waypoints,
-                            double posX, double posY, double posZ,
-                            double heading, double speed) {
+                           double posX, double posY, double posZ,
+                           double heading, double speed) {
         this.strategicWaypoints = List.copyOf(waypoints);
         this.strategicWaypointIndex = 0;
         this.routeIndex = 0;
@@ -328,14 +328,37 @@ final class ClaudeAutopilot {
         }
     }
 
-    boolean hasArrived() { return arrived; }
-    boolean isBlocked() { return blocked; }
-    int currentWaypointIndex() { return strategicWaypointIndex; }
-    int currentNavIndex() { return routeIndex; }
-    List<Vec3> navWaypoints() { return List.copyOf(route); }
-    List<StrategicWaypoint> strategicWaypoints() { return strategicWaypoints; }
-    String lastStatus() { return lastStatus; }
-    PathPlanner pathPlanner() { return pathPlanner; }
+    boolean hasArrived() {
+        return arrived;
+    }
+
+    boolean isBlocked() {
+        return blocked;
+    }
+
+    int currentWaypointIndex() {
+        return strategicWaypointIndex;
+    }
+
+    int currentNavIndex() {
+        return routeIndex;
+    }
+
+    List<Vec3> navWaypoints() {
+        return List.copyOf(route);
+    }
+
+    List<StrategicWaypoint> strategicWaypoints() {
+        return strategicWaypoints;
+    }
+
+    String lastStatus() {
+        return lastStatus;
+    }
+
+    PathPlanner pathPlanner() {
+        return pathPlanner;
+    }
 
     double distanceToStrategic(double x, double y) {
         if (strategicWaypoints.isEmpty()) return Double.POSITIVE_INFINITY;
@@ -379,8 +402,8 @@ final class ClaudeAutopilot {
      * before ridges and never dives faster than physics allows.
      */
     private List<Vec3> buildRoute(List<Vec3> raw, double preferredDepth,
-                                   double startZ, double startX, double startY,
-                                   double expectedSpeed) {
+                                  double startZ, double startX, double startY,
+                                  double expectedSpeed) {
         // Step 1: Densify into evenly-spaced waypoints
         var dense = new ArrayList<Vec3>();
         double carried = 0;
@@ -474,12 +497,15 @@ final class ClaudeAutopilot {
         double bestDist = hdist(x, y, route.get(routeIndex).x(), route.get(routeIndex).y());
         for (int i = routeIndex + 1; i < Math.min(route.size(), routeIndex + 4); i++) {
             double d = hdist(x, y, route.get(i).x(), route.get(i).y());
-            if (d + 20 < bestDist) { bestDist = d; best = i; }
+            if (d + 20 < bestDist) {
+                bestDist = d;
+                best = i;
+            }
         }
         routeIndex = best;
         // Advance past close waypoints
         while (routeIndex < route.size() - 1 &&
-               hdist(x, y, route.get(routeIndex).x(), route.get(routeIndex).y()) < NAV_ACCEPTANCE) {
+                hdist(x, y, route.get(routeIndex).x(), route.get(routeIndex).y()) < NAV_ACCEPTANCE) {
             routeIndex++;
         }
     }
@@ -496,7 +522,8 @@ final class ClaudeAutopilot {
                 return new Vec3(lerp(ax, wp.x(), t), lerp(ay, wp.y(), t), wp.z());
             }
             remaining -= seg;
-            ax = wp.x(); ay = wp.y();
+            ax = wp.x();
+            ay = wp.y();
         }
         return route.getLast();
     }
@@ -550,7 +577,8 @@ final class ClaudeAutopilot {
                 worst = Math.max(worst, terrain.elevationAt(lerp(ax, wp.x(), t), lerp(ay, wp.y(), t)));
             }
             walked += seg;
-            ax = wp.x(); ay = wp.y();
+            ax = wp.x();
+            ay = wp.y();
         }
         return worst;
     }
@@ -637,5 +665,7 @@ final class ClaudeAutopilot {
         return n < 0 ? n + 2 * Math.PI : n;
     }
 
-    private static double lerp(double a, double b, double t) { return a + (b - a) * t; }
+    private static double lerp(double a, double b, double t) {
+        return a + (b - a) * t;
+    }
 }

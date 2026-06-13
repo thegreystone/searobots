@@ -57,7 +57,10 @@ final class SimConfigState extends BaseAppState {
 
     record ShipOption(String displayName, Supplier<SubmarineController> factory,
                       VehicleConfig vehicleConfig) {
-        @Override public String toString() { return displayName; }
+        @Override
+        public String toString() {
+            return displayName;
+        }
     }
 
     private static final List<ShipOption> SHIP_OPTIONS = List.of(
@@ -266,7 +269,9 @@ final class SimConfigState extends BaseAppState {
 
     // --- Static helpers matching the old SimConfigDialog API ---
 
-    static boolean isCompetitionMode() { return selectedSimType == 1; }
+    static boolean isCompetitionMode() {
+        return selectedSimType == 1;
+    }
 
     static List<SubmarineController> currentControllers() {
         var result = new ArrayList<SubmarineController>();

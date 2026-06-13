@@ -42,7 +42,8 @@ import java.util.Set;
 public final class CodexClaudeBattleTrace {
     private static final int MATCH_TICKS = 600 * 50;
 
-    private CodexClaudeBattleTrace() {}
+    private CodexClaudeBattleTrace() {
+    }
 
     public static void main(String[] args) {
         long seed = args.length > 0 ? Long.parseLong(args[0]) : -499828820137885826L;

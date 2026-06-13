@@ -44,7 +44,8 @@ public final class CodexTorpedoTerminalTrace {
     private static final int MATCH_TICKS = 600 * 50;
     private static final double TRACE_RADIUS_METERS = 250.0;
 
-    private CodexTorpedoTerminalTrace() {}
+    private CodexTorpedoTerminalTrace() {
+    }
 
     public static void main(String[] args) {
         long seed = args.length > 0 ? Long.parseLong(args[0]) : DEFAULT_SEED;

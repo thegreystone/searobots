@@ -65,7 +65,9 @@ public class PassiveDetectionRangeTest {
         return Math.pow(10, headroom / SonarModel.SPREADING_COEFFICIENT);
     }
 
-    /** Sub-to-sub theoretical range (35 dB offset). */
+    /**
+     * Sub-to-sub theoretical range (35 dB offset).
+     */
     private static double theoreticalRange(double targetSL, double listenerSL) {
         return theoreticalRange(targetSL, listenerSL, VehicleConfig.submarine().sonarSelfNoiseOffsetDb());
     }

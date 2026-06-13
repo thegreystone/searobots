@@ -71,7 +71,7 @@ class HeadlessSimTest {
                         var p0 = submarines.get(0).pose().position();
                         var p1 = submarines.get(1).pose().position();
                         double actualDist = Math.sqrt(
-                                Math.pow(p0.x()-p1.x(),2) + Math.pow(p0.y()-p1.y(),2));
+                                Math.pow(p0.x() - p1.x(), 2) + Math.pow(p0.y() - p1.y(), 2));
                         sb.append(String.format("  dist=%.0f", actualDist));
                     }
                     stateLog.add(sb.toString());
@@ -95,7 +95,10 @@ class HeadlessSimTest {
             Thread.currentThread().interrupt();
         }
         sim.stop();
-        try { thread.join(5000); } catch (InterruptedException e) {}
+        try {
+            thread.join(5000);
+        } catch (InterruptedException e) {
+        }
 
         // Check that at least one sub entered CHASE at some point
         boolean anyChase = stateLog.stream().anyMatch(s -> s.contains("C/") || s.contains("C "));
@@ -113,7 +116,8 @@ class HeadlessSimTest {
                 try {
                     int hp = Integer.parseInt(hpStr.substring(0, end));
                     return hp < 1000;
-                } catch (NumberFormatException e) {}
+                } catch (NumberFormatException e) {
+                }
             }
             return false;
         });

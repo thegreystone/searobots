@@ -32,5 +32,6 @@ import java.util.List;
 
 public interface SimulationListener {
     void onTick(long tick, List<SubmarineSnapshot> submarines, List<TorpedoSnapshot> torpedoes);
+
     void onMatchEnd();
 }

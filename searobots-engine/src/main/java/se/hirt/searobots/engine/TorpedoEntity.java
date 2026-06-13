@@ -118,123 +118,338 @@ public final class TorpedoEntity {
 
     // ── Accessors ──────────────────────────────────────────────────
 
-    public int id() { return id; }
-    public int ownerId() { return ownerId; }
-    public VehicleConfig vehicleConfig() { return vehicleConfig; }
-    public TorpedoController controller() { return controller; }
-    public Color color() { return color; }
-    public double fuseRadius() { return fuseRadius; }
+    public int id() {
+        return id;
+    }
 
-    public double x() { return x; }
-    public double y() { return y; }
-    public double z() { return z; }
-    public double heading() { return heading; }
-    public double pitch() { return pitch; }
-    public double speed() { return speed; }
-    public double verticalSpeed() { return verticalSpeed; }
-    public double yawRate() { return yawRate; }
-    public double pitchRate() { return pitchRate; }
-    public double fuelRemaining() { return fuelRemaining; }
-    public double sourceLevelDb() { return sourceLevelDb; }
-    public boolean pingRequested() { return pingRequested; }
-    public int activeSonarCooldown() { return activeSonarCooldown; }
+    public int ownerId() {
+        return ownerId;
+    }
 
-    public boolean alive() { return alive; }
-    public boolean detonated() { return detonated; }
-    public boolean detonateRequested() { return detonateRequested; }
+    public VehicleConfig vehicleConfig() {
+        return vehicleConfig;
+    }
+
+    public TorpedoController controller() {
+        return controller;
+    }
+
+    public Color color() {
+        return color;
+    }
+
+    public double fuseRadius() {
+        return fuseRadius;
+    }
+
+    public double x() {
+        return x;
+    }
+
+    public double y() {
+        return y;
+    }
+
+    public double z() {
+        return z;
+    }
+
+    public double heading() {
+        return heading;
+    }
+
+    public double pitch() {
+        return pitch;
+    }
+
+    public double speed() {
+        return speed;
+    }
+
+    public double verticalSpeed() {
+        return verticalSpeed;
+    }
+
+    public double yawRate() {
+        return yawRate;
+    }
+
+    public double pitchRate() {
+        return pitchRate;
+    }
+
+    public double fuelRemaining() {
+        return fuelRemaining;
+    }
+
+    public double sourceLevelDb() {
+        return sourceLevelDb;
+    }
+
+    public boolean pingRequested() {
+        return pingRequested;
+    }
+
+    public int activeSonarCooldown() {
+        return activeSonarCooldown;
+    }
+
+    public boolean alive() {
+        return alive;
+    }
+
+    public boolean detonated() {
+        return detonated;
+    }
+
+    public boolean detonateRequested() {
+        return detonateRequested;
+    }
 
     // ── Mutators (called by physics/engine) ────────────────────────
 
-    public void setX(double x) { this.x = x; }
-    public void setY(double y) { this.y = y; }
-    public void setZ(double z) { this.z = z; }
-    public void setHeading(double h) { this.heading = h; }
-    public void setPitch(double p) { this.pitch = p; }
-    public void setSpeed(double s) { this.speed = s; }
-    public void setVerticalSpeed(double v) { this.verticalSpeed = v; }
-    public void setYawRate(double r) { this.yawRate = r; }
-    public void setPitchRate(double r) { this.pitchRate = r; }
-    public void setSourceLevelDb(double db) { this.sourceLevelDb = db; }
-    public void setActualThrottle(double t) { this.actualThrottle = t; }
-    public void setActualRudder(double r) { this.actualRudder = r; }
-    public void setActualSternPlanes(double p) { this.actualSternPlanes = p; }
+    public void setX(double x) {
+        this.x = x;
+    }
 
-    public double actualThrottle() { return actualThrottle; }
-    public double actualRudder() { return actualRudder; }
-    public double actualSternPlanes() { return actualSternPlanes; }
+    public void setY(double y) {
+        this.y = y;
+    }
+
+    public void setZ(double z) {
+        this.z = z;
+    }
+
+    public void setHeading(double h) {
+        this.heading = h;
+    }
+
+    public void setPitch(double p) {
+        this.pitch = p;
+    }
+
+    public void setSpeed(double s) {
+        this.speed = s;
+    }
+
+    public void setVerticalSpeed(double v) {
+        this.verticalSpeed = v;
+    }
+
+    public void setYawRate(double r) {
+        this.yawRate = r;
+    }
+
+    public void setPitchRate(double r) {
+        this.pitchRate = r;
+    }
+
+    public void setSourceLevelDb(double db) {
+        this.sourceLevelDb = db;
+    }
+
+    public void setActualThrottle(double t) {
+        this.actualThrottle = t;
+    }
+
+    public void setActualRudder(double r) {
+        this.actualRudder = r;
+    }
+
+    public void setActualSternPlanes(double p) {
+        this.actualSternPlanes = p;
+    }
+
+    public double actualThrottle() {
+        return actualThrottle;
+    }
+
+    public double actualRudder() {
+        return actualRudder;
+    }
+
+    public double actualSternPlanes() {
+        return actualSternPlanes;
+    }
 
     public void consumeFuel(double seconds) {
         fuelRemaining = Math.max(0, fuelRemaining - seconds);
     }
 
-    public void kill() { alive = false; }
-    public void detonate() { detonated = true; alive = false; }
-    public boolean explosionProcessed() { return explosionProcessed; }
-    public void setExplosionProcessed() { explosionProcessed = true; }
+    public void kill() {
+        alive = false;
+    }
+
+    public void detonate() {
+        detonated = true;
+        alive = false;
+    }
+
+    public boolean explosionProcessed() {
+        return explosionProcessed;
+    }
+
+    public void setExplosionProcessed() {
+        explosionProcessed = true;
+    }
 
     public void decrementSonarCooldown() {
         if (activeSonarCooldown > 0) activeSonarCooldown--;
     }
 
-    /** True if the fuse is armed (arming delay has elapsed). */
-    public boolean fuseArmed() { return armingTicks <= 0; }
-    public void decrementArmingDelay() { if (armingTicks > 0) armingTicks--; }
-    public long launchTick() { return launchTick; }
-    public void setLaunchTick(long tick) { this.launchTick = tick; }
+    /**
+     * True if the fuse is armed (arming delay has elapsed).
+     */
+    public boolean fuseArmed() {
+        return armingTicks <= 0;
+    }
+
+    public void decrementArmingDelay() {
+        if (armingTicks > 0) armingTicks--;
+    }
+
+    public long launchTick() {
+        return launchTick;
+    }
+
+    public void setLaunchTick(long tick) {
+        this.launchTick = tick;
+    }
 
     // ── Controller interface ───────────────────────────────────────
 
-    /** Applies controller commands. Called after controller.onTick(). */
+    /**
+     * Applies controller commands. Called after controller.onTick().
+     */
     public void applyCommands() {
         // Store commanded values for physics to slew toward
     }
 
-    /** Returns a TorpedoOutput that captures commands from the controller. */
+    /**
+     * Returns a TorpedoOutput that captures commands from the controller.
+     */
     public TorpedoOutput createOutput() {
         return new TorpedoOutput() {
-            @Override public void setRudder(double value) { cmdRudder = Math.clamp(value, -1, 1); }
-            @Override public void setSternPlanes(double value) { cmdSternPlanes = Math.clamp(value, -1, 1); }
-            @Override public void setThrottle(double value) { cmdThrottle = Math.clamp(value, 0, 1); }
-            @Override public void activeSonarPing() {
-                if (activeSonarCooldown <= 0) { pingRequested = true; }
+            @Override
+            public void setRudder(double value) {
+                cmdRudder = Math.clamp(value, -1, 1);
             }
-            @Override public void detonate() { detonateRequested = true; }
-            @Override public void publishTarget(double x, double y, double z) {
-                pubTargetX = x; pubTargetY = y; pubTargetZ = z;
+
+            @Override
+            public void setSternPlanes(double value) {
+                cmdSternPlanes = Math.clamp(value, -1, 1);
             }
-            @Override public void publishDiagnostics(double estX, double estY, double estZ,
-                                                      double estHeading, double estSpeed,
-                                                      double intX, double intY, double intZ,
-                                                      String phase) {
-                diagEstX = estX; diagEstY = estY; diagEstZ = estZ;
-                diagEstHeading = estHeading; diagEstSpeed = estSpeed;
-                diagIntX = intX; diagIntY = intY; diagIntZ = intZ;
+
+            @Override
+            public void setThrottle(double value) {
+                cmdThrottle = Math.clamp(value, 0, 1);
+            }
+
+            @Override
+            public void activeSonarPing() {
+                if (activeSonarCooldown <= 0) {
+                    pingRequested = true;
+                }
+            }
+
+            @Override
+            public void detonate() {
+                detonateRequested = true;
+            }
+
+            @Override
+            public void publishTarget(double x, double y, double z) {
+                pubTargetX = x;
+                pubTargetY = y;
+                pubTargetZ = z;
+            }
+
+            @Override
+            public void publishDiagnostics(double estX, double estY, double estZ,
+                                           double estHeading, double estSpeed,
+                                           double intX, double intY, double intZ,
+                                           String phase) {
+                diagEstX = estX;
+                diagEstY = estY;
+                diagEstZ = estZ;
+                diagEstHeading = estHeading;
+                diagEstSpeed = estSpeed;
+                diagIntX = intX;
+                diagIntY = intY;
+                diagIntZ = intZ;
                 diagPhase = phase;
             }
         };
     }
 
-    public double publishedTargetX() { return pubTargetX; }
-    public double publishedTargetY() { return pubTargetY; }
-    public double publishedTargetZ() { return pubTargetZ; }
+    public double publishedTargetX() {
+        return pubTargetX;
+    }
+
+    public double publishedTargetY() {
+        return pubTargetY;
+    }
+
+    public double publishedTargetZ() {
+        return pubTargetZ;
+    }
 
     // Guidance diagnostics
-    public double diagEstX() { return diagEstX; }
-    public double diagEstY() { return diagEstY; }
-    public double diagEstZ() { return diagEstZ; }
-    public double diagEstHeading() { return diagEstHeading; }
-    public double diagEstSpeed() { return diagEstSpeed; }
-    public double diagIntX() { return diagIntX; }
-    public double diagIntY() { return diagIntY; }
-    public double diagIntZ() { return diagIntZ; }
-    public String diagPhase() { return diagPhase; }
+    public double diagEstX() {
+        return diagEstX;
+    }
 
-    public double cmdRudder() { return cmdRudder; }
-    public double cmdSternPlanes() { return cmdSternPlanes; }
-    public double cmdThrottle() { return fuelRemaining > 0 ? cmdThrottle : 0; }
+    public double diagEstY() {
+        return diagEstY;
+    }
 
-    public void clearPingRequested() { pingRequested = false; }
-    public void setActiveSonarCooldown(int ticks) { activeSonarCooldown = ticks; }
+    public double diagEstZ() {
+        return diagEstZ;
+    }
+
+    public double diagEstHeading() {
+        return diagEstHeading;
+    }
+
+    public double diagEstSpeed() {
+        return diagEstSpeed;
+    }
+
+    public double diagIntX() {
+        return diagIntX;
+    }
+
+    public double diagIntY() {
+        return diagIntY;
+    }
+
+    public double diagIntZ() {
+        return diagIntZ;
+    }
+
+    public String diagPhase() {
+        return diagPhase;
+    }
+
+    public double cmdRudder() {
+        return cmdRudder;
+    }
+
+    public double cmdSternPlanes() {
+        return cmdSternPlanes;
+    }
+
+    public double cmdThrottle() {
+        return fuelRemaining > 0 ? cmdThrottle : 0;
+    }
+
+    public void clearPingRequested() {
+        pingRequested = false;
+    }
+
+    public void setActiveSonarCooldown(int ticks) {
+        activeSonarCooldown = ticks;
+    }
 
     // ── Snapshot and state ─────────────────────────────────────────
 
@@ -260,7 +475,15 @@ public final class TorpedoEntity {
 
     // ── Constants ──────────────────────────────────────────────────
 
-    public static double minimumSpeed() { return MINIMUM_SPEED; }
-    public static double sinkAcceleration() { return SINK_ACCELERATION; }
-    public static double defaultFuelSeconds() { return DEFAULT_FUEL_SECONDS; }
+    public static double minimumSpeed() {
+        return MINIMUM_SPEED;
+    }
+
+    public static double sinkAcceleration() {
+        return SINK_ACCELERATION;
+    }
+
+    public static double defaultFuelSeconds() {
+        return DEFAULT_FUEL_SECONDS;
+    }
 }

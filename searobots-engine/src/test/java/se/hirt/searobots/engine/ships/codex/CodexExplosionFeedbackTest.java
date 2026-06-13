@@ -53,14 +53,14 @@ class CodexExplosionFeedbackTest {
         var self = submarineState(new Vec3(0.0, 0.0, -140.0), 0.0, 7.5);
         var output = new TestHelpers.CapturedOutput();
         controller.onTick(new ExplosionInput(
-                600L,
-                DT,
-                self,
-                environment(world),
-                List.of(),
-                List.of(),
-                0,
-                List.of(new ExplosionEvent(0.0, 1_500.0, true, 3, true))),
+                        600L,
+                        DT,
+                        self,
+                        environment(world),
+                        List.of(),
+                        List.of(),
+                        0,
+                        List.of(new ExplosionEvent(0.0, 1_500.0, true, 3, true))),
                 output);
 
         assertTrue(!output.contactEstimates.isEmpty(), "Codex should publish a track after a confirmed torpedo hit.");
@@ -91,5 +91,6 @@ class CodexExplosionFeedbackTest {
                                   List<SonarContact> activeSonarReturns,
                                   int activeSonarCooldownTicks,
                                   List<ExplosionEvent> explosionEvents)
-            implements SubmarineInput {}
+            implements SubmarineInput {
+    }
 }

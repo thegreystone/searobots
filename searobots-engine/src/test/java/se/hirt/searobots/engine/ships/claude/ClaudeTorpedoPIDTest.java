@@ -49,7 +49,8 @@ public class ClaudeTorpedoPIDTest {
     private static final GeneratedWorld WORLD = GeneratedWorld.deepFlat();
 
     record RunResult(double minDist, double minDepth, double maxDepth,
-                     double maxPitchDeg, int oscillations, boolean hit, int ticks) {}
+                     double maxPitchDeg, int oscillations, boolean hit, int ticks) {
+    }
 
     private RunResult fireTorpedo(double launchZ, double targetDist, double targetZ, double launchHeading) {
         double targetX = 0;
@@ -78,12 +79,35 @@ public class ClaudeTorpedoPIDTest {
         for (int tick = 0; tick < 12000; tick++) {
             final int t = tick;
             var torpInput = new TorpedoInput() {
-                @Override public long tick() { return t; }
-                @Override public double deltaTimeSeconds() { return DT; }
-                @Override public Pose self() { return torp.pose(); }
-                @Override public Velocity velocity() { return torp.velocity(); }
-                @Override public double speed() { return torp.speed(); }
-                @Override public double fuelRemaining() { return torp.fuelRemaining(); }
+                @Override
+                public long tick() {
+                    return t;
+                }
+
+                @Override
+                public double deltaTimeSeconds() {
+                    return DT;
+                }
+
+                @Override
+                public Pose self() {
+                    return torp.pose();
+                }
+
+                @Override
+                public Velocity velocity() {
+                    return torp.velocity();
+                }
+
+                @Override
+                public double speed() {
+                    return torp.speed();
+                }
+
+                @Override
+                public double fuelRemaining() {
+                    return torp.fuelRemaining();
+                }
             };
             var torpOutput = torp.createOutput();
             ctrl.onTick(torpInput, torpOutput);
@@ -185,10 +209,10 @@ public class ClaudeTorpedoPIDTest {
     @Test
     void neverBreachesModerateClimb() {
         double[][] cases = {
-            {-150, 1500, -100},
-            {-120, 1000, -80},
-            {-300, 1500, -200},
-            {-100, 1500, -100},
+                {-150, 1500, -100},
+                {-120, 1000, -80},
+                {-300, 1500, -200},
+                {-100, 1500, -100},
         };
         for (var c : cases) {
             var r = fireTorpedo(c[0], c[1], c[2], 0);
@@ -209,7 +233,8 @@ public class ClaudeTorpedoPIDTest {
 
     // ── Moving target tests (full simulation with sonar) ──
 
-    private record CombatResult(int hpTarget, double closestApproach) {}
+    private record CombatResult(int hpTarget, double closestApproach) {
+    }
 
     private CombatResult fireTorpedoAtMovingTarget(
             SubmarineController target, long seed, double launchRange) {
@@ -240,14 +265,23 @@ public class ClaudeTorpedoPIDTest {
                 }
                 if (tick >= 90_000 || targetHp[0] <= 0) sim.stop();
             }
-            @Override public void onMatchEnd() {}
+
+            @Override
+            public void onMatchEnd() {
+            }
         };
 
         var thread = new Thread(() -> sim.run(world, controllers, configs, listener));
         thread.start();
-        try { thread.join(120_000); } catch (InterruptedException e) {}
+        try {
+            thread.join(120_000);
+        } catch (InterruptedException e) {
+        }
         sim.stop();
-        try { thread.join(3000); } catch (InterruptedException e) {}
+        try {
+            thread.join(3000);
+        } catch (InterruptedException e) {
+        }
 
         return new CombatResult(targetHp[0], closest[0]);
     }
@@ -275,18 +309,19 @@ public class ClaudeTorpedoPIDTest {
                 "Scenario", "LaunchZ", "TargetZ", "Range", "MinDist", "MaxPitch", "Oscill", "Breach", "Hit");
         System.out.println("-".repeat(85));
 
-        record Scenario(String name, double launchZ, double targetDist, double targetZ, double heading) {}
-        var scenarios = new Scenario[] {
-            new Scenario("Near same",  -100, 500,  -100, 0),
-            new Scenario("Mid same",   -100, 1500, -100, 0),
-            new Scenario("Far same",   -100, 3000, -100, 0),
-            new Scenario("Deep->shal", -400, 1500, -80,  0),
-            new Scenario("Shal->deep", -50,  1500, -300, 0),
-            new Scenario("Shal->Vdeep",-50,  2000, -500, 0),
-            new Scenario("Deep same",  -400, 1500, -400, 0),
-            new Scenario("15deg off",  -200, 1500, -200, Math.toRadians(15)),
-            new Scenario("30deg off",  -200, 1500, -200, Math.toRadians(30)),
-            new Scenario("Surf->deep", -30,  1500, -400, 0),
+        record Scenario(String name, double launchZ, double targetDist, double targetZ, double heading) {
+        }
+        var scenarios = new Scenario[]{
+                new Scenario("Near same", -100, 500, -100, 0),
+                new Scenario("Mid same", -100, 1500, -100, 0),
+                new Scenario("Far same", -100, 3000, -100, 0),
+                new Scenario("Deep->shal", -400, 1500, -80, 0),
+                new Scenario("Shal->deep", -50, 1500, -300, 0),
+                new Scenario("Shal->Vdeep", -50, 2000, -500, 0),
+                new Scenario("Deep same", -400, 1500, -400, 0),
+                new Scenario("15deg off", -200, 1500, -200, Math.toRadians(15)),
+                new Scenario("30deg off", -200, 1500, -200, Math.toRadians(30)),
+                new Scenario("Surf->deep", -30, 1500, -400, 0),
         };
 
         int hits = 0;

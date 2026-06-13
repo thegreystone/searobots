@@ -65,19 +65,19 @@ final class TrajectoryProjector {
      * corridor to the goal. Returns 3D waypoints that are each physically
      * reachable from the previous one.
      *
-     * @param x               current position X
-     * @param y               current position Y
-     * @param z               current depth
-     * @param heading         current heading (radians)
-     * @param speed           current speed (m/s, used to determine turn radius)
-     * @param corridor        2D corridor waypoints from A*
-     * @param preferredDepth  strategic depth preference (NaN = as deep as possible)
-     * @param expectedSpeed   expected cruising speed for envelope computation
+     * @param x              current position X
+     * @param y              current position Y
+     * @param z              current depth
+     * @param heading        current heading (radians)
+     * @param speed          current speed (m/s, used to determine turn radius)
+     * @param corridor       2D corridor waypoints from A*
+     * @param preferredDepth strategic depth preference (NaN = as deep as possible)
+     * @param expectedSpeed  expected cruising speed for envelope computation
      * @return list of 3D nav waypoints
      */
     List<Vec3> projectRoute(double x, double y, double z, double heading,
-                             double speed, List<CorridorPoint> corridor,
-                             double preferredDepth, double expectedSpeed) {
+                            double speed, List<CorridorPoint> corridor,
+                            double preferredDepth, double expectedSpeed) {
         if (corridor.isEmpty()) return List.of();
 
         var result = new ArrayList<Vec3>();
@@ -173,9 +173,9 @@ final class TrajectoryProjector {
      * sub can head straight toward the target, or null if no arc is needed.
      */
     private Vec3 projectArcToward(double fromX, double fromY, double fromZ,
-                                   double heading, double targetX, double targetY,
-                                   double turnRadius, double depthRatio,
-                                   double preferredDepth) {
+                                  double heading, double targetX, double targetY,
+                                  double turnRadius, double depthRatio,
+                                  double preferredDepth) {
         double dx = targetX - fromX;
         double dy = targetY - fromY;
         double bearingToTarget = Math.atan2(dx, dy);
@@ -242,8 +242,8 @@ final class TrajectoryProjector {
      * Scans terrain along the leg to ensure clearance.
      */
     private double computeDepth(double fromX, double fromY, double fromZ,
-                                 double toX, double toY, double dist,
-                                 double depthRatio, double preferredDepth) {
+                                double toX, double toY, double dist,
+                                double depthRatio, double preferredDepth) {
         // Scan terrain along the leg
         double worstFloor = terrain.elevationAt(toX, toY);
         int samples = Math.max(3, (int) (dist / 75));
@@ -278,7 +278,7 @@ final class TrajectoryProjector {
      * Finds the first corridor point that is ahead of the sub (not behind it).
      */
     private int findFirstRelevantCorridorPoint(double x, double y, double heading,
-                                                List<CorridorPoint> corridor) {
+                                               List<CorridorPoint> corridor) {
         for (int i = 0; i < corridor.size(); i++) {
             var cp = corridor.get(i);
             double dx = cp.x() - x;

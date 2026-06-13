@@ -38,9 +38,9 @@ import java.util.List;
 /**
  * Traces torpedo guidance diagnostics for analysis.
  * Compares: estimated target position/heading vs actual, vs intercept point.
- *
+ * <p>
  * Usage: java TorpedoTraceRun [torpedoId] [seed]
- *   defaults: torpedoId=1003, seed=daf0549d9456a568
+ * defaults: torpedoId=1003, seed=daf0549d9456a568
  */
 public class TorpedoTraceRun {
     public static void main(String[] args) {
@@ -147,7 +147,8 @@ public class TorpedoTraceRun {
                 }
             }
 
-            @Override public void onMatchEnd() {
+            @Override
+            public void onMatchEnd() {
                 System.err.println("Match ended.");
             }
         });

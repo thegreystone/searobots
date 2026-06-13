@@ -79,13 +79,17 @@ public final class SubmarineAutopilot {
             0, 0.02, 0.09, 0.21, 0.37, 0.59, 0.87, 1.21, 1.58, 1.99, 2.42, 2.86, 3.30, 3.75, 4.20, 4.64
     };
 
-    /** Steady-state turn radius at a given speed (interpolated from physics table). */
+    /**
+     * Steady-state turn radius at a given speed (interpolated from physics table).
+     */
     static double turnRadiusAtSpeed(double speed) {
         if (speed < 1) return 9999;
         return interpolateTable(TURN_RADIUS, speed);
     }
 
-    /** Steady-state depth change rate (m/s) at a given speed. */
+    /**
+     * Steady-state depth change rate (m/s) at a given speed.
+     */
     static double depthRateAtSpeed(double speed) {
         if (speed < 1) return 0;
         return interpolateTable(DEPTH_RATE, speed);
@@ -101,7 +105,9 @@ public final class SubmarineAutopilot {
         return depthRateAtSpeed(speed) / speed * 0.65;
     }
 
-    /** Maximum speed that can achieve a given turn radius (inverse table lookup). */
+    /**
+     * Maximum speed that can achieve a given turn radius (inverse table lookup).
+     */
     static double maxSpeedForRadius(double radius) {
         if (radius >= TURN_RADIUS[TURN_RADIUS.length - 1]) return TURN_RADIUS.length - 1;
         // Search from high speed down
@@ -210,7 +216,7 @@ public final class SubmarineAutopilot {
      * (not deferred to first tick).
      */
     public void setWaypoints(List<StrategicWaypoint> waypoints, double posX, double posY,
-                              double posZ, double heading, double speed) {
+                             double posZ, double heading, double speed) {
         this.strategicWaypoints = List.copyOf(waypoints);
         this.strategicWaypointIndex = 0;
         this.arrived = false;
@@ -279,7 +285,7 @@ public final class SubmarineAutopilot {
                 if (legLen > 0) {
                     // Dot product: positive means sub has passed the waypoint plane
                     double dot = (pos.x() - wp.x()) * legDx / legLen
-                               + (pos.y() - wp.y()) * legDy / legLen;
+                            + (pos.y() - wp.y()) * legDy / legLen;
                     if (dot > -50) { // small negative margin for smooth transition
                         currentNavIndex++;
                         wp = navWaypoints.get(currentNavIndex);
@@ -372,7 +378,7 @@ public final class SubmarineAutopilot {
                 && pathPlanner != null
                 && !emergencyActive
                 && pathPlanner.isSafe(navWaypoints.get(currentNavIndex).x(),
-                                       navWaypoints.get(currentNavIndex).y());
+                navWaypoints.get(currentNavIndex).y());
 
         // Step 3a: Imminent wall check. Only triggers when NOT on a safe route,
         // or when terrain is dangerously close (< 100m). On a safe route the
@@ -942,20 +948,36 @@ public final class SubmarineAutopilot {
     }
 
     // Accessors for last tick outputs
-    public double lastRudder() { return lastRudder; }
-    public double lastSternPlanes() { return lastSternPlanes; }
-    public double lastThrottle() { return lastThrottle; }
-    public double lastBallast() { return lastBallast; }
-    public String lastStatus() { return lastStatus; }
+    public double lastRudder() {
+        return lastRudder;
+    }
+
+    public double lastSternPlanes() {
+        return lastSternPlanes;
+    }
+
+    public double lastThrottle() {
+        return lastThrottle;
+    }
+
+    public double lastBallast() {
+        return lastBallast;
+    }
+
+    public String lastStatus() {
+        return lastStatus;
+    }
 
     // Package-private for testing
-    PathPlanner pathPlanner() { return pathPlanner; }
+    PathPlanner pathPlanner() {
+        return pathPlanner;
+    }
 
     // ── Route planning ──────────────────────────────────────────────
 
     private void planRouteToWaypoint(double posX, double posY, double posZ,
-                                      double heading, double speed,
-                                      StrategicWaypoint target) {
+                                     double heading, double speed,
+                                     StrategicWaypoint target) {
         navWaypoints.clear();
         currentNavIndex = 0;
 
@@ -978,7 +1000,9 @@ public final class SubmarineAutopilot {
         }
     }
 
-    /** Estimate the cruising speed for a strategic waypoint based on noise policy / target speed. */
+    /**
+     * Estimate the cruising speed for a strategic waypoint based on noise policy / target speed.
+     */
     private double estimateSpeed(StrategicWaypoint wp) {
         if (wp.targetSpeed() > 0) return wp.targetSpeed();
         return switch (wp.noise()) {
@@ -997,7 +1021,7 @@ public final class SubmarineAutopilot {
      * The safe heading prefers perpendicular escape (least turning > 60°).
      */
     private void planThreePointTurn(double posX, double posY, double posZ,
-                                     double heading, double speed) {
+                                    double heading, double speed) {
         // Find the best escape heading: safe for 500m, prefer least turning > 60°
         double safeHeading = Double.NaN;
         double bestScore = Double.MAX_VALUE;
@@ -1062,7 +1086,7 @@ public final class SubmarineAutopilot {
     }
 
     List<Vec3> planRoute(double fromX, double fromY, double toX, double toY,
-                          double expectedSpeed) {
+                         double expectedSpeed) {
         if (pathPlanner != null) {
             double operatingDepth = stealthDepthAt(fromX, fromY);
             double ratio = depthChangeRatio(expectedSpeed);
@@ -1080,7 +1104,7 @@ public final class SubmarineAutopilot {
     // ── Steering ────────────────────────────────────────────────────
 
     private double steerToward(double posX, double posY, double heading,
-                                double targetX, double targetY) {
+                               double targetX, double targetY) {
         double targetBearing = Math.atan2(targetX - posX, targetY - posY);
         if (targetBearing < 0) targetBearing += 2 * Math.PI;
         double diff = angleDiff(targetBearing, heading);
@@ -1120,8 +1144,8 @@ public final class SubmarineAutopilot {
     // ── Movement patterns ───────────────────────────────────────────
 
     private double applyMovementPattern(double baseRudder, double heading,
-                                         double posX, double posY,
-                                         StrategicWaypoint wp, long tick) {
+                                        double posX, double posY,
+                                        StrategicWaypoint wp, long tick) {
         return switch (wp.pattern()) {
             case DIRECT -> baseRudder;
             case ZIGZAG_TMA -> {

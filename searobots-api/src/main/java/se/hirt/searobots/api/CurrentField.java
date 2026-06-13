@@ -37,11 +37,12 @@ import java.util.List;
 public record CurrentField(List<CurrentBand> bands) {
 
     /**
-     * @param minZ bottom of the band (more negative = deeper)
-     * @param maxZ top of the band
+     * @param minZ    bottom of the band (more negative = deeper)
+     * @param maxZ    top of the band
      * @param current horizontal current vector (m/s)
      */
-    public record CurrentBand(double minZ, double maxZ, Vec2 current) {}
+    public record CurrentBand(double minZ, double maxZ, Vec2 current) {
+    }
 
     public Vec2 currentAt(double z) {
         for (var band : bands) {

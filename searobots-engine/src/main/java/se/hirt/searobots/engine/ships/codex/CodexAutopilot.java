@@ -197,12 +197,29 @@ final class CodexAutopilot {
         }
     }
 
-    boolean hasArrived() { return arrived; }
-    boolean isBlocked() { return blocked; }
-    int currentWaypointIndex() { return strategicWaypointIndex; }
-    List<Vec3> navWaypoints() { return List.copyOf(route); }
-    String lastStatus() { return lastStatus; }
-    double cruiseDepth() { return preferredCruiseDepth(thermalLayers); }
+    boolean hasArrived() {
+        return arrived;
+    }
+
+    boolean isBlocked() {
+        return blocked;
+    }
+
+    int currentWaypointIndex() {
+        return strategicWaypointIndex;
+    }
+
+    List<Vec3> navWaypoints() {
+        return List.copyOf(route);
+    }
+
+    String lastStatus() {
+        return lastStatus;
+    }
+
+    double cruiseDepth() {
+        return preferredCruiseDepth(thermalLayers);
+    }
 
     double distanceToStrategic(double x, double y) {
         if (strategicWaypoints.isEmpty()) return Double.POSITIVE_INFINITY;

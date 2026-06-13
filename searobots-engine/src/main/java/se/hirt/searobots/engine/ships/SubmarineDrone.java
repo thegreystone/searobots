@@ -40,7 +40,9 @@ import se.hirt.searobots.api.*;
 public final class SubmarineDrone implements SubmarineController {
 
     @Override
-    public String name() { return "Sub Drone"; }
+    public String name() {
+        return "Sub Drone";
+    }
 
     private static final double CRUISE_THROTTLE = 0.2;  // quiet patrol, ~6 m/s
     private static final double TARGET_DEPTH = -40;      // fixed operating depth
@@ -141,5 +143,6 @@ public final class SubmarineDrone implements SubmarineController {
     }
 
     @Override
-    public void onMatchEnd(MatchResult result) {}
+    public void onMatchEnd(MatchResult result) {
+    }
 }

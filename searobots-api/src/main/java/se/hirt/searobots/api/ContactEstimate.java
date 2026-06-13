@@ -49,9 +49,9 @@ package se.hirt.searobots.api;
  * @param label             optional short label (e.g. "passive", "ping"), may be empty
  */
 public record ContactEstimate(double x, double y, double confidence,
-                               double contactAlive, double uncertaintyRadius,
-                               double estimatedHeading, double estimatedSpeed,
-                               String label) {
+                              double contactAlive, double uncertaintyRadius,
+                              double estimatedHeading, double estimatedSpeed,
+                              String label) {
     public ContactEstimate {
         confidence = Math.clamp(confidence, 0.0, 1.0);
         contactAlive = Math.clamp(contactAlive, 0.0, 1.0);

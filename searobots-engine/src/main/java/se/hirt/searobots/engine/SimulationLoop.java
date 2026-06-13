@@ -43,7 +43,13 @@ public final class SimulationLoop {
             new Color(200, 80, 220), new Color(80, 220, 220)
     };
 
-    public enum State { CREATED, INITIALIZING, RUNNING, PAUSED, STOPPED }
+    public enum State {CREATED, INITIALIZING, RUNNING, PAUSED, STOPPED}
+
+    // Per-tick torpedo terminal-approach trace. Enable with -Dtorp.trace=true.
+    // Logs the continuously-computed intercept/estimate point vs. the true target
+    // so the final-approach geometry (and aim-point jitter) can be analysed.
+    private static final boolean TORP_TRACE = Boolean.getBoolean("torp.trace");
+    private static final double TORP_TRACE_RANGE = 500.0; // only trace inside this true range
 
     private volatile double speedMultiplier = 1.0;
     private volatile boolean paused;
@@ -64,6 +70,7 @@ public final class SimulationLoop {
 
     /**
      * Run the simulation with optional per-entity headings.
+     *
      * @param headings optional list of initial headings in radians, or null
      *                 to use the default (face toward center). Individual
      *                 entries may be Double.NaN to use the default for that entity.
@@ -119,7 +126,11 @@ public final class SimulationLoop {
                 // Handle pause (sim may start paused to let viewers register)
                 if (paused) state = State.PAUSED;
                 while (paused && !stepOnce && !stopped) {
-                    try { Thread.sleep(50); } catch (InterruptedException ex) { break; }
+                    try {
+                        Thread.sleep(50);
+                    } catch (InterruptedException ex) {
+                        break;
+                    }
                 }
                 if (stopped) break;
                 stepOnce = false;
@@ -162,14 +173,45 @@ public final class SimulationLoop {
                             new SonarModel.SonarResult(List.of(), List.of(), 0));
                     var explosionEvs = entity.drainExplosionEvents();
                     var input = new SubmarineInput() {
-                        @Override public long tick() { return currentTick; }
-                        @Override public double deltaTimeSeconds() { return dt; }
-                        @Override public SubmarineState self() { return entity.state(); }
-                        @Override public EnvironmentSnapshot environment() { return envSnapshot; }
-                        @Override public List<SonarContact> sonarContacts() { return sr.passiveContacts(); }
-                        @Override public List<SonarContact> activeSonarReturns() { return sr.activeReturns(); }
-                        @Override public int activeSonarCooldownTicks() { return sr.cooldownTicks(); }
-                        @Override public List<ExplosionEvent> explosionEvents() { return explosionEvs; }
+                        @Override
+                        public long tick() {
+                            return currentTick;
+                        }
+
+                        @Override
+                        public double deltaTimeSeconds() {
+                            return dt;
+                        }
+
+                        @Override
+                        public SubmarineState self() {
+                            return entity.state();
+                        }
+
+                        @Override
+                        public EnvironmentSnapshot environment() {
+                            return envSnapshot;
+                        }
+
+                        @Override
+                        public List<SonarContact> sonarContacts() {
+                            return sr.passiveContacts();
+                        }
+
+                        @Override
+                        public List<SonarContact> activeSonarReturns() {
+                            return sr.activeReturns();
+                        }
+
+                        @Override
+                        public int activeSonarCooldownTicks() {
+                            return sr.cooldownTicks();
+                        }
+
+                        @Override
+                        public List<ExplosionEvent> explosionEvents() {
+                            return explosionEvs;
+                        }
                     };
 
                     entity.controller().onTick(input, entity);
@@ -252,17 +294,56 @@ public final class SimulationLoop {
                     var torpSonar = sonarResults.getOrDefault(torp.id(),
                             new SonarModel.SonarResult(List.of(), List.of(), 0));
                     var torpInput = new TorpedoInput() {
-                        @Override public long tick() { return torpTick; }
-                        @Override public double deltaTimeSeconds() { return dt; }
-                        @Override public Pose self() { return torp.pose(); }
-                        @Override public Velocity velocity() { return torp.velocity(); }
-                        @Override public double speed() { return torp.speed(); }
-                        @Override public double fuelRemaining() { return torp.fuelRemaining(); }
-                        @Override public List<SonarContact> sonarContacts() { return torpSonar.passiveContacts(); }
-                        @Override public List<SonarContact> activeSonarReturns() { return torpSonar.activeReturns(); }
-                        @Override public int activeSonarCooldownTicks() { return torpSonar.cooldownTicks(); }
+                        @Override
+                        public long tick() {
+                            return torpTick;
+                        }
+
+                        @Override
+                        public double deltaTimeSeconds() {
+                            return dt;
+                        }
+
+                        @Override
+                        public Pose self() {
+                            return torp.pose();
+                        }
+
+                        @Override
+                        public Velocity velocity() {
+                            return torp.velocity();
+                        }
+
+                        @Override
+                        public double speed() {
+                            return torp.speed();
+                        }
+
+                        @Override
+                        public double fuelRemaining() {
+                            return torp.fuelRemaining();
+                        }
+
+                        @Override
+                        public List<SonarContact> sonarContacts() {
+                            return torpSonar.passiveContacts();
+                        }
+
+                        @Override
+                        public List<SonarContact> activeSonarReturns() {
+                            return torpSonar.activeReturns();
+                        }
+
+                        @Override
+                        public int activeSonarCooldownTicks() {
+                            return torpSonar.cooldownTicks();
+                        }
                     };
                     torp.controller().onTick(torpInput, torpOutput);
+
+                    if (TORP_TRACE) {
+                        traceTorpedoApproach(tick, torp, entities);
+                    }
 
                     // Check detonation request from controller
                     if (torp.detonateRequested()) {
@@ -349,7 +430,11 @@ public final class SimulationLoop {
                 // Timing
                 long sleepMs = (long) (1000.0 / config.tickRateHz() / speedMultiplier);
                 if (sleepMs > 0 && !paused) {
-                    try { Thread.sleep(sleepMs); } catch (InterruptedException ex) { break; }
+                    try {
+                        Thread.sleep(sleepMs);
+                    } catch (InterruptedException ex) {
+                        break;
+                    }
                 }
             }
         } finally {
@@ -362,9 +447,78 @@ public final class SimulationLoop {
         }
     }
 
-    /** Distance from a torpedo to the nearest point on a sub's hull ellipsoid. */
+    /**
+     * Distance from a torpedo to the nearest point on a sub's hull ellipsoid.
+     */
     private static double distanceToHullSurface(TorpedoEntity torp, SubmarineEntity sub) {
         return HullGeometry.distanceToHull(torp, sub);
+    }
+
+    // ── Torpedo terminal-approach trace ──────────────────────────────
+
+    // Tracks the previously logged intercept point per torpedo to report
+    // tick-to-tick aim-point movement (the "jitter").
+    private final java.util.Map<Integer, double[]> lastInt = new java.util.HashMap<>();
+
+    private void traceTorpedoApproach(long tick, TorpedoEntity torp, List<SubmarineEntity> subs) {
+        // Nearest living enemy sub = presumed target; report true closing geometry.
+        SubmarineEntity target = null;
+        double bestRange = Double.MAX_VALUE;
+        for (var sub : subs) {
+            if (sub.id() == torp.ownerId() || sub.hp() <= 0 || sub.forfeited()) continue;
+            double dx = sub.x() - torp.x(), dy = sub.y() - torp.y(), dz = sub.z() - torp.z();
+            double r = Math.sqrt(dx * dx + dy * dy + dz * dz);
+            if (r < bestRange) {
+                bestRange = r;
+                target = sub;
+            }
+        }
+        if (target == null || bestRange > TORP_TRACE_RANGE) return;
+
+        double intX = torp.diagIntX(), intY = torp.diagIntY(), intZ = torp.diagIntZ();
+        double estX = torp.diagEstX(), estY = torp.diagEstY(), estZ = torp.diagEstZ();
+
+        // Aim-point movement since last tick (how much the intercept point jumped).
+        double intJump = Double.NaN;
+        double[] prev = lastInt.get(torp.id());
+        if (prev != null && !Double.isNaN(intX)) {
+            intJump = Math.sqrt((intX - prev[0]) * (intX - prev[0])
+                    + (intY - prev[1]) * (intY - prev[1]) + (intZ - prev[2]) * (intZ - prev[2]));
+        }
+        if (!Double.isNaN(intX)) lastInt.put(torp.id(), new double[]{intX, intY, intZ});
+
+        // Estimate error: how far the published target estimate is from truth.
+        double estErr = Double.NaN;
+        if (!Double.isNaN(estX)) {
+            estErr = Math.sqrt((estX - target.x()) * (estX - target.x())
+                    + (estY - target.y()) * (estY - target.y()) + (estZ - target.z()) * (estZ - target.z()));
+        }
+
+        // Heading error from torpedo heading to the intercept bearing.
+        double hdgErr = Double.NaN;
+        if (!Double.isNaN(intX)) {
+            double brg = Math.atan2(intX - torp.x(), intY - torp.y());
+            hdgErr = Math.toDegrees(normalizeAngle(brg - torp.heading()));
+        }
+
+        System.out.printf(
+                "[TT] tick=%d id=%d phase=%-8s spd=%.1f rTrue=%.0f hdgErrInt=%s intJump=%s estErr=%s "
+                        + "pos=(%.0f,%.0f,%.0f) est=(%.0f,%.0f,%.0f) int=(%.0f,%.0f,%.0f) tgt=(%.0f,%.0f,%.0f)%n",
+                tick, torp.id(), torp.diagPhase(), torp.speed(), bestRange,
+                fmt(hdgErr), fmt(intJump), fmt(estErr),
+                torp.x(), torp.y(), torp.z(),
+                estX, estY, estZ, intX, intY, intZ,
+                target.x(), target.y(), target.z());
+    }
+
+    private static String fmt(double v) {
+        return Double.isNaN(v) ? "  -  " : String.format("%.1f", v);
+    }
+
+    private static double normalizeAngle(double a) {
+        while (a > Math.PI) a -= 2 * Math.PI;
+        while (a < -Math.PI) a += 2 * Math.PI;
+        return a;
     }
 
     // ── Torpedo explosion ────────────────────────────────────────────
@@ -373,7 +527,7 @@ public final class SimulationLoop {
     private static final double EXPLOSION_IMPULSE = 15.0; // m/s velocity change at zero range (before mass division)
 
     private static void handleDetonation(TorpedoEntity torp, List<SubmarineEntity> subs,
-                                          MatchConfig config, boolean submarineHit) {
+                                         MatchConfig config, boolean submarineHit) {
         torp.detonate();
         torp.setExplosionProcessed();
         double blastRadius = config.blastRadius();
@@ -517,7 +671,9 @@ public final class SimulationLoop {
         return false;
     }
 
-    /** Returns 3 sample points on the sub's hull: center, bow tip, stern tip. */
+    /**
+     * Returns 3 sample points on the sub's hull: center, bow tip, stern tip.
+     */
     private static double[][] hullSamplePoints(SubmarineEntity sub) {
         double cosH = Math.cos(sub.heading()), sinH = Math.sin(sub.heading());
         double cosP = Math.cos(sub.pitch()), sinP = Math.sin(sub.pitch());
@@ -528,14 +684,16 @@ public final class SimulationLoop {
         double cy = sub.y() + fwdY * HullGeometry.AFT_OFFSET;
         double cz = sub.z() + fwdZ * HullGeometry.AFT_OFFSET;
 
-        return new double[][] {
-            {cx, cy, cz},                                                                     // center
-            {cx + fwdX * HullGeometry.SEMI_LENGTH, cy + fwdY * HullGeometry.SEMI_LENGTH, cz + fwdZ * HullGeometry.SEMI_LENGTH},  // bow
-            {cx - fwdX * HullGeometry.SEMI_LENGTH, cy - fwdY * HullGeometry.SEMI_LENGTH, cz - fwdZ * HullGeometry.SEMI_LENGTH},  // stern
+        return new double[][]{
+                {cx, cy, cz},                                                                     // center
+                {cx + fwdX * HullGeometry.SEMI_LENGTH, cy + fwdY * HullGeometry.SEMI_LENGTH, cz + fwdZ * HullGeometry.SEMI_LENGTH},  // bow
+                {cx - fwdX * HullGeometry.SEMI_LENGTH, cy - fwdY * HullGeometry.SEMI_LENGTH, cz - fwdZ * HullGeometry.SEMI_LENGTH},  // stern
         };
     }
 
-    /** Check if a world-space point lies inside a sub's collision ellipsoid. */
+    /**
+     * Check if a world-space point lies inside a sub's collision ellipsoid.
+     */
     private static boolean pointInEllipsoid(double[] pt, SubmarineEntity sub) {
         double cosH = Math.cos(sub.heading()), sinH = Math.sin(sub.heading());
         double cosP = Math.cos(sub.pitch()), sinP = Math.sin(sub.pitch());
@@ -561,12 +719,35 @@ public final class SimulationLoop {
         return norm <= 1.0;
     }
 
-    public double getSpeedMultiplier() { return speedMultiplier; }
-    public void setSpeedMultiplier(double m) { this.speedMultiplier = m; }
-    public State getState() { return state; }
-    public void setPaused(boolean p) { this.paused = p; }
-    public boolean isPaused() { return paused; }
-    public void stepOnce() { this.stepOnce = true; }
-    public void stop() { this.stopped = true; }
-    public boolean isStopped() { return stopped; }
+    public double getSpeedMultiplier() {
+        return speedMultiplier;
+    }
+
+    public void setSpeedMultiplier(double m) {
+        this.speedMultiplier = m;
+    }
+
+    public State getState() {
+        return state;
+    }
+
+    public void setPaused(boolean p) {
+        this.paused = p;
+    }
+
+    public boolean isPaused() {
+        return paused;
+    }
+
+    public void stepOnce() {
+        this.stepOnce = true;
+    }
+
+    public void stop() {
+        this.stopped = true;
+    }
+
+    public boolean isStopped() {
+        return stopped;
+    }
 }

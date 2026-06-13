@@ -421,7 +421,9 @@ class SonarModelTest {
 
     // ── Terrain builders ──────────────────────────────────────────────
 
-    /** Deep ocean (-400m) with a circular island centered at (cx, cy), peak +50m. */
+    /**
+     * Deep ocean (-400m) with a circular island centered at (cx, cy), peak +50m.
+     */
     private static TerrainMap islandTerrain(double cx, double cy, double radius) {
         int size = 401;
         double cellSize = 10;
@@ -443,7 +445,9 @@ class SonarModelTest {
         return new TerrainMap(data, size, size, origin, origin, cellSize);
     }
 
-    /** Two circular islands at y=+-gap/2, each with given radius. Deep ocean between/around. */
+    /**
+     * Two circular islands at y=+-gap/2, each with given radius. Deep ocean between/around.
+     */
     private static TerrainMap channelTerrain(double gap, double islandRadius) {
         int size = 401;
         double cellSize = 10;
@@ -497,7 +501,9 @@ class SonarModelTest {
         return new TerrainMap(data, size, size, origin, origin, cellSize);
     }
 
-    /** Deep ocean (-400m) with Gaussian ridge at y=0, peaking at ridgePeakDepth. */
+    /**
+     * Deep ocean (-400m) with Gaussian ridge at y=0, peaking at ridgePeakDepth.
+     */
     private static TerrainMap underwaterRidgeTerrain(double ridgePeakDepth) {
         int size = 401;
         double cellSize = 10;
@@ -515,7 +521,9 @@ class SonarModelTest {
         return new TerrainMap(data, size, size, origin, origin, cellSize);
     }
 
-    /** Heading from (x1,y1) toward (x2,y2). */
+    /**
+     * Heading from (x1,y1) toward (x2,y2).
+     */
     private static double headingToward(double x1, double y1, double x2, double y2) {
         double h = Math.atan2(x2 - x1, y2 - y1);
         if (h < 0) h += 2 * Math.PI;

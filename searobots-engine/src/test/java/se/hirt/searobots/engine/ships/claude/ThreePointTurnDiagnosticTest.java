@@ -311,7 +311,8 @@ class ThreePointTurnDiagnosticTest {
             }
 
             @Override
-            public void onMatchEnd() {}
+            public void onMatchEnd() {
+            }
         };
 
         var thread = new Thread(() -> sim.run(world, controllers, configs, headings, listener));
@@ -322,7 +323,10 @@ class ThreePointTurnDiagnosticTest {
             Thread.currentThread().interrupt();
         }
         sim.stop();
-        try { thread.join(5000); } catch (InterruptedException e) {}
+        try {
+            thread.join(5000);
+        } catch (InterruptedException e) {
+        }
 
         System.out.println("\n=== Three-Point Turn Simulation Trace (sub 0) ===");
         System.out.println("Sub starts at (0, -900, -150) heading 0 deg (north)");

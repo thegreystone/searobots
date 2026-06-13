@@ -45,20 +45,38 @@ import java.util.function.Supplier;
  */
 final class CompetitionRunner {
 
-    /** Callback interface so CompetitionRunner works without Swing. */
+    /**
+     * Callback interface so CompetitionRunner works without Swing.
+     */
     interface ViewerCallbacks {
         void setTitle(String title);
-        /** Compact score line shown at top during competition. */
+
+        /**
+         * Compact score line shown at top during competition.
+         */
         void setCompetitionScore(String score);
-        /** Current phase label. */
+
+        /**
+         * Current phase label.
+         */
         void setCompetitionPhase(String phase);
-        /** Add a line to the detailed results log (toggled with a key). */
+
+        /**
+         * Add a line to the detailed results log (toggled with a key).
+         */
         void addDetailLine(String line);
+
         void clearCompetition();
+
         void showResultsDialog(String text);
+
         void scheduleDelayed(long delayMs, Runnable action);
-        /** Called with the nav objectives for the current phase (null to clear). */
-        default void setObjectives(List<StrategicWaypoint> objectives) {}
+
+        /**
+         * Called with the nav objectives for the current phase (null to clear).
+         */
+        default void setObjectives(List<StrategicWaypoint> objectives) {
+        }
     }
 
     private final ViewerCallbacks viewer;
@@ -88,9 +106,10 @@ final class CompetitionRunner {
 
     record Phase(String description, long seed, PhaseType type,
                  String nameA, Supplier<SubmarineController> factoryA,
-                 String nameB, Supplier<SubmarineController> factoryB) {}
+                 String nameB, Supplier<SubmarineController> factoryB) {
+    }
 
-    enum PhaseType { NAV, COMBAT }
+    enum PhaseType {NAV, COMBAT}
 
     // Persist speed across phases so the user doesn't have to press 0 every time
     private int currentSpeedMultiplier = 8;
@@ -235,18 +254,26 @@ final class CompetitionRunner {
         var listener = new SimulationListener() {
             @Override
             public void onTick(long tick, List<SubmarineSnapshot> submarines, List<se.hirt.searobots.engine.TorpedoSnapshot> torpedoes) {
-                if (cancelled) { sim.stop(); return; }
+                if (cancelled) {
+                    sim.stop();
+                    return;
+                }
                 simManager.fanOutTick(tick, submarines);
                 tracker.onTick(tick, submarines, java.util.List.of());
 
                 if (submarines.isEmpty()) return;
                 var s = submarines.getFirst();
-                if (s.hp() <= 0 || s.forfeited()) { sim.stop(); }
-                if (tracker.objectivesHit() >= 2) { sim.stop(); }
+                if (s.hp() <= 0 || s.forfeited()) {
+                    sim.stop();
+                }
+                if (tracker.objectivesHit() >= 2) {
+                    sim.stop();
+                }
                 if (tick >= navDurationTicks) sim.stop();
             }
 
-            @Override public void onMatchEnd() {
+            @Override
+            public void onMatchEnd() {
                 tracker.onMatchEnd();
                 var metrics = tracker.getMetrics();
                 allNavResults.add(new SubmarineCompetition.SeedResult(phase.seed(), phase.nameA(), metrics));
@@ -263,7 +290,9 @@ final class CompetitionRunner {
                 if (!cancelled) {
                     System.out.printf("[comp] Phase done, advancing in 1.5s%n");
                     currentPhase++;
-                    viewer.scheduleDelayed(1500, () -> { if (!cancelled) runNextPhase(); });
+                    viewer.scheduleDelayed(1500, () -> {
+                        if (!cancelled) runNextPhase();
+                    });
                 }
             }
         };
@@ -274,7 +303,9 @@ final class CompetitionRunner {
                 sim.run(world, controllers, configs, listener));
     }
 
-    SimulationLoop currentSim() { return currentSim; }
+    SimulationLoop currentSim() {
+        return currentSim;
+    }
 
     void setSpeed(int multiplier) {
         currentSpeedMultiplier = multiplier;
@@ -305,7 +336,10 @@ final class CompetitionRunner {
         var listener = new SimulationListener() {
             @Override
             public void onTick(long tick, List<SubmarineSnapshot> submarines, List<se.hirt.searobots.engine.TorpedoSnapshot> torpedoes) {
-                if (cancelled) { sim.stop(); return; }
+                if (cancelled) {
+                    sim.stop();
+                    return;
+                }
                 simManager.fanOutTick(tick, submarines);
                 if (submarines.size() < 2) return;
                 var s0 = submarines.get(0);
@@ -320,22 +354,35 @@ final class CompetitionRunner {
                 if (tick >= combatDurationTicks) sim.stop();
             }
 
-            @Override public void onMatchEnd() {
+            @Override
+            public void onMatchEnd() {
                 // Scoring: kill enemy = 5pts, survive = 5pts
                 int ptsA = 0, ptsB = 0;
                 var reasons = new java.util.ArrayList<String>();
 
-                if (!bAlive[0]) { ptsA += 5; reasons.add(shortName(phase.nameA()) + " KILLED " + shortName(phase.nameB())); }
-                if (!aAlive[0]) { ptsB += 5; reasons.add(shortName(phase.nameB()) + " KILLED " + shortName(phase.nameA())); }
-                if (aAlive[0]) { ptsA += 5; reasons.add(shortName(phase.nameA()) + " SURVIVED"); }
-                if (bAlive[0]) { ptsB += 5; reasons.add(shortName(phase.nameB()) + " SURVIVED"); }
+                if (!bAlive[0]) {
+                    ptsA += 5;
+                    reasons.add(shortName(phase.nameA()) + " KILLED " + shortName(phase.nameB()));
+                }
+                if (!aAlive[0]) {
+                    ptsB += 5;
+                    reasons.add(shortName(phase.nameB()) + " KILLED " + shortName(phase.nameA()));
+                }
+                if (aAlive[0]) {
+                    ptsA += 5;
+                    reasons.add(shortName(phase.nameA()) + " SURVIVED");
+                }
+                if (bAlive[0]) {
+                    ptsB += 5;
+                    reasons.add(shortName(phase.nameB()) + " SURVIVED");
+                }
 
                 combatPoints.merge(phase.nameA(), ptsA, Integer::sum);
                 combatPoints.merge(phase.nameB(), ptsB, Integer::sum);
 
                 matchResult = String.join(", ", reasons)
                         + String.format(" (%s:%dpt %s:%dpt)",
-                            shortName(phase.nameA()), ptsA, shortName(phase.nameB()), ptsB);
+                        shortName(phase.nameA()), ptsA, shortName(phase.nameB()), ptsB);
                 String combatLog = shortName(phase.nameA()) + " vs " + shortName(phase.nameB()) + ": " + matchResult;
                 log.add(combatLog);
                 viewer.addDetailLine(combatLog);
@@ -345,7 +392,9 @@ final class CompetitionRunner {
                 if (!cancelled) {
                     System.out.printf("[comp] Combat done: %s%n", matchResult);
                     currentPhase++;
-                    viewer.scheduleDelayed(1500, () -> { if (!cancelled) runNextPhase(); });
+                    viewer.scheduleDelayed(1500, () -> {
+                        if (!cancelled) runNextPhase();
+                    });
                 }
             }
         };
@@ -398,7 +447,10 @@ final class CompetitionRunner {
         // Find which seed number this is (1-based)
         int seedNum = 0;
         for (int i = 0; i < seeds.length; i++) {
-            if (seeds[i] == seed) { seedNum = i + 1; break; }
+            if (seeds[i] == seed) {
+                seedNum = i + 1;
+                break;
+            }
         }
 
         if (type == PhaseType.NAV && competitors.size() == 2) {
@@ -406,8 +458,13 @@ final class CompetitionRunner {
             String nameA = null, nameB = null;
             for (var result : allNavResults) {
                 if (result.seed() != seed) continue;
-                if (mA == null) { mA = result.metrics(); nameA = result.competitorName(); }
-                else { mB = result.metrics(); nameB = result.competitorName(); }
+                if (mA == null) {
+                    mA = result.metrics();
+                    nameA = result.competitorName();
+                } else {
+                    mB = result.metrics();
+                    nameB = result.competitorName();
+                }
             }
             if (mA != null && mB != null) {
                 // Use the shared scoring method (single source of truth)

@@ -47,7 +47,8 @@ class ClaudeObjectiveTest {
 
     record ObjectiveResult(long seed, int objectivesHit, double closestToObj1, double closestToObj2,
                            long obj1HitTick, long obj2HitTick, boolean reachedInOrder, boolean alive,
-                           List<double[]> positionLog) {}
+                           List<double[]> positionLog) {
+    }
 
     private ObjectiveResult runObjectiveTest(long seed, int durationSeconds) {
         var config = MatchConfig.withDefaults(seed);

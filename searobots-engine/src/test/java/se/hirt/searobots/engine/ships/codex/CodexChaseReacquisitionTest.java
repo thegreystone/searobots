@@ -53,26 +53,26 @@ class CodexChaseReacquisitionTest {
         var self = submarineState(new Vec3(0.0, 0.0, -140.0), 0.0, 7.5);
 
         controller.onTick(new TestHelpers.TestInput(
-                0L,
-                DT,
-                self,
-                environment(world),
-                List.of(),
-                List.of(activeContact(0.0, 3_400.0)),
-                250),
+                        0L,
+                        DT,
+                        self,
+                        environment(world),
+                        List.of(),
+                        List.of(activeContact(0.0, 3_400.0)),
+                        250),
                 new TestHelpers.CapturedOutput());
 
         TestHelpers.CapturedOutput finalOutput = null;
         for (long tick = 1; tick <= 560; tick++) {
             var output = new TestHelpers.CapturedOutput();
             controller.onTick(new TestHelpers.TestInput(
-                    tick,
-                    DT,
-                    self,
-                    environment(world),
-                    List.of(passiveContact(0.0)),
-                    List.of(),
-                    tick == 560 ? 0 : 250),
+                            tick,
+                            DT,
+                            self,
+                            environment(world),
+                            List.of(passiveContact(0.0)),
+                            List.of(),
+                            tick == 560 ? 0 : 250),
                     output);
             finalOutput = output;
         }
@@ -97,13 +97,13 @@ class CodexChaseReacquisitionTest {
         for (long tick = 0; tick <= 600; tick++) {
             var output = new TestHelpers.CapturedOutput();
             controller.onTick(new TestHelpers.TestInput(
-                    tick,
-                    DT,
-                    self,
-                    environment(world),
-                    List.of(passiveContact(0.0, 0.34)),
-                    List.of(),
-                    tick == 600 ? 0 : 250),
+                            tick,
+                            DT,
+                            self,
+                            environment(world),
+                            List.of(passiveContact(0.0, 0.34)),
+                            List.of(),
+                            tick == 600 ? 0 : 250),
                     output);
             finalOutput = output;
         }

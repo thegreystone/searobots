@@ -182,7 +182,10 @@ class TurnRadiusTableTest {
             for (double rudder : rudders) {
                 double[] r = measureTurn(throttle, rudder, -200);
                 System.out.printf("%6.0fm", r[0]);
-                if (r[0] < bestRadius) { bestRadius = r[0]; bestRudder = rudder; }
+                if (r[0] < bestRadius) {
+                    bestRadius = r[0];
+                    bestRudder = rudder;
+                }
             }
             System.out.printf("  best=%.0f%% (%.0fm)%n", bestRudder * 100, bestRadius);
         }

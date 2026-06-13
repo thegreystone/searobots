@@ -43,9 +43,20 @@ import java.util.List;
 
 class SingleSeedTrace {
 
-    @Test void traceSeed55555() { trace(55555, 50000, 70000); }
-    @Test void traceSeed8888()  { trace(8888,  35000, 41000); }
-    @Test void traceSeed7777()  { trace(7777,  5000, 12000); }
+    @Test
+    void traceSeed55555() {
+        trace(55555, 50000, 70000);
+    }
+
+    @Test
+    void traceSeed8888() {
+        trace(8888, 35000, 41000);
+    }
+
+    @Test
+    void traceSeed7777() {
+        trace(7777, 5000, 12000);
+    }
 
     private void trace(long seed, long startTick, long endTick) {
         var config = MatchConfig.withDefaults(seed);
@@ -91,13 +102,22 @@ class SingleSeedTrace {
                     if (s0.hp() <= 0) return;
                 }
             }
-            @Override public void onMatchEnd() {}
+
+            @Override
+            public void onMatchEnd() {
+            }
         };
 
         var thread = new Thread(() -> sim.run(world, controllers, configs, listener));
         thread.start();
-        try { thread.join(30_000); } catch (InterruptedException e) {}
+        try {
+            thread.join(30_000);
+        } catch (InterruptedException e) {
+        }
         sim.stop();
-        try { thread.join(5000); } catch (InterruptedException e) {}
+        try {
+            thread.join(5000);
+        } catch (InterruptedException e) {
+        }
     }
 }

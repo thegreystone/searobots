@@ -66,7 +66,10 @@ final class CinematicDirector {
         IDLE_ESTABLISHING("Overview");
 
         final String label;
-        ShotType(String label) { this.label = label; }
+
+        ShotType(String label) {
+            this.label = label;
+        }
     }
 
     enum TransitionType {
@@ -77,11 +80,15 @@ final class CinematicDirector {
         SLOW_PULLBACK(2.5f);
 
         final float duration;
-        TransitionType(float duration) { this.duration = duration; }
+
+        TransitionType(float duration) {
+            this.duration = duration;
+        }
     }
 
     record Shot(ShotType type, int subjectId, int secondaryId,
-                float duration, float minDuration, TransitionType transition) {}
+                float duration, float minDuration, TransitionType transition) {
+    }
 
     // ── Scene access ──
 
@@ -124,7 +131,9 @@ final class CinematicDirector {
     //   ... round-robin
     private int lastIdleEntityIndex = -1;
     private final List<Integer> idleEntityIds = new ArrayList<>();
-    private enum IdlePhase { CLOSE_UNDERWATER, CLOSE_TOPDOWN, WIDE_OVERVIEW, PREVIEW_TOPDOWN }
+
+    private enum IdlePhase {CLOSE_UNDERWATER, CLOSE_TOPDOWN, WIDE_OVERVIEW, PREVIEW_TOPDOWN}
+
     private IdlePhase nextIdlePhase = IdlePhase.CLOSE_UNDERWATER;
 
     // ── Context shot: queued follow-up after wide view ──
@@ -276,9 +285,9 @@ final class CinematicDirector {
             } else {
                 // Spline transition: cubic Hermite for underwater/mixed transitions
                 float t2 = t * t, t3 = t2 * t;
-                float h00 = 2*t3 - 3*t2 + 1;
-                float h10 = t3 - 2*t2 + t;
-                float h01 = -2*t3 + 3*t2;
+                float h00 = 2 * t3 - 3 * t2 + 1;
+                float h10 = t3 - 2 * t2 + t;
+                float h01 = -2 * t3 + 3 * t2;
                 float h11 = t3 - t2;
 
                 float transDist = fromPos.distance(new Vector3f(destX, destY, destZ));
@@ -291,9 +300,9 @@ final class CinematicDirector {
                 Vector3f t1 = arriveDir.mult(tangentScale);
 
                 outPos.set(
-                        h00*fromPos.x + h10*t0.x + h01*destX + h11*t1.x,
-                        h00*fromPos.y + h10*t0.y + h01*destY + h11*t1.y,
-                        h00*fromPos.z + h10*t0.z + h01*destZ + h11*t1.z);
+                        h00 * fromPos.x + h10 * t0.x + h01 * destX + h11 * t1.x,
+                        h00 * fromPos.y + h10 * t0.y + h01 * destY + h11 * t1.y,
+                        h00 * fromPos.z + h10 * t0.z + h01 * destZ + h11 * t1.z);
 
                 outLookAt.set(
                         fromLookAt.x + (destLX - fromLookAt.x) * t,
@@ -351,7 +360,9 @@ final class CinematicDirector {
      * Establishing shots smoothly fade to 0 so the subs become visible
      * from above. Other shots fade back to 1.0.
      */
-    float waterOpacity() { return waterOpacity; }
+    float waterOpacity() {
+        return waterOpacity;
+    }
 
     // ── Entity list for idle cycling ──
 
@@ -518,8 +529,8 @@ final class CinematicDirector {
             // transition with a slow descent back into the water
             if (afterContextShot != null
                     && (currentShot.type == ShotType.CONTEXT_WIDE
-                        || currentShot.type == ShotType.IDLE_ESTABLISHING
-                        || currentShot.type == ShotType.OPENING_FLYAROUND)) {
+                    || currentShot.type == ShotType.IDLE_ESTABLISHING
+                    || currentShot.type == ShotType.OPENING_FLYAROUND)) {
                 var next = afterContextShot;
                 afterContextShot = null;
                 switchToShot(new Shot(next.type, next.subjectId, next.secondaryId,
@@ -535,8 +546,8 @@ final class CinematicDirector {
         // so the camera glides back into the water smoothly.
         boolean leavingOverhead = currentShot != null
                 && (currentShot.type == ShotType.IDLE_ESTABLISHING
-                    || currentShot.type == ShotType.CONTEXT_WIDE
-                    || currentShot.type == ShotType.OPENING_FLYAROUND);
+                || currentShot.type == ShotType.CONTEXT_WIDE
+                || currentShot.type == ShotType.OPENING_FLYAROUND);
         if (leavingOverhead && shot.transition != TransitionType.HARD_CUT
                 && shot.transition != TransitionType.SLOW_DESCENT) {
             shot = new Shot(shot.type, shot.subjectId, shot.secondaryId,
@@ -757,7 +768,10 @@ final class CinematicDirector {
                                  Vector3f outPos, Vector3f outLookAt) {
         // Slow orbit around the dying sub
         Node node = subNodes.get(currentShot.subjectId);
-        if (node == null) { computeIdleEstablishing(subs, outPos, outLookAt); return; }
+        if (node == null) {
+            computeIdleEstablishing(subs, outPos, outLookAt);
+            return;
+        }
 
         Vector3f subPos = node.getLocalTranslation();
         float orbitRate = 0.3f; // rad/s
@@ -779,7 +793,10 @@ final class CinematicDirector {
         Node torpNode = torpedoNodes.get(currentShot.subjectId);
         Node targetNode = currentShot.secondaryId >= 0 ? subNodes.get(currentShot.secondaryId) : null;
 
-        if (torpNode == null) { computeIdleOrbit(tpf, subs, outPos, outLookAt); return; }
+        if (torpNode == null) {
+            computeIdleOrbit(tpf, subs, outPos, outLookAt);
+            return;
+        }
 
         Vector3f torpPos = torpNode.getLocalTranslation();
         Vector3f targetPos = targetNode != null ? targetNode.getLocalTranslation() : torpPos;
@@ -808,7 +825,11 @@ final class CinematicDirector {
             // Might be a torpedo ID that got used for launch shot
             node = torpedoNodes.get(currentShot.subjectId);
         }
-        if (node == null) { outPos.set(0, 100, 0); outLookAt.set(0, 0, 0); return; }
+        if (node == null) {
+            outPos.set(0, 100, 0);
+            outLookAt.set(0, 0, 0);
+            return;
+        }
 
         Vector3f pos = node.getLocalTranslation();
 
@@ -834,7 +855,11 @@ final class CinematicDirector {
     private void computeTorpedoTrack(float tpf, List<TorpedoSnapshot> torps,
                                      Vector3f outPos, Vector3f outLookAt) {
         Node node = torpedoNodes.get(currentShot.subjectId);
-        if (node == null) { outPos.set(0, 50, 0); outLookAt.set(0, 0, 0); return; }
+        if (node == null) {
+            outPos.set(0, 50, 0);
+            outLookAt.set(0, 0, 0);
+            return;
+        }
 
         Vector3f torpPos = node.getLocalTranslation();
 
@@ -867,11 +892,15 @@ final class CinematicDirector {
     }
 
     private void computeContextWide(float tpf, List<SubmarineSnapshot> subs,
-                                     List<TorpedoSnapshot> torps,
-                                     Vector3f outPos, Vector3f outLookAt) {
+                                    List<TorpedoSnapshot> torps,
+                                    Vector3f outPos, Vector3f outLookAt) {
         // High-altitude shot centered on the midpoint between all active subs.
         // Camera height scales with the distance between subs so both are visible.
-        if (subs.isEmpty()) { outPos.set(0, 300, 0); outLookAt.set(0, 0, 0); return; }
+        if (subs.isEmpty()) {
+            outPos.set(0, 300, 0);
+            outLookAt.set(0, 0, 0);
+            return;
+        }
 
         // Compute centroid and max spread of all subs
         float sumX = 0, sumZ = 0;
@@ -882,9 +911,12 @@ final class CinematicDirector {
             Node node = subNodes.get(s.id());
             if (node == null) continue;
             Vector3f p = node.getLocalTranslation();
-            sumX += p.x; sumZ += p.z;
-            minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x);
-            minZ = Math.min(minZ, p.z); maxZ = Math.max(maxZ, p.z);
+            sumX += p.x;
+            sumZ += p.z;
+            minX = Math.min(minX, p.x);
+            maxX = Math.max(maxX, p.x);
+            minZ = Math.min(minZ, p.z);
+            maxZ = Math.max(maxZ, p.z);
             count++;
         }
         // Include active torpedoes in the framing
@@ -893,12 +925,19 @@ final class CinematicDirector {
             Node node = torpedoNodes.get(ts.id());
             if (node == null) continue;
             Vector3f p = node.getLocalTranslation();
-            sumX += p.x; sumZ += p.z;
-            minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x);
-            minZ = Math.min(minZ, p.z); maxZ = Math.max(maxZ, p.z);
+            sumX += p.x;
+            sumZ += p.z;
+            minX = Math.min(minX, p.x);
+            maxX = Math.max(maxX, p.x);
+            minZ = Math.min(minZ, p.z);
+            maxZ = Math.max(maxZ, p.z);
             count++;
         }
-        if (count == 0) { outPos.set(0, 300, 0); outLookAt.set(0, 0, 0); return; }
+        if (count == 0) {
+            outPos.set(0, 300, 0);
+            outLookAt.set(0, 0, 0);
+            return;
+        }
 
         float rawMidX = sumX / count;
         float rawMidZ = sumZ / count;
@@ -939,7 +978,11 @@ final class CinematicDirector {
     private void computeIdleOrbit(float tpf, List<SubmarineSnapshot> subs,
                                   Vector3f outPos, Vector3f outLookAt) {
         Node node = findEntityNode(currentShot.subjectId);
-        if (node == null) { outPos.set(0, 200, 0); outLookAt.set(0, 0, 0); return; }
+        if (node == null) {
+            outPos.set(0, 200, 0);
+            outLookAt.set(0, 0, 0);
+            return;
+        }
 
         Vector3f subPos = node.getLocalTranslation();
         boolean isTorp = isTorpedoEntity(currentShot.subjectId);
@@ -957,7 +1000,10 @@ final class CinematicDirector {
     private void computeIdleFlyBy(float tpf, List<SubmarineSnapshot> subs,
                                   Vector3f outPos, Vector3f outLookAt) {
         Node node = findEntityNode(currentShot.subjectId);
-        if (node == null) { computeIdleOrbit(tpf, subs, outPos, outLookAt); return; }
+        if (node == null) {
+            computeIdleOrbit(tpf, subs, outPos, outLookAt);
+            return;
+        }
 
         Vector3f subPos = node.getLocalTranslation();
         flyByAge += tpf;
@@ -975,7 +1021,11 @@ final class CinematicDirector {
     private void computeIdleEstablishing(List<SubmarineSnapshot> subs,
                                          Vector3f outPos, Vector3f outLookAt) {
         Node node = findEntityNode(currentShot.subjectId);
-        if (node == null) { outPos.set(0, 200, 500); outLookAt.set(0, 0, 0); return; }
+        if (node == null) {
+            outPos.set(0, 200, 500);
+            outLookAt.set(0, 0, 0);
+            return;
+        }
 
         Vector3f subPos = node.getLocalTranslation();
         // Close top-down with dynamic altitude.
@@ -1030,7 +1080,10 @@ final class CinematicDirector {
             var p = s.pose().position();
             double dx = p.x() - x, dy = p.y() - y;
             double d = dx * dx + dy * dy;
-            if (d < bestDist) { bestDist = d; best = s.id(); }
+            if (d < bestDist) {
+                bestDist = d;
+                best = s.id();
+            }
         }
         return best;
     }
@@ -1043,7 +1096,10 @@ final class CinematicDirector {
             var p = s.pose().position();
             double dx = p.x() - x, dy = p.y() - y;
             double d = dx * dx + dy * dy;
-            if (d < bestDist) { bestDist = d; best = s.id(); }
+            if (d < bestDist) {
+                bestDist = d;
+                best = s.id();
+            }
         }
         return best >= 0 ? best : (subs.isEmpty() ? 0 : subs.getFirst().id());
     }

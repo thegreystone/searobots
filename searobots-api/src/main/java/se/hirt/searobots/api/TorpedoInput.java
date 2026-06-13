@@ -11,30 +11,54 @@ import java.util.List;
  * no information from the launching submarine.
  */
 public interface TorpedoInput {
-    /** Current simulation tick. */
+    /**
+     * Current simulation tick.
+     */
     long tick();
 
-    /** Time delta in seconds (typically 1/50 = 0.02s). */
+    /**
+     * Time delta in seconds (typically 1/50 = 0.02s).
+     */
     double deltaTimeSeconds();
 
-    /** Torpedo's current pose (position, heading, pitch). */
+    /**
+     * Torpedo's current pose (position, heading, pitch).
+     */
     Pose self();
 
-    /** Torpedo's current velocity. */
+    /**
+     * Torpedo's current velocity.
+     */
     Velocity velocity();
 
-    /** Torpedo's current forward speed in m/s. */
+    /**
+     * Torpedo's current forward speed in m/s.
+     */
     double speed();
 
-    /** Remaining fuel in seconds. When zero, the torpedo loses thrust. */
+    /**
+     * Remaining fuel in seconds. When zero, the torpedo loses thrust.
+     */
     double fuelRemaining();
 
-    /** Passive sonar detections (bearing, signal strength, estimated range). */
-    default List<SonarContact> sonarContacts() { return List.of(); }
+    /**
+     * Passive sonar detections (bearing, signal strength, estimated range).
+     */
+    default List<SonarContact> sonarContacts() {
+        return List.of();
+    }
 
-    /** Active sonar returns (bearing + range from own ping). */
-    default List<SonarContact> activeSonarReturns() { return List.of(); }
+    /**
+     * Active sonar returns (bearing + range from own ping).
+     */
+    default List<SonarContact> activeSonarReturns() {
+        return List.of();
+    }
 
-    /** Ticks remaining before the next active sonar ping is allowed. */
-    default int activeSonarCooldownTicks() { return 0; }
+    /**
+     * Ticks remaining before the next active sonar ping is allowed.
+     */
+    default int activeSonarCooldownTicks() {
+        return 0;
+    }
 }

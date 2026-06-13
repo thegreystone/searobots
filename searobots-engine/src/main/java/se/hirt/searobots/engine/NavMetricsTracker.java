@@ -90,18 +90,22 @@ public final class NavMetricsTracker implements SimulationListener {
         double x = pos.x(), y = pos.y(), z = pos.z();
 
         if (Double.isNaN(startX)) {
-            startX = x; startY = y;
-            lastX = x; lastY = y;
+            startX = x;
+            startY = y;
+            lastX = x;
+            lastY = y;
             maxHp = snap.hp();
         }
 
         aliveTicks = (int) tick + 1;
-        endX = x; endY = y;
+        endX = x;
+        endY = y;
 
         // Distance traveled
         double dx = x - lastX, dy = y - lastY;
         totalDistTraveled += Math.sqrt(dx * dx + dy * dy);
-        lastX = x; lastY = y;
+        lastX = x;
+        lastY = y;
 
         // Depth
         totalDepth += z;
@@ -220,7 +224,9 @@ public final class NavMetricsTracker implements SimulationListener {
         finished = true;
     }
 
-    /** Returns the computed metrics. Call after the simulation ends. */
+    /**
+     * Returns the computed metrics. Call after the simulation ends.
+     */
     public SubmarineCompetition.Metrics getMetrics() {
         double progressDist = Double.isNaN(startX) ? 0 :
                 Math.hypot(endX - startX, endY - startY);
@@ -244,10 +250,16 @@ public final class NavMetricsTracker implements SimulationListener {
         );
     }
 
-    /** True if objectives were both reached or the sub died/forfeited. */
-    public boolean isFinished() { return finished; }
+    /**
+     * True if objectives were both reached or the sub died/forfeited.
+     */
+    public boolean isFinished() {
+        return finished;
+    }
 
-    /** Number of objectives reached (0, 1, or 2). */
+    /**
+     * Number of objectives reached (0, 1, or 2).
+     */
     public int objectivesHit() {
         int hits = obj1HitTick >= 0 ? 1 : 0;
         if (obj1HitTick >= 0 && closestToObj2AfterObj1 < OBJ_HIT_RADIUS) hits = 2;

@@ -472,7 +472,13 @@ public class PhysicsCharacterization {
     }
 
     static class DummyController implements SubmarineController {
-        @Override public String name() { return "Test"; }
-        @Override public void onTick(SubmarineInput input, SubmarineOutput output) {}
+        @Override
+        public String name() {
+            return "Test";
+        }
+
+        @Override
+        public void onTick(SubmarineInput input, SubmarineOutput output) {
+        }
     }
 }

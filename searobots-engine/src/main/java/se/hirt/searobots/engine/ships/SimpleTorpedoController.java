@@ -182,7 +182,9 @@ public class SimpleTorpedoController implements TorpedoController {
         output.publishTarget(interceptX, interceptY, targetZ);
     }
 
-    /** Pick the active return that's most forward of our heading. */
+    /**
+     * Pick the active return that's most forward of our heading.
+     */
     private SonarContact pickForwardContact(java.util.List<SonarContact> returns, double heading) {
         SonarContact best = null;
         double bestScore = Double.NEGATIVE_INFINITY;
@@ -193,7 +195,10 @@ public class SimpleTorpedoController implements TorpedoController {
             while (angleDiff < -Math.PI) angleDiff += 2 * Math.PI;
             double forwardness = Math.cos(angleDiff);
             double score = forwardness * 100 - c.range() * 0.01;
-            if (score > bestScore) { bestScore = score; best = c; }
+            if (score > bestScore) {
+                bestScore = score;
+                best = c;
+            }
         }
         return best;
     }

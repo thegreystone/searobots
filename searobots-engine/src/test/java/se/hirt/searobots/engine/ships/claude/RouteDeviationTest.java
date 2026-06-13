@@ -142,13 +142,22 @@ class RouteDeviationTest {
                             s0.status(), wpInfo);
                 }
             }
-            @Override public void onMatchEnd() {}
+
+            @Override
+            public void onMatchEnd() {
+            }
         };
 
         var thread = new Thread(() -> sim.run(world, controllers, configs, listener));
         thread.start();
-        try { thread.join(30_000); } catch (InterruptedException e) {}
+        try {
+            thread.join(30_000);
+        } catch (InterruptedException e) {
+        }
         sim.stop();
-        try { thread.join(5000); } catch (InterruptedException e) {}
+        try {
+            thread.join(5000);
+        } catch (InterruptedException e) {
+        }
     }
 }

@@ -127,8 +127,8 @@ class SubmarineAutopilotTest {
     }
 
     private CapturedOutput tickAutopilot(SubmarineAutopilot ap, TerrainMap terrain,
-                                          long tick, double x, double y, double z,
-                                          double heading, Vec3 velocity) {
+                                         long tick, double x, double y, double z,
+                                         double heading, Vec3 velocity) {
         var pose = new Pose(new Vec3(x, y, z), heading, 0, 0);
         var vel = new Velocity(velocity, Vec3.ZERO);
         var state = new SubmarineState(pose, vel, 1000, 0);
@@ -140,8 +140,8 @@ class SubmarineAutopilotTest {
     }
 
     private CapturedOutput tickAutopilot(SubmarineAutopilot ap, TerrainMap terrain,
-                                          long tick, double x, double y, double z,
-                                          double heading) {
+                                         long tick, double x, double y, double z,
+                                         double heading) {
         return tickAutopilot(ap, terrain, tick, x, y, z, heading, Vec3.ZERO);
     }
 
@@ -151,44 +151,68 @@ class SubmarineAutopilotTest {
     }
 
     private static StrategicWaypoint wp(double x, double y, double depth,
-                                         NoisePolicy noise) {
+                                        NoisePolicy noise) {
         return new StrategicWaypoint(x, y, depth, Purpose.PATROL,
                 noise, MovementPattern.DIRECT, 200, -1);
     }
 
     private static StrategicWaypoint wp(double x, double y, double depth,
-                                         MovementPattern pattern) {
+                                        MovementPattern pattern) {
         return new StrategicWaypoint(x, y, depth, Purpose.PATROL,
                 NoisePolicy.NORMAL, pattern, 200, -1);
     }
 
     private static StrategicWaypoint wp(double x, double y, double depth,
-                                         double arrivalRadius) {
+                                        double arrivalRadius) {
         return new StrategicWaypoint(x, y, depth, Purpose.PATROL,
                 NoisePolicy.NORMAL, MovementPattern.DIRECT, arrivalRadius, -1);
     }
 
     private static StrategicWaypoint wpWithSpeed(double x, double y, double depth,
-                                                   NoisePolicy noise, double targetSpeed) {
+                                                 NoisePolicy noise, double targetSpeed) {
         return new StrategicWaypoint(x, y, depth, Purpose.PATROL,
                 noise, MovementPattern.DIRECT, 200, targetSpeed);
     }
 
     record TestInput(long tick, double deltaTimeSeconds,
                      SubmarineState self, EnvironmentSnapshot environment)
-            implements SubmarineInput {}
+            implements SubmarineInput {
+    }
 
     static final class CapturedOutput implements SubmarineOutput {
         double rudder, sternPlanes, throttle, ballast;
         boolean pinged;
         final java.util.ArrayList<Waypoint> waypoints = new java.util.ArrayList<>();
 
-        @Override public void setRudder(double value) { rudder = value; }
-        @Override public void setSternPlanes(double value) { sternPlanes = value; }
-        @Override public void setThrottle(double value) { throttle = value; }
-        @Override public void setBallast(double value) { ballast = value; }
-        @Override public void activeSonarPing() { pinged = true; }
-        @Override public void publishWaypoint(Waypoint wp) { waypoints.add(wp); }
+        @Override
+        public void setRudder(double value) {
+            rudder = value;
+        }
+
+        @Override
+        public void setSternPlanes(double value) {
+            sternPlanes = value;
+        }
+
+        @Override
+        public void setThrottle(double value) {
+            throttle = value;
+        }
+
+        @Override
+        public void setBallast(double value) {
+            ballast = value;
+        }
+
+        @Override
+        public void activeSonarPing() {
+            pinged = true;
+        }
+
+        @Override
+        public void publishWaypoint(Waypoint wp) {
+            waypoints.add(wp);
+        }
     }
 
     // ── 1a. Route Planning ──────────────────────────────────────────

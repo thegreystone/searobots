@@ -53,7 +53,9 @@ final class ContactTracker {
     private static final double SPREADING_COEFFICIENT = 10.0;
 
     // Bearing history (capped at 200)
-    record BearingObs(long tick, double bearing, double ownX, double ownY, double se) {}
+    record BearingObs(long tick, double bearing, double ownX, double ownY, double se) {
+    }
+
     private final List<BearingObs> history = new ArrayList<>();
 
     // Cross-track displacement (accumulated perpendicular motion relative to bearing)
@@ -257,7 +259,9 @@ final class ContactTracker {
         solutionQuality = Math.clamp(geoQuality + legBonus + timeBonus, 0.05, 0.95);
     }
 
-    /** Active sonar ping gives precise range immediately, bypassing TMA. */
+    /**
+     * Active sonar ping gives precise range immediately, bypassing TMA.
+     */
     void updateFromPing(long tick, double range, double se) {
         estimatedRange = range;
         rangeBias = 0; // ping eliminates systematic error entirely
@@ -283,9 +287,23 @@ final class ContactTracker {
     }
 
     // Accessors
-    double estimatedRange() { return Double.isNaN(estimatedRange) ? 0 : estimatedRange; }
-    double rangeUncertainty() { return rangeUncertainty; }
-    double solutionQuality() { return solutionQuality; }
-    double estimatedHeading() { return estimatedHeading; }
-    long lastObservationTick() { return lastObservationTick; }
+    double estimatedRange() {
+        return Double.isNaN(estimatedRange) ? 0 : estimatedRange;
+    }
+
+    double rangeUncertainty() {
+        return rangeUncertainty;
+    }
+
+    double solutionQuality() {
+        return solutionQuality;
+    }
+
+    double estimatedHeading() {
+        return estimatedHeading;
+    }
+
+    long lastObservationTick() {
+        return lastObservationTick;
+    }
 }

@@ -33,18 +33,26 @@ public interface SubmarineController {
      * Short display name for this controller, shown in the viewer HUD
      * and match logs. Keep it brief (under 20 characters).
      */
-    default String name() { return getClass().getSimpleName(); }
+    default String name() {
+        return getClass().getSimpleName();
+    }
 
-    default void onMatchStart(MatchContext context) {}
+    default void onMatchStart(MatchContext context) {
+    }
+
     void onTick(SubmarineInput input, SubmarineOutput output);
-    default void onMatchEnd(MatchResult result) {}
+
+    default void onMatchEnd(MatchResult result) {
+    }
 
     /**
      * Creates the torpedo controller to use for torpedoes launched by this
      * submarine. Return null to use the default SimpleTorpedoController.
      * Called once per torpedo launch.
      */
-    default TorpedoController createTorpedoController() { return null; }
+    default TorpedoController createTorpedoController() {
+        return null;
+    }
 
     /**
      * Sets mandatory navigation objectives. When set, the controller MUST
@@ -57,5 +65,6 @@ public interface SubmarineController {
      *
      * @param objectives ordered list of waypoints to navigate to
      */
-    default void setObjectives(java.util.List<StrategicWaypoint> objectives) {}
+    default void setObjectives(java.util.List<StrategicWaypoint> objectives) {
+    }
 }

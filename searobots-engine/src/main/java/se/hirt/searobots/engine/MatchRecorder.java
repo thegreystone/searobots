@@ -69,7 +69,9 @@ public final class MatchRecorder implements SimulationListener {
         writeHeader(config, spawnPoints);
     }
 
-    public Path logFile() { return logFile; }
+    public Path logFile() {
+        return logFile;
+    }
 
     private void writeHeader(MatchConfig config, List<Vec3> spawnPoints) throws IOException {
         var sb = new StringBuilder(512);
@@ -83,10 +85,10 @@ public final class MatchRecorder implements SimulationListener {
         var arena = config.battleArea();
         switch (arena) {
             case se.hirt.searobots.api.BattleArea.Circular c ->
-                sb.append(",\"arena\":{\"type\":\"circle\",\"radius\":").append(c.radius()).append("}");
+                    sb.append(",\"arena\":{\"type\":\"circle\",\"radius\":").append(c.radius()).append("}");
             case se.hirt.searobots.api.BattleArea.Rectangular r ->
-                sb.append(",\"arena\":{\"type\":\"rect\",\"halfWidth\":").append(r.halfWidth())
-                  .append(",\"halfHeight\":").append(r.halfHeight()).append("}");
+                    sb.append(",\"arena\":{\"type\":\"rect\",\"halfWidth\":").append(r.halfWidth())
+                            .append(",\"halfHeight\":").append(r.halfHeight()).append("}");
         }
         sb.append(",\"spawns\":[");
         for (int i = 0; i < spawnPoints.size(); i++) {
@@ -211,7 +213,7 @@ public final class MatchRecorder implements SimulationListener {
 
     private static void appendVec3(StringBuilder sb, Vec3 v) {
         sb.append("[").append(fmt(v.x())).append(",")
-          .append(fmt(v.y())).append(",").append(fmt(v.z())).append("]");
+                .append(fmt(v.y())).append(",").append(fmt(v.z())).append("]");
     }
 
     private static String fmt(double v) {

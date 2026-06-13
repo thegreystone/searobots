@@ -61,4 +61,5 @@ public record TorpedoSnapshot(
         double diagIntY,
         double diagIntZ,
         String diagPhase
-) {}
+) {
+}

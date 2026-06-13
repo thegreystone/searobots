@@ -68,14 +68,14 @@ class CodexTorpedoGuidanceTest {
 
         var output = new CapturingOutput();
         controller.onTick(new FixedInput(
-                600L,
-                new Pose(new Vec3(0.0, 0.0, -120.0), 0.0, 0.0, 0.0),
-                Velocity.ZERO,
-                25.0,
-                120.0,
-                List.of(),
-                List.of(activeContact(0.0, 240.0, -280.0)),
-                0),
+                        600L,
+                        new Pose(new Vec3(0.0, 0.0, -120.0), 0.0, 0.0, 0.0),
+                        Velocity.ZERO,
+                        25.0,
+                        120.0,
+                        List.of(),
+                        List.of(activeContact(0.0, 240.0, -280.0)),
+                        0),
                 output);
 
         assertTrue(output.publishedTargetZ < -220.0,

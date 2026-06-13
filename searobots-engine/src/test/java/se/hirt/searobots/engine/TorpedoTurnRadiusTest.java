@@ -67,7 +67,9 @@ class TorpedoTurnRadiusTest {
         }
     }
 
-    /** Measure steady-state yaw turn radius at full rudder. */
+    /**
+     * Measure steady-state yaw turn radius at full rudder.
+     */
     private double[] measureYawTurn(int targetSpeed) {
         var cfg = VehicleConfig.torpedo();
         var torp = createTorpedo(cfg, targetSpeed);
@@ -107,7 +109,9 @@ class TorpedoTurnRadiusTest {
         return new double[]{radius, Math.toDegrees(avgYawRate)};
     }
 
-    /** Measure steady-state pitch rate at full stern planes. */
+    /**
+     * Measure steady-state pitch rate at full stern planes.
+     */
     private double[] measurePitchTurn(int targetSpeed) {
         var cfg = VehicleConfig.torpedo();
         var torp = createTorpedo(cfg, targetSpeed);

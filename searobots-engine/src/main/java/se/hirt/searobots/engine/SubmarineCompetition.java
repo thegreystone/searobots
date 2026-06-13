@@ -64,17 +64,21 @@ public class SubmarineCompetition {
      * The master seed deterministically generates all individual match seeds.
      */
     public record CompetitionFormat(long masterSeed, int navSeeds, int navDurationSeconds,
-                                     int combatDurationSeconds, long[] matchSeeds) {
+                                    int combatDurationSeconds, long[] matchSeeds) {
 
-        /** Standard format with the given master seed. */
+        /**
+         * Standard format with the given master seed.
+         */
         public static CompetitionFormat standard(long masterSeed) {
             return create(masterSeed, STANDARD_NAV_SEEDS, STANDARD_NAV_DURATION_SECONDS,
                     STANDARD_COMBAT_DURATION_SECONDS);
         }
 
-        /** Create a format with custom parameters. */
+        /**
+         * Create a format with custom parameters.
+         */
         public static CompetitionFormat create(long masterSeed, int navSeeds,
-                                                int navDurationSeconds, int combatDurationSeconds) {
+                                               int navDurationSeconds, int combatDurationSeconds) {
             var rng = new java.util.Random(masterSeed);
             long[] seeds = new long[navSeeds];
             for (int i = 0; i < navSeeds; i++) {
@@ -85,14 +89,16 @@ public class SubmarineCompetition {
         }
     }
 
-    public record Competitor(String name, Supplier<SubmarineController> factory) {}
+    public record Competitor(String name, Supplier<SubmarineController> factory) {
+    }
 
     /**
      * Per-seed H2H scoring result for two competitors on one seed.
      * Points include absolute objective points + relative metric wins.
      */
     public record SeedScore(int pointsA, List<String> breakdownA,
-                             int pointsB, List<String> breakdownB) {}
+                            int pointsB, List<String> breakdownB) {
+    }
 
     /**
      * Scores two competitors' metrics for a single seed.
@@ -106,46 +112,100 @@ public class SubmarineCompetition {
         // Objectives (absolute: 1pt for WP1, +3pt for WP2)
         int objA = (mA.objectivesHit >= 1 ? 1 : 0) + (mA.objectivesHit >= 2 ? 3 : 0);
         int objB = (mB.objectivesHit >= 1 ? 1 : 0) + (mB.objectivesHit >= 2 ? 3 : 0);
-        if (objA > 0) { ptsA += objA; winsA.add("obj:" + objA); }
-        if (objB > 0) { ptsB += objB; winsB.add("obj:" + objB); }
+        if (objA > 0) {
+            ptsA += objA;
+            winsA.add("obj:" + objA);
+        }
+        if (objB > 0) {
+            ptsB += objB;
+            winsB.add("obj:" + objB);
+        }
 
         // Depth (2pts: more negative = stealthier)
-        if (mA.avgDepth < mB.avgDepth) { ptsA += 2; winsA.add("depth:2"); }
-        else if (mB.avgDepth < mA.avgDepth) { ptsB += 2; winsB.add("depth:2"); }
+        if (mA.avgDepth < mB.avgDepth) {
+            ptsA += 2;
+            winsA.add("depth:2");
+        } else if (mB.avgDepth < mA.avgDepth) {
+            ptsB += 2;
+            winsB.add("depth:2");
+        }
 
         // Peak depth (1pt)
-        if (mA.peakDepthShallowest < mB.peakDepthShallowest) { ptsA++; winsA.add("peakDep:1"); }
-        else if (mB.peakDepthShallowest < mA.peakDepthShallowest) { ptsB++; winsB.add("peakDep:1"); }
+        if (mA.peakDepthShallowest < mB.peakDepthShallowest) {
+            ptsA++;
+            winsA.add("peakDep:1");
+        } else if (mB.peakDepthShallowest < mA.peakDepthShallowest) {
+            ptsB++;
+            winsB.add("peakDep:1");
+        }
 
         // Noise (1pt each: lower = stealthier)
-        if (mA.avgNoiseDb < mB.avgNoiseDb) { ptsA++; winsA.add("noise:1"); }
-        else if (mB.avgNoiseDb < mA.avgNoiseDb) { ptsB++; winsB.add("noise:1"); }
-        if (mA.peakNoiseDb < mB.peakNoiseDb) { ptsA++; winsA.add("peakNs:1"); }
-        else if (mB.peakNoiseDb < mA.peakNoiseDb) { ptsB++; winsB.add("peakNs:1"); }
+        if (mA.avgNoiseDb < mB.avgNoiseDb) {
+            ptsA++;
+            winsA.add("noise:1");
+        } else if (mB.avgNoiseDb < mA.avgNoiseDb) {
+            ptsB++;
+            winsB.add("noise:1");
+        }
+        if (mA.peakNoiseDb < mB.peakNoiseDb) {
+            ptsA++;
+            winsA.add("peakNs:1");
+        } else if (mB.peakNoiseDb < mA.peakNoiseDb) {
+            ptsB++;
+            winsB.add("peakNs:1");
+        }
 
         // Speed (1pt: faster = better)
-        if (mA.avgSpeed > mB.avgSpeed) { ptsA++; winsA.add("speed:1"); }
-        else if (mB.avgSpeed > mA.avgSpeed) { ptsB++; winsB.add("speed:1"); }
+        if (mA.avgSpeed > mB.avgSpeed) {
+            ptsA++;
+            winsA.add("speed:1");
+        } else if (mB.avgSpeed > mA.avgSpeed) {
+            ptsB++;
+            winsB.add("speed:1");
+        }
 
         // Normal patrol % (1pt)
-        if (mA.normalPatrolPct > mB.normalPatrolPct) { ptsA++; winsA.add("patrol:1"); }
-        else if (mB.normalPatrolPct > mA.normalPatrolPct) { ptsB++; winsB.add("patrol:1"); }
+        if (mA.normalPatrolPct > mB.normalPatrolPct) {
+            ptsA++;
+            winsA.add("patrol:1");
+        } else if (mB.normalPatrolPct > mA.normalPatrolPct) {
+            ptsB++;
+            winsB.add("patrol:1");
+        }
 
         // Late damage (1pt)
         boolean aUndamaged = mA.timeOfFirstDamage < 0;
         boolean bUndamaged = mB.timeOfFirstDamage < 0;
-        if (aUndamaged && !bUndamaged) { ptsA++; winsA.add("noDmg:1"); }
-        else if (bUndamaged && !aUndamaged) { ptsB++; winsB.add("noDmg:1"); }
-        else if (!aUndamaged && !bUndamaged && mA.timeOfFirstDamage > mB.timeOfFirstDamage) { ptsA++; winsA.add("lateDmg:1"); }
-        else if (!aUndamaged && !bUndamaged && mB.timeOfFirstDamage > mA.timeOfFirstDamage) { ptsB++; winsB.add("lateDmg:1"); }
+        if (aUndamaged && !bUndamaged) {
+            ptsA++;
+            winsA.add("noDmg:1");
+        } else if (bUndamaged && !aUndamaged) {
+            ptsB++;
+            winsB.add("noDmg:1");
+        } else if (!aUndamaged && !bUndamaged && mA.timeOfFirstDamage > mB.timeOfFirstDamage) {
+            ptsA++;
+            winsA.add("lateDmg:1");
+        } else if (!aUndamaged && !bUndamaged && mB.timeOfFirstDamage > mA.timeOfFirstDamage) {
+            ptsB++;
+            winsB.add("lateDmg:1");
+        }
 
         // Survive (2pts)
         boolean aSurvived = mA.timeToDeath < 0;
         boolean bSurvived = mB.timeToDeath < 0;
-        if (aSurvived && !bSurvived) { ptsA += 2; winsA.add("survive:2"); }
-        else if (bSurvived && !aSurvived) { ptsB += 2; winsB.add("survive:2"); }
-        else if (!aSurvived && !bSurvived && mA.timeToDeath > mB.timeToDeath) { ptsA += 2; winsA.add("survive:2"); }
-        else if (!aSurvived && !bSurvived && mB.timeToDeath > mA.timeToDeath) { ptsB += 2; winsB.add("survive:2"); }
+        if (aSurvived && !bSurvived) {
+            ptsA += 2;
+            winsA.add("survive:2");
+        } else if (bSurvived && !aSurvived) {
+            ptsB += 2;
+            winsB.add("survive:2");
+        } else if (!aSurvived && !bSurvived && mA.timeToDeath > mB.timeToDeath) {
+            ptsA += 2;
+            winsA.add("survive:2");
+        } else if (!aSurvived && !bSurvived && mB.timeToDeath > mA.timeToDeath) {
+            ptsB += 2;
+            winsB.add("survive:2");
+        }
 
         return new SeedScore(ptsA, winsA, ptsB, winsB);
     }
@@ -173,12 +233,17 @@ public class SubmarineCompetition {
             // Survivability
             double timeOfFirstDamage,    // seconds until first HP loss (-1 = no damage)
             double timeToDeath           // seconds alive (-1 = survived)
-    ) {}
+    ) {
+    }
 
-    public record SeedResult(long seed, String competitorName, Metrics metrics) {}
+    public record SeedResult(long seed, String competitorName, Metrics metrics) {
+    }
 
-    /** Two objective waypoints per seed in deep, safe water. */
-    public record Objectives(double x1, double y1, double x2, double y2) {}
+    /**
+     * Two objective waypoints per seed in deep, safe water.
+     */
+    public record Objectives(double x1, double y1, double x2, double y2) {
+    }
 
     public static Objectives generateObjectives(long seed, GeneratedWorld world) {
         var terrain = world.terrain();
@@ -227,7 +292,7 @@ public class SubmarineCompetition {
      * identical results whether running headless or with the UI.
      */
     static Metrics runOne(Supplier<SubmarineController> factory, long seed,
-                           int durationTicks, Objectives objectives) {
+                          int durationTicks, Objectives objectives) {
         var config = MatchConfig.withDefaults(seed);
         var world = new WorldGenerator().generate(config);
         var terrain = world.terrain();
@@ -263,16 +328,24 @@ public class SubmarineCompetition {
                 if (tracker.objectivesHit() >= 2) sim.stop();
                 if (tick >= durationTicks) sim.stop();
             }
-            @Override public void onMatchEnd() {
+
+            @Override
+            public void onMatchEnd() {
                 tracker.onMatchEnd();
             }
         };
 
         var thread = new Thread(() -> sim.run(world, controllers, configs, listener));
         thread.start();
-        try { thread.join(120_000); } catch (InterruptedException e) {}
+        try {
+            thread.join(120_000);
+        } catch (InterruptedException e) {
+        }
         sim.stop();
-        try { thread.join(5000); } catch (InterruptedException e) {}
+        try {
+            thread.join(5000);
+        } catch (InterruptedException e) {
+        }
 
         return tracker.getMetrics();
     }
@@ -450,7 +523,8 @@ public class SubmarineCompetition {
      * Combat result: points for each competitor + description.
      * Scoring: kill enemy = 5pts, survive = 5pts. Max 10pts per side.
      */
-    record CombatResult(int pointsA, int pointsB, String description, long ticks) {}
+    record CombatResult(int pointsA, int pointsB, String description, long ticks) {
+    }
 
     /**
      * Pits two competitors head-to-head on a seed. Match runs to completion
@@ -458,8 +532,8 @@ public class SubmarineCompetition {
      * enemy, 5pts for surviving.
      */
     static CombatResult runCombat(Supplier<SubmarineController> factoryA, String nameA,
-                                   Supplier<SubmarineController> factoryB, String nameB,
-                                   long seed, int durationTicks) {
+                                  Supplier<SubmarineController> factoryB, String nameB,
+                                  long seed, int durationTicks) {
         var config = MatchConfig.withDefaults(seed);
         var world = new WorldGenerator().generate(config);
 
@@ -485,32 +559,57 @@ public class SubmarineCompetition {
                 bAlive[0] = s1.hp() > 0 && !s1.forfeited();
 
                 // End match early if both are dead
-                if (!aAlive[0] && !bAlive[0]) { endTick[0] = tick; sim.stop(); }
+                if (!aAlive[0] && !bAlive[0]) {
+                    endTick[0] = tick;
+                    sim.stop();
+                }
 
                 if (tick >= durationTicks) sim.stop();
             }
 
-            @Override public void onMatchEnd() {}
+            @Override
+            public void onMatchEnd() {
+            }
         };
 
         var thread = new Thread(() -> sim.run(world, controllers, configs, listener));
         thread.start();
-        try { thread.join(120_000); } catch (InterruptedException e) {}
+        try {
+            thread.join(120_000);
+        } catch (InterruptedException e) {
+        }
         sim.stop();
-        try { thread.join(5000); } catch (InterruptedException e) {}
+        try {
+            thread.join(5000);
+        } catch (InterruptedException e) {
+        }
 
         // Score: kill=5pts, survive=5pts
         int ptsA = 0, ptsB = 0;
         var reasons = new ArrayList<String>();
-        if (!bAlive[0]) { ptsA += 5; reasons.add(nameA + " KILLED " + nameB); }
-        if (!aAlive[0]) { ptsB += 5; reasons.add(nameB + " KILLED " + nameA); }
-        if (aAlive[0]) { ptsA += 5; reasons.add(nameA + " SURVIVED"); }
-        if (bAlive[0]) { ptsB += 5; reasons.add(nameB + " SURVIVED"); }
+        if (!bAlive[0]) {
+            ptsA += 5;
+            reasons.add(nameA + " KILLED " + nameB);
+        }
+        if (!aAlive[0]) {
+            ptsB += 5;
+            reasons.add(nameB + " KILLED " + nameA);
+        }
+        if (aAlive[0]) {
+            ptsA += 5;
+            reasons.add(nameA + " SURVIVED");
+        }
+        if (bAlive[0]) {
+            ptsB += 5;
+            reasons.add(nameB + " SURVIVED");
+        }
 
         return new CombatResult(ptsA, ptsB, String.join(", ", reasons), endTick[0]);
     }
 
-    /** Returns true if attacker is within 60° of the target's stern arc. */
+    /**
+     * Returns true if attacker is within 60° of the target's stern arc.
+     */
     private static boolean isBehind(SubmarineSnapshot attacker, SubmarineSnapshot target) {
         double targetHeading = target.pose().heading();
         double sternBearing = (targetHeading + Math.PI) % (2 * Math.PI);
@@ -525,7 +624,7 @@ public class SubmarineCompetition {
     }
 
     public static void runCombatScenario(List<Competitor> competitors, long[] seeds,
-                                          int durationTicks, Map<String, Integer> navPoints) {
+                                         int durationTicks, Map<String, Integer> navPoints) {
         System.out.println("=".repeat(120));
         System.out.println("COMBAT SCENARIO - Head-to-head");
         System.out.println("=".repeat(120));
@@ -571,7 +670,7 @@ public class SubmarineCompetition {
 
     /**
      * Usage: SubmarineCompetition [masterSeed_hex] [--combat-only]
-     *
+     * <p>
      * With no arguments: generates a random master seed for a standard competition.
      * With a hex seed: runs a reproducible standard competition with that master seed.
      * With --combat-only: skips the navigation phase and runs combat only (faster iteration).

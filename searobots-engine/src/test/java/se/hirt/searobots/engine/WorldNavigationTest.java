@@ -46,8 +46,13 @@ import static se.hirt.searobots.api.VehicleConfig.submarine;
 public abstract class WorldNavigationTest extends AbstractControllerTest {
 
     record PatrolResult(long seed, int tickLimit, int[] hp, double[] distanceMoved, boolean timedOut) {
-        boolean survived(int subIndex) { return hp[subIndex] > 0; }
-        boolean noTerrainDamage(int subIndex) { return hp[subIndex] == 1000; }
+        boolean survived(int subIndex) {
+            return hp[subIndex] > 0;
+        }
+
+        boolean noTerrainDamage(int subIndex) {
+            return hp[subIndex] == 1000;
+        }
     }
 
     private PatrolResult runPatrolTest(long seed, int tickLimit) {
@@ -80,7 +85,10 @@ public abstract class WorldNavigationTest extends AbstractControllerTest {
                 posRecorded[0] = true;
                 if (tick >= tickLimit) sim.stop();
             }
-            @Override public void onMatchEnd() {}
+
+            @Override
+            public void onMatchEnd() {
+            }
         };
 
         long timeoutMs = (tickLimit <= 3000) ? 60_000 : 120_000;
@@ -90,9 +98,13 @@ public abstract class WorldNavigationTest extends AbstractControllerTest {
         try {
             thread.join(timeoutMs);
             if (thread.isAlive()) timedOut = true;
-        } catch (InterruptedException e) {}
+        } catch (InterruptedException e) {
+        }
         sim.stop();
-        try { thread.join(5000); } catch (InterruptedException e) {}
+        try {
+            thread.join(5000);
+        } catch (InterruptedException e) {
+        }
 
         double[] dist = new double[2];
         for (int i = 0; i < 2; i++) {

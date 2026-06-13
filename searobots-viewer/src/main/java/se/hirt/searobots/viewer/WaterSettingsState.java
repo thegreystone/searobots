@@ -51,7 +51,9 @@ final class WaterSettingsState extends BaseAppState {
 
     // Track slider refs for polling in update()
     private record SliderBinding(com.simsilica.lemur.core.VersionedReference<Double> ref,
-                                 Slider slider, Label label, String name, IntConsumer onChange) {}
+                                 Slider slider, Label label, String name, IntConsumer onChange) {
+    }
+
     private final java.util.List<SliderBinding> sliderBindings = new java.util.ArrayList<>();
 
     void setWaterFilter(WaterFilter wf) {
@@ -94,25 +96,31 @@ final class WaterSettingsState extends BaseAppState {
         // Water Color
         window.addChild(new Label("-- Water Color --"));
         addSlider(window, "Red", 0, 100, (int) (waterFilter.getWaterColor().r * 100), v -> {
-            var c = waterFilter.getWaterColor(); waterFilter.setWaterColor(new ColorRGBA(v / 100f, c.g, c.b, 1f));
+            var c = waterFilter.getWaterColor();
+            waterFilter.setWaterColor(new ColorRGBA(v / 100f, c.g, c.b, 1f));
         });
         addSlider(window, "Green", 0, 100, (int) (waterFilter.getWaterColor().g * 100), v -> {
-            var c = waterFilter.getWaterColor(); waterFilter.setWaterColor(new ColorRGBA(c.r, v / 100f, c.b, 1f));
+            var c = waterFilter.getWaterColor();
+            waterFilter.setWaterColor(new ColorRGBA(c.r, v / 100f, c.b, 1f));
         });
         addSlider(window, "Blue", 0, 100, (int) (waterFilter.getWaterColor().b * 100), v -> {
-            var c = waterFilter.getWaterColor(); waterFilter.setWaterColor(new ColorRGBA(c.r, c.g, v / 100f, 1f));
+            var c = waterFilter.getWaterColor();
+            waterFilter.setWaterColor(new ColorRGBA(c.r, c.g, v / 100f, 1f));
         });
 
         // Deep Water Color
         window.addChild(new Label("-- Deep Water Color --"));
         addSlider(window, "Red", 0, 100, (int) (waterFilter.getDeepWaterColor().r * 100), v -> {
-            var c = waterFilter.getDeepWaterColor(); waterFilter.setDeepWaterColor(new ColorRGBA(v / 100f, c.g, c.b, 1f));
+            var c = waterFilter.getDeepWaterColor();
+            waterFilter.setDeepWaterColor(new ColorRGBA(v / 100f, c.g, c.b, 1f));
         });
         addSlider(window, "Green", 0, 100, (int) (waterFilter.getDeepWaterColor().g * 100), v -> {
-            var c = waterFilter.getDeepWaterColor(); waterFilter.setDeepWaterColor(new ColorRGBA(c.r, v / 100f, c.b, 1f));
+            var c = waterFilter.getDeepWaterColor();
+            waterFilter.setDeepWaterColor(new ColorRGBA(c.r, v / 100f, c.b, 1f));
         });
         addSlider(window, "Blue", 0, 100, (int) (waterFilter.getDeepWaterColor().b * 100), v -> {
-            var c = waterFilter.getDeepWaterColor(); waterFilter.setDeepWaterColor(new ColorRGBA(c.r, c.g, v / 100f, 1f));
+            var c = waterFilter.getDeepWaterColor();
+            waterFilter.setDeepWaterColor(new ColorRGBA(c.r, c.g, v / 100f, 1f));
         });
 
         // Water properties
@@ -147,13 +155,16 @@ final class WaterSettingsState extends BaseAppState {
         window.addChild(new Label("-- Color Extinction --"));
         var ce = waterFilter.getColorExtinction();
         addSlider(window, "Red depth", 1, 100, (int) ce.x, v -> {
-            var cur = waterFilter.getColorExtinction(); waterFilter.setColorExtinction(new Vector3f(v, cur.y, cur.z));
+            var cur = waterFilter.getColorExtinction();
+            waterFilter.setColorExtinction(new Vector3f(v, cur.y, cur.z));
         });
         addSlider(window, "Green depth", 1, 100, (int) ce.y, v -> {
-            var cur = waterFilter.getColorExtinction(); waterFilter.setColorExtinction(new Vector3f(cur.x, v, cur.z));
+            var cur = waterFilter.getColorExtinction();
+            waterFilter.setColorExtinction(new Vector3f(cur.x, v, cur.z));
         });
         addSlider(window, "Blue depth", 1, 100, (int) ce.z, v -> {
-            var cur = waterFilter.getColorExtinction(); waterFilter.setColorExtinction(new Vector3f(cur.x, cur.y, v));
+            var cur = waterFilter.getColorExtinction();
+            waterFilter.setColorExtinction(new Vector3f(cur.x, cur.y, v));
         });
 
         // Print button

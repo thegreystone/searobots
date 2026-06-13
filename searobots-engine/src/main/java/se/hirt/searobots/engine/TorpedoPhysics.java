@@ -60,11 +60,11 @@ public final class TorpedoPhysics {
     /**
      * Steps the torpedo physics by one tick.
      *
-     * @param torp torpedo entity to update
-     * @param dt time step in seconds
-     * @param terrain terrain map for collision checking
+     * @param torp         torpedo entity to update
+     * @param dt           time step in seconds
+     * @param terrain      terrain map for collision checking
      * @param currentField ocean currents
-     * @param battleArea battle area boundary
+     * @param battleArea   battle area boundary
      */
     public void step(TorpedoEntity torp, double dt, TerrainMap terrain,
                      CurrentField currentField, BattleArea battleArea) {

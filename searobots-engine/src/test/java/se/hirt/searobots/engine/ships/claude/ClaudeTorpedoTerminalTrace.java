@@ -137,14 +137,23 @@ public class ClaudeTorpedoTerminalTrace {
 
                 if (tick >= 90_000 || claude.hp() <= 0 || codex.hp() <= 0) sim.stop();
             }
-            @Override public void onMatchEnd() {}
+
+            @Override
+            public void onMatchEnd() {
+            }
         };
 
         var thread = new Thread(() -> sim.run(world, controllers, configs, listener));
         thread.start();
-        try { thread.join(60_000); } catch (InterruptedException e) {}
+        try {
+            thread.join(60_000);
+        } catch (InterruptedException e) {
+        }
         sim.stop();
-        try { thread.join(3000); } catch (InterruptedException e) {}
+        try {
+            thread.join(3000);
+        } catch (InterruptedException e) {
+        }
     }
 
     static class TorpState {

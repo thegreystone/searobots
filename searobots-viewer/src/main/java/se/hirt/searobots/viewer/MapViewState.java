@@ -120,7 +120,9 @@ final class MapViewState extends BaseAppState {
         mapMaterial.setColor("Color", new ColorRGBA(1, 1, 1, 0));
     }
 
-    /** Toggle the map view with cross-fade. */
+    /**
+     * Toggle the map view with cross-fade.
+     */
     void toggle() {
         if (fadingIn) {
             // Reverse: start fading out
@@ -225,7 +227,9 @@ final class MapViewState extends BaseAppState {
         mapTexture.setImage(jmeImage);
     }
 
-    /** Pan the map view by screen-space pixels. */
+    /**
+     * Pan the map view by screen-space pixels.
+     */
     void pan(float dx, float dy) {
         if (mapVisible || fadingIn) {
             mapRenderer.viewX += dx / mapRenderer.pixelsPerMeter;
@@ -233,7 +237,9 @@ final class MapViewState extends BaseAppState {
         }
     }
 
-    /** Zoom the map view centered on the given screen position, with smooth animation. */
+    /**
+     * Zoom the map view centered on the given screen position, with smooth animation.
+     */
     void zoomAt(double factor, float screenX, float screenY) {
         if (!(mapVisible || fadingIn)) return;
         int w = getApplication().getCamera().getWidth();

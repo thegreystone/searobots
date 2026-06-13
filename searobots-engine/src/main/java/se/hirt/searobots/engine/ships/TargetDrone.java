@@ -39,7 +39,9 @@ import se.hirt.searobots.api.*;
 public final class TargetDrone implements SubmarineController {
 
     @Override
-    public String name() { return "Ship Drone"; }
+    public String name() {
+        return "Ship Drone";
+    }
 
     // Full throttle: the surface ship VehicleConfig limits terminal speed to ~8 m/s.
     private static final double CRUISE_THROTTLE = 1.0;
@@ -98,5 +100,6 @@ public final class TargetDrone implements SubmarineController {
     }
 
     @Override
-    public void onMatchEnd(MatchResult result) {}
+    public void onMatchEnd(MatchResult result) {
+    }
 }

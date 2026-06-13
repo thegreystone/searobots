@@ -54,13 +54,21 @@ public class ClaudeTorpedoCombatTest {
 
     record CombatOutcome(int hpA, int hpB, int torpsAFired, int torpsBFired,
                          int detonations, long endTick) {
-        boolean aHitB() { return hpB < 1000; }
-        boolean bHitA() { return hpA < 1000; }
-        boolean aKilledB() { return hpB <= 0; }
+        boolean aHitB() {
+            return hpB < 1000;
+        }
+
+        boolean bHitA() {
+            return hpA < 1000;
+        }
+
+        boolean aKilledB() {
+            return hpB <= 0;
+        }
     }
 
     private CombatOutcome runCombat(Supplier<SubmarineController> a, Supplier<SubmarineController> b,
-                                     long seed, int maxTicks) {
+                                    long seed, int maxTicks) {
         var config = MatchConfig.withDefaults(seed);
         var world = new WorldGenerator().generate(config);
         var sim = new SimulationLoop();
@@ -86,17 +94,29 @@ public class ClaudeTorpedoCombatTest {
                         if (t.detonated()) detonations[0]++;
                     }
                 }
-                if (hpA[0] <= 0 || hpB[0] <= 0) { endTick[0] = tick; sim.stop(); }
+                if (hpA[0] <= 0 || hpB[0] <= 0) {
+                    endTick[0] = tick;
+                    sim.stop();
+                }
                 if (tick >= maxTicks) sim.stop();
             }
-            @Override public void onMatchEnd() {}
+
+            @Override
+            public void onMatchEnd() {
+            }
         };
 
         var thread = new Thread(() -> sim.run(world, controllers, configs, listener));
         thread.start();
-        try { thread.join(60_000); } catch (InterruptedException e) {}
+        try {
+            thread.join(60_000);
+        } catch (InterruptedException e) {
+        }
         sim.stop();
-        try { thread.join(3000); } catch (InterruptedException e) {}
+        try {
+            thread.join(3000);
+        } catch (InterruptedException e) {
+        }
 
         return new CombatOutcome(hpA[0], hpB[0], torpsA[0], torpsB[0], detonations[0], endTick[0]);
     }
@@ -106,7 +126,7 @@ public class ClaudeTorpedoCombatTest {
     @Test
     void claudeVsDrone_10seeds() {
         long[] seeds = {0x1000, 0x2000, 0x3000, 0x4000, 0x5000,
-                        0x6000, 0x7000, 0x8000, 0x9000, 0xA000};
+                0x6000, 0x7000, 0x8000, 0x9000, 0xA000};
         int hits = 0, kills = 0, torpsFired = 0;
 
         for (long seed : seeds) {
@@ -128,7 +148,7 @@ public class ClaudeTorpedoCombatTest {
     @Test
     void claudeVsDefault_10seeds() {
         long[] seeds = {0x1000, 0x2000, 0x3000, 0x4000, 0x5000,
-                        0x6000, 0x7000, 0x8000, 0x9000, 0xA000};
+                0x6000, 0x7000, 0x8000, 0x9000, 0xA000};
         int hits = 0, kills = 0, torpsFired = 0;
         int gotHit = 0;
 
@@ -150,7 +170,7 @@ public class ClaudeTorpedoCombatTest {
     @Test
     void claudeVsCodex_10seeds() {
         long[] seeds = {0x1000, 0x2000, 0x3000, 0x4000, 0x5000,
-                        0x6000, 0x7000, 0x8000, 0x9000, 0xA000};
+                0x6000, 0x7000, 0x8000, 0x9000, 0xA000};
         int hits = 0, kills = 0, torpsFired = 0;
         int gotHit = 0;
 
@@ -172,9 +192,9 @@ public class ClaudeTorpedoCombatTest {
     @Test
     void claudeVsCodexBatch() {
         long[] seeds = {0x1000, 0x2000, 0x3000, 0x4000, 0x5000,
-                        0x6000, 0x7000, 0x8000, 0x9000, 0xA000,
-                        0xB000, 0xC000, 0xD000, 0xE000, 0xF000,
-                        0x1100, 0x2200, 0x3300, 0x4400, 0x5500};
+                0x6000, 0x7000, 0x8000, 0x9000, 0xA000,
+                0xB000, 0xC000, 0xD000, 0xE000, 0xF000,
+                0x1100, 0x2200, 0x3300, 0x4400, 0x5500};
         int claudeWins = 0, codexWins = 0, draws = 0;
         int claudeHits = 0, codexHits = 0;
         int claudeKills = 0, codexKills = 0;
@@ -201,12 +221,25 @@ public class ClaudeTorpedoCombatTest {
             if (r.hpA <= 0) codexKills++;
 
             String outcome;
-            if (r.hpB <= 0 && r.hpA > 0) { outcome = "CLAUDE WIN"; claudeWins++; }
-            else if (r.hpA <= 0 && r.hpB > 0) { outcome = "CODEX WIN"; codexWins++; }
-            else if (r.hpA <= 0 && r.hpB <= 0) { outcome = "MUTUAL KILL"; draws++; }
-            else if (claudeDmg > codexDmg) { outcome = "Claude dmg+" + (claudeDmg - codexDmg); claudeWins++; }
-            else if (codexDmg > claudeDmg) { outcome = "Codex dmg+" + (codexDmg - claudeDmg); codexWins++; }
-            else { outcome = "DRAW"; draws++; }
+            if (r.hpB <= 0 && r.hpA > 0) {
+                outcome = "CLAUDE WIN";
+                claudeWins++;
+            } else if (r.hpA <= 0 && r.hpB > 0) {
+                outcome = "CODEX WIN";
+                codexWins++;
+            } else if (r.hpA <= 0 && r.hpB <= 0) {
+                outcome = "MUTUAL KILL";
+                draws++;
+            } else if (claudeDmg > codexDmg) {
+                outcome = "Claude dmg+" + (claudeDmg - codexDmg);
+                claudeWins++;
+            } else if (codexDmg > claudeDmg) {
+                outcome = "Codex dmg+" + (codexDmg - claudeDmg);
+                codexWins++;
+            } else {
+                outcome = "DRAW";
+                draws++;
+            }
 
             System.out.printf("0x%04x  %10d  %10d  %7d  %7d  %6d  %s%n",
                     seed, r.hpA, r.hpB, r.torpsAFired, r.torpsBFired, r.endTick, outcome);
@@ -230,7 +263,7 @@ public class ClaudeTorpedoCombatTest {
         // 50 seeds: i * 0x1111 for i = 1..50
         long[] seeds = new long[50];
         for (int i = 0; i < 50; i++) {
-            seeds[i] = (long)(i + 1) * 0x1111;
+            seeds[i] = (long) (i + 1) * 0x1111;
         }
 
         int claudeWins = 0, codexWins = 0, draws = 0;
@@ -259,12 +292,25 @@ public class ClaudeTorpedoCombatTest {
             if (r.hpA <= 0) codexKills++;
 
             String outcome;
-            if (r.hpB <= 0 && r.hpA > 0) { outcome = "CLAUDE WIN"; claudeWins++; }
-            else if (r.hpA <= 0 && r.hpB > 0) { outcome = "CODEX WIN"; codexWins++; }
-            else if (r.hpA <= 0 && r.hpB <= 0) { outcome = "MUTUAL KILL"; draws++; }
-            else if (claudeDmg > codexDmg) { outcome = "Claude dmg+" + (claudeDmg - codexDmg); claudeWins++; }
-            else if (codexDmg > claudeDmg) { outcome = "Codex dmg+" + (codexDmg - claudeDmg); codexWins++; }
-            else { outcome = "DRAW"; draws++; }
+            if (r.hpB <= 0 && r.hpA > 0) {
+                outcome = "CLAUDE WIN";
+                claudeWins++;
+            } else if (r.hpA <= 0 && r.hpB > 0) {
+                outcome = "CODEX WIN";
+                codexWins++;
+            } else if (r.hpA <= 0 && r.hpB <= 0) {
+                outcome = "MUTUAL KILL";
+                draws++;
+            } else if (claudeDmg > codexDmg) {
+                outcome = "Claude dmg+" + (claudeDmg - codexDmg);
+                claudeWins++;
+            } else if (codexDmg > claudeDmg) {
+                outcome = "Codex dmg+" + (codexDmg - claudeDmg);
+                codexWins++;
+            } else {
+                outcome = "DRAW";
+                draws++;
+            }
 
             System.out.printf("0x%05x  %10d  %10d  %7d  %7d  %6d  %s%n",
                     seed, r.hpA, r.hpB, r.torpsAFired, r.torpsBFired, r.endTick, outcome);
@@ -289,7 +335,7 @@ public class ClaudeTorpedoCombatTest {
         // Different seed set: 0xDEAD0000 + i * 0x7331
         long[] seeds = new long[50];
         for (int i = 0; i < 50; i++) {
-            seeds[i] = 0xDEAD0000L + (long)(i + 1) * 0x7331;
+            seeds[i] = 0xDEAD0000L + (long) (i + 1) * 0x7331;
         }
 
         int claudeWins = 0, codexWins = 0, draws = 0;
@@ -314,12 +360,25 @@ public class ClaudeTorpedoCombatTest {
             if (r.hpA <= 0) codexKills++;
 
             String outcome;
-            if (r.hpB <= 0 && r.hpA > 0) { outcome = "CLAUDE WIN"; claudeWins++; }
-            else if (r.hpA <= 0 && r.hpB > 0) { outcome = "CODEX WIN"; codexWins++; }
-            else if (r.hpA <= 0 && r.hpB <= 0) { outcome = "MUTUAL KILL"; draws++; }
-            else if (claudeDmg > codexDmg) { outcome = "Claude dmg+" + (claudeDmg - codexDmg); claudeWins++; }
-            else if (codexDmg > claudeDmg) { outcome = "Codex dmg+" + (codexDmg - claudeDmg); codexWins++; }
-            else { outcome = "DRAW"; draws++; }
+            if (r.hpB <= 0 && r.hpA > 0) {
+                outcome = "CLAUDE WIN";
+                claudeWins++;
+            } else if (r.hpA <= 0 && r.hpB > 0) {
+                outcome = "CODEX WIN";
+                codexWins++;
+            } else if (r.hpA <= 0 && r.hpB <= 0) {
+                outcome = "MUTUAL KILL";
+                draws++;
+            } else if (claudeDmg > codexDmg) {
+                outcome = "Claude dmg+" + (claudeDmg - codexDmg);
+                claudeWins++;
+            } else if (codexDmg > claudeDmg) {
+                outcome = "Codex dmg+" + (codexDmg - claudeDmg);
+                codexWins++;
+            } else {
+                outcome = "DRAW";
+                draws++;
+            }
 
             System.out.printf("0x%08x  %10d  %10d  %7d  %7d  %6d  %s%n",
                     seed, r.hpA, r.hpB, r.torpsAFired, r.torpsBFired, r.endTick, outcome);

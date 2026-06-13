@@ -107,7 +107,9 @@ public final class SubmarineEntity implements SubmarineOutput {
         this.heading = heading;
     }
 
-    public VehicleConfig vehicleConfig() { return vehicleConfig; }
+    public VehicleConfig vehicleConfig() {
+        return vehicleConfig;
+    }
 
     // ── SubmarineOutput ──
 
@@ -183,59 +185,185 @@ public final class SubmarineEntity implements SubmarineOutput {
         this.engineClutch = engaged;
     }
 
-    public boolean engineClutch() { return engineClutch; }
+    public boolean engineClutch() {
+        return engineClutch;
+    }
 
     // ── accessors ──
 
-    public int id() { return id; }
-    public SubmarineController controller() { return controller; }
-    public Color color() { return color; }
+    public int id() {
+        return id;
+    }
 
-    public double x() { return x; }
-    public double y() { return y; }
-    public double z() { return z; }
-    public double heading() { return heading; }
-    public double pitch() { return pitch; }
-    public double speed() { return speed; }
-    public double verticalSpeed() { return verticalSpeed; }
-    public int hp() { return hp; }
-    public int maxHp() { return maxHp; }
-    public boolean forfeited() { return forfeited; }
-    public double noiseLevel() { return noiseLevel; }
-    public double sourceLevelDb() { return sourceLevelDb; }
-    public double actualBallast() { return actualBallast; }
-    public double previousActualBallast() { return previousActualBallast; }
+    public SubmarineController controller() {
+        return controller;
+    }
 
-    public boolean pingRequested() { return pingRequested; }
-    public int activeSonarCooldown() { return activeSonarCooldown; }
+    public Color color() {
+        return color;
+    }
+
+    public double x() {
+        return x;
+    }
+
+    public double y() {
+        return y;
+    }
+
+    public double z() {
+        return z;
+    }
+
+    public double heading() {
+        return heading;
+    }
+
+    public double pitch() {
+        return pitch;
+    }
+
+    public double speed() {
+        return speed;
+    }
+
+    public double verticalSpeed() {
+        return verticalSpeed;
+    }
+
+    public int hp() {
+        return hp;
+    }
+
+    public int maxHp() {
+        return maxHp;
+    }
+
+    public boolean forfeited() {
+        return forfeited;
+    }
+
+    public double noiseLevel() {
+        return noiseLevel;
+    }
+
+    public double sourceLevelDb() {
+        return sourceLevelDb;
+    }
+
+    public double actualBallast() {
+        return actualBallast;
+    }
+
+    public double previousActualBallast() {
+        return previousActualBallast;
+    }
+
+    public boolean pingRequested() {
+        return pingRequested;
+    }
+
+    public int activeSonarCooldown() {
+        return activeSonarCooldown;
+    }
 
     // Torpedo launch
-    public int torpedoesRemaining() { return torpedoesRemaining; }
-    public void setTorpedoesRemaining(int n) { torpedoesRemaining = n; }
-    public TorpedoLaunchCommand pendingTorpedoLaunch() { return pendingTorpedoLaunch; }
-    public void clearPendingTorpedoLaunch() { pendingTorpedoLaunch = null; }
-    public int launchTransientTicks() { return launchTransientTicks; }
-    public void decrementLaunchTransient() { if (launchTransientTicks > 0) launchTransientTicks--; }
+    public int torpedoesRemaining() {
+        return torpedoesRemaining;
+    }
 
-    public double rudder() { return rudder; }
-    public double actualRudder() { return actualRudder; }
-    public void setActualRudder(double v) { actualRudder = v; }
-    public double sternPlanes() { return sternPlanes; }
-    public double actualSternPlanes() { return actualSternPlanes; }
-    public void setActualSternPlanes(double v) { actualSternPlanes = v; }
-    public double throttle() { return throttle; }
-    public double ballast() { return ballast; }
-    public String status() { return status; }
-    public List<ContactEstimate> contactEstimates() { return List.copyOf(contactEstimates); }
-    public void clearContactEstimates() { contactEstimates.clear(); }
-    public List<Waypoint> waypoints() { return List.copyOf(waypoints); }
-    public void clearWaypoints() { waypoints.clear(); }
-    public List<SubmarineSnapshot.StrategicWaypointViz> strategicWaypoints() { return List.copyOf(strategicWaypoints); }
-    public void clearStrategicWaypoints() { strategicWaypoints.clear(); }
-    public FiringSolution firingSolution() { return firingSolution; }
-    public void clearFiringSolution() { firingSolution = null; }
+    public void setTorpedoesRemaining(int n) {
+        torpedoesRemaining = n;
+    }
 
-    public void addExplosionEvent(ExplosionEvent event) { pendingExplosionEvents.add(event); }
+    public TorpedoLaunchCommand pendingTorpedoLaunch() {
+        return pendingTorpedoLaunch;
+    }
+
+    public void clearPendingTorpedoLaunch() {
+        pendingTorpedoLaunch = null;
+    }
+
+    public int launchTransientTicks() {
+        return launchTransientTicks;
+    }
+
+    public void decrementLaunchTransient() {
+        if (launchTransientTicks > 0) launchTransientTicks--;
+    }
+
+    public double rudder() {
+        return rudder;
+    }
+
+    public double actualRudder() {
+        return actualRudder;
+    }
+
+    public void setActualRudder(double v) {
+        actualRudder = v;
+    }
+
+    public double sternPlanes() {
+        return sternPlanes;
+    }
+
+    public double actualSternPlanes() {
+        return actualSternPlanes;
+    }
+
+    public void setActualSternPlanes(double v) {
+        actualSternPlanes = v;
+    }
+
+    public double throttle() {
+        return throttle;
+    }
+
+    public double ballast() {
+        return ballast;
+    }
+
+    public String status() {
+        return status;
+    }
+
+    public List<ContactEstimate> contactEstimates() {
+        return List.copyOf(contactEstimates);
+    }
+
+    public void clearContactEstimates() {
+        contactEstimates.clear();
+    }
+
+    public List<Waypoint> waypoints() {
+        return List.copyOf(waypoints);
+    }
+
+    public void clearWaypoints() {
+        waypoints.clear();
+    }
+
+    public List<SubmarineSnapshot.StrategicWaypointViz> strategicWaypoints() {
+        return List.copyOf(strategicWaypoints);
+    }
+
+    public void clearStrategicWaypoints() {
+        strategicWaypoints.clear();
+    }
+
+    public FiringSolution firingSolution() {
+        return firingSolution;
+    }
+
+    public void clearFiringSolution() {
+        firingSolution = null;
+    }
+
+    public void addExplosionEvent(ExplosionEvent event) {
+        pendingExplosionEvents.add(event);
+    }
+
     public List<ExplosionEvent> drainExplosionEvents() {
         if (pendingExplosionEvents.isEmpty()) return List.of();
         var result = List.copyOf(pendingExplosionEvents);
@@ -243,29 +371,97 @@ public final class SubmarineEntity implements SubmarineOutput {
         return result;
     }
 
-    public void setX(double x) { this.x = x; }
-    public void setY(double y) { this.y = y; }
-    public void setZ(double z) { this.z = z; }
-    public void setHeading(double heading) { this.heading = heading; }
-    public void setPitch(double pitch) { this.pitch = pitch; }
-    public void setSpeed(double speed) { this.speed = speed; }
-    public void setVerticalSpeed(double vs) { this.verticalSpeed = vs; }
-    public void setHp(int hp) { this.hp = hp; }
-    public void setForfeited(boolean f) { this.forfeited = f; }
-    public void setNoiseLevel(double n) { this.noiseLevel = n; }
-    public void setSourceLevelDb(double db) { this.sourceLevelDb = db; }
-    public void setActualBallast(double b) { this.actualBallast = b; }
-    public void setPreviousActualBallast(double b) { this.previousActualBallast = b; }
-    public double actualThrottle() { return actualThrottle; }
-    public void setActualThrottle(double t) { this.actualThrottle = t; }
-    public double swaySpeed() { return swaySpeed; }
-    public void setSwaySpeed(double s) { this.swaySpeed = s; }
-    public double yawRate() { return yawRate; }
-    public void setYawRate(double r) { this.yawRate = r; }
-    public double pitchRate() { return pitchRate; }
-    public void setPitchRate(double r) { this.pitchRate = r; }
-    public void setPingRequested(boolean p) { this.pingRequested = p; }
-    public void setActiveSonarCooldown(int ticks) { this.activeSonarCooldown = ticks; }
+    public void setX(double x) {
+        this.x = x;
+    }
+
+    public void setY(double y) {
+        this.y = y;
+    }
+
+    public void setZ(double z) {
+        this.z = z;
+    }
+
+    public void setHeading(double heading) {
+        this.heading = heading;
+    }
+
+    public void setPitch(double pitch) {
+        this.pitch = pitch;
+    }
+
+    public void setSpeed(double speed) {
+        this.speed = speed;
+    }
+
+    public void setVerticalSpeed(double vs) {
+        this.verticalSpeed = vs;
+    }
+
+    public void setHp(int hp) {
+        this.hp = hp;
+    }
+
+    public void setForfeited(boolean f) {
+        this.forfeited = f;
+    }
+
+    public void setNoiseLevel(double n) {
+        this.noiseLevel = n;
+    }
+
+    public void setSourceLevelDb(double db) {
+        this.sourceLevelDb = db;
+    }
+
+    public void setActualBallast(double b) {
+        this.actualBallast = b;
+    }
+
+    public void setPreviousActualBallast(double b) {
+        this.previousActualBallast = b;
+    }
+
+    public double actualThrottle() {
+        return actualThrottle;
+    }
+
+    public void setActualThrottle(double t) {
+        this.actualThrottle = t;
+    }
+
+    public double swaySpeed() {
+        return swaySpeed;
+    }
+
+    public void setSwaySpeed(double s) {
+        this.swaySpeed = s;
+    }
+
+    public double yawRate() {
+        return yawRate;
+    }
+
+    public void setYawRate(double r) {
+        this.yawRate = r;
+    }
+
+    public double pitchRate() {
+        return pitchRate;
+    }
+
+    public void setPitchRate(double r) {
+        this.pitchRate = r;
+    }
+
+    public void setPingRequested(boolean p) {
+        this.pingRequested = p;
+    }
+
+    public void setActiveSonarCooldown(int ticks) {
+        this.activeSonarCooldown = ticks;
+    }
 
     public Pose pose() {
         return new Pose(new Vec3(x, y, z), heading, pitch, 0);

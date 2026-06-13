@@ -48,12 +48,14 @@ import java.util.List;
 public final class DefaultAttackSub implements SubmarineController {
 
     @Override
-    public String name() { return "Default Sub"; }
+    public String name() {
+        return "Default Sub";
+    }
 
 
     // ── State machine ──
 
-    public enum State { PATROL, TRACKING, STALKING, ATTACKING, EVADING, REPOSITIONING }
+    public enum State {PATROL, TRACKING, STALKING, ATTACKING, EVADING, REPOSITIONING}
 
     // ── Constants ──
 
@@ -144,27 +146,54 @@ public final class DefaultAttackSub implements SubmarineController {
 
     // ── Public accessors (for tests) ──
 
-    public State state() { return state; }
-    public boolean hasTrackedContact() { return hasTrackedContact; }
-    public double trackedX() { return trackedX; }
-    public double trackedY() { return trackedY; }
-    public double contactAlive() { return contactAlive; }
-    public double estimatedRange() { return estimatedRange; }
-    public double trackedHeading() { return trackedHeading; }
-    public SubmarineAutopilot autopilot() { return autopilot; }
+    public State state() {
+        return state;
+    }
+
+    public boolean hasTrackedContact() {
+        return hasTrackedContact;
+    }
+
+    public double trackedX() {
+        return trackedX;
+    }
+
+    public double trackedY() {
+        return trackedY;
+    }
+
+    public double contactAlive() {
+        return contactAlive;
+    }
+
+    public double estimatedRange() {
+        return estimatedRange;
+    }
+
+    public double trackedHeading() {
+        return trackedHeading;
+    }
+
+    public SubmarineAutopilot autopilot() {
+        return autopilot;
+    }
+
     public static final double TRACKING_THROTTLE = QUIET_THROTTLE;
     public static final double RAM_THROTTLE = 1.0;
     public static final int BAFFLE_CLEAR_INTERVAL = 1500;
     public static final int PATROL_SILENCE_PING_TICKS = 3000;
+
     public static double angleDiff(double a, double b) {
         double d = a - b;
         while (d > Math.PI) d -= 2 * Math.PI;
         while (d < -Math.PI) d += 2 * Math.PI;
         return d;
     }
+
     public List<StrategicWaypoint> generatePatrolWaypoints(double x, double y, double h, BattleArea a) {
         return List.of(planPatrolWaypoint(x, y, h));
     }
+
     public List<StrategicWaypoint> generateEvadeWaypoints(double px, double py, double cb, TerrainMap t) {
         return List.of();
     }
@@ -316,7 +345,8 @@ public final class DefaultAttackSub implements SubmarineController {
     }
 
     @Override
-    public void onMatchEnd(MatchResult result) {}
+    public void onMatchEnd(MatchResult result) {
+    }
 
     // ── Contact tracking ──
 
@@ -325,16 +355,24 @@ public final class DefaultAttackSub implements SubmarineController {
         double bestSE = 0;
         for (var c : active) {
             if (isConfirmedTorpedo(c)) continue; // skip confirmed torpedoes
-            if (c.signalExcess() > bestSE) { best = c; bestSE = c.signalExcess(); }
+            if (c.signalExcess() > bestSE) {
+                best = c;
+                bestSE = c.signalExcess();
+            }
         }
         for (var c : passive) {
             if (isConfirmedTorpedo(c)) continue;
-            if (c.signalExcess() > bestSE) { best = c; bestSE = c.signalExcess(); }
+            if (c.signalExcess() > bestSE) {
+                best = c;
+                bestSE = c.signalExcess();
+            }
         }
         return best;
     }
 
-    /** A confirmed torpedo: loud AND fast. Loud but slow = surface ship or sprinting sub. */
+    /**
+     * A confirmed torpedo: loud AND fast. Loud but slow = surface ship or sprinting sub.
+     */
     private boolean isConfirmedTorpedo(SonarContact c) {
         return c.estimatedSourceLevel() > TORPEDO_SL_THRESHOLD && c.estimatedSpeed() > 20;
     }
@@ -391,7 +429,9 @@ public final class DefaultAttackSub implements SubmarineController {
             trackedX = trackedX * (1 - blend) + tx * blend;
             trackedY = trackedY * (1 - blend) + ty * blend;
         } else {
-            trackedX = tx; trackedY = ty; hasTrackedContact = true;
+            trackedX = tx;
+            trackedY = ty;
+            hasTrackedContact = true;
         }
 
         estimatedRange = hdist(pos.x(), pos.y(), trackedX, trackedY);
@@ -405,7 +445,9 @@ public final class DefaultAttackSub implements SubmarineController {
     private void clearTrack() {
         hasTrackedContact = false;
         trackedX = trackedY = trackedHeading = Double.NaN;
-        trackedSpeed = 5; contactAlive = 0; uncertaintyRadius = 0;
+        trackedSpeed = 5;
+        contactAlive = 0;
+        uncertaintyRadius = 0;
         estimatedRange = Double.POSITIVE_INFINITY;
         bestSolutionQuality = 0;
         consecutiveContactTicks = 0;
@@ -415,7 +457,9 @@ public final class DefaultAttackSub implements SubmarineController {
 
     private State prevState = State.PATROL;
 
-    private boolean stateChanged() { return state != prevState; }
+    private boolean stateChanged() {
+        return state != prevState;
+    }
 
     private void updateState(Vec3 pos, long tick, boolean tookDamage) {
         prevState = state;
@@ -445,16 +489,23 @@ public final class DefaultAttackSub implements SubmarineController {
                 }
             }
             case TRACKING -> {
-                if (!hasTrackedContact) { state = State.PATROL; return; }
+                if (!hasTrackedContact) {
+                    state = State.PATROL;
+                    return;
+                }
                 if (bestSolutionQuality >= TMA_TRACKING_QUALITY
                         && !Double.isNaN(trackedHeading)) {
                     state = State.STALKING;
                 }
             }
             case STALKING -> {
-                if (!hasTrackedContact || contactAlive < 0.1) { state = State.PATROL; return; }
+                if (!hasTrackedContact || contactAlive < 0.1) {
+                    state = State.PATROL;
+                    return;
+                }
                 if (bestSolutionQuality < TMA_TRACKING_QUALITY * 0.5) {
-                    state = State.TRACKING; return;
+                    state = State.TRACKING;
+                    return;
                 }
                 double dist = hdist(pos.x(), pos.y(), trackedX, trackedY);
                 // Only attack when: in range, good TMA, AND behind the target
@@ -521,7 +572,8 @@ public final class DefaultAttackSub implements SubmarineController {
                         - Math.abs(dist - 2000) * 0.1;
                 if (score > bestScore) {
                     bestScore = score;
-                    bestX = tx; bestY = ty;
+                    bestX = tx;
+                    bestY = ty;
                     bestDepth = safeDepth(tx, ty, cruiseDepth);
                 }
             }
@@ -616,12 +668,14 @@ public final class DefaultAttackSub implements SubmarineController {
         double ty = pos.y() + Math.cos(evadeBearing) * dist;
 
         // Try to find terrain cover
-        for (double off : new double[]{0, Math.PI/4, -Math.PI/4, Math.PI/2, -Math.PI/2}) {
+        for (double off : new double[]{0, Math.PI / 4, -Math.PI / 4, Math.PI / 2, -Math.PI / 2}) {
             double cx = pos.x() + Math.sin(evadeBearing + off) * 800;
             double cy = pos.y() + Math.cos(evadeBearing + off) * 800;
             double floor = terrain.elevationAt(cx, cy);
             if (floor > -80) { // shallow terrain = potential cover
-                tx = cx; ty = cy; break;
+                tx = cx;
+                ty = cy;
+                break;
             }
         }
 
@@ -702,7 +756,7 @@ public final class DefaultAttackSub implements SubmarineController {
     // ── Torpedo launch ──
 
     private void launchTorpedoIfReady(SubmarineInput input, SubmarineOutput output,
-                                       Vec3 pos, long tick) {
+                                      Vec3 pos, long tick) {
         if (state != State.ATTACKING && state != State.STALKING) return;
         if (input.self().torpedoesRemaining() <= 0) return;
         if (tick - lastTorpedoLaunchTick < TORPEDO_COOLDOWN) return;
@@ -753,8 +807,10 @@ public final class DefaultAttackSub implements SubmarineController {
 
     // ── Depth helpers ──
 
-    /** The preferred tactical depth: on the opposite side of the thermocline
-     *  from the enemy when pinged, below it by default. */
+    /**
+     * The preferred tactical depth: on the opposite side of the thermocline
+     * from the enemy when pinged, below it by default.
+     */
     private double tacticalDepth(long tick) {
         boolean recentlyPinged = tick - lastPingedTick < 3000; // remember for 60s
         if (recentlyPinged && preferAboveThermocline) {
@@ -765,7 +821,9 @@ public final class DefaultAttackSub implements SubmarineController {
         return Math.max(thermoclineDepth - THERMOCLINE_MARGIN, depthLimit);
     }
 
-    /** Convenience: below the thermocline depth. */
+    /**
+     * Convenience: below the thermocline depth.
+     */
     private double belowThermocline() {
         return Math.max(thermoclineDepth - THERMOCLINE_MARGIN, depthLimit);
     }
@@ -783,7 +841,9 @@ public final class DefaultAttackSub implements SubmarineController {
         return Math.sqrt(dx * dx + dy * dy);
     }
 
-    /** True if we are within 60 degrees of the target's stern arc (their baffles). */
+    /**
+     * True if we are within 60 degrees of the target's stern arc (their baffles).
+     */
     private boolean isBehindTarget(double x, double y) {
         if (Double.isNaN(trackedHeading)) return false;
         double sternBearing = norm(trackedHeading + Math.PI);

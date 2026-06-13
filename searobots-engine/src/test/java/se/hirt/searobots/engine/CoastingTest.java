@@ -140,7 +140,8 @@ class CoastingTest {
             sub.setThrottle(mid);
             for (int t = 0; t < 50 * 120; t++)
                 physics.step(sub, DT, world.terrain(), world.currentField(), world.config().battleArea());
-            if (sub.speed() < targetSpeed) lo = mid; else hi = mid;
+            if (sub.speed() < targetSpeed) lo = mid;
+            else hi = mid;
         }
         return (lo + hi) / 2;
     }

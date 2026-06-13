@@ -42,8 +42,10 @@ class TurnRadiusExperiment {
     private static final double DT = 1.0 / CONFIG.tickRateHz();
 
     private static TerrainMap deepFlat() {
-        int size = 201; double cellSize = 100; double origin = -(size/2)*cellSize;
-        double[] data = new double[size*size];
+        int size = 201;
+        double cellSize = 100;
+        double origin = -(size / 2) * cellSize;
+        double[] data = new double[size * size];
         Arrays.fill(data, -500);
         return new TerrainMap(data, size, size, origin, origin, cellSize);
     }

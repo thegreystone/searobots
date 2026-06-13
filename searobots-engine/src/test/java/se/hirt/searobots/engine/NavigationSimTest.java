@@ -124,7 +124,7 @@ class NavigationSimTest {
      * y=+channelHalfWidth. The shelves on either side have shelfDepth.
      */
     static TerrainMap terrainWithNarrowChannel(double channelDepth, double shelfDepth,
-                                                double channelHalfWidth) {
+                                               double channelHalfWidth) {
         int size = 201;
         double cellSize = 100;
         double origin = -(size / 2) * cellSize;
@@ -150,8 +150,8 @@ class NavigationSimTest {
     }
 
     private CapturedOutput tickFull(TerrainMap terrain, long tick,
-                                     double x, double y, double z,
-                                     double heading, Vec3 linearVelocity, int hp) {
+                                    double x, double y, double z,
+                                    double heading, Vec3 linearVelocity, int hp) {
         var pose = new Pose(new Vec3(x, y, z), heading, 0, 0);
         var velocity = new Velocity(linearVelocity, Vec3.ZERO);
         var state = new SubmarineState(pose, velocity, hp, 0);
@@ -166,19 +166,43 @@ class NavigationSimTest {
                          SubmarineState self, EnvironmentSnapshot environment,
                          List<SonarContact> sonarContacts, List<SonarContact> activeSonarReturns,
                          int activeSonarCooldownTicks)
-            implements SubmarineInput {}
+            implements SubmarineInput {
+    }
 
     static final class CapturedOutput implements SubmarineOutput {
         double rudder, sternPlanes, throttle, ballast;
         boolean pinged;
         final ArrayList<Waypoint> waypoints = new ArrayList<>();
 
-        @Override public void setRudder(double value) { rudder = value; }
-        @Override public void setSternPlanes(double value) { sternPlanes = value; }
-        @Override public void setThrottle(double value) { throttle = value; }
-        @Override public void setBallast(double value) { ballast = value; }
-        @Override public void activeSonarPing() { pinged = true; }
-        @Override public void publishWaypoint(Waypoint wp) { waypoints.add(wp); }
+        @Override
+        public void setRudder(double value) {
+            rudder = value;
+        }
+
+        @Override
+        public void setSternPlanes(double value) {
+            sternPlanes = value;
+        }
+
+        @Override
+        public void setThrottle(double value) {
+            throttle = value;
+        }
+
+        @Override
+        public void setBallast(double value) {
+            ballast = value;
+        }
+
+        @Override
+        public void activeSonarPing() {
+            pinged = true;
+        }
+
+        @Override
+        public void publishWaypoint(Waypoint wp) {
+            waypoints.add(wp);
+        }
     }
 
     // ── Test 1: planRouteAvoidsIsland ───────────────────────────────
@@ -309,7 +333,8 @@ class NavigationSimTest {
             }
 
             @Override
-            public void onMatchEnd() {}
+            public void onMatchEnd() {
+            }
         };
 
         var thread = new Thread(() -> sim.run(world, controllers, List.of(submarine(), submarine()), listener));
@@ -320,7 +345,10 @@ class NavigationSimTest {
             Thread.currentThread().interrupt();
         }
         sim.stop();
-        try { thread.join(5000); } catch (InterruptedException e) {}
+        try {
+            thread.join(5000);
+        } catch (InterruptedException e) {
+        }
 
         assertTrue(ticked[0], "Simulation should have produced ticks");
         assertFalse(positionLog.isEmpty(), "Should have logged positions");
@@ -550,7 +578,8 @@ class NavigationSimTest {
             }
 
             @Override
-            public void onMatchEnd() {}
+            public void onMatchEnd() {
+            }
         };
 
         var thread = new Thread(() -> sim.run(world, controllers, List.of(submarine(), submarine()), listener));
@@ -561,7 +590,10 @@ class NavigationSimTest {
             Thread.currentThread().interrupt();
         }
         sim.stop();
-        try { thread.join(5000); } catch (InterruptedException e) {}
+        try {
+            thread.join(5000);
+        } catch (InterruptedException e) {
+        }
 
         assertTrue(ticked[0], "Simulation should have produced ticks");
 
@@ -659,15 +691,24 @@ class NavigationSimTest {
                 }
             }
 
-            @Override public void onMatchEnd() {}
+            @Override
+            public void onMatchEnd() {
+            }
         };
 
         var thread = new Thread(() ->
                 sim.run(world, controllers, List.of(submarine(), submarine()), listener));
         thread.start();
-        try { thread.join(60_000); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+        try {
+            thread.join(60_000);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
         sim.stop();
-        try { thread.join(5000); } catch (InterruptedException e) {}
+        try {
+            thread.join(5000);
+        } catch (InterruptedException e) {
+        }
 
         // Print analysis
         double seconds = tickCount[0] / 50.0;
@@ -682,7 +723,7 @@ class NavigationSimTest {
                     finalHp[i] < 1000 ? " (DAMAGED" +
                             (firstDamageTick[0] >= 0 && i == 0
                                     ? " at tick " + firstDamageTick[0] + " / " +
-                                      String.format("%.1fs", firstDamageTick[0] / 50.0)
+                                    String.format("%.1fs", firstDamageTick[0] / 50.0)
                                     : "") + ")" : "");
             System.out.printf("  Distance traveled: %.0fm%n", totalDist[i]);
             System.out.printf("  Avg speed: %.1f m/s%n", totalDist[i] / seconds);
@@ -829,15 +870,24 @@ class NavigationSimTest {
                 if (tick >= 5000) sim.stop(); // 100s max
             }
 
-            @Override public void onMatchEnd() {}
+            @Override
+            public void onMatchEnd() {
+            }
         };
 
         var thread = new Thread(() ->
                 sim.run(world, controllers, List.of(submarine(), submarine()), listener));
         thread.start();
-        try { thread.join(30_000); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+        try {
+            thread.join(30_000);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
         sim.stop();
-        try { thread.join(5000); } catch (InterruptedException e) {}
+        try {
+            thread.join(5000);
+        } catch (InterruptedException e) {
+        }
 
         // This seed has challenging terrain. The sub may die due to terrain
         // avoidance overriding the planned route (a known issue to fix).

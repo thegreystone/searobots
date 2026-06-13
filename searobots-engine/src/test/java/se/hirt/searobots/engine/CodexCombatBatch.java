@@ -38,7 +38,8 @@ public final class CodexCombatBatch {
             SubmarineCompetition.STANDARD_COMBAT_DURATION_SECONDS * SubmarineCompetition.TICKS_PER_SECOND;
     private static final int DEFAULT_MASTER_COUNT = 10;
 
-    private CodexCombatBatch() {}
+    private CodexCombatBatch() {
+    }
 
     public static void main(String[] args) {
         var options = parseArgs(args);

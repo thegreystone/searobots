@@ -46,7 +46,7 @@ import java.time.LocalTime;
  * @param ratedDepth          submarine's rated max operating depth (negative Z);
  *                            below this, hull stress damage and implosion risk begin
  * @param crushDepth          absolute crush depth (negative Z): instant destruction
- * @param battleArea           shape and size of the battle zone
+ * @param battleArea          shape and size of the battle zone
  * @param terrainMarginMeters extra terrain generated beyond the battle area
  * @param gridCellMeters      heightmap resolution (metres per cell)
  * @param minSeaFloorZ        shallowest sea floor elevation (e.g. -30)

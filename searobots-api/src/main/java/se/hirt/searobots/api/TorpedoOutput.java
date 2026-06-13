@@ -8,23 +8,38 @@ package se.hirt.searobots.api;
  * steering, propulsion, sonar, and detonation.
  */
 public interface TorpedoOutput {
-    /** Set rudder deflection: -1 (full port) to +1 (full starboard). */
+    /**
+     * Set rudder deflection: -1 (full port) to +1 (full starboard).
+     */
     void setRudder(double value);
 
-    /** Set stern planes deflection: -1 (dive) to +1 (climb). */
+    /**
+     * Set stern planes deflection: -1 (dive) to +1 (climb).
+     */
     void setSternPlanes(double value);
 
-    /** Set throttle: 0 (stop) to 1 (full ahead). Negative not supported. */
+    /**
+     * Set throttle: 0 (stop) to 1 (full ahead). Negative not supported.
+     */
     void setThrottle(double value);
 
-    /** Emit an active sonar ping. Reveals the torpedo's position to all listeners. */
-    default void activeSonarPing() {}
+    /**
+     * Emit an active sonar ping. Reveals the torpedo's position to all listeners.
+     */
+    default void activeSonarPing() {
+    }
 
-    /** Manually detonate the torpedo's warhead at the current position. */
-    default void detonate() {}
+    /**
+     * Manually detonate the torpedo's warhead at the current position.
+     */
+    default void detonate() {
+    }
 
-    /** Publish current target position for viewer visualization. */
-    default void publishTarget(double x, double y, double z) {}
+    /**
+     * Publish current target position for viewer visualization.
+     */
+    default void publishTarget(double x, double y, double z) {
+    }
 
     /**
      * Publish torpedo guidance diagnostics for analysis.
@@ -40,7 +55,8 @@ public interface TorpedoOutput {
      * @param phase      guidance phase name (e.g. "TRANSIT", "ACQUISITION", "TERMINAL")
      */
     default void publishDiagnostics(double estX, double estY, double estZ,
-                                     double estHeading, double estSpeed,
-                                     double intX, double intY, double intZ,
-                                     String phase) {}
+                                    double estHeading, double estSpeed,
+                                    double intX, double intY, double intZ,
+                                    String phase) {
+    }
 }

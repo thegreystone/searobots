@@ -92,18 +92,30 @@ final class MapRenderer implements se.hirt.searobots.engine.SimulationListener {
             new java.util.concurrent.CopyOnWriteArrayList<>();
     volatile String competitionPhase = "";
 
-    public void setCompetitionPhase(String phase) { this.competitionPhase = phase; }
-    public void addCompetitionResult(String result) { competitionResults.add(result); }
-    public void clearCompetitionResults() { competitionResults.clear(); competitionPhase = ""; }
+    public void setCompetitionPhase(String phase) {
+        this.competitionPhase = phase;
+    }
+
+    public void addCompetitionResult(String result) {
+        competitionResults.add(result);
+    }
+
+    public void clearCompetitionResults() {
+        competitionResults.clear();
+        competitionPhase = "";
+    }
 
     // Competition objectives (nav waypoint targets)
     volatile java.util.List<se.hirt.searobots.api.StrategicWaypoint> competitionObjectives;
+
     public void setCompetitionObjectives(java.util.List<se.hirt.searobots.api.StrategicWaypoint> obj) {
         this.competitionObjectives = obj;
     }
 
     // Ping animations
-    record PingAnimation(double x, double y, long startTick, Color color, int sourceId) {}
+    record PingAnimation(double x, double y, long startTick, Color color, int sourceId) {
+    }
+
     final java.util.concurrent.CopyOnWriteArrayList<PingAnimation> pingAnimations =
             new java.util.concurrent.CopyOnWriteArrayList<>();
     private static final double PING_VISUAL_SPEED = 1500.0; // m/s — realistic sound speed in water
@@ -112,13 +124,17 @@ final class MapRenderer implements se.hirt.searobots.engine.SimulationListener {
     private static final double PING_FLASH_RADIUS = 150.0;  // meters
 
     // Detection highlights: when a ping ring sweeps over another sub
-    record DetectionHighlight(double x, double y, long startTick, Color color) {}
+    record DetectionHighlight(double x, double y, long startTick, Color color) {
+    }
+
     final java.util.ArrayList<DetectionHighlight> detectionHighlights = new java.util.ArrayList<>();
     private static final double DETECTION_HIGHLIGHT_DURATION = 1.5; // seconds
     private static final double DETECTION_HIGHLIGHT_RADIUS = 80.0;  // meters
 
     // Ping fix trace records for contact tracking visualization
-    private record PingFixRecord(double x, double y, long tick, Color color, int subId) {}
+    private record PingFixRecord(double x, double y, long tick, Color color, int subId) {
+    }
+
     private final java.util.ArrayList<PingFixRecord> pingFixRecords = new java.util.ArrayList<>();
     private static final long PING_FIX_EXPIRE_TICKS = 3000; // ~60 seconds at 50Hz
 
@@ -149,7 +165,9 @@ final class MapRenderer implements se.hirt.searobots.engine.SimulationListener {
     private final java.util.Set<Integer> knownTorpedoIds = new java.util.HashSet<>();
 
     // Explosion animations
-    record ExplosionAnimation(double x, double y, double z, long startTick, Color color) {}
+    record ExplosionAnimation(double x, double y, double z, long startTick, Color color) {
+    }
+
     final java.util.concurrent.CopyOnWriteArrayList<ExplosionAnimation> explosionAnimations =
             new java.util.concurrent.CopyOnWriteArrayList<>();
     private static final double EXPLOSION_DURATION = 2.0; // seconds
@@ -294,6 +312,7 @@ final class MapRenderer implements se.hirt.searobots.engine.SimulationListener {
     public void setSimPausedSupplier(java.util.function.BooleanSupplier supplier) {
         this.simPausedSupplier = supplier;
     }
+
     public void setSimSpeedSupplier(java.util.function.DoubleSupplier supplier) {
         this.simSpeedSupplier = supplier;
     }
@@ -454,8 +473,8 @@ final class MapRenderer implements se.hirt.searobots.engine.SimulationListener {
     }
 
     private void drawContourSegmentH(Graphics2D g2, TerrainMap terrain,
-                                      int col, int row, double cx, double cy,
-                                      double cell, double ox, double oy, double interval) {
+                                     int col, int row, double cx, double cy,
+                                     double cell, double ox, double oy, double interval) {
         if (row + 1 >= terrain.getRows()) return;
         double e00 = terrain.elevationAtGrid(col, row);
         double e10 = terrain.elevationAtGrid(col + 1, row);
@@ -488,8 +507,8 @@ final class MapRenderer implements se.hirt.searobots.engine.SimulationListener {
     }
 
     private void drawContourSegmentV(Graphics2D g2, TerrainMap terrain,
-                                      int col, int row, double cx, double cy,
-                                      double cell, double ox, double oy, double interval) {
+                                     int col, int row, double cx, double cy,
+                                     double cell, double ox, double oy, double interval) {
         if (col + 1 >= terrain.getCols()) return;
         double e00 = terrain.elevationAtGrid(col, row);
         double e10 = terrain.elevationAtGrid(col + 1, row);
@@ -529,10 +548,8 @@ final class MapRenderer implements se.hirt.searobots.engine.SimulationListener {
                 0, new float[]{(float) (20 / pixelsPerMeter)}, 0));
 
         switch (world.config().battleArea()) {
-            case BattleArea.Circular(var r) ->
-                    g2.draw(new Ellipse2D.Double(-r, -r, 2 * r, 2 * r));
-            case BattleArea.Rectangular(var hw, var hh) ->
-                    g2.draw(new Rectangle2D.Double(-hw, -hh, 2 * hw, 2 * hh));
+            case BattleArea.Circular(var r) -> g2.draw(new Ellipse2D.Double(-r, -r, 2 * r, 2 * r));
+            case BattleArea.Rectangular(var hw, var hh) -> g2.draw(new Rectangle2D.Double(-hw, -hh, 2 * hw, 2 * hh));
         }
     }
 
@@ -632,7 +649,7 @@ final class MapRenderer implements se.hirt.searobots.engine.SimulationListener {
             g2.setColor(new Color(c.getRed(), c.getGreen(), c.getBlue(), 80));
             g2.setStroke(new BasicStroke((float) (1.5 / pixelsPerMeter),
                     BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND,
-                    0, new float[]{(float)(8/pixelsPerMeter), (float)(4/pixelsPerMeter)}, 0));
+                    0, new float[]{(float) (8 / pixelsPerMeter), (float) (4 / pixelsPerMeter)}, 0));
             g2.draw(new Line2D.Double(pos.x(), pos.y(), tx, ty));
         }
     }
@@ -907,52 +924,51 @@ final class MapRenderer implements se.hirt.searobots.engine.SimulationListener {
             }
 
             // 3. Draw strategic waypoints (larger, distinct markers)
-            if (!overlayConfig.strategicWaypoints) { /* skip */ }
-            else {
-            var strategicWps = sub.strategicWaypoints();
-            if (strategicWps != null) {
-                double sr = markerRadius * 2.5;
-                for (int i = 0; i < strategicWps.size(); i++) {
-                    var swp = strategicWps.get(i);
-                    var wp = swp.waypoint();
-                    boolean active = wp.active();
+            if (!overlayConfig.strategicWaypoints) { /* skip */ } else {
+                var strategicWps = sub.strategicWaypoints();
+                if (strategicWps != null) {
+                    double sr = markerRadius * 2.5;
+                    for (int i = 0; i < strategicWps.size(); i++) {
+                        var swp = strategicWps.get(i);
+                        var wp = swp.waypoint();
+                        boolean active = wp.active();
 
-                    // Crosshair marker for strategic waypoints
-                    Color color = active
-                            ? new Color(255, 220, 50, 220)
-                            : new Color(255, 200, 50, 140);
-                    g2.setColor(color);
-                    float sw = (float) ((active ? 3.0 : 2.0) / pixelsPerMeter);
-                    g2.setStroke(new BasicStroke(sw));
+                        // Crosshair marker for strategic waypoints
+                        Color color = active
+                                ? new Color(255, 220, 50, 220)
+                                : new Color(255, 200, 50, 140);
+                        g2.setColor(color);
+                        float sw = (float) ((active ? 3.0 : 2.0) / pixelsPerMeter);
+                        g2.setStroke(new BasicStroke(sw));
 
-                    // Draw crosshair
-                    g2.draw(new Line2D.Double(wp.x() - sr, wp.y(), wp.x() + sr, wp.y()));
-                    g2.draw(new Line2D.Double(wp.x(), wp.y() - sr, wp.x(), wp.y() + sr));
-                    // Circle around crosshair
-                    g2.draw(new Ellipse2D.Double(wp.x() - sr * 0.7, wp.y() - sr * 0.7,
-                            sr * 1.4, sr * 1.4));
+                        // Draw crosshair
+                        g2.draw(new Line2D.Double(wp.x() - sr, wp.y(), wp.x() + sr, wp.y()));
+                        g2.draw(new Line2D.Double(wp.x(), wp.y() - sr, wp.x(), wp.y() + sr));
+                        // Circle around crosshair
+                        g2.draw(new Ellipse2D.Double(wp.x() - sr * 0.7, wp.y() - sr * 0.7,
+                                sr * 1.4, sr * 1.4));
 
-                    // Label with purpose
-                    var purpose = swp.purpose();
-                    String purposeLabel = switch (purpose) {
-                        case PATROL -> "P";
-                        case INVESTIGATE -> "?";
-                        case PING_POSITION -> "S";
-                        case STEALTH_TRANSIT -> "T";
-                        case INTERCEPT -> "!";
-                        case EVADE -> "E";
-                        case RALLY -> "R";
-                    };
-                    String label = (i + 1) + purposeLabel;
-                    // Flip Y for text (world transform has inverted Y)
-                    var origTransform = g2.getTransform();
-                    g2.translate(wp.x() + sr * 0.8, wp.y() - sr * 0.3);
-                    g2.scale(1, -1);
-                    g2.setFont(g2.getFont().deriveFont((float) (sr * 1.0)));
-                    g2.drawString(label, 0, 0);
-                    g2.setTransform(origTransform);
+                        // Label with purpose
+                        var purpose = swp.purpose();
+                        String purposeLabel = switch (purpose) {
+                            case PATROL -> "P";
+                            case INVESTIGATE -> "?";
+                            case PING_POSITION -> "S";
+                            case STEALTH_TRANSIT -> "T";
+                            case INTERCEPT -> "!";
+                            case EVADE -> "E";
+                            case RALLY -> "R";
+                        };
+                        String label = (i + 1) + purposeLabel;
+                        // Flip Y for text (world transform has inverted Y)
+                        var origTransform = g2.getTransform();
+                        g2.translate(wp.x() + sr * 0.8, wp.y() - sr * 0.3);
+                        g2.scale(1, -1);
+                        g2.setFont(g2.getFont().deriveFont((float) (sr * 1.0)));
+                        g2.drawString(label, 0, 0);
+                        g2.setTransform(origTransform);
+                    }
                 }
-            }
             } // end overlayConfig.strategicWaypoints
         }
     }
@@ -969,7 +985,9 @@ final class MapRenderer implements se.hirt.searobots.engine.SimulationListener {
 
         int r, g, b;
         if (depth <= 20) {
-            r = 150; g = 220; b = 255;
+            r = 150;
+            g = 220;
+            b = 255;
         } else if (depth <= 200) {
             double t = (depth - 20) / 180.0;
             r = (int) (150 + t * (50 - 150));
@@ -981,7 +999,9 @@ final class MapRenderer implements se.hirt.searobots.engine.SimulationListener {
             g = (int) (100 + t * (40 - 100));
             b = (int) (220 + t * (180 - 220));
         } else {
-            r = 80; g = 40; b = 180;
+            r = 80;
+            g = 40;
+            b = 180;
         }
         return new Color(r, g, b, 200);
     }
@@ -1022,7 +1042,7 @@ final class MapRenderer implements se.hirt.searobots.engine.SimulationListener {
             // Outer ring (arrival zone)
             g2.setColor(new Color(255, 200, 50, 120));
             g2.setStroke(new BasicStroke(sw, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND,
-                    0, new float[]{(float)(20 / pixelsPerMeter), (float)(10 / pixelsPerMeter)}, 0));
+                    0, new float[]{(float) (20 / pixelsPerMeter), (float) (10 / pixelsPerMeter)}, 0));
             g2.draw(new Ellipse2D.Double(x - markerR, y - markerR, markerR * 2, markerR * 2));
 
             // Center marker (crosshair)
@@ -1184,8 +1204,11 @@ final class MapRenderer implements se.hirt.searobots.engine.SimulationListener {
 
             Color c = subs.get(i).color();
             Vec3[] points;
-            try { points = trail.toArray(new Vec3[0]); }
-            catch (Exception e) { continue; } // concurrent modification
+            try {
+                points = trail.toArray(new Vec3[0]);
+            } catch (Exception e) {
+                continue;
+            } // concurrent modification
             for (int j = 1; j < points.length; j++) {
                 if (points[j - 1] == null || points[j] == null) continue;
                 float alpha = (float) j / points.length * 0.6f;

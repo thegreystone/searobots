@@ -52,7 +52,8 @@ public class TMAConvergenceTest {
      * A submarine that follows scripted legs and records sonar contact data.
      */
     static class ScriptedSub implements SubmarineController {
-        record Leg(double heading, int durationTicks) {}
+        record Leg(double heading, int durationTicks) {
+        }
 
         private final List<Leg> legs;
         private final double depth;
@@ -73,8 +74,14 @@ public class TMAConvergenceTest {
             this.pingOnce = pingOnce;
         }
 
-        @Override public String name() { return "ScriptedSub"; }
-        @Override public void onMatchStart(MatchContext context) {}
+        @Override
+        public String name() {
+            return "ScriptedSub";
+        }
+
+        @Override
+        public void onMatchStart(MatchContext context) {
+        }
 
         @Override
         public void onTick(SubmarineInput input, SubmarineOutput output) {
@@ -143,8 +150,15 @@ public class TMAConvergenceTest {
      * A target that cruises north at moderate speed (detectable at 2km).
      */
     static class NoisyTarget implements SubmarineController {
-        @Override public String name() { return "NoisyTarget"; }
-        @Override public void onMatchStart(MatchContext context) {}
+        @Override
+        public String name() {
+            return "NoisyTarget";
+        }
+
+        @Override
+        public void onMatchStart(MatchContext context) {
+        }
+
         @Override
         public void onTick(SubmarineInput input, SubmarineOutput output) {
             double heading = input.self().pose().heading();
@@ -290,14 +304,23 @@ public class TMAConvergenceTest {
                 }
                 if (tick >= 10000) sim.stop();
             }
-            @Override public void onMatchEnd() {}
+
+            @Override
+            public void onMatchEnd() {
+            }
         };
 
         var thread = new Thread(() -> sim.run(world, controllers, configs, listener));
         thread.start();
-        try { thread.join(30_000); } catch (InterruptedException e) {}
+        try {
+            thread.join(30_000);
+        } catch (InterruptedException e) {
+        }
         sim.stop();
-        try { thread.join(3000); } catch (InterruptedException e) {}
+        try {
+            thread.join(3000);
+        } catch (InterruptedException e) {
+        }
     }
 
     // ── Helpers ──
@@ -322,14 +345,23 @@ public class TMAConvergenceTest {
                 lastActual[0] = actualDistance(subs);
                 if (tick >= maxTicks) sim.stop();
             }
-            @Override public void onMatchEnd() {}
+
+            @Override
+            public void onMatchEnd() {
+            }
         };
 
         var thread = new Thread(() -> sim.run(world, controllers, configs, listener));
         thread.start();
-        try { thread.join(30_000); } catch (InterruptedException e) {}
+        try {
+            thread.join(30_000);
+        } catch (InterruptedException e) {
+        }
         sim.stop();
-        try { thread.join(3000); } catch (InterruptedException e) {}
+        try {
+            thread.join(3000);
+        } catch (InterruptedException e) {
+        }
 
         return lastActual[0];
     }

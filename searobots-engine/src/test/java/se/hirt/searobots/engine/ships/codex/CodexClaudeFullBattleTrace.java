@@ -31,12 +31,7 @@ package se.hirt.searobots.engine.ships.codex;
 import se.hirt.searobots.api.MatchConfig;
 import se.hirt.searobots.api.SubmarineController;
 import se.hirt.searobots.api.VehicleConfig;
-import se.hirt.searobots.engine.GeneratedWorld;
-import se.hirt.searobots.engine.SimulationListener;
-import se.hirt.searobots.engine.SimulationLoop;
-import se.hirt.searobots.engine.SubmarineSnapshot;
-import se.hirt.searobots.engine.TorpedoSnapshot;
-import se.hirt.searobots.engine.WorldGenerator;
+import se.hirt.searobots.engine.*;
 import se.hirt.searobots.engine.ships.claude.ClaudeAttackSub;
 
 import java.util.HashSet;
@@ -45,7 +40,8 @@ import java.util.Locale;
 import java.util.Set;
 
 public final class CodexClaudeFullBattleTrace {
-    private CodexClaudeFullBattleTrace() {}
+    private CodexClaudeFullBattleTrace() {
+    }
 
     public static void main(String[] args) {
         long seed = args.length > 0 ? Long.parseLong(args[0]) : -7357182929195418698L;

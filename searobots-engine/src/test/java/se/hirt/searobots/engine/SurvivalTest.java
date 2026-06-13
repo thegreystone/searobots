@@ -75,14 +75,23 @@ public abstract class SurvivalTest extends AbstractControllerTest {
                         deathStatus[0] = s0.status() != null ? s0.status() : "";
                     }
                 }
-                @Override public void onMatchEnd() {}
+
+                @Override
+                public void onMatchEnd() {
+                }
             };
 
             var thread = new Thread(() -> sim.run(world, controllers, configs, listener));
             thread.start();
-            try { thread.join(60_000); } catch (InterruptedException e) {}
+            try {
+                thread.join(60_000);
+            } catch (InterruptedException e) {
+            }
             sim.stop();
-            try { thread.join(5000); } catch (InterruptedException e) {}
+            try {
+                thread.join(5000);
+            } catch (InterruptedException e) {
+            }
 
             if (subAlive[0]) {
                 survived++;

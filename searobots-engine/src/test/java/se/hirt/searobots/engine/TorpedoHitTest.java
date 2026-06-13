@@ -69,18 +69,21 @@ public class TorpedoHitTest {
                         if (!t.alive()) continue;
                         var tp = t.pose().position();
                         var sp = target.pose().position();
-                        double d = Math.sqrt(Math.pow(tp.x()-sp.x(),2)+Math.pow(tp.y()-sp.y(),2)+Math.pow(tp.z()-sp.z(),2));
+                        double d = Math.sqrt(Math.pow(tp.x() - sp.x(), 2) + Math.pow(tp.y() - sp.y(), 2) + Math.pow(tp.z() - sp.z(), 2));
                         if (d < closestDist[0]) closestDist[0] = d;
                         if (target.hp() < 1000) targetHit[0] = true;
                         if (tick % 100 == 0) {
                             System.out.printf("tick=%d torp pos=(%.0f,%.0f,%.0f) target pos=(%.0f,%.0f,%.0f) dist=%.0f%n",
-                                tick, tp.x(), tp.y(), tp.z(), sp.x(), sp.y(), sp.z(), d);
+                                    tick, tp.x(), tp.y(), tp.z(), sp.x(), sp.y(), sp.z(), d);
                         }
                     }
                 }
                 if (tick >= 10000) sim.stop();
             }
-            @Override public void onMatchEnd() {}
+
+            @Override
+            public void onMatchEnd() {
+            }
         };
 
         // We can't easily place subs at custom positions via SimulationLoop.
@@ -106,19 +109,42 @@ public class TorpedoHitTest {
         double bestDist = 500;
         for (int tick = 0; tick < 5000; tick++) {
             var torpInput = new TorpedoInput() {
-                @Override public long tick() { return 0; }
-                @Override public double deltaTimeSeconds() { return dt; }
-                @Override public Pose self() { return torp.pose(); }
-                @Override public Velocity velocity() { return torp.velocity(); }
-                @Override public double speed() { return torp.speed(); }
-                @Override public double fuelRemaining() { return torp.fuelRemaining(); }
+                @Override
+                public long tick() {
+                    return 0;
+                }
+
+                @Override
+                public double deltaTimeSeconds() {
+                    return dt;
+                }
+
+                @Override
+                public Pose self() {
+                    return torp.pose();
+                }
+
+                @Override
+                public Velocity velocity() {
+                    return torp.velocity();
+                }
+
+                @Override
+                public double speed() {
+                    return torp.speed();
+                }
+
+                @Override
+                public double fuelRemaining() {
+                    return torp.fuelRemaining();
+                }
             };
             var torpOutput = torp.createOutput();
             torpCtrl.onTick(torpInput, torpOutput);
             physics.step(torp, dt, world.terrain(), null, world.config().battleArea());
             if (!torp.alive()) break;
 
-            double distToTarget = Math.sqrt(torp.x()*torp.x() + Math.pow(torp.y()-500,2) + Math.pow(torp.z()+100,2));
+            double distToTarget = Math.sqrt(torp.x() * torp.x() + Math.pow(torp.y() - 500, 2) + Math.pow(torp.z() + 100, 2));
             if (distToTarget < bestDist) bestDist = distToTarget;
 
             // Proximity fuse check (target at 0,500,-100)
@@ -172,7 +198,7 @@ public class TorpedoHitTest {
                     if (subs.size() >= 2 && t.alive()) {
                         var dp = subs.get(1).pose().position();
                         var tp = t.pose().position();
-                        double d = Math.sqrt(Math.pow(tp.x()-dp.x(),2)+Math.pow(tp.y()-dp.y(),2)+Math.pow(tp.z()-dp.z(),2));
+                        double d = Math.sqrt(Math.pow(tp.x() - dp.x(), 2) + Math.pow(tp.y() - dp.y(), 2) + Math.pow(tp.z() - dp.z(), 2));
                         if (tick % 500 == 0 && t.id() == 1000) {
                             System.out.printf("[CLOSE] tick=%d torp %d dist=%.1fm depth torp=%.0f drone=%.0f%n",
                                     tick, t.id(), d, tp.z(), dp.z());
@@ -182,14 +208,23 @@ public class TorpedoHitTest {
                 // Run for 5 minutes max
                 if (tick >= 25000) sim.stop();
             }
-            @Override public void onMatchEnd() {}
+
+            @Override
+            public void onMatchEnd() {
+            }
         };
 
         var thread = new Thread(() -> sim.run(world, controllers, configs, listener));
         thread.start();
-        try { thread.join(60_000); } catch (InterruptedException e) {}
+        try {
+            thread.join(60_000);
+        } catch (InterruptedException e) {
+        }
         sim.stop();
-        try { thread.join(5000); } catch (InterruptedException e) {}
+        try {
+            thread.join(5000);
+        } catch (InterruptedException e) {
+        }
 
         System.out.println("Torpedo fates: " + torpedoFates);
         System.out.println("Drone HP: " + droneHp[0]);

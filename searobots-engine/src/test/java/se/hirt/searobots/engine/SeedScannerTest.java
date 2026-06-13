@@ -86,14 +86,23 @@ public class SeedScannerTest {
                     }
                     if (tick >= combat30min) sim.stop();
                 }
-                @Override public void onMatchEnd() {}
+
+                @Override
+                public void onMatchEnd() {
+                }
             };
 
             var thread = new Thread(() -> sim.run(world, controllers, configs, listener));
             thread.start();
-            try { thread.join(60_000); } catch (InterruptedException e) {}
+            try {
+                thread.join(60_000);
+            } catch (InterruptedException e) {
+            }
             sim.stop();
-            try { thread.join(3000); } catch (InterruptedException e) {}
+            try {
+                thread.join(3000);
+            } catch (InterruptedException e) {
+            }
 
             totalTorpsFired += torpsA[0];
             System.out.printf("seed=%s  %s hp=%d torps=%d  |  %s hp=%d torps=%d%n",

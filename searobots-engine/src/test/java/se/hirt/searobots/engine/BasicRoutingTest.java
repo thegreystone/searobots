@@ -52,7 +52,8 @@ class BasicRoutingTest {
      * Creates a sub at the given position/heading with a direct autopilot
      * (bypassing DefaultAttackSub's patrol waypoint generation).
      */
-    record SimSub(SubmarineEntity entity, SubmarineAutopilot autopilot) {}
+    record SimSub(SubmarineEntity entity, SubmarineAutopilot autopilot) {
+    }
 
     SimSub createSub(double x, double y, double z, double heading) {
         var config = MatchConfig.withDefaults(0);
@@ -65,7 +66,9 @@ class BasicRoutingTest {
         return new SimSub(entity, autopilot);
     }
 
-    /** Run the simulation for a number of ticks. */
+    /**
+     * Run the simulation for a number of ticks.
+     */
     void runTicks(SubmarineEntity sub, int ticks) {
         for (int t = 0; t < ticks; t++) {
             physics.step(sub, DT, world.terrain(), world.currentField(),
@@ -73,9 +76,11 @@ class BasicRoutingTest {
         }
     }
 
-    /** Set strategic waypoints on the autopilot and run the physics loop. */
+    /**
+     * Set strategic waypoints on the autopilot and run the physics loop.
+     */
     void setWaypointAndRun(SimSub sim, double wpX, double wpY, double wpZ,
-                            int ticks) {
+                           int ticks) {
         var wp = new StrategicWaypoint(wpX, wpY, wpZ, Purpose.PATROL,
                 NoisePolicy.NORMAL, MovementPattern.DIRECT, 200, -1);
         sim.autopilot.setWaypoints(List.of(wp),
@@ -87,8 +92,8 @@ class BasicRoutingTest {
                     sim.entity.heading(), sim.entity.pitch(), 0);
             var vel = new Velocity(
                     new Vec3(sim.entity.speed() * Math.sin(sim.entity.heading()),
-                             sim.entity.speed() * Math.cos(sim.entity.heading()),
-                             sim.entity.verticalSpeed()),
+                            sim.entity.speed() * Math.cos(sim.entity.heading()),
+                            sim.entity.verticalSpeed()),
                     Vec3.ZERO);
             var state = new SubmarineState(pose, vel, sim.entity.hp(), 0);
             var env = new EnvironmentSnapshot(world.terrain(), List.of(), world.currentField());
@@ -239,8 +244,8 @@ class BasicRoutingTest {
                     sim.entity.heading(), sim.entity.pitch(), 0);
             var vel = new Velocity(
                     new Vec3(sim.entity.speed() * Math.sin(sim.entity.heading()),
-                             sim.entity.speed() * Math.cos(sim.entity.heading()),
-                             sim.entity.verticalSpeed()),
+                            sim.entity.speed() * Math.cos(sim.entity.heading()),
+                            sim.entity.verticalSpeed()),
                     Vec3.ZERO);
             var state = new SubmarineState(pose, vel, sim.entity.hp(), 0);
             var env = new EnvironmentSnapshot(world.terrain(), List.of(), world.currentField());
@@ -305,8 +310,8 @@ class BasicRoutingTest {
                     sim.entity.heading(), sim.entity.pitch(), 0);
             var vel = new Velocity(
                     new Vec3(sim.entity.speed() * Math.sin(sim.entity.heading()),
-                             sim.entity.speed() * Math.cos(sim.entity.heading()),
-                             sim.entity.verticalSpeed()),
+                            sim.entity.speed() * Math.cos(sim.entity.heading()),
+                            sim.entity.verticalSpeed()),
                     Vec3.ZERO);
             var state = new SubmarineState(pose, vel, sim.entity.hp(), 0);
             var env = new EnvironmentSnapshot(world.terrain(), List.of(), world.currentField());
@@ -356,8 +361,8 @@ class BasicRoutingTest {
     // Deep water (-500m) everywhere except a ridge from (ridgeMinX..ridgeMaxX)
     // at y in (ridgeMinY..ridgeMaxY) with floor at ridgeDepth.
     static GeneratedWorld worldWithRidge(double ridgeMinX, double ridgeMaxX,
-                                          double ridgeMinY, double ridgeMaxY,
-                                          double ridgeDepth) {
+                                         double ridgeMinY, double ridgeMaxY,
+                                         double ridgeDepth) {
         int size = 201;
         double cellSize = 100;
         double origin = -(size / 2) * cellSize;
@@ -392,7 +397,7 @@ class BasicRoutingTest {
     }
 
     void setWaypointAndRunInWorld(SimSub sim, GeneratedWorld w,
-                                   double wpX, double wpY, double wpZ, int ticks) {
+                                  double wpX, double wpY, double wpZ, int ticks) {
         var wp = new StrategicWaypoint(wpX, wpY, wpZ, Purpose.PATROL,
                 NoisePolicy.NORMAL, MovementPattern.DIRECT, 200, -1);
         sim.autopilot.setWaypoints(java.util.List.of(wp),
@@ -405,8 +410,8 @@ class BasicRoutingTest {
                     sim.entity.heading(), sim.entity.pitch(), 0);
             var vel = new Velocity(
                     new Vec3(sim.entity.speed() * Math.sin(sim.entity.heading()),
-                             sim.entity.speed() * Math.cos(sim.entity.heading()),
-                             sim.entity.verticalSpeed()),
+                            sim.entity.speed() * Math.cos(sim.entity.heading()),
+                            sim.entity.verticalSpeed()),
                     Vec3.ZERO);
             var state = new SubmarineState(pose, vel, sim.entity.hp(), 0);
             var env = new EnvironmentSnapshot(w.terrain(), java.util.List.of(), w.currentField());
@@ -670,8 +675,8 @@ class BasicRoutingTest {
                     sim.entity.heading(), sim.entity.pitch(), 0);
             var vel = new Velocity(
                     new Vec3(sim.entity.speed() * Math.sin(sim.entity.heading()),
-                             sim.entity.speed() * Math.cos(sim.entity.heading()),
-                             sim.entity.verticalSpeed()),
+                            sim.entity.speed() * Math.cos(sim.entity.heading()),
+                            sim.entity.verticalSpeed()),
                     Vec3.ZERO);
             var state = new SubmarineState(pose, vel, sim.entity.hp(), 0);
             var env = new EnvironmentSnapshot(world.terrain(), List.of(), world.currentField());

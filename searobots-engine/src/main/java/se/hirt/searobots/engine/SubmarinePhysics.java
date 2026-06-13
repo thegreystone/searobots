@@ -287,13 +287,13 @@ public final class SubmarinePhysics {
         // Sample terrain at each point; for each point also compute its Z offset
         // from center so we can check clearance at the actual hull extremity
         double[][] points = {
-            {newX,                          newY,                           0},           // center
-            {newX + fwdX * bowDist,         newY + fwdY * bowDist,          fwdZ * bowDist},    // bow
-            {newX - fwdX * sternDist,       newY - fwdY * sternDist,        -fwdZ * sternDist}, // stern
-            {newX + rightX * beamDist,      newY + rightY * beamDist,       0},           // port
-            {newX - rightX * beamDist,      newY - rightY * beamDist,       0},           // starboard
-            {newX + upX * towerUp,          newY + upY * towerUp,           upZ * towerUp},     // tower
-            {newX - upX * keelDown,         newY - upY * keelDown,          -upZ * keelDown},   // keel
+                {newX, newY, 0},           // center
+                {newX + fwdX * bowDist, newY + fwdY * bowDist, fwdZ * bowDist},    // bow
+                {newX - fwdX * sternDist, newY - fwdY * sternDist, -fwdZ * sternDist}, // stern
+                {newX + rightX * beamDist, newY + rightY * beamDist, 0},           // port
+                {newX - rightX * beamDist, newY - rightY * beamDist, 0},           // starboard
+                {newX + upX * towerUp, newY + upY * towerUp, upZ * towerUp},     // tower
+                {newX - upX * keelDown, newY - upY * keelDown, -upZ * keelDown},   // keel
         };
 
         // Dead subs rest directly on the seabed (no clearance buffer).
