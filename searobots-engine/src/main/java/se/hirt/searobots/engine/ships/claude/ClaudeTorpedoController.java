@@ -218,6 +218,10 @@ public class ClaudeTorpedoController implements TorpedoController {
         double interceptX, interceptY;
         double leadTime = solveInterceptTime(dx, dy, cappedVelX, cappedVelY, torpSpeed);
         if (leadTime > 0 && leadTime < 60) {
+            // Bound the lead horizon: the target sub maneuvers, so a long
+            // straight-line lead over-leads; the limited-agility hull is only
+            // ~straight over a few seconds.
+            leadTime = Math.min(leadTime, 12);
             interceptX = targetX + cappedVelX * leadTime;
             interceptY = targetY + cappedVelY * leadTime;
         } else {
