@@ -57,6 +57,7 @@ import java.util.Set;
 class ClaudeVsCodexWinRate {
 
     private static final int SEED_COUNT = 16;
+    private static final int SEED_START = Integer.getInteger("searobots.seedStart", 1);
     private static final int MAX_TICKS = 30_000; // ~10 min
     private static final int CLAUDE = 1;
     private static final int CODEX = 0;
@@ -71,7 +72,7 @@ class ClaudeVsCodexWinRate {
     void scoreboard() {
         Outcome o = new Outcome();
         var lines = new StringBuilder();
-        for (int seed = 1; seed <= SEED_COUNT; seed++) {
+        for (int seed = SEED_START; seed < SEED_START + SEED_COUNT; seed++) {
             SeedResult r = runSeed(seed);
             o.totalTicks += r.ticks;
             o.claudePingTicks += r.claudePingTicks;

@@ -203,9 +203,15 @@ public class ClaudeTorpedoController implements TorpedoController {
 		}
 		}
 
-		// ── Compute intercept point ──
+		// ── Continuously-solved intercept (impact) point ──
+		// Solve for the time tau when a straight-running torpedo at our speed
+		// meets the target moving at its estimated constant velocity:
+		//   |(T - P) + Vt*tau| = torpSpeed * tau   (the collision triangle)
+		// Re-solved every tick, this tracks a maneuvering sub: over the few
+		// seconds of tau the slow (~limited-agility) sub is nearly straight, so
+		// the impact point is accurate. Steering at it gives a constant-bearing,
+		// zero-miss course instead of a pursuit curve.
 		double torpSpeed = Math.max(input.speed(), 5);
-		double timeToIntercept = dist / torpSpeed;
 
 		// Cap velocity magnitude to reject garbage estimates
 		double velMag = Math.sqrt(estVelX * estVelX + estVelY * estVelY);
@@ -214,95 +220,55 @@ public class ClaudeTorpedoController implements TorpedoController {
 			double scale = 15 / velMag;
 			cappedVelX *= scale;
 			cappedVelY *= scale;
+			velMag = 15;
 		}
-		// Lead distance: full time-to-intercept lead, capped at 60% of range
-		double maxLead = dist * 0.6;
-		double leadTime = Math.min(timeToIntercept, maxLead / Math.max(velMag, 0.1));
 
-		double interceptX = targetX + cappedVelX * leadTime;
-		double interceptY = targetY + cappedVelY * leadTime;
+		double rx = targetX - pos.x();
+		double ry = targetY - pos.y();
+		double aQ = velMag * velMag - torpSpeed * torpSpeed; // < 0: we are faster
+		double bQ = 2 * (rx * cappedVelX + ry * cappedVelY);
+		double cQ = rx * rx + ry * ry;
+		double tau;
+		double disc = bQ * bQ - 4 * aQ * cQ;
+		if (aQ < -1e-6 && disc >= 0) {
+			double sqrtD = Math.sqrt(disc);
+			double t1 = (-bQ + sqrtD) / (2 * aQ);
+			double t2 = (-bQ - sqrtD) / (2 * aQ);
+			tau = Math.max(t1, t2);
+			if (tau < 0)
+				tau = Math.max(0, Math.min(t1, t2));
+		} else {
+			tau = dist / torpSpeed; // degenerate fallback
+		}
+		// Bound the lead horizon: the constant-velocity assumption only holds for
+		// a few seconds against a maneuvering sub.
+		tau = Math.clamp(tau, 0, 12);
 
-		// ── Steering ──
-		// Bearing to intercept point
+		double interceptX = targetX + cappedVelX * tau;
+		double interceptY = targetY + cappedVelY * tau;
+
+		// ── Steering: command-to-intercept (lead pursuit of the impact point) ──
+		// Steer the nose at the continuously-solved impact point. Because that
+		// point is the collision solution, the course is constant-bearing and
+		// the torpedo arrives with ~zero miss, instead of pursuit-curving into
+		// the target's turn circle (the old PN under-responded to the small
+		// early miss, which then amplified as range -> 0 and saturated the
+		// rudder, leaving the torpedo circling at its turn radius ~47m).
 		double idx = interceptX - pos.x();
 		double idy = interceptY - pos.y();
 		double bearingToIntercept = Math.atan2(idx, idy);
 		if (bearingToIntercept < 0)
 			bearingToIntercept += 2 * Math.PI;
 
-		// Bearing directly to target (for PN guidance)
-		double bearingToTarget = Math.atan2(dx, dy);
-		if (bearingToTarget < 0)
-			bearingToTarget += 2 * Math.PI;
-
-		if (phase == Phase.TERMINAL) {
-			// True Proportional Navigation: steer proportional to LOS rate.
-			// a_cmd = N * V_closing * (dLOS/dt)
-			// This naturally leads the target without explicit intercept geometry.
-			double dt = input.deltaTimeSeconds();
-			double rudderCmd;
-
-			if (!Double.isNaN(prevBearingToTarget) && prevBearingTick >= 0) {
-				double dtBearing = (input.tick() - prevBearingTick) / 50.0;
-				if (dtBearing > 0.01) {
-					double dBearing = bearingToTarget - prevBearingToTarget;
-					while (dBearing > Math.PI)
-						dBearing -= 2 * Math.PI;
-					while (dBearing < -Math.PI)
-						dBearing += 2 * Math.PI;
-					double losRate = dBearing / dtBearing; // rad/s
-
-					// PN gain N=4 (aggressive: typical range 3-5)
-					// Closing speed: torpedo speed minus target's speed along our bearing
-					double closingSpeed = Math.max(torpSpeed - (cappedVelX * bearingX + cappedVelY * bearingY), 5);
-					double pnAccel = 4.0 * closingSpeed * losRate;
-					// Convert lateral acceleration to rudder command
-					// At speed v, rudder 1.0 gives ~v/turnRadius lateral accel
-					rudderCmd = Math.clamp(pnAccel * 0.08, -1, 1);
-
-					// Blend with pursuit guidance at very close range.
-					// Use direct bearing to target (not intercept point) for pure pursuit.
-					if (dist < 150) {
-						double headErr = bearingToTarget - heading;
-						while (headErr > Math.PI)
-							headErr -= 2 * Math.PI;
-						while (headErr < -Math.PI)
-							headErr += 2 * Math.PI;
-						double pursuit = Math.clamp(headErr * 4.0, -1, 1);
-						double blend = Math.clamp((dist - 50) / 100.0, 0, 1);
-						rudderCmd = rudderCmd * blend + pursuit * (1 - blend);
-					}
-				} else {
-					// No valid dt, fall back to pursuit on target
-					double headErr = bearingToTarget - heading;
-					while (headErr > Math.PI)
-						headErr -= 2 * Math.PI;
-					while (headErr < -Math.PI)
-						headErr += 2 * Math.PI;
-					rudderCmd = Math.clamp(headErr * 4.0, -1, 1);
-				}
-			} else {
-				// First tick in terminal, use pursuit on target
-				double headErr = bearingToTarget - heading;
-				while (headErr > Math.PI)
-					headErr -= 2 * Math.PI;
-				while (headErr < -Math.PI)
-					headErr += 2 * Math.PI;
-				rudderCmd = Math.clamp(headErr * 3.0, -1, 1);
-			}
-
-			prevBearingToTarget = bearingToTarget;
-			prevBearingTick = input.tick();
-			output.setRudder(rudderCmd);
-		} else {
-			// Transit/Acquisition: aim at intercept point
-			double headingError = bearingToIntercept - heading;
-			while (headingError > Math.PI)
-				headingError -= 2 * Math.PI;
-			while (headingError < -Math.PI)
-				headingError += 2 * Math.PI;
-			output.setRudder(Math.clamp(headingError * 2.5, -1, 1));
-		}
+		double headingError = bearingToIntercept - heading;
+		while (headingError > Math.PI)
+			headingError -= 2 * Math.PI;
+		while (headingError < -Math.PI)
+			headingError += 2 * Math.PI;
+		// Higher gain in terminal so any residual miss is nulled while there is
+		// still room to turn; the bounded-lead intercept keeps the demand small.
+		double steerGain = phase == Phase.TERMINAL ? 4.0 : 2.5;
+		output.setRudder(Math.clamp(headingError * steerGain, -1, 1));
 
 		// ── Depth control (PID) ──
 		// Depth profile: start shallow (terrain clearance), then smoothly

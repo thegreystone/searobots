@@ -102,6 +102,8 @@ class ClaudeTorpedoOvershootTrace {
                     if (t.samples.get(i).rTrue() < t.samples.get(cpa).rTrue())
                         cpa = i;
                 double cpaRange = t.samples.get(cpa).rTrue();
+                System.out.printf(Locale.US, "  [seed %d torp %d] CPA=%.0fm detonated=%s%n",
+                        seed, e.getKey(), cpaRange, t.detonated);
                 boolean overshoot = cpaRange >= 30 && cpaRange <= 200 && !(t.detonated && cpaRange < 35);
                 if (!overshoot)
                     continue;
