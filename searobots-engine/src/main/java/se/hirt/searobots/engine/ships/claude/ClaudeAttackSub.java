@@ -54,8 +54,11 @@ public final class ClaudeAttackSub implements SubmarineController {
 	private static final long PATROL_PING_INTERVAL = 600;   // ping more often
 	private static final long STALE_CONTACT_TICKS = 150;    // refresh sooner
 	private static final double CHASE_RANGE = 3500.0;       // enter chase earlier
-	private static final double FIRING_RANGE = 2000.0;      // fire from further
+	private static final double FIRING_RANGE = 2800.0;      // torpedo has ~5km of legs; engage well out
+	private static final double PASSIVE_FIRE_QUALITY = 0.45; // min engine TMA quality to fire silently (no ping)
 	private static final double STERN_OFFSET = 450.0;       // wider stern approach
+	private static final long TMA_WEAVE_PERIOD = 600;       // 12s legs to converge passive TMA
+	private static final double TMA_WEAVE_OFFSET = Math.toRadians(35); // off-axis angle while closing
 
 	// Torpedo evasion
 	private static final double TORPEDO_EVADE_RANGE = 900.0;  // evade inbound torpedoes within this range
@@ -89,6 +92,7 @@ public final class ClaudeAttackSub implements SubmarineController {
 	private double contactAlive = 0, uncertaintyRadius = 0, refUncertainty = 400;
 	private double estimatedRange = Double.POSITIVE_INFINITY;
 	private boolean rangeConfirmedByActive;
+	private double trackSolutionQuality; // engine passive TMA quality 0..1 for the current track
 	private double lastContactBearing = Double.NaN, lastContactSE = 0;
 	private long lastContactTick = Long.MIN_VALUE / 4;
 	private long trackedLastFixTick = Long.MIN_VALUE / 4;
@@ -98,6 +102,12 @@ public final class ClaudeAttackSub implements SubmarineController {
 	private double lastCombatTargetX = Double.NaN, lastCombatTargetY = Double.NaN;
 	private long lastTorpedoLaunchTick = Long.MIN_VALUE / 4;
 	private long lastConfirmedHitTick = Long.MIN_VALUE / 4;
+	// Salvo: a second tube fired a beat after the first, spread to bracket evasion.
+	private long pendingSalvoTick = Long.MIN_VALUE / 4;
+	private double pendingSalvoBearing;
+	private String pendingSalvoMission = "";
+	private static final long SALVO_SPACING = 40;            // ~0.8s between the two shots
+	private static final double SALVO_SPREAD = Math.toRadians(3.5); // bracket angle
 	private static final long TORPEDO_REFIRE_COOLDOWN = 750; // 15 seconds between launches (2 tubes)
 	private boolean outOfTorpedoes; // set when all torpedoes expended
 
@@ -295,10 +305,12 @@ public final class ClaudeAttackSub implements SubmarineController {
 					needPlan = true;
 				else if (tick - lastCombatPlanTick > COMBAT_REPLAN_TICKS && uncertaintyRadius > 700)
 					needPlan = true;
+				else if (buildingPassiveTma() && tick - lastCombatPlanTick > 200)
+					needPlan = true; // keep the TMA weave legs refreshing
 			}
 
 			if (needPlan) {
-				var wp = planCombatWaypoint(pos.x(), pos.y(), pos.z(), heading, speed, evading);
+				var wp = planCombatWaypoint(pos.x(), pos.y(), pos.z(), heading, speed, evading, tick);
 				strategicWaypoints = List.of(wp);
 				autopilot.setWaypoints(strategicWaypoints, pos.x(), pos.y(), pos.z(), heading, speed);
 				bestDistToGoal = autopilot.distanceToStrategic(pos.x(), pos.y());
@@ -337,6 +349,7 @@ public final class ClaudeAttackSub implements SubmarineController {
 
 		// ── Firing solution + torpedo launch ──
 		publishFiringSolution(output, pos, tick);
+		fireScheduledSalvo(input, output, tick);
 		launchTorpedoIfReady(input, output, pos, tick);
 
 		// ── Contact estimate ──
@@ -444,6 +457,9 @@ public final class ClaudeAttackSub implements SubmarineController {
 			hasTrackedContact = true;
 		}
 
+		if (contact.solutionQuality() >= 0)
+			trackSolutionQuality = contact.solutionQuality();
+
 		if (contact.isActive() && contact.range() > 50) {
 			estimatedRange = contact.range();
 			rangeConfirmedByActive = true;
@@ -452,6 +468,13 @@ public final class ClaudeAttackSub implements SubmarineController {
 			refUncertainty = uncertaintyRadius;
 			if (!Double.isNaN(contact.estimatedDepth()))
 				trackedZ = contact.estimatedDepth();
+		} else if (contact.rangeUncertainty() > 0) {
+			// Trust the engine's passive TMA. Its rangeUncertainty converges as we
+			// build cross-track geometry, letting us fire SILENTLY (no ping) once
+			// the solution is good. The old code floored this at ~450m, which made
+			// a passive firing solution impossible and forced an active ping.
+			double engineUnc = contact.rangeUncertainty();
+			uncertaintyRadius = hasTrackedContact ? uncertaintyRadius * 0.6 + engineUnc * 0.4 : engineUnc;
 		} else {
 			double spread = Math.max(450, range * Math.max(contact.bearingUncertainty(), Math.toRadians(6)) * 2);
 			uncertaintyRadius = hasTrackedContact ? Math.min(Math.max(uncertaintyRadius, 200), spread) : spread;
@@ -485,6 +508,7 @@ public final class ClaudeAttackSub implements SubmarineController {
 		uncertaintyRadius = 0;
 		estimatedRange = Double.POSITIVE_INFINITY;
 		rangeConfirmedByActive = false;
+		trackSolutionQuality = 0;
 		consecutiveContactTicks = 0;
 	}
 
@@ -599,7 +623,7 @@ public final class ClaudeAttackSub implements SubmarineController {
 		double dist = ClaudeAutopilot.hdist(pos.x(), pos.y(), trackedX, trackedY);
 		if (dist < 800 || dist > FIRING_RANGE)
 			return;
-		if (!rangeConfirmedByActive && uncertaintyRadius > 300)
+		if (!rangeConfirmedByActive && (uncertaintyRadius > 300 || trackSolutionQuality < PASSIVE_FIRE_QUALITY))
 			return;
 		if (uncertaintyRadius > 400)
 			return;
@@ -630,9 +654,9 @@ public final class ClaudeAttackSub implements SubmarineController {
 			return;
 
 		double dist = ClaudeAutopilot.hdist(pos.x(), pos.y(), trackedX, trackedY);
-		if (dist < 800 || dist > 2000)
+		if (dist < 800 || dist > FIRING_RANGE)
 			return;
-		if (!rangeConfirmedByActive && uncertaintyRadius > 300)
+		if (!rangeConfirmedByActive && (uncertaintyRadius > 300 || trackSolutionQuality < PASSIVE_FIRE_QUALITY))
 			return;
 		if (uncertaintyRadius > 400)
 			return;
@@ -682,6 +706,29 @@ public final class ClaudeAttackSub implements SubmarineController {
 		lastTorpedoLaunchTick = tick;
 		System.out.printf("[Claude] Torpedo launched at tick %d, target=(%.0f,%.0f) dist=%.0fm hdgErr=%.1f°%n", tick,
 				leadX, leadY, dist, Math.toDegrees(headingError));
+
+		// Schedule the second tube: same solution, bracketed by a small spread so
+		// the two torpedoes straddle the target's escape and it cannot dodge both.
+		if (input.self().torpedoesRemaining() > 1) {
+			pendingSalvoTick = tick + SALVO_SPACING;
+			double sideSpread = ClaudeAutopilot.adiff(leadBearing, input.self().pose().heading()) >= 0
+					? SALVO_SPREAD : -SALVO_SPREAD;
+			pendingSalvoBearing = ClaudeAutopilot.norm(leadBearing + sideSpread);
+			pendingSalvoMission = missionData;
+		}
+	}
+
+	/** Fire the second tube of a salvo once the spacing beat has elapsed. */
+	private void fireScheduledSalvo(SubmarineInput input, SubmarineOutput output, long tick) {
+		if (tick < pendingSalvoTick || pendingSalvoTick == Long.MIN_VALUE / 4)
+			return;
+		pendingSalvoTick = Long.MIN_VALUE / 4; // consume the schedule regardless
+		if (input.self().torpedoesRemaining() <= 0 || tick < evadeUntilTick)
+			return;
+		output.launchTorpedo(new TorpedoLaunchCommand(pendingSalvoBearing, 0, 15.0, pendingSalvoMission));
+		lastTorpedoLaunchTick = tick;
+		System.out.printf("[Claude] Salvo 2nd torpedo at tick %d, brg=%.1f°%n", tick,
+				Math.toDegrees(pendingSalvoBearing));
 	}
 
 	private boolean isBehindTarget(double x, double y) {
@@ -694,9 +741,15 @@ public final class ClaudeAttackSub implements SubmarineController {
 
 	// ── Combat waypoint planning ────────────────────────────────────
 
+	/** True while stalking a contact we can only fire on once the passive TMA converges. */
+	private boolean buildingPassiveTma() {
+		return mode == Mode.CHASE && hasTrackedContact && !rangeConfirmedByActive
+				&& trackSolutionQuality < PASSIVE_FIRE_QUALITY;
+	}
+
 	private StrategicWaypoint planCombatWaypoint(
 			double x, double y, double z, double heading, double speed,
-			boolean evading) {
+			boolean evading, long tick) {
 		double dist = ClaudeAutopilot.hdist(x, y, trackedX, trackedY);
 		double cruiseDepth = autopilot.cruiseDepth();
 
@@ -752,6 +805,22 @@ public final class ClaudeAttackSub implements SubmarineController {
 			noise = NoisePolicy.QUIET;
 			targetSpeed = 6.0;
 			arrival = 240;
+		} else if (buildingPassiveTma() && dist > 1500) {
+			// Silent stalk: close on alternating off-axis legs so the engine's
+			// passive TMA converges (it rewards cross-track displacement and
+			// course changes > 15 degrees). This builds a firing solution WITHOUT
+			// pinging, so the first thing the enemy hears is the torpedo.
+			int side = (tick / TMA_WEAVE_PERIOD) % 2 == 0 ? 1 : -1;
+			double bTgt = ClaudeAutopilot.norm(Math.atan2(trackedX - x, trackedY - y));
+			double legHeading = ClaudeAutopilot.norm(bTgt + side * TMA_WEAVE_OFFSET);
+			double legDist = Math.clamp(dist * 0.6, 600, 1400);
+			tx = x + Math.sin(legHeading) * legDist;
+			ty = y + Math.cos(legHeading) * legDist;
+			depth = safeDepth(tx, ty, Math.min(cruiseDepth, -180));
+			purpose = Purpose.INVESTIGATE;
+			noise = NoisePolicy.QUIET;
+			targetSpeed = dist > 2500 ? 8.0 : 6.5;
+			arrival = 200;
 		} else if (!Double.isNaN(trackedHeading) && trackedSpeed > 0.5) {
 			// Shadow at torpedo engagement range (1500-2500m), don't close in
 			// Stay behind the target for best torpedo geometry
@@ -760,8 +829,8 @@ public final class ClaudeAttackSub implements SubmarineController {
 			ty += Math.cos(trackedHeading) * trackedSpeed * predict * 0.6;
 
 			// Maintain standoff: if too close, back off to stern at safe distance
-			double desiredDist = 2000; // ideal shadow distance
-			double minDist = 1200; // never closer than this
+			double desiredDist = 1200; // ideal shadow distance: close enough that torpedoes acquire fast
+			double minDist = 800; // never closer than this
 			if (dist < minDist) {
 				// Back away: go to a point behind the target at desired distance
 				double awayBearing = ClaudeAutopilot.norm(
@@ -771,7 +840,7 @@ public final class ClaudeAttackSub implements SubmarineController {
 				noise = NoisePolicy.QUIET;
 				targetSpeed = 7.0;
 				purpose = Purpose.EVADE;
-			} else if (dist < 2500) {
+			} else if (dist < FIRING_RANGE) {
 				// Good range: get behind the target for torpedo shot
 				double sternX = tx - Math.sin(trackedHeading) * STERN_OFFSET;
 				double sternY = ty - Math.cos(trackedHeading) * STERN_OFFSET;
