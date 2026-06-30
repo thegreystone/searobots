@@ -40,120 +40,133 @@ import java.util.Locale;
 import java.util.Set;
 
 public final class CodexClaudeFullBattleTrace {
-	private CodexClaudeFullBattleTrace() {
-	}
+    private CodexClaudeFullBattleTrace() {
+    }
 
-	public static void main(String[] args) {
-		long seed = args.length > 0 ? Long.parseLong(args[0]) : -7357182929195418698L;
-		MatchConfig config = MatchConfig.withDefaults(seed);
-		GeneratedWorld world = new WorldGenerator().generate(config);
-		SimulationLoop sim = new SimulationLoop();
-		sim.setSpeedMultiplier(1_000_000);
+    public static void main(String[] args) {
+        long seed = args.length > 0 ? Long.parseLong(args[0]) : -7357182929195418698L;
+        MatchConfig config = MatchConfig.withDefaults(seed);
+        GeneratedWorld world = new WorldGenerator().generate(config);
+        SimulationLoop sim = new SimulationLoop();
+        sim.setSpeedMultiplier(1_000_000);
 
-		List<SubmarineController> controllers = List.of(new CodexAttackSub(), new ClaudeAttackSub());
-		List<VehicleConfig> configs = List.of(VehicleConfig.submarine(), VehicleConfig.submarine());
-		Set<Integer> seenTorpedoes = new HashSet<>();
-		int[] lastCodexHp = {config.startingHp()};
-		int[] lastClaudeHp = {config.startingHp()};
-		boolean[] lastCodexFs = {false};
-		boolean[] lastClaudeFs = {false};
-		boolean[] lastCodexPing = {false};
-		boolean[] lastClaudePing = {false};
-		String[] lastCodexStatus = {""};
-		String[] lastClaudeStatus = {""};
+        List<SubmarineController> controllers = List.of(new CodexAttackSub(), new ClaudeAttackSub());
+        List<VehicleConfig> configs = List.of(VehicleConfig.submarine(), VehicleConfig.submarine());
+        Set<Integer> seenTorpedoes = new HashSet<>();
+        int[] lastCodexHp = {config.startingHp()};
+        int[] lastClaudeHp = {config.startingHp()};
+        boolean[] lastCodexFs = {false};
+        boolean[] lastClaudeFs = {false};
+        boolean[] lastCodexPing = {false};
+        boolean[] lastClaudePing = {false};
+        String[] lastCodexStatus = {""};
+        String[] lastClaudeStatus = {""};
 
-		SimulationListener listener = new SimulationListener() {
-			@Override
-			public void onTick(long tick, List<SubmarineSnapshot> subs, List<TorpedoSnapshot> torps) {
-				if (subs.size() < 2) {
-					return;
-				}
+        SimulationListener listener = new SimulationListener() {
+            @Override
+            public void onTick(long tick, List<SubmarineSnapshot> subs, List<TorpedoSnapshot> torps) {
+                if (subs.size() < 2) {
+                    return;
+                }
 
-				SubmarineSnapshot codex = subs.get(0);
-				SubmarineSnapshot claude = subs.get(1);
+                SubmarineSnapshot codex = subs.get(0);
+                SubmarineSnapshot claude = subs.get(1);
 
-				for (TorpedoSnapshot torp : torps) {
-					if (seenTorpedoes.add(torp.id())) {
-						System.out.printf(Locale.US,
-								"LAUNCH tick=%d owner=%d pos=(%.0f,%.0f,%.0f) target=(%.0f,%.0f,%.0f)%n", tick,
-								torp.ownerId(), torp.pose().position().x(), torp.pose().position().y(),
-								torp.pose().position().z(), torp.targetX(), torp.targetY(), torp.targetZ());
-					}
-					if (torp.detonated()) {
-						System.out.printf(Locale.US, "DETONATE tick=%d owner=%d pos=(%.0f,%.0f,%.0f)%n", tick,
-								torp.ownerId(), torp.pose().position().x(), torp.pose().position().y(),
-								torp.pose().position().z());
-					}
-				}
+                for (TorpedoSnapshot torp : torps) {
+                    if (seenTorpedoes.add(torp.id())) {
+                        System.out.printf(Locale.US,
+                                "LAUNCH tick=%d owner=%d pos=(%.0f,%.0f,%.0f) target=(%.0f,%.0f,%.0f)%n",
+                                tick, torp.ownerId(),
+                                torp.pose().position().x(), torp.pose().position().y(), torp.pose().position().z(),
+                                torp.targetX(), torp.targetY(), torp.targetZ());
+                    }
+                    if (torp.detonated()) {
+                        System.out.printf(Locale.US,
+                                "DETONATE tick=%d owner=%d pos=(%.0f,%.0f,%.0f)%n",
+                                tick, torp.ownerId(),
+                                torp.pose().position().x(), torp.pose().position().y(), torp.pose().position().z());
+                    }
+                }
 
-				if (codex.hp() != lastCodexHp[0] || claude.hp() != lastClaudeHp[0]) {
-					System.out.printf(Locale.US, "DAMAGE tick=%d codexHp=%d claudeHp=%d%n", tick, codex.hp(),
-							claude.hp());
-					lastCodexHp[0] = codex.hp();
-					lastClaudeHp[0] = claude.hp();
-				}
+                if (codex.hp() != lastCodexHp[0] || claude.hp() != lastClaudeHp[0]) {
+                    System.out.printf(Locale.US,
+                            "DAMAGE tick=%d codexHp=%d claudeHp=%d%n",
+                            tick, codex.hp(), claude.hp());
+                    lastCodexHp[0] = codex.hp();
+                    lastClaudeHp[0] = claude.hp();
+                }
 
-				boolean codexFs = codex.firingSolution() != null;
-				boolean claudeFs = claude.firingSolution() != null;
-				boolean codexPing = codex.pingRequested();
-				boolean claudePing = claude.pingRequested();
-				String codexStatus = codex.status();
-				String claudeStatus = claude.status();
-				if (codexFs != lastCodexFs[0] || claudeFs != lastClaudeFs[0] || codexPing != lastCodexPing[0] || claudePing != lastClaudePing[0] || !codexStatus.equals(
-						lastCodexStatus[0]) || !claudeStatus.equals(lastClaudeStatus[0])) {
-					double range = codex.pose().position().distanceTo(claude.pose().position());
-					System.out.printf(Locale.US,
-							"STATE tick=%d rng=%.0f codex[hp=%d ping=%s fs=%s torps=%d %s] claude[hp=%d ping=%s fs=%s torps=%d %s]%n",
-							tick, range, codex.hp(), codexPing, codexFs, codex.torpedoesRemaining(), codexStatus,
-							claude.hp(), claudePing, claudeFs, claude.torpedoesRemaining(), claudeStatus);
-					lastCodexFs[0] = codexFs;
-					lastClaudeFs[0] = claudeFs;
-					lastCodexPing[0] = codexPing;
-					lastClaudePing[0] = claudePing;
-					lastCodexStatus[0] = codexStatus;
-					lastClaudeStatus[0] = claudeStatus;
-				}
+                boolean codexFs = codex.firingSolution() != null;
+                boolean claudeFs = claude.firingSolution() != null;
+                boolean codexPing = codex.pingRequested();
+                boolean claudePing = claude.pingRequested();
+                String codexStatus = codex.status();
+                String claudeStatus = claude.status();
+                if (codexFs != lastCodexFs[0]
+                        || claudeFs != lastClaudeFs[0]
+                        || codexPing != lastCodexPing[0]
+                        || claudePing != lastClaudePing[0]
+                        || !codexStatus.equals(lastCodexStatus[0])
+                        || !claudeStatus.equals(lastClaudeStatus[0])) {
+                    double range = codex.pose().position().distanceTo(claude.pose().position());
+                    System.out.printf(Locale.US,
+                            "STATE tick=%d rng=%.0f codex[hp=%d ping=%s fs=%s torps=%d %s] claude[hp=%d ping=%s fs=%s torps=%d %s]%n",
+                            tick, range,
+                            codex.hp(), codexPing, codexFs, codex.torpedoesRemaining(), codexStatus,
+                            claude.hp(), claudePing, claudeFs, claude.torpedoesRemaining(), claudeStatus);
+                    lastCodexFs[0] = codexFs;
+                    lastClaudeFs[0] = claudeFs;
+                    lastCodexPing[0] = codexPing;
+                    lastClaudePing[0] = claudePing;
+                    lastCodexStatus[0] = codexStatus;
+                    lastClaudeStatus[0] = claudeStatus;
+                }
 
-				if (tick % 1000 == 0) {
-					double range = codex.pose().position().distanceTo(claude.pose().position());
-					String codexTrack = codex.contactEstimates().isEmpty() ? "-"
-							: String.format(Locale.US, "%s c=%.2f u=%.0f", codex.contactEstimates().getFirst().label(),
-									codex.contactEstimates().getFirst().confidence(),
-									codex.contactEstimates().getFirst().uncertaintyRadius());
-					String claudeTrack = claude.contactEstimates().isEmpty() ? "-"
-							: String.format(Locale.US, "%s c=%.2f u=%.0f", claude.contactEstimates().getFirst().label(),
-									claude.contactEstimates().getFirst().confidence(),
-									claude.contactEstimates().getFirst().uncertaintyRadius());
-					System.out.printf(Locale.US,
-							"TICK tick=%d rng=%.0f codex[x=%.0f y=%.0f z=%.0f spd=%.1f torps=%d fs=%s %s %s] " + "claude[x=%.0f y=%.0f z=%.0f spd=%.1f torps=%d fs=%s %s %s]%n",
-							tick, range, codex.pose().position().x(), codex.pose().position().y(),
-							codex.pose().position().z(), codex.speed(), codex.torpedoesRemaining(), codexFs, codexTrack,
-							codexStatus, claude.pose().position().x(), claude.pose().position().y(),
-							claude.pose().position().z(), claude.speed(), claude.torpedoesRemaining(), claudeFs,
-							claudeTrack, claudeStatus);
-				}
+                if (tick % 1000 == 0) {
+                    double range = codex.pose().position().distanceTo(claude.pose().position());
+                    String codexTrack = codex.contactEstimates().isEmpty()
+                            ? "-"
+                            : String.format(Locale.US, "%s c=%.2f u=%.0f",
+                            codex.contactEstimates().getFirst().label(),
+                            codex.contactEstimates().getFirst().confidence(),
+                            codex.contactEstimates().getFirst().uncertaintyRadius());
+                    String claudeTrack = claude.contactEstimates().isEmpty()
+                            ? "-"
+                            : String.format(Locale.US, "%s c=%.2f u=%.0f",
+                            claude.contactEstimates().getFirst().label(),
+                            claude.contactEstimates().getFirst().confidence(),
+                            claude.contactEstimates().getFirst().uncertaintyRadius());
+                    System.out.printf(Locale.US,
+                            "TICK tick=%d rng=%.0f codex[x=%.0f y=%.0f z=%.0f spd=%.1f torps=%d fs=%s %s %s] "
+                                    + "claude[x=%.0f y=%.0f z=%.0f spd=%.1f torps=%d fs=%s %s %s]%n",
+                            tick, range,
+                            codex.pose().position().x(), codex.pose().position().y(), codex.pose().position().z(),
+                            codex.speed(), codex.torpedoesRemaining(), codexFs, codexTrack, codexStatus,
+                            claude.pose().position().x(), claude.pose().position().y(), claude.pose().position().z(),
+                            claude.speed(), claude.torpedoesRemaining(), claudeFs, claudeTrack, claudeStatus);
+                }
 
-				if (tick >= config.matchDurationTicks() || codex.hp() <= 0 || claude.hp() <= 0) {
-					sim.stop();
-				}
-			}
+                if (tick >= config.matchDurationTicks() || codex.hp() <= 0 || claude.hp() <= 0) {
+                    sim.stop();
+                }
+            }
 
-			@Override
-			public void onMatchEnd() {
-				System.out.println("TRACE END");
-			}
-		};
+            @Override
+            public void onMatchEnd() {
+                System.out.println("TRACE END");
+            }
+        };
 
-		Thread thread = new Thread(() -> sim.run(world, controllers, configs, listener));
-		thread.start();
-		try {
-			thread.join(60_000);
-		} catch (InterruptedException ignored) {
-		}
-		sim.stop();
-		try {
-			thread.join(5_000);
-		} catch (InterruptedException ignored) {
-		}
-	}
+        Thread thread = new Thread(() -> sim.run(world, controllers, configs, listener));
+        thread.start();
+        try {
+            thread.join(60_000);
+        } catch (InterruptedException ignored) {
+        }
+        sim.stop();
+        try {
+            thread.join(5_000);
+        } catch (InterruptedException ignored) {
+        }
+    }
 }

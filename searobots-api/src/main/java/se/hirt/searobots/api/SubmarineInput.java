@@ -31,31 +31,39 @@ package se.hirt.searobots.api;
 import java.util.List;
 
 public interface SubmarineInput {
-	long tick();
+    long tick();
 
-	double deltaTimeSeconds();
+    double deltaTimeSeconds();
 
-	SubmarineState self();
+    SubmarineState self();
 
-	EnvironmentSnapshot environment();
+    EnvironmentSnapshot environment();
 
-	/** Passive sonar detections this tick (bearing + signal excess, no range). */
-	default List<SonarContact> sonarContacts() {
-		return List.of();
-	}
+    /**
+     * Passive sonar detections this tick (bearing + signal excess, no range).
+     */
+    default List<SonarContact> sonarContacts() {
+        return List.of();
+    }
 
-	/** Active sonar returns from own ping, if any (bearing + range). */
-	default List<SonarContact> activeSonarReturns() {
-		return List.of();
-	}
+    /**
+     * Active sonar returns from own ping, if any (bearing + range).
+     */
+    default List<SonarContact> activeSonarReturns() {
+        return List.of();
+    }
 
-	/** Ticks until next active ping is allowed. 0 = ready. */
-	default int activeSonarCooldownTicks() {
-		return 0;
-	}
+    /**
+     * Ticks until next active ping is allowed. 0 = ready.
+     */
+    default int activeSonarCooldownTicks() {
+        return 0;
+    }
 
-	/** Explosions heard this tick (detonations that occurred on the previous tick). */
-	default List<ExplosionEvent> explosionEvents() {
-		return List.of();
-	}
+    /**
+     * Explosions heard this tick (detonations that occurred on the previous tick).
+     */
+    default List<ExplosionEvent> explosionEvents() {
+        return List.of();
+    }
 }

@@ -223,6 +223,7 @@ To test your controller in combat without running a full competition,
 write a JUnit test using `SimulationLoop` directly:
 
 ```java
+
 @Test
 void mySubVsDefault() {
     long seed = 0x1e001; // use a known seed, or try several
@@ -250,12 +251,18 @@ void mySubVsDefault() {
             }
             if (tick >= 30_000) sim.stop(); // 10 minutes
         }
-        @Override public void onMatchEnd() {}
+
+        @Override
+        public void onMatchEnd() {
+        }
     };
 
     var thread = new Thread(() -> sim.run(world, controllers, configs, listener));
     thread.start();
-    try { thread.join(60_000); } catch (InterruptedException e) {}
+    try {
+        thread.join(60_000);
+    } catch (InterruptedException e) {
+    }
     sim.stop();
 }
 ```

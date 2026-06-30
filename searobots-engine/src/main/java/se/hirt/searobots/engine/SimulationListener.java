@@ -31,7 +31,7 @@ package se.hirt.searobots.engine;
 import java.util.List;
 
 public interface SimulationListener {
-	void onTick(long tick, List<SubmarineSnapshot> submarines, List<TorpedoSnapshot> torpedoes);
+    void onTick(long tick, List<SubmarineSnapshot> submarines, List<TorpedoSnapshot> torpedoes);
 
-	void onMatchEnd();
+    void onMatchEnd();
 }
