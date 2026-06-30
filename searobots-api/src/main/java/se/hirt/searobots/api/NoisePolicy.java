@@ -29,13 +29,9 @@
 package se.hirt.searobots.api;
 
 /**
- * Noise discipline policy for a strategic waypoint. The autopilot
- * translates this into throttle limits; the strategic layer does
- * not set throttle directly.
+ * Noise discipline policy for a strategic waypoint. The autopilot translates this into throttle limits; the strategic
+ * layer does not set throttle directly.
  */
 public enum NoisePolicy {
-    SILENT,
-    QUIET,
-    NORMAL,
-    SPRINT
+	SILENT, QUIET, NORMAL, SPRINT
 }

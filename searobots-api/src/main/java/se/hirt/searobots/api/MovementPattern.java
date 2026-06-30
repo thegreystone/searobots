@@ -32,7 +32,5 @@ package se.hirt.searobots.api;
  * Movement pattern describing how the submarine moves toward a waypoint.
  */
 public enum MovementPattern {
-    DIRECT,
-    ZIGZAG_TMA,
-    SPRINT_DRIFT
+	DIRECT, ZIGZAG_TMA, SPRINT_DRIFT
 }

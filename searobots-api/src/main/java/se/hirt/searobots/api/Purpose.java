@@ -29,15 +29,8 @@
 package se.hirt.searobots.api;
 
 /**
- * The tactical purpose of a strategic waypoint: why the submarine
- * is heading to this position.
+ * The tactical purpose of a strategic waypoint: why the submarine is heading to this position.
  */
 public enum Purpose {
-    PATROL,
-    INVESTIGATE,
-    PING_POSITION,
-    STEALTH_TRANSIT,
-    INTERCEPT,
-    EVADE,
-    RALLY
+	PATROL, INVESTIGATE, PING_POSITION, STEALTH_TRANSIT, INTERCEPT, EVADE, RALLY
 }

@@ -24,7 +24,7 @@ Manager (which was used by the original simulator).
 Participants submit programs that control autonomous submarines and their
 torpedoes in a real-time simulation. Matches are fully replayable in a 3D viewer.
 
-Right now two subs are being built by Claude and Codex (with some human guidance, 
+Right now two subs are being built by Claude and Codex (with some human guidance,
 help and patience). They are also the two submarines that will battle by default.
 
 ---
@@ -76,49 +76,49 @@ mvn exec:exec -pl searobots-viewer
 
 **Simulation:**
 
-| Key | Action |
-|-----|--------|
-| Space | New random map |
-| P | Pause / resume |
-| N | Step one tick (when paused) |
-| 1-5 | Speed: 1x, 2x, 4x, 8x, 16x |
-| 0 | Maximum speed |
-| F2 | Configure simulation (ship picker, seed) |
-| F3 | Render settings (water, fog, lighting) |
-| F11 | Maximize window |
-| Esc | Menu (quit, restart) |
+| Key   | Action                                   |
+|-------|------------------------------------------|
+| Space | New random map                           |
+| P     | Pause / resume                           |
+| N     | Step one tick (when paused)              |
+| 1-5   | Speed: 1x, 2x, 4x, 8x, 16x               |
+| 0     | Maximum speed                            |
+| F2    | Configure simulation (ship picker, seed) |
+| F3    | Render settings (water, fog, lighting)   |
+| F11   | Maximize window                          |
+| Esc   | Menu (quit, restart)                     |
 
 **Camera:**
 
-| Key | Action |
-|-----|--------|
-| V | Cycle camera mode (Orbit, Chase, Target, Periscope, Free Look, Fly-by, Director) |
-| Tab | Cycle between entities (subs + torpedoes). In Director mode, exits to Orbit. |
-| Mouse drag | Orbit / pan (in Orbit and Free Look modes) |
-| Scroll | Zoom (in Orbit and Free Look modes) |
+| Key        | Action                                                                           |
+|------------|----------------------------------------------------------------------------------|
+| V          | Cycle camera mode (Orbit, Chase, Target, Periscope, Free Look, Fly-by, Director) |
+| Tab        | Cycle between entities (subs + torpedoes). In Director mode, exits to Orbit.     |
+| Mouse drag | Orbit / pan (in Orbit and Free Look modes)                                       |
+| Scroll     | Zoom (in Orbit and Free Look modes)                                              |
 
 **Overlays:**
 
-| Key | Action |
-|-----|--------|
-| M | Toggle 2D map overlay |
-| T | Toggle trails |
-| R | Toggle route visualization |
-| E | Toggle contact estimates |
-| W | Toggle waypoints |
-| G | Toggle strategic waypoints |
-| B | Toggle collision volumes |
-| I | Toggle score details |
-| D | Pause on sub death |
-| F | Pause on firing solution |
-| L | Pause on torpedo launch |
+| Key | Action                     |
+|-----|----------------------------|
+| M   | Toggle 2D map overlay      |
+| T   | Toggle trails              |
+| R   | Toggle route visualization |
+| E   | Toggle contact estimates   |
+| W   | Toggle waypoints           |
+| G   | Toggle strategic waypoints |
+| B   | Toggle collision volumes   |
+| I   | Toggle score details       |
+| D   | Pause on sub death         |
+| F   | Pause on firing solution   |
+| L   | Pause on torpedo launch    |
 
 **Clipboard:**
 
-| Key | Action |
-|-----|--------|
+| Key    | Action                         |
+|--------|--------------------------------|
 | Ctrl+C | Copy current seed to clipboard |
-| Ctrl+V | Paste seed (in F2 dialog) |
+| Ctrl+V | Paste seed (in F2 dialog)      |
 
 #### Camera Modes
 
@@ -308,7 +308,8 @@ searobots/
 
 ### Writing a New Controller
 
-For now, submarines have to be implemented in Java. In a later version, a network protocol will be introduced so that submarines can be implemented in any language. 
+For now, submarines have to be implemented in Java. In a later version, a network protocol will be introduced so that
+submarines can be implemented in any language.
 
 1. Create a class implementing `SubmarineController` in a new subpackage
    under `se.hirt.searobots.engine.ships`.

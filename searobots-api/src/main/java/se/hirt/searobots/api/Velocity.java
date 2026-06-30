@@ -29,15 +29,14 @@
 package se.hirt.searobots.api;
 
 /**
- * Linear and angular velocity in the body frame.
- * Linear: (surge, sway, heave) in m/s.
- * Angular: (roll rate, pitch rate, yaw rate) in rad/s.
+ * Linear and angular velocity in the body frame. Linear: (surge, sway, heave) in m/s. Angular: (roll rate, pitch rate,
+ * yaw rate) in rad/s.
  */
 public record Velocity(Vec3 linear, Vec3 angular) {
 
-    public static final Velocity ZERO = new Velocity(Vec3.ZERO, Vec3.ZERO);
+	public static final Velocity ZERO = new Velocity(Vec3.ZERO, Vec3.ZERO);
 
-    public double speed() {
-        return linear.length();
-    }
+	public double speed() {
+		return linear.length();
+	}
 }

@@ -30,28 +30,30 @@ package se.hirt.searobots.api;
 
 public sealed interface BattleArea {
 
-    record Circular(double radius) implements BattleArea {}
+	record Circular(double radius) implements BattleArea {
+	}
 
-    record Rectangular(double halfWidth, double halfHeight) implements BattleArea {}
+	record Rectangular(double halfWidth, double halfHeight) implements BattleArea {
+	}
 
-    default boolean contains(double x, double y) {
-        return switch (this) {
-            case Circular(var r) -> x * x + y * y <= r * r;
-            case Rectangular(var hw, var hh) -> Math.abs(x) <= hw && Math.abs(y) <= hh;
-        };
-    }
+	default boolean contains(double x, double y) {
+		return switch (this) {
+			case Circular(var r) -> x * x + y * y <= r * r;
+			case Rectangular(var hw, var hh) -> Math.abs(x) <= hw && Math.abs(y) <= hh;
+		};
+	}
 
-    default double distanceToBoundary(double x, double y) {
-        return switch (this) {
-            case Circular(var r) -> r - Math.sqrt(x * x + y * y);
-            case Rectangular(var hw, var hh) -> Math.min(hw - Math.abs(x), hh - Math.abs(y));
-        };
-    }
+	default double distanceToBoundary(double x, double y) {
+		return switch (this) {
+			case Circular(var r) -> r - Math.sqrt(x * x + y * y);
+			case Rectangular(var hw, var hh) -> Math.min(hw - Math.abs(x), hh - Math.abs(y));
+		};
+	}
 
-    default double extent() {
-        return switch (this) {
-            case Circular(var r) -> r;
-            case Rectangular(var hw, var hh) -> Math.sqrt(hw * hw + hh * hh);
-        };
-    }
+	default double extent() {
+		return switch (this) {
+			case Circular(var r) -> r;
+			case Rectangular(var hw, var hh) -> Math.sqrt(hw * hw + hh * hh);
+		};
+	}
 }
