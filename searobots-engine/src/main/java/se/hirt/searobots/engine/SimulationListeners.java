@@ -26,19 +26,37 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
-package se.hirt.searobots.engine.ships.codex;
+package se.hirt.searobots.engine;
 
-import se.hirt.searobots.api.SubmarineController;
-import se.hirt.searobots.engine.WorldNavigationTest;
+import java.util.List;
 
-class CodexWorldNavigationTest extends WorldNavigationTest {
-	@Override
-	protected SubmarineController createController() {
-		return new CodexAttackSub();
+/** Factory methods for combining {@link SimulationListener}s. */
+public final class SimulationListeners {
+
+	private SimulationListeners() {
 	}
 
-	@Override
-	protected String controllerName() {
-		return "CodexAttackSub";
+	/**
+	 * Returns a listener that forwards every callback to each of the given listeners in order. The
+	 * {@link SimulationLoop} accepts only one listener, so this is how a match can be recorded (e.g. with a
+	 * {@code ReplayWriter}) while it is also rendered by a viewer.
+	 */
+	public static SimulationListener composite(SimulationListener... listeners) {
+		List<SimulationListener> copy = List.of(listeners);
+		return new SimulationListener() {
+			@Override
+			public void onTick(long tick, List<SubmarineSnapshot> submarines, List<TorpedoSnapshot> torpedoes) {
+				for (var l : copy) {
+					l.onTick(tick, submarines, torpedoes);
+				}
+			}
+
+			@Override
+			public void onMatchEnd() {
+				for (var l : copy) {
+					l.onMatchEnd();
+				}
+			}
+		};
 	}
 }

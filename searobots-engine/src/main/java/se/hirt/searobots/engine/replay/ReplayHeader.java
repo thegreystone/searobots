@@ -26,19 +26,53 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
-package se.hirt.searobots.engine.ships.codex;
+package se.hirt.searobots.engine.replay;
 
-import se.hirt.searobots.api.SubmarineController;
-import se.hirt.searobots.engine.WorldNavigationTest;
+import se.hirt.searobots.api.BattleArea;
 
-class CodexWorldNavigationTest extends WorldNavigationTest {
-	@Override
-	protected SubmarineController createController() {
-		return new CodexAttackSub();
-	}
+import java.util.List;
 
-	@Override
-	protected String controllerName() {
-		return "CodexAttackSub";
+/**
+ * Match-level metadata parsed from a replay file's header lines.
+ *
+ * @param formatVersion
+ * 		the format version from line 1 of the file
+ * @param seed
+ * 		world seed
+ * @param tickRateHz
+ * 		simulation tick rate
+ * @param durationTicks
+ * 		configured match duration in ticks
+ * @param startingHp
+ * 		starting hull points
+ * @param crushDepth
+ * 		crush depth (meters, negative)
+ * @param ratedDepth
+ * 		rated depth (meters, negative)
+ * @param battleArea
+ * 		arena shape
+ * @param submarines
+ * 		submarine definitions (id, name, color, spawn)
+ */
+public record ReplayHeader(int formatVersion, long seed, int tickRateHz, long durationTicks, int startingHp,
+                           double crushDepth, double ratedDepth, BattleArea battleArea, List<SubDef> submarines) {
+
+	/**
+	 * A submarine's identity, fixed for the whole match.
+	 *
+	 * @param id
+	 * 		engine id
+	 * @param name
+	 * 		display name
+	 * @param colorRgb
+	 * 		ARGB color (as from {@link java.awt.Color#getRGB()})
+	 * @param spawnX
+	 * 		spawn X
+	 * @param spawnY
+	 * 		spawn Y
+	 * @param spawnZ
+	 * 		spawn Z
+	 */
+	public record SubDef(int id, String name, int colorRgb, double spawnX, double spawnY, double spawnZ) {
 	}
 }
