@@ -29,42 +29,39 @@
 package se.hirt.searobots.api;
 
 public interface SubmarineController {
-    /**
-     * Short display name for this controller, shown in the viewer HUD
-     * and match logs. Keep it brief (under 20 characters).
-     */
-    default String name() {
-        return getClass().getSimpleName();
-    }
+	/**
+	 * Short display name for this controller, shown in the viewer HUD and match logs. Keep it brief (under 20
+	 * characters).
+	 */
+	default String name() {
+		return getClass().getSimpleName();
+	}
 
-    default void onMatchStart(MatchContext context) {
-    }
+	default void onMatchStart(MatchContext context) {
+	}
 
-    void onTick(SubmarineInput input, SubmarineOutput output);
+	void onTick(SubmarineInput input, SubmarineOutput output);
 
-    default void onMatchEnd(MatchResult result) {
-    }
+	default void onMatchEnd(MatchResult result) {
+	}
 
-    /**
-     * Creates the torpedo controller to use for torpedoes launched by this
-     * submarine. Return null to use the default SimpleTorpedoController.
-     * Called once per torpedo launch.
-     */
-    default TorpedoController createTorpedoController() {
-        return null;
-    }
+	/**
+	 * Creates the torpedo controller to use for torpedoes launched by this submarine. Return null to use the default
+	 * SimpleTorpedoController. Called once per torpedo launch.
+	 */
+	default TorpedoController createTorpedoController() {
+		return null;
+	}
 
-    /**
-     * Sets mandatory navigation objectives. When set, the controller MUST
-     * navigate to these waypoints in order before generating its own patrol
-     * waypoints. The objectives are not replanned or overridden until all
-     * have been reached.
-     *
-     * <p>Called after {@link #onMatchStart} but before the first tick.
-     * Used by the competition framework and test harnesses.
-     *
-     * @param objectives ordered list of waypoints to navigate to
-     */
-    default void setObjectives(java.util.List<StrategicWaypoint> objectives) {
-    }
+	/**
+	 * Sets mandatory navigation objectives. When set, the controller MUST navigate to these waypoints in order before
+	 * generating its own patrol waypoints. The objectives are not replanned or overridden until all have been reached.
+	 * <p>Called after {@link #onMatchStart} but before the first tick.
+	 * Used by the competition framework and test harnesses.
+	 *
+	 * @param objectives
+	 * 		ordered list of waypoints to navigate to
+	 */
+	default void setObjectives(java.util.List<StrategicWaypoint> objectives) {
+	}
 }

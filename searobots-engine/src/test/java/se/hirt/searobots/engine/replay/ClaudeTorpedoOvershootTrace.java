@@ -33,26 +33,17 @@ import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 import se.hirt.searobots.api.MatchConfig;
 import se.hirt.searobots.api.SubmarineController;
 import se.hirt.searobots.api.VehicleConfig;
-import se.hirt.searobots.engine.SimulationListener;
-import se.hirt.searobots.engine.SimulationLoop;
-import se.hirt.searobots.engine.SubmarineSnapshot;
-import se.hirt.searobots.engine.TorpedoSnapshot;
-import se.hirt.searobots.engine.WorldGenerator;
+import se.hirt.searobots.engine.*;
 import se.hirt.searobots.engine.ships.claude.ClaudeAttackSub;
 import se.hirt.searobots.engine.ships.codex.CodexAttackSub;
 
-import java.util.ArrayList;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Locale;
-import java.util.Map;
+import java.util.*;
 
 /**
- * Fine-grained endgame trace of overshooting Claude torpedoes, to study whether
- * the continuously-calculated impact point is doing its job. For each torpedo,
- * every tick inside 800m of the TRUE target it records the geometry, then prints
- * the window around closest point of approach (CPA) for the torpedoes that
- * overshoot (CPA in 30..200m). Columns:
+ * Fine-grained endgame trace of overshooting Claude torpedoes, to study whether the continuously-calculated impact
+ * point is doing its job. For each torpedo, every tick inside 800m of the TRUE target it records the geometry, then
+ * prints the window around closest point of approach (CPA) for the torpedoes that overshoot (CPA in 30..200m).
+ * Columns:
  * <pre>
  *   t       tick
  *   ph      guidance phase (TRA/ACQ/TER)
@@ -66,143 +57,148 @@ import java.util.Map;
  *   missStr rTrue*sin(hdgErr): perpendicular miss if it flies straight (m)
  *   losRate d(los)/dt (deg/s): crossing rate the guidance must null
  * </pre>
- * A growing missStr / saturating losRate near CPA means the geometry outran the
- * torpedo's turn rate (control limit). A large intErr means the impact-point
- * prediction itself was bad (lead/prediction limit).
+ * A growing missStr / saturating losRate near CPA means the geometry outran the torpedo's turn rate (control limit). A
+ * large intErr means the impact-point prediction itself was bad (lead/prediction limit).
  */
 @EnabledIfSystemProperty(named = "searobots.diag", matches = "true")
 class ClaudeTorpedoOvershootTrace {
 
-    private static final long[] SEEDS = {8, 13};
-    private static final int MAX_TICKS = 30_000;
-    private static final int CLAUDE = 1;
-    private static final double ENDGAME_RANGE = 800.0;
+	private static final long[] SEEDS = {8, 13};
+	private static final int MAX_TICKS = 30_000;
+	private static final int CLAUDE = 1;
+	private static final double ENDGAME_RANGE = 800.0;
 
-    private record Sample(long t, String phase, double spd, double rTrue, double rEst, double estErr,
-                          double intErr, double losDeg, double hdgErrDeg, double missStraight, double losRateDeg) {}
+	private record Sample(long t, String phase, double spd, double rTrue, double rEst, double estErr, double intErr,
+	                      double losDeg, double hdgErrDeg, double missStraight, double losRateDeg) {
+	}
 
-    private static final class Torp {
-        final List<Sample> samples = new ArrayList<>();
-        double prevLos = Double.NaN;
-        long prevTick = -1;
-        boolean detonated;
-    }
+	private static final class Torp {
+		final List<Sample> samples = new ArrayList<>();
+		double prevLos = Double.NaN;
+		long prevTick = -1;
+		boolean detonated;
+	}
 
-    @Test
-    void traceOvershoots() {
-        for (long seed : SEEDS) {
-            Map<Integer, Torp> torps = runSeed(seed);
-            for (var e : torps.entrySet()) {
-                Torp t = e.getValue();
-                if (t.samples.isEmpty())
-                    continue;
-                // CPA = sample with min rTrue
-                int cpa = 0;
-                for (int i = 1; i < t.samples.size(); i++)
-                    if (t.samples.get(i).rTrue() < t.samples.get(cpa).rTrue())
-                        cpa = i;
-                double cpaRange = t.samples.get(cpa).rTrue();
-                System.out.printf(Locale.US, "  [seed %d torp %d] CPA=%.0fm detonated=%s%n",
-                        seed, e.getKey(), cpaRange, t.detonated);
-                boolean overshoot = cpaRange >= 30 && cpaRange <= 200 && !(t.detonated && cpaRange < 35);
-                if (!overshoot)
-                    continue;
-                System.out.printf(Locale.US,
-                        "%n===== seed %d torp %d : OVERSHOOT, CPA=%.0fm at t=%d (detonated=%s) =====%n",
-                        seed, e.getKey(), cpaRange, t.samples.get(cpa).t(), t.detonated);
-                System.out.println(
-                        "      t   ph   spd  rTrue  rEst estErr intErr   los hdgErr missStr losRate");
-                // Full endgame: coarse (every 15 ticks) until the last ~120 ticks, then every tick.
-                int to = Math.min(t.samples.size() - 1, cpa + 12);
-                for (int i = 0; i <= to; i++) {
-                    boolean fine = i >= cpa - 24;
-                    if (!fine && (i % 15 != 0))
-                        continue;
-                    Sample s = t.samples.get(i);
-                    String mark = i == cpa ? " <CPA" : "";
-                    System.out.printf(Locale.US,
-                            "  %7d  %3s %5.1f %6.0f %5.0f %5.0f %6.0f %5.0f %6.1f %7.1f %7.1f%s%n",
-                            s.t(), s.phase(), s.spd(), s.rTrue(), s.rEst(), s.estErr(), s.intErr(),
-                            s.losDeg(), s.hdgErrDeg(), s.missStraight(), s.losRateDeg(), mark);
-                }
-            }
-        }
-    }
+	@Test
+	void traceOvershoots() {
+		for (long seed : SEEDS) {
+			Map<Integer, Torp> torps = runSeed(seed);
+			for (var e : torps.entrySet()) {
+				Torp t = e.getValue();
+				if (t.samples.isEmpty())
+					continue;
+				// CPA = sample with min rTrue
+				int cpa = 0;
+				for (int i = 1; i < t.samples.size(); i++)
+					if (t.samples.get(i).rTrue() < t.samples.get(cpa).rTrue())
+						cpa = i;
+				double cpaRange = t.samples.get(cpa).rTrue();
+				System.out.printf(Locale.US, "  [seed %d torp %d] CPA=%.0fm detonated=%s%n", seed, e.getKey(), cpaRange,
+						t.detonated);
+				boolean overshoot = cpaRange >= 30 && cpaRange <= 200 && !(t.detonated && cpaRange < 35);
+				if (!overshoot)
+					continue;
+				System.out.printf(Locale.US,
+						"%n===== seed %d torp %d : OVERSHOOT, CPA=%.0fm at t=%d (detonated=%s) =====%n", seed,
+						e.getKey(), cpaRange, t.samples.get(cpa).t(), t.detonated);
+				System.out.println("      t   ph   spd  rTrue  rEst estErr intErr   los hdgErr missStr losRate");
+				// Full endgame: coarse (every 15 ticks) until the last ~120 ticks, then every tick.
+				int to = Math.min(t.samples.size() - 1, cpa + 12);
+				for (int i = 0; i <= to; i++) {
+					boolean fine = i >= cpa - 24;
+					if (!fine && (i % 15 != 0))
+						continue;
+					Sample s = t.samples.get(i);
+					String mark = i == cpa ? " <CPA" : "";
+					System.out.printf(Locale.US, "  %7d  %3s %5.1f %6.0f %5.0f %5.0f %6.0f %5.0f %6.1f %7.1f %7.1f%s%n",
+							s.t(), s.phase(), s.spd(), s.rTrue(), s.rEst(), s.estErr(), s.intErr(), s.losDeg(),
+							s.hdgErrDeg(), s.missStraight(), s.losRateDeg(), mark);
+				}
+			}
+		}
+	}
 
-    private Map<Integer, Torp> runSeed(long seed) {
-        MatchConfig base = MatchConfig.withDefaults(seed);
-        MatchConfig config = new MatchConfig(base.worldSeed(), base.tickRateHz(), MAX_TICKS, base.submarineCount(),
-                base.torpedoCount(), base.startingHp(), base.blastRadius(), base.minFuseRadius(), base.maxFuseRadius(),
-                base.ratedDepth(), base.crushDepth(), base.battleArea(), base.terrainMarginMeters(),
-                base.gridCellMeters(), base.minSeaFloorZ(), base.maxSeaFloorZ(), base.maxSubSpeed(), base.startTime());
+	private Map<Integer, Torp> runSeed(long seed) {
+		MatchConfig base = MatchConfig.withDefaults(seed);
+		MatchConfig config = new MatchConfig(base.worldSeed(), base.tickRateHz(), MAX_TICKS, base.submarineCount(),
+				base.torpedoCount(), base.startingHp(), base.blastRadius(), base.minFuseRadius(), base.maxFuseRadius(),
+				base.ratedDepth(), base.crushDepth(), base.battleArea(), base.terrainMarginMeters(),
+				base.gridCellMeters(), base.minSeaFloorZ(), base.maxSeaFloorZ(), base.maxSubSpeed(), base.startTime());
 
-        var world = new WorldGenerator().generate(config);
-        var sim = new SimulationLoop();
-        sim.setSpeedMultiplier(1e9);
+		var world = new WorldGenerator().generate(config);
+		var sim = new SimulationLoop();
+		sim.setSpeedMultiplier(1e9);
 
-        List<SubmarineController> controllers = List.of(new CodexAttackSub(), new ClaudeAttackSub());
-        List<VehicleConfig> vehicles = List.of(VehicleConfig.submarine(), VehicleConfig.submarine());
+		List<SubmarineController> controllers = List.of(new CodexAttackSub(), new ClaudeAttackSub());
+		List<VehicleConfig> vehicles = List.of(VehicleConfig.submarine(), VehicleConfig.submarine());
 
-        Map<Integer, Torp> torps = new LinkedHashMap<>();
-        var listener = new SimulationListener() {
-            @Override
-            public void onTick(long tick, List<SubmarineSnapshot> subs, List<TorpedoSnapshot> ts) {
-                SubmarineSnapshot enemy = null;
-                for (var s : subs)
-                    if (s.id() != CLAUDE)
-                        enemy = s;
-                if (enemy == null)
-                    return;
-                double ex = enemy.pose().position().x(), ey = enemy.pose().position().y();
-                for (var torp : ts) {
-                    if (torp.ownerId() != CLAUDE)
-                        continue;
-                    var px = torp.pose().position().x();
-                    var py = torp.pose().position().y();
-                    double rTrue = Math.hypot(px - ex, py - ey);
-                    Torp t = torps.computeIfAbsent(torp.id(), k -> new Torp());
-                    if (torp.detonated())
-                        t.detonated = true;
-                    double los = norm(Math.atan2(ex - px, ey - py));
-                    double losRateDeg = 0;
-                    if (!Double.isNaN(t.prevLos) && t.prevTick >= 0 && tick > t.prevTick) {
-                        double d = los - t.prevLos;
-                        while (d > Math.PI) d -= 2 * Math.PI;
-                        while (d < -Math.PI) d += 2 * Math.PI;
-                        losRateDeg = Math.toDegrees(d / ((tick - t.prevTick) / 50.0));
-                    }
-                    t.prevLos = los;
-                    t.prevTick = tick;
-                    if (rTrue > ENDGAME_RANGE)
-                        continue;
-                    double hdg = torp.pose().heading();
-                    double hdgErr = los - hdg;
-                    while (hdgErr > Math.PI) hdgErr -= 2 * Math.PI;
-                    while (hdgErr < -Math.PI) hdgErr += 2 * Math.PI;
-                    double estErr = Math.hypot(torp.diagEstX() - ex, torp.diagEstY() - ey);
-                    double intErr = Math.hypot(torp.diagIntX() - ex, torp.diagIntY() - ey);
-                    double rEst = Math.hypot(px - torp.diagEstX(), py - torp.diagEstY());
-                    String ph = switch (torp.diagPhase() == null ? "" : torp.diagPhase()) {
-                        case "TRANSIT" -> "TRA";
-                        case "ACQUISITION" -> "ACQ";
-                        case "TERMINAL" -> "TER";
-                        default -> "?";
-                    };
-                    t.samples.add(new Sample(tick, ph, torp.speed(), rTrue, rEst, estErr, intErr,
-                            Math.toDegrees(los), Math.toDegrees(hdgErr), rTrue * Math.sin(hdgErr), losRateDeg));
-                }
-            }
+		Map<Integer, Torp> torps = new LinkedHashMap<>();
+		var listener = new SimulationListener() {
+			@Override
+			public void onTick(long tick, List<SubmarineSnapshot> subs, List<TorpedoSnapshot> ts) {
+				SubmarineSnapshot enemy = null;
+				for (var s : subs)
+					if (s.id() != CLAUDE)
+						enemy = s;
+				if (enemy == null)
+					return;
+				double ex = enemy.pose().position().x(), ey = enemy.pose().position().y();
+				for (var torp : ts) {
+					if (torp.ownerId() != CLAUDE)
+						continue;
+					var px = torp.pose().position().x();
+					var py = torp.pose().position().y();
+					double rTrue = Math.hypot(px - ex, py - ey);
+					Torp t = torps.computeIfAbsent(torp.id(), k -> new Torp());
+					if (torp.detonated())
+						t.detonated = true;
+					double los = norm(Math.atan2(ex - px, ey - py));
+					double losRateDeg = 0;
+					if (!Double.isNaN(t.prevLos) && t.prevTick >= 0 && tick > t.prevTick) {
+						double d = los - t.prevLos;
+						while (d > Math.PI)
+							d -= 2 * Math.PI;
+						while (d < -Math.PI)
+							d += 2 * Math.PI;
+						losRateDeg = Math.toDegrees(d / ((tick - t.prevTick) / 50.0));
+					}
+					t.prevLos = los;
+					t.prevTick = tick;
+					if (rTrue > ENDGAME_RANGE)
+						continue;
+					double hdg = torp.pose().heading();
+					double hdgErr = los - hdg;
+					while (hdgErr > Math.PI)
+						hdgErr -= 2 * Math.PI;
+					while (hdgErr < -Math.PI)
+						hdgErr += 2 * Math.PI;
+					double estErr = Math.hypot(torp.diagEstX() - ex, torp.diagEstY() - ey);
+					double intErr = Math.hypot(torp.diagIntX() - ex, torp.diagIntY() - ey);
+					double rEst = Math.hypot(px - torp.diagEstX(), py - torp.diagEstY());
+					String ph = switch (torp.diagPhase() == null ? "" : torp.diagPhase()) {
+						case "TRANSIT" -> "TRA";
+						case "ACQUISITION" -> "ACQ";
+						case "TERMINAL" -> "TER";
+						default -> "?";
+					};
+					t.samples.add(new Sample(tick, ph, torp.speed(), rTrue, rEst, estErr, intErr, Math.toDegrees(los),
+							Math.toDegrees(hdgErr), rTrue * Math.sin(hdgErr), losRateDeg));
+				}
+			}
 
-            @Override
-            public void onMatchEnd() {}
-        };
-        sim.run(world, controllers, vehicles, listener);
-        return torps;
-    }
+			@Override
+			public void onMatchEnd() {
+			}
+		};
+		sim.run(world, controllers, vehicles, listener);
+		return torps;
+	}
 
-    private static double norm(double a) {
-        while (a < 0) a += 2 * Math.PI;
-        while (a >= 2 * Math.PI) a -= 2 * Math.PI;
-        return a;
-    }
+	private static double norm(double a) {
+		while (a < 0)
+			a += 2 * Math.PI;
+		while (a >= 2 * Math.PI)
+			a -= 2 * Math.PI;
+		return a;
+	}
 }

@@ -29,14 +29,19 @@
 package se.hirt.searobots.api;
 
 /**
- * An explosion heard by a submarine, delivered via {@link SubmarineInput#explosionEvents()}
- * on the tick following the detonation.
+ * An explosion heard by a submarine, delivered via {@link SubmarineInput#explosionEvents()} on the tick following the
+ * detonation.
  *
- * @param bearing      bearing from this submarine to the explosion, in radians (0=north, clockwise)
- * @param rangeMetres  distance to the explosion centre, in metres
- * @param ownTorpedo   true if this submarine fired the torpedo that detonated
- * @param torpedoId    ID of the torpedo that detonated
- * @param submarineHit true if the proximity fuse triggered on a submarine hull (vs terrain/fuel/manual)
+ * @param bearing
+ * 		bearing from this submarine to the explosion, in radians (0=north, clockwise)
+ * @param rangeMetres
+ * 		distance to the explosion centre, in metres
+ * @param ownTorpedo
+ * 		true if this submarine fired the torpedo that detonated
+ * @param torpedoId
+ * 		ID of the torpedo that detonated
+ * @param submarineHit
+ * 		true if the proximity fuse triggered on a submarine hull (vs terrain/fuel/manual)
  */
 public record ExplosionEvent(double bearing, double rangeMetres, boolean ownTorpedo, int torpedoId,
                              boolean submarineHit) {
