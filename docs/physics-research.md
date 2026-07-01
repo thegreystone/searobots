@@ -17,6 +17,7 @@ M * v_dot + C(v) * v + D(v) * v + g(eta) = tau
 ```
 
 Where:
+
 - **M**: inertia matrix (rigid body + added mass)
 - **C(v)**: Coriolis-centripetal matrix
 - **D(v)**: damping matrix (linear + quadratic terms)
@@ -39,6 +40,7 @@ Provides tables of added mass coefficients (X_u_dot, Y_v_dot,
 Z_w_dot, etc.) and working Matlab code.
 
 Key data for scaling to game-sized submarine (30m hull, 6m beam):
+
 - Added mass scales roughly with diameter squared and length
 - X_u_dot (surge added mass) ~ 0.5x dry mass for slender body
 - Y_v_dot (sway added mass) ~ 1.5x dry mass (blunt cross-section)
@@ -75,10 +77,11 @@ The most transparent game for studying submarine physics: almost
 everything is controlled by editable text files.
 
 **Movement model:**
+
 - `AccelerationRate` and `DecelerationRate` per vessel
 - Key insight: **deceleration is 4-10x slower than acceleration**
-  - Alfa-class: AccelerationRate=0.35, DecelerationRate=0.08
-  - Stingray: AccelerationRate=0.34, DecelerationRate=0.08
+    - Alfa-class: AccelerationRate=0.35, DecelerationRate=0.08
+    - Stingray: AccelerationRate=0.34, DecelerationRate=0.08
 - This asymmetry creates the "heavy" feeling. A sub takes minutes to
   reach flank speed, but coasting from flank to stop takes
   substantially longer.
@@ -86,12 +89,14 @@ everything is controlled by editable text files.
   effect"
 
 **Turning:**
+
 - `RudderTurnRate` and `TurnRate` per vessel
 - Alfa-class: RudderTurnRate=1, TurnRate=2.8
 - `PivotPointTurning=0.256` appears consistently
 - Rudder damage significantly increases turn radius
 
 **Torpedoes:**
+
 - Wire-guided with real-time control while wire intact
 - Launch speed limit: above ~20-25 knots causes tube malfunction
 - Settings: Sensor (Passive/Active), Search (Straight/Snake),
@@ -99,6 +104,7 @@ everything is controlled by editable text files.
 - A 50-knot torpedo needs ~213 seconds to travel 6000 yards
 
 **Cavitation:**
+
 - Formula: `cavitation_depth = 20 * speed_knots - 100`
 - Every 5 knots extra = 100 feet less depth margin
 
@@ -109,6 +115,7 @@ Sweet spot between accessibility and simulation.
 ### Silent Hunter III (Ubisoft, 2005)
 
 **Movement:**
+
 - "The friction of moving through the water will eventually slow you
   down, but your U-boat will continue to travel for a while even after
   ordering a full stop."
@@ -116,6 +123,7 @@ Sweet spot between accessibility and simulation.
 - Speed parameters in config: `eng_power` and `max_speed` sections
 
 **What it gets right:**
+
 - Adjustable realism (auto-targeting to full manual TDC)
 - Damaged ship physics are impressive
 - The manual torpedo data computer creates deep engagement
@@ -124,12 +132,14 @@ Sweet spot between accessibility and simulation.
 ### UBOAT (Deep Water Studio, 2019)
 
 **Turning circle data** (Type VIIC from uboatarchive.net):
+
 - Surface: 270-230m depending on speed
 - Submerged: 280-180m depending on speed
 - At 32-degree rudder: ~250m turning radius
 - At slowest speed: 180m (tighter because less momentum)
 
 **Ballast tank simulation:**
+
 - Flooding opens vents on top, air escapes, water rushes in
 - "Adjust Ballast" command trims to neutral buoyancy
 - Compressed air effectiveness decreases with depth: at 100m (10
@@ -139,6 +149,7 @@ Sweet spot between accessibility and simulation.
 - Crash dive: 30-40 seconds (historical was 25-30 seconds)
 
 **Community feedback:**
+
 - Submarines should not stop "dead still": waves, currents, and wind
   cause drift. Static stop feels wrong.
 - "Turning quickly requires a lot of water flowing over the rudders":
@@ -147,6 +158,7 @@ Sweet spot between accessibility and simulation.
 ### Barotrauma (Undertow Games/FakeFish, 2019)
 
 **Unique depth model:**
+
 - Horizontal movement via engines, vertical via ballast pumps
 - Most subs: ~40 km/h horizontal, rarely >20 km/h vertical
 - Terminal upward velocity: ~15 m/s for ALL submarines (can't fill
@@ -288,32 +300,33 @@ produced unrealistic "handbrake" deceleration and no sense of inertia.
 
 **Chosen scale: WW2-era attack submarine**
 
-| Parameter | Old | New | Reference |
-|-----------|-----|-----|-----------|
-| Hull length | 30m | 65m | Type VIIC: 67m |
-| Hull beam | 6m | 8m | Type VIIC: 6.2m (slightly wider for gameplay) |
-| Dry mass | 8,000 kg | 700,000 kg | Type VIIC: 770 tons surfaced |
-| Added mass (surge) | n/a | 350,000 kg | ~50% of dry mass for slender hull |
-| Effective mass | 8,000 kg | 1,050,000 kg | Dry + added mass |
-| Drag coefficient | 530 | ~3,864 | 0.5 * rho * Cd * frontalArea |
-| Max thrust | 120,000 N | ~870,000 N | For ~15 m/s top speed |
-| Arena radius | 5,000m | 7,000m | Room for long-range torpedo combat |
+| Parameter          | Old       | New          | Reference                                     |
+|--------------------|-----------|--------------|-----------------------------------------------|
+| Hull length        | 30m       | 65m          | Type VIIC: 67m                                |
+| Hull beam          | 6m        | 8m           | Type VIIC: 6.2m (slightly wider for gameplay) |
+| Dry mass           | 8,000 kg  | 700,000 kg   | Type VIIC: 770 tons surfaced                  |
+| Added mass (surge) | n/a       | 350,000 kg   | ~50% of dry mass for slender hull             |
+| Effective mass     | 8,000 kg  | 1,050,000 kg | Dry + added mass                              |
+| Drag coefficient   | 530       | ~3,864       | 0.5 * rho * Cd * frontalArea                  |
+| Max thrust         | 120,000 N | ~870,000 N   | For ~15 m/s top speed                         |
+| Arena radius       | 5,000m    | 7,000m       | Room for long-range torpedo combat            |
 
 **Resulting behavior:**
 
-| Maneuver | Time |
-|----------|------|
-| 0 to cruise (8 m/s) | ~11 seconds |
-| 0 to flank (15 m/s) | ~37 seconds |
-| Cruise coast (neutral) to half speed | ~20 seconds |
-| Flank coast (neutral) to half speed | ~14 seconds |
-| Full coast to near-stop | ~60+ seconds |
-| Turn radius at cruise | ~224m |
-| Turn radius at flank | ~306m |
+| Maneuver                             | Time         |
+|--------------------------------------|--------------|
+| 0 to cruise (8 m/s)                  | ~11 seconds  |
+| 0 to flank (15 m/s)                  | ~37 seconds  |
+| Cruise coast (neutral) to half speed | ~20 seconds  |
+| Flank coast (neutral) to half speed  | ~14 seconds  |
+| Full coast to near-stop              | ~60+ seconds |
+| Turn radius at cruise                | ~224m        |
+| Turn radius at flank                 | ~306m        |
 
 **Engine clutch mechanic:**
 
 Three propulsion states:
+
 - Engine engaged + throttle: normal powered operation, machinery noise
 - Engine engaged + throttle zero: engine braking, prop acts as brake,
   faster deceleration, some machinery noise

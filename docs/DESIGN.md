@@ -96,21 +96,21 @@ The orchestrator manages participant isolation and match lifecycle.
   back to the engine.
 - Establishes the TCP connection between the engine and the guest agent.
 - Enforces hard resource limits on the VM:
-  - CPU quota (shared across submarine + all torpedo processes)
-  - Memory ceiling
-  - Process/thread cap
-  - Read-only root filesystem, ephemeral scratch only
-  - No outbound network access (except the engine connection)
+    - CPU quota (shared across submarine + all torpedo processes)
+    - Memory ceiling
+    - Process/thread cap
+    - Read-only root filesystem, ephemeral scratch only
+    - No outbound network access (except the engine connection)
 - Terminates participants on resource violation or protocol breach.
 - Schedules matches, collects results, destroys sandboxes.
 
 Recommended isolation tiers (strongest first):
 
-| Tier | Technology | Notes |
-|------|-----------|-------|
-| Strongest | MicroVM / Kata Containers | Hardware-virtualisation backed |
-| Good | gVisor | Userspace kernel interposition |
-| Minimum | Hardened Docker (seccomp + AppArmor + cgroups) | Acceptable for trusted environments |
+| Tier      | Technology                                     | Notes                               |
+|-----------|------------------------------------------------|-------------------------------------|
+| Strongest | MicroVM / Kata Containers                      | Hardware-virtualisation backed      |
+| Good      | gVisor                                         | Userspace kernel interposition      |
+| Minimum   | Hardened Docker (seccomp + AppArmor + cgroups) | Acceptable for trusted environments |
 
 ### Participant Process (Untrusted)
 
@@ -208,20 +208,20 @@ rules. These are communicated to the submarine via `MatchContext` in
 
 Key configurable parameters:
 
-| Parameter | Description | Example |
-|-----------|-------------|---------|
-| Torpedo count | Total torpedoes per submarine | 3–8 |
-| Decoy count | Countermeasure decoys per submarine | 3 |
+| Parameter       | Description                                         | Example                 |
+|-----------------|-----------------------------------------------------|-------------------------|
+| Torpedo count   | Total torpedoes per submarine                       | 3–8                     |
+| Decoy count     | Countermeasure decoys per submarine                 | 3                       |
 | Vehicle configs | Per-participant vehicle type and physics parameters | submarine, surface ship |
-| Tick rate | Simulation ticks per second | 20–50 Hz |
-| Match duration | Maximum ticks before draw | 6000 (2 min at 50 Hz) |
-| World seed | Procedural generation seed | random long |
-| Blast radius | Torpedo explosion radius | 50 m |
-| Max fuse radius | Upper bound on configurable fuse radius | 30 m |
-| Min fuse radius | Lower bound on configurable fuse radius | 5 m |
-| Starting HP | Hit points per submarine | 200 |
-| Rated depth | Submarine's rated max operating depth | −400 m |
-| Crush depth | Absolute hull failure: instant destruction | −700 m |
+| Tick rate       | Simulation ticks per second                         | 20–50 Hz                |
+| Match duration  | Maximum ticks before draw                           | 6000 (2 min at 50 Hz)   |
+| World seed      | Procedural generation seed                          | random long             |
+| Blast radius    | Torpedo explosion radius                            | 50 m                    |
+| Max fuse radius | Upper bound on configurable fuse radius             | 30 m                    |
+| Min fuse radius | Lower bound on configurable fuse radius             | 5 m                     |
+| Starting HP     | Hit points per submarine                            | 200                     |
+| Rated depth     | Submarine's rated max operating depth               | −400 m                  |
+| Crush depth     | Absolute hull failure: instant destruction          | −700 m                  |
 
 The torpedo count is a deliberate balance lever. Low counts (e.g. 3)
 create a tense, conservative game where every launch must count. High
@@ -365,47 +365,47 @@ public interface TorpedoOutput {
 
 **Sensors received:**
 
-| Sensor | Description |
-|--------|-------------|
-| Pose | Position, orientation |
-| Velocity | Linear and angular velocity |
-| Sonar (passive) | Contacts with bearing, speed, signal excess, measurement uncertainty (**no FFI**) |
-| Sonar (active ping) | Bearing + range with measurement uncertainty, but reveals own position (**no FFI**) |
-| Own torpedo positions | Exact position of all own active torpedoes (see below) |
-| Environment | Water temperature, pressure, current at own position |
-| Damage | Current hit points, damage events |
-| Weapons | Torpedoes remaining (of match-configured total) |
+| Sensor                | Description                                                                         |
+|-----------------------|-------------------------------------------------------------------------------------|
+| Pose                  | Position, orientation                                                               |
+| Velocity              | Linear and angular velocity                                                         |
+| Sonar (passive)       | Contacts with bearing, speed, signal excess, measurement uncertainty (**no FFI**)   |
+| Sonar (active ping)   | Bearing + range with measurement uncertainty, but reveals own position (**no FFI**) |
+| Own torpedo positions | Exact position of all own active torpedoes (see below)                              |
+| Environment           | Water temperature, pressure, current at own position                                |
+| Damage                | Current hit points, damage events                                                   |
+| Weapons               | Torpedoes remaining (of match-configured total)                                     |
 
 **Always available (from match start):**
 
-| Information | Source |
-|-------------|--------|
-| Sea floor heightmap | `MatchContext`: full terrain topology |
-| Thermal layer depths | `MatchContext`: thermocline boundaries |
-| Current field | `MatchContext`: depth-varying current map |
-| Own position, heading, depth | `SubmarineState` every tick |
-| Own torpedo positions | Telemetry in `SubmarineInput` every tick |
-| Torpedoes remaining | `SubmarineState` every tick |
+| Information                  | Source                                    |
+|------------------------------|-------------------------------------------|
+| Sea floor heightmap          | `MatchContext`: full terrain topology     |
+| Thermal layer depths         | `MatchContext`: thermocline boundaries    |
+| Current field                | `MatchContext`: depth-varying current map |
+| Own position, heading, depth | `SubmarineState` every tick               |
+| Own torpedo positions        | Telemetry in `SubmarineInput` every tick  |
+| Torpedoes remaining          | `SubmarineState` every tick               |
 
 **Never available directly:**
 
-| Information | How to obtain |
-|-------------|--------------|
-| Enemy positions | Sonar only (bearing + signal strength) |
-| Enemy count or identity | Cannot (no FFI) |
-| Contact type (sub vs torpedo) | Cannot (no FFI) |
+| Information                   | How to obtain                          |
+|-------------------------------|----------------------------------------|
+| Enemy positions               | Sonar only (bearing + signal strength) |
+| Enemy count or identity       | Cannot (no FFI)                        |
+| Contact type (sub vs torpedo) | Cannot (no FFI)                        |
 
 **Actuators:**
 
-| Actuator | Range | Description |
-|----------|-------|-------------|
-| Rudder | \[-1.0, 1.0\] | Yaw control |
-| Stern planes | \[-1.0, 1.0\] | Pitch/depth control |
-| Throttle | \[0.0, 1.0\] | Engine power |
-| Ballast | \[0.0, 1.0\] | Buoyancy control |
-| Launch torpedo | (action) | Issues a `TorpedoLaunchCommand` |
-| Launch decoy | (action) | Deploys a noisemaker countermeasure in a direction |
-| Active sonar ping | (action) | Triggers a ping (reveals own position) |
+| Actuator          | Range         | Description                                        |
+|-------------------|---------------|----------------------------------------------------|
+| Rudder            | \[-1.0, 1.0\] | Yaw control                                        |
+| Stern planes      | \[-1.0, 1.0\] | Pitch/depth control                                |
+| Throttle          | \[0.0, 1.0\]  | Engine power                                       |
+| Ballast           | \[0.0, 1.0\]  | Buoyancy control                                   |
+| Launch torpedo    | (action)      | Issues a `TorpedoLaunchCommand`                    |
+| Launch decoy      | (action)      | Deploys a noisemaker countermeasure in a direction |
+| Active sonar ping | (action)      | Triggers a ping (reveals own position)             |
 
 *(See `SubmarineOutput` in the Control Model section for the Java
 interface.)*
@@ -532,6 +532,7 @@ confuse incoming torpedoes and provide a defensive option separate from
 the offensive torpedo inventory.
 
 **Decoy characteristics:**
+
 - Launched in a specified direction via `SubmarineOutput.launchDecoy(double bearing)`.
 - Travel in a straight line at moderate speed, making noise.
 - No guidance, no sonar, no controller. Fire-and-forget noisemakers.
@@ -546,6 +547,7 @@ to deploy one is a tradeoff: save it and try to evade with maneuvers
 only 3 per match).
 
 Effective decoy use requires timing:
+
 - Deploy too early: the torpedo may not have acquired the decoy, wasted.
 - Deploy too late: the torpedo is too close to be drawn away.
 - Deploy in the right geometry: the decoy should be between you and the
@@ -577,13 +579,13 @@ practice.
 
 **Actuators:**
 
-| Actuator | Range | Description |
-|----------|-------|-------------|
-| Rudder | \[-1.0, 1.0\] | Yaw control |
-| Planes | \[-1.0, 1.0\] | Pitch/depth control |
-| Throttle | \[0.0, 1.0\] | Engine power |
-| Active sonar ping | (action) | Triggers a ping (indistinguishable from submarine ping) |
-| Detonate | (action) | Manual detonation command (armed torpedoes only) |
+| Actuator          | Range         | Description                                             |
+|-------------------|---------------|---------------------------------------------------------|
+| Rudder            | \[-1.0, 1.0\] | Yaw control                                             |
+| Planes            | \[-1.0, 1.0\] | Pitch/depth control                                     |
+| Throttle          | \[0.0, 1.0\]  | Engine power                                            |
+| Active sonar ping | (action)      | Triggers a ping (indistinguishable from submarine ping) |
+| Detonate          | (action)      | Manual detonation command (armed torpedoes only)        |
 
 *(See `TorpedoOutput` in the Control Model section for the Java
 interface.)*
@@ -594,6 +596,7 @@ uses quadratic falloff: `(1 - d/r)²`, where d is distance and r is
 blast radius. Impulse is physics-driven: the force vector goes from
 the blast center to the submarine's center of mass, so the direction
 of the blast relative to the submarine matters:
+
 - Blast below pushes up (and possibly into the surface).
 - Blast to port shoves starboard and induces roll.
 - Blast behind accelerates forward.
@@ -728,16 +731,16 @@ only the routing layer differs.
 
 **Engine ↔ Guest Agent (TCP, multiplexed):**
 
-| Message | Direction | Contents |
-|---------|-----------|----------|
-| `MATCH_START` | Engine → Agent | Match metadata, world parameters |
-| `SUBMARINE_INPUT` | Engine → Agent | Tick, deadline, sub state, sonar, own torpedo positions |
-| `SUBMARINE_OUTPUT` | Agent → Engine | Sub actuators, optional launch command |
-| `SPAWN_TORPEDO` | Engine → Agent | Torpedo ID, launch parameters; agent spawns new process |
-| `TORPEDO_INPUT` | Engine → Agent | Torpedo ID, tick, deadline, torpedo state, sonar |
-| `TORPEDO_OUTPUT` | Agent → Engine | Torpedo ID, torpedo actuators |
-| `DESTROY_TORPEDO` | Engine → Agent | Torpedo ID; agent kills the process |
-| `MATCH_END` | Engine → Agent | Match result, final scores |
+| Message            | Direction      | Contents                                                |
+|--------------------|----------------|---------------------------------------------------------|
+| `MATCH_START`      | Engine → Agent | Match metadata, world parameters                        |
+| `SUBMARINE_INPUT`  | Engine → Agent | Tick, deadline, sub state, sonar, own torpedo positions |
+| `SUBMARINE_OUTPUT` | Agent → Engine | Sub actuators, optional launch command                  |
+| `SPAWN_TORPEDO`    | Engine → Agent | Torpedo ID, launch parameters; agent spawns new process |
+| `TORPEDO_INPUT`    | Engine → Agent | Torpedo ID, tick, deadline, torpedo state, sonar        |
+| `TORPEDO_OUTPUT`   | Agent → Engine | Torpedo ID, torpedo actuators                           |
+| `DESTROY_TORPEDO`  | Engine → Agent | Torpedo ID; agent kills the process                     |
+| `MATCH_END`        | Engine → Agent | Match result, final scores                              |
 
 **Guest Agent ↔ Controller processes (Unix domain sockets):**
 
@@ -748,11 +751,11 @@ other processes.
 
 ### Timeout Behaviour
 
-| Entity | On missed deadline |
-|--------|--------------------|
-| Submarine | Previous actuator settings remain active |
-| Each torpedo (independently) | Previous actuator settings remain active |
-| New torpedo launches | Ignored: launch commands must arrive in time |
+| Entity                       | On missed deadline                           |
+|------------------------------|----------------------------------------------|
+| Submarine                    | Previous actuator settings remain active     |
+| Each torpedo (independently) | Previous actuator settings remain active     |
+| New torpedo launches         | Ignored: launch commands must arrive in time |
 
 Because each torpedo is a separate process with its own Unix socket, a
 slow torpedo does not block the submarine or other torpedoes; each
@@ -784,12 +787,12 @@ The SDK detects whether it is running as a submarine or torpedo process
 
 Each process (submarine or torpedo) runs the same SDK structure:
 
-| Thread | Responsibility |
-|--------|---------------|
-| Network reader | Reads framed TCP messages |
-| Tick coordinator | Tracks current tick, deadline, staleness |
+| Thread            | Responsibility                                   |
+|-------------------|--------------------------------------------------|
+| Network reader    | Reads framed TCP messages                        |
+| Tick coordinator  | Tracks current tick, deadline, staleness         |
 | Controller thread | Invokes `onTick()` on the appropriate controller |
-| Network writer | Sends actuator packets |
+| Network writer    | Sends actuator packets                           |
 
 The public API is **single-callback-at-a-time** by default. The SDK
 manages concurrency internally.
@@ -846,6 +849,7 @@ M · ν̇ + C(ν) · ν + D(ν) · ν + g(η) = τ
 ```
 
 Where:
+
 - **η**: position and orientation in the world frame
 - **ν**: linear and angular velocity in the body frame
 - **M**: system inertia (rigid-body + added mass, diagonal approximation)
@@ -860,14 +864,14 @@ stability.
 
 ### Simplifications for the Game
 
-| Component | Simplified model |
-|-----------|-----------------|
-| Added mass | Diagonal approximation (6 coefficients) |
-| Damping | Linear + quadratic diagonal + key cross-terms |
-| Control surfaces | Linear lift slope with stall limit |
-| Propulsion | Thrust as function of throttle, first-order lag |
-| Ballast | Net buoyancy variable with rate limit |
-| Currents | Depth-varying 2D current field |
+| Component        | Simplified model                                |
+|------------------|-------------------------------------------------|
+| Added mass       | Diagonal approximation (6 coefficients)         |
+| Damping          | Linear + quadratic diagonal + key cross-terms   |
+| Control surfaces | Linear lift slope with stall limit              |
+| Propulsion       | Thrust as function of throttle, first-order lag |
+| Ballast          | Net buoyancy variable with rate limit           |
+| Currents         | Depth-varying 2D current field                  |
 
 ### Data-Driven Vehicle Physics (VehicleConfig)
 
@@ -878,11 +882,11 @@ thrust, noise profile, hull dimensions, and vehicle type flags.
 
 Preset configurations:
 
-| Vehicle | Mass | Max Speed | Hull | Key traits |
-|---------|------|-----------|------|------------|
-| Submarine | 700 tons | ~15 m/s | 65m x 8m | Full depth control, ballast, quiet at low speed |
-| Surface ship | 5000 tons | ~8 m/s | 150m x 30m | Surface-locked, very loud, no depth control |
-| Torpedo | 300 kg | ~25 m/s | small | No ballast, minimum speed to maintain depth, 180s fuel |
+| Vehicle      | Mass      | Max Speed | Hull       | Key traits                                             |
+|--------------|-----------|-----------|------------|--------------------------------------------------------|
+| Submarine    | 700 tons  | ~15 m/s   | 65m x 8m   | Full depth control, ballast, quiet at low speed        |
+| Surface ship | 5000 tons | ~8 m/s    | 150m x 30m | Surface-locked, very loud, no depth control            |
+| Torpedo      | 300 kg    | ~25 m/s   | small      | No ballast, minimum speed to maintain depth, 180s fuel |
 
 **Surface-locked vehicles** stay at z=0. The physics skips pitch
 updates, ballast processing, and vertical dynamics. Terrain collisions
@@ -944,14 +948,14 @@ see. They can only listen, and occasionally shout.
 
 Every entity emits noise based on its current state:
 
-| Source | Noise level | Notes |
-|--------|-------------|-------|
-| Engine / throttle | **Primary**, proportional to throttle | Cut engines = go quiet |
-| Cavitation | High speed only, above a threshold | Speed and loud; unavoidable at high throttle |
-| Hull flow | Low, proportional to speed² | Present even when gliding with engines off |
-| Ballast changes | Transient burst | Blowing/flooding tanks is noisy |
-| Torpedo launch | Loud transient | Reveals position momentarily |
-| Active sonar ping | **Very loud**, long range | Heard by everyone, precise bearing |
+| Source            | Noise level                           | Notes                                        |
+|-------------------|---------------------------------------|----------------------------------------------|
+| Engine / throttle | **Primary**, proportional to throttle | Cut engines = go quiet                       |
+| Cavitation        | High speed only, above a threshold    | Speed and loud; unavoidable at high throttle |
+| Hull flow         | Low, proportional to speed²           | Present even when gliding with engines off   |
+| Ballast changes   | Transient burst                       | Blowing/flooding tanks is noisy              |
+| Torpedo launch    | Loud transient                        | Reveals position momentarily                 |
+| Active sonar ping | **Very loud**, long range             | Heard by everyone, precise bearing           |
 
 **Key gameplay consequence:** noise comes primarily from the **engine**,
 not from speed. A submarine that sprints to build speed, then cuts
@@ -973,12 +977,12 @@ Detection requires SE > 5 dB
 Submarines have base SL = 90 dB + 2 dB per m/s of speed. Under ideal
 conditions (no thermocline, no terrain), detection ranges are:
 
-| Target | Listener | Max Range |
-|--------|----------|-----------|
-| Patrol (3 m/s, 96 dB) | Patrol (3 m/s) | ~1 km |
-| Moderate (5 m/s, 100 dB) | Slow (1 m/s) | ~6 km |
-| Sprinting (10 m/s, 110 dB) | Patrol (3 m/s) | ~25 km |
-| Torpedo (25 m/s, 140 dB) | Anyone | Arena-wide |
+| Target                     | Listener       | Max Range  |
+|----------------------------|----------------|------------|
+| Patrol (3 m/s, 96 dB)      | Patrol (3 m/s) | ~1 km      |
+| Moderate (5 m/s, 100 dB)   | Slow (1 m/s)   | ~6 km      |
+| Sprinting (10 m/s, 110 dB) | Patrol (3 m/s) | ~25 km     |
+| Torpedo (25 m/s, 140 dB)   | Anyone         | Arena-wide |
 
 Speed asymmetry is critical: a slow listener detects much further than
 a fast one. Going slow is the primary tactical advantage for detection.
@@ -1018,9 +1022,9 @@ powerful but costly action:
 - **Everyone hears the ping**: all entities get a precise bearing to
   the pinger at long range.
 - **The pinger gets returns** with much better information:
-  - Bearing (high accuracy).
-  - Range (from time-of-flight, good accuracy).
-  - Possibly a rough signature / size.
+    - Bearing (high accuracy).
+    - Range (from time-of-flight, good accuracy).
+    - Possibly a rough signature / size.
 - Returns are still **no FFI**: you know something is there, not what
   it is.
 - Terrain blocks active sonar: a ping won't find something behind a
@@ -1150,18 +1154,18 @@ it gets.
 - **Rated depth** (e.g. −400 m): the submarine's design limit. Above
   this, no depth-related effects. Below this, things start going wrong.
 - **Between rated depth and crush depth** (−400 m to −700 m):
-  - **Hull stress damage:** the submarine takes HP damage each tick,
-    proportional to how far past rated depth it is. Mild near the
-    boundary, severe deeper down.
-  - **Implosion risk:** each tick below rated depth has a probability
-    of **catastrophic implosion** (instant destruction). The
-    probability increases with both **excess depth** and
-    **accumulated time** below rated depth. A quick dive to −450 m
-    and back up is a calculated risk. Lingering at −600 m is playing
-    Russian roulette.
-  - The engine tracks accumulated hull stress per submarine. Stress
-    builds while below rated depth and slowly recovers above it.
-    Multiple deep dives without recovery between them are cumulative.
+    - **Hull stress damage:** the submarine takes HP damage each tick,
+      proportional to how far past rated depth it is. Mild near the
+      boundary, severe deeper down.
+    - **Implosion risk:** each tick below rated depth has a probability
+      of **catastrophic implosion** (instant destruction). The
+      probability increases with both **excess depth** and
+      **accumulated time** below rated depth. A quick dive to −450 m
+      and back up is a calculated risk. Lingering at −600 m is playing
+      Russian roulette.
+    - The engine tracks accumulated hull stress per submarine. Stress
+      builds while below rated depth and slowly recovers above it.
+      Multiple deep dives without recovery between them are cumulative.
 - **Crush depth** (e.g. −700 m): **instant destruction**, no chance of
   survival. The hull implodes regardless of HP or stress history.
 - **Terrain goes deeper** than crush depth (e.g. −900 m). Deep
@@ -1285,17 +1289,17 @@ SeaRobots assumes participant code may be **actively malicious**.
 
 ### Threat Model
 
-| Threat | Mitigation |
-|--------|-----------|
-| Fork/thread bombs | Process/thread limits via cgroups |
-| Memory exhaustion | Hard memory ceiling |
-| Busy loops | Per-tick wall-clock deadline; CPU quota |
-| stdout/stderr spam | Output size limits |
-| File probing | Read-only root FS, no access beyond scratch |
-| Network callbacks / exfiltration | No outbound network (only engine socket) |
-| JNI / native library escapes | Disallowed in submissions |
-| Deserialization attacks | Engine never deserializes untrusted Java objects |
-| Host kernel exploits | VM-backed isolation for adversarial tournaments |
+| Threat                           | Mitigation                                       |
+|----------------------------------|--------------------------------------------------|
+| Fork/thread bombs                | Process/thread limits via cgroups                |
+| Memory exhaustion                | Hard memory ceiling                              |
+| Busy loops                       | Per-tick wall-clock deadline; CPU quota          |
+| stdout/stderr spam               | Output size limits                               |
+| File probing                     | Read-only root FS, no access beyond scratch      |
+| Network callbacks / exfiltration | No outbound network (only engine socket)         |
+| JNI / native library escapes     | Disallowed in submissions                        |
+| Deserialization attacks          | Engine never deserializes untrusted Java objects |
+| Host kernel exploits             | VM-backed isolation for adversarial tournaments  |
 
 ### Submission Restrictions
 
