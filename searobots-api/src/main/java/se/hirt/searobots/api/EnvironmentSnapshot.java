@@ -30,7 +30,5 @@ package se.hirt.searobots.api;
 
 import java.util.List;
 
-public record EnvironmentSnapshot(TerrainMap terrain,
-                                  List<ThermalLayer> thermalLayers,
-                                  CurrentField currentField) {
+public record EnvironmentSnapshot(TerrainMap terrain, List<ThermalLayer> thermalLayers, CurrentField currentField) {
 }
