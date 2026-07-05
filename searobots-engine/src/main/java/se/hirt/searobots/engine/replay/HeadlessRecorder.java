@@ -31,12 +31,7 @@ package se.hirt.searobots.engine.replay;
 import se.hirt.searobots.api.MatchConfig;
 import se.hirt.searobots.api.SubmarineController;
 import se.hirt.searobots.api.VehicleConfig;
-import se.hirt.searobots.engine.SimulationListener;
-import se.hirt.searobots.engine.SimulationListeners;
-import se.hirt.searobots.engine.SimulationLoop;
-import se.hirt.searobots.engine.SubmarineSnapshot;
-import se.hirt.searobots.engine.TorpedoSnapshot;
-import se.hirt.searobots.engine.WorldGenerator;
+import se.hirt.searobots.engine.*;
 import se.hirt.searobots.engine.ships.claude.ClaudeAttackSub;
 import se.hirt.searobots.engine.ships.codex.CodexAttackSub;
 
@@ -63,8 +58,8 @@ public final class HeadlessRecorder {
 	public static void main(String[] args) throws IOException {
 		long seed = args.length > 0 ? Long.parseLong(args[0]) : 13L;
 		int duration = args.length > 1 ? Integer.parseInt(args[1]) : DEFAULT_DURATION;
-		Path out = args.length > 2 ? Path.of(args[2])
-				: Path.of("replays", "headless-" + Long.toHexString(seed) + ".srl");
+		Path out =
+				args.length > 2 ? Path.of(args[2]) : Path.of("replays", "headless-" + Long.toHexString(seed) + ".srl");
 
 		MatchConfig config = withDuration(MatchConfig.withDefaults(seed), duration);
 		var world = new WorldGenerator().generate(config);

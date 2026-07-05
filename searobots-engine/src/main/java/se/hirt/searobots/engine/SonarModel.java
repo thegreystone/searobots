@@ -235,8 +235,8 @@ public final class SonarModel {
 	 * Active sonar return: does the ping illuminate the target? Returns contact or null.
 	 */
 	private SonarContact activeDetect(
-			double lx, double ly, double lz, double lSLdB, double lSonarOffset, double sx, double sy, double sz,
-			double sSpeed, TerrainMap terrain, List<ThermalLayer> thermalLayers) {
+			double lx, double ly, double lz, double lSLdB, double lSonarOffset, double sx,
+			double sy, double sz, double sSpeed, TerrainMap terrain, List<ThermalLayer> thermalLayers) {
 		double distance = Math.sqrt((sx - lx) * (sx - lx) + (sy - ly) * (sy - ly) + (sz - lz) * (sz - lz));
 		if (distance < 1.0)
 			distance = 1.0;

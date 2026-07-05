@@ -166,8 +166,8 @@ public final class ReplayReader {
 	/**
 	 * Reads the entire match into memory as a list of {@link ReplayFrame}s, one per recorded tick. This is what enables
 	 * a {@link ReplayPlayer} to walk the match under viewer control (pause / step / speed / fast-forward), including
-	 * jumping straight to a later frame. A full match is ~120k frames of small snapshot lists, which fits comfortably in
-	 * memory.
+	 * jumping straight to a later frame. A full match is ~120k frames of small snapshot lists, which fits comfortably
+	 * in memory.
 	 */
 	public List<ReplayFrame> readAll() throws IOException {
 		List<ReplayFrame> frames = new ArrayList<>();

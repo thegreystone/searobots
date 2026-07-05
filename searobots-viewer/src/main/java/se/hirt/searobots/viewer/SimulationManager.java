@@ -30,11 +30,7 @@ package se.hirt.searobots.viewer;
 
 import se.hirt.searobots.api.*;
 import se.hirt.searobots.engine.*;
-import se.hirt.searobots.engine.replay.ReplayFrame;
-import se.hirt.searobots.engine.replay.ReplayHeader;
-import se.hirt.searobots.engine.replay.ReplayPlayer;
-import se.hirt.searobots.engine.replay.ReplayReader;
-import se.hirt.searobots.engine.replay.ReplayWriter;
+import se.hirt.searobots.engine.replay.*;
 
 import java.io.IOException;
 import java.nio.file.Path;
@@ -242,7 +238,8 @@ final class SimulationManager {
 	 */
 	SimulationListener recorderFor(GeneratedWorld world) {
 		try {
-			String name = STAMP.format(LocalDateTime.now()) + "-" + Long.toHexString(world.config().worldSeed()) + ".srl";
+			String name = STAMP.format(LocalDateTime.now()) + "-" + Long.toHexString(
+					world.config().worldSeed()) + ".srl";
 			Path file = REPLAY_DIR.resolve(name);
 			var writer = new ReplayWriter(world.config(), world.spawnPoints(), file);
 			System.out.println("Recording match to " + file.toAbsolutePath());

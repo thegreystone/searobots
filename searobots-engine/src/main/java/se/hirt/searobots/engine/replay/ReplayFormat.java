@@ -69,8 +69,8 @@ public final class ReplayFormat {
 	 * Current format version written by {@link ReplayWriter}.
 	 * <p>
 	 * v2 added the firing-solution child line ({@code f}); it is additive (a new tag plus a {@code COLS} declaration),
-	 * so the change is only version-gated because the magic-line check is strict, not because the layout of any existing
-	 * record changed.
+	 * so the change is only version-gated because the magic-line check is strict, not because the layout of any
+	 * existing record changed.
 	 */
 	public static final int VERSION = 2;
 

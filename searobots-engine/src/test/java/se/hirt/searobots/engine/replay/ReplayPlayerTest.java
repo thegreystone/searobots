@@ -36,7 +36,6 @@ import se.hirt.searobots.engine.*;
 import se.hirt.searobots.engine.ships.DefaultAttackSub;
 
 import java.awt.*;
-import java.io.IOException;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;

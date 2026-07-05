@@ -241,7 +241,8 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 		long seed;
 		if (replayPath != null) {
 			try {
-				seed = new se.hirt.searobots.engine.replay.ReplayReader(java.nio.file.Path.of(replayPath)).header().seed();
+				seed = new se.hirt.searobots.engine.replay.ReplayReader(java.nio.file.Path.of(replayPath)).header()
+						.seed();
 			} catch (java.io.IOException e) {
 				System.err.println("Cannot read replay " + replayPath + ": " + e.getMessage());
 				return;
