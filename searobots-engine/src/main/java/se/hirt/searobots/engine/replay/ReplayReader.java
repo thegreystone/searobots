@@ -158,9 +158,35 @@ public final class ReplayReader {
 	 * @return the number of ticks replayed
 	 */
 	public long replay(SimulationListener listener) throws IOException {
+		long ticks = streamFrames(frame -> frame.emit(listener));
+		listener.onMatchEnd();
+		return ticks;
+	}
+
+	/**
+	 * Reads the entire match into memory as a list of {@link ReplayFrame}s, one per recorded tick. This is what enables
+	 * a {@link ReplayPlayer} to walk the match under viewer control (pause / step / speed / fast-forward), including
+	 * jumping straight to a later frame. A full match is ~120k frames of small snapshot lists, which fits comfortably in
+	 * memory.
+	 */
+	public List<ReplayFrame> readAll() throws IOException {
+		List<ReplayFrame> frames = new ArrayList<>();
+		streamFrames(frames::add);
+		return frames;
+	}
+
+	/**
+	 * Parses the file frame by frame, handing each completed frame to {@code sink} in tick order. Bounded to one frame
+	 * of working memory regardless of how the sink accumulates. Does not signal match end; callers decide what that
+	 * means (a listener's {@code onMatchEnd}, or simply the end of the returned list).
+	 *
+	 * @return the number of frames streamed
+	 */
+	private long streamFrames(java.util.function.Consumer<ReplayFrame> sink) throws IOException {
 		Schema subSchema = schemaFor(ReplayFormat.TAG_SUB, ReplayCodec.SUB_COLS);
 		Schema contactSchema = schemaFor(ReplayFormat.TAG_CONTACT, ReplayCodec.CONTACT_COLS);
 		Schema waypointSchema = schemaFor(ReplayFormat.TAG_WAYPOINT, ReplayCodec.WAYPOINT_COLS);
+		Schema firingSchema = schemaFor(ReplayFormat.TAG_FIRING, ReplayCodec.FIRING_COLS);
 		Schema torpedoSchema = schemaFor(ReplayFormat.TAG_TORPEDO, ReplayCodec.TORPEDO_COLS);
 
 		try (BufferedReader r = Files.newBufferedReader(file)) {
@@ -172,7 +198,7 @@ public final class ReplayReader {
 				switch (f[0]) {
 				case ReplayFormat.TAG_TICK -> {
 					if (frame.hasTick) {
-						frame.emit(listener);
+						sink.accept(frame.build());
 						ticks++;
 					}
 					frame.start(Long.parseLong(f[1]));
@@ -180,13 +206,13 @@ public final class ReplayReader {
 				case ReplayFormat.TAG_SUB -> frame.startSub(parseSub(f, subSchema));
 				case ReplayFormat.TAG_CONTACT -> frame.addContact(ReplayCodec.decodeContact(f, contactSchema));
 				case ReplayFormat.TAG_WAYPOINT -> frame.addWaypoint(ReplayCodec.decodeWaypoint(f, waypointSchema));
+				case ReplayFormat.TAG_FIRING -> frame.addFiring(ReplayCodec.decodeFiring(f, firingSchema));
 				case ReplayFormat.TAG_TORPEDO -> frame.addTorpedo(ReplayCodec.decodeTorpedo(f, torpedoSchema));
 				case ReplayFormat.TAG_END -> {
 					if (frame.hasTick) {
-						frame.emit(listener);
+						sink.accept(frame.build());
 						ticks++;
 					}
-					listener.onMatchEnd();
 					return ticks;
 				}
 				default -> {
@@ -195,10 +221,9 @@ public final class ReplayReader {
 				}
 			}
 			if (frame.hasTick) {
-				frame.emit(listener);
+				sink.accept(frame.build());
 				ticks++;
 			}
-			listener.onMatchEnd();
 			return ticks;
 		}
 	}
@@ -262,6 +287,12 @@ public final class ReplayReader {
 			}
 		}
 
+		void addFiring(FiringSolution fs) {
+			if (pending != null) {
+				pending.firingSolution = fs;
+			}
+		}
+
 		void addTorpedo(TorpedoSnapshot t) {
 			finishSub();
 			torps.add(t);
@@ -274,9 +305,9 @@ public final class ReplayReader {
 			}
 		}
 
-		void emit(SimulationListener listener) {
+		ReplayFrame build() {
 			finishSub();
-			listener.onTick(tick, subs, torps);
+			return new ReplayFrame(tick, subs, torps);
 		}
 	}
 
@@ -298,13 +329,14 @@ public final class ReplayReader {
 		String status;
 		boolean pingRequested;
 		int torpedoesRemaining;
+		FiringSolution firingSolution;
 		final List<ContactEstimate> contacts = new ArrayList<>();
 		final List<Waypoint> waypoints = new ArrayList<>();
 
 		SubmarineSnapshot build() {
 			return new SubmarineSnapshot(id, name, pose, velocity, speed, color, forfeited, hp, noiseLevel,
 					sourceLevelDb, throttle, rudder, sternPlanes, status, pingRequested, torpedoesRemaining,
-					List.copyOf(contacts), List.copyOf(waypoints), List.of(), null);
+					List.copyOf(contacts), List.copyOf(waypoints), List.of(), firingSolution);
 		}
 	}
 }

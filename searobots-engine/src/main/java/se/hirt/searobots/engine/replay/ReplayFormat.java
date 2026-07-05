@@ -52,6 +52,7 @@ import java.util.Locale;
  *   s   id ...fixed... status             submarine state (one per sub per frame)
  *   c   ...contact estimate...            child of the preceding s line
  *   w   ...waypoint...                    child of the preceding s line
+ *   f   ...firing solution...             child of the preceding s line (0 or 1)
  *   p   id owner colorRGB ... phase       torpedo state (one per torpedo per frame)
  *   E   reason                            end of match
  * </pre>
@@ -64,8 +65,14 @@ public final class ReplayFormat {
 
 	public static final String MAGIC = "SRREPLAY";
 
-	/** Current format version written by {@link ReplayWriter}. */
-	public static final int VERSION = 1;
+	/**
+	 * Current format version written by {@link ReplayWriter}.
+	 * <p>
+	 * v2 added the firing-solution child line ({@code f}); it is additive (a new tag plus a {@code COLS} declaration),
+	 * so the change is only version-gated because the magic-line check is strict, not because the layout of any existing
+	 * record changed.
+	 */
+	public static final int VERSION = 2;
 
 	public static final String DELIM = "\t";
 
@@ -76,6 +83,7 @@ public final class ReplayFormat {
 	public static final String TAG_SUB = "s";
 	public static final String TAG_CONTACT = "c";
 	public static final String TAG_WAYPOINT = "w";
+	public static final String TAG_FIRING = "f";
 	public static final String TAG_TORPEDO = "p";
 	public static final String TAG_END = "E";
 

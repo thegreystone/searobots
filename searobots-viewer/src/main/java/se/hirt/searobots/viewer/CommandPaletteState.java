@@ -48,6 +48,7 @@ final class CommandPaletteState extends BaseAppState {
 	Runnable onFlatOcean;
 	Runnable onLIsland;
 	Runnable onSeedInput;
+	Runnable onLoadReplay;
 
 	// Toggle state references
 	SimulationManager simManager;
@@ -69,6 +70,7 @@ final class CommandPaletteState extends BaseAppState {
 		addAction(window, "[Space] New random map", onNewMap);
 		addAction(window, "[Ctrl+R] Re-run same seed", onRerun);
 		addAction(window, "[F2] Configure simulation...", onConfigure);
+		addAction(window, "Load latest replay", onLoadReplay);
 
 		window.addChild(new Label("")); // spacer
 		window.addChild(new Label("-- Scenarios --"));

@@ -50,8 +50,8 @@ import static org.junit.jupiter.api.Assertions.*;
  * <p>
  * The key property is <b>lossless against the live match</b>: the stream a {@link ReplayReader} produces must equal the
  * stream the simulation emitted, not merely agree with the writer. Numbers are compared to the format's fixed precision
- * (4 decimals), which is far below any physically meaningful threshold; the {@code strategicWaypoints} and
- * {@code firingSolution} fields are intentionally not captured in format v1 and are excluded from the comparison.
+ * (4 decimals), which is far below any physically meaningful threshold. The {@code firingSolution} is captured (format
+ * v2) and compared; the {@code strategicWaypoints} field is still not captured and is excluded from the comparison.
  */
 class ReplayRoundTripTest {
 
@@ -183,7 +183,8 @@ class ReplayRoundTripTest {
 				List.of(new ContactEstimate(1000.0, 2000.0, 0.7, 0.9, 150.0, 2.5, 7.0, "passive"),
 						new ContactEstimate(1050.0, 1980.0, 0.4, 0.6, 300.0, Double.NaN, -1.0, "")),
 				List.of(new Waypoint(500.0, 600.0, -250.0, true, false),
-						new Waypoint(700.0, 800.0, -250.0, false, true)), List.of(), null);
+						new Waypoint(700.0, 800.0, -250.0, false, true)), List.of(),
+				new FiringSolution(1234.5, -678.25, 2.1, 8.5, 0.85));
 
 		var torp = new TorpedoSnapshot(1001, 0, new Pose(new Vec3(200.0, 300.0, -180.0), 0.75, 0.05, 0.0),
 				new Velocity(new Vec3(23.0, 0.0, 0.5), Vec3.ZERO), 23.0, new Color(255, 80, 80), 220.5, false, true,
@@ -282,6 +283,15 @@ class ReplayRoundTripTest {
 			assertClose(wa.z(), wb.z(), ctx + " wp z");
 			assertEquals(wa.active(), wb.active(), ctx + " wp active");
 			assertEquals(wa.reverse(), wb.reverse(), ctx + " wp reverse");
+		}
+		FiringSolution fa = a.firingSolution(), fb = b.firingSolution();
+		assertEquals(fa == null, fb == null, ctx + " firingSolution presence");
+		if (fa != null) {
+			assertClose(fa.targetX(), fb.targetX(), ctx + " fs targetX");
+			assertClose(fa.targetY(), fb.targetY(), ctx + " fs targetY");
+			assertCloseNaN(fa.targetHeading(), fb.targetHeading(), ctx + " fs targetHeading");
+			assertClose(fa.targetSpeed(), fb.targetSpeed(), ctx + " fs targetSpeed");
+			assertClose(fa.quality(), fb.quality(), ctx + " fs quality");
 		}
 	}
 
