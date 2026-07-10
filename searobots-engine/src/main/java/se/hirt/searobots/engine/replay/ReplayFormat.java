@@ -69,10 +69,18 @@ public final class ReplayFormat {
 	 * Current format version written by {@link ReplayWriter}.
 	 * <p>
 	 * v2 added the firing-solution child line ({@code f}); it is additive (a new tag plus a {@code COLS} declaration),
-	 * so the change is only version-gated because the magic-line check is strict, not because the layout of any
-	 * existing record changed.
+	 * so older files stay readable — see {@link #MIN_READ_VERSION}.
 	 */
 	public static final int VERSION = 2;
+
+	/**
+	 * Oldest format version {@link ReplayReader} accepts. Every version from v1 on has only <em>added</em> record tags
+	 * and columns (v2: the {@code f} firing-solution line), and the reader resolves columns by name from the file's own
+	 * {@code COLS} declarations, so older files decode fine — absent records simply reconstruct as empty/null (a v1
+	 * file yields {@code firingSolution() == null}). Raise this only when a change actually breaks decoding of older
+	 * files.
+	 */
+	public static final int MIN_READ_VERSION = 1;
 
 	public static final String DELIM = "\t";
 

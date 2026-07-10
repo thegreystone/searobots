@@ -75,6 +75,14 @@ writer emits them as `COLS` lines and the reader resolves columns **by name**,
 a reader can still read the common columns of a file written by a later version
 that appended columns. Incompatible changes bump `ReplayFormat.VERSION`.
 
+The reader likewise accepts **older** files, back to `ReplayFormat.MIN_READ_VERSION`
+(currently v1): every version so far has only *added* tags and columns, so absent
+records reconstruct as empty/null — a v1 file simply yields no firing solutions.
+`ReplayRoundTripTest.readsVersion1Files` proves this, and `SampleReplayTest` pins
+the decoder against the committed sample match (`replays/headless-d.srl`) so a
+codec change that breaks files already on disk fails in CI rather than in the
+viewer.
+
 Conceptually each data tag is its own rectangular table; the file interleaves
 them in tick order for streaming replay.
 

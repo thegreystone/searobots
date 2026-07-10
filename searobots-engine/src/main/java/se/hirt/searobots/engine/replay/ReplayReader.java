@@ -88,9 +88,9 @@ public final class ReplayReader {
 				throw new IOException("Not a SeaRobots replay file: " + file);
 			}
 			int version = Integer.parseInt(magic[1]);
-			if (version != ReplayFormat.VERSION) {
+			if (version < ReplayFormat.MIN_READ_VERSION || version > ReplayFormat.VERSION) {
 				throw new IOException(
-						"Unsupported replay format version " + version + " (this build reads version " + ReplayFormat.VERSION + ")");
+						"Unsupported replay format version " + version + " (this build reads versions " + ReplayFormat.MIN_READ_VERSION + ".." + ReplayFormat.VERSION + ")");
 			}
 
 			long seed = 0;
