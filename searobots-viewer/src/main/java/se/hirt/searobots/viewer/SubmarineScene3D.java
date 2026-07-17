@@ -125,6 +125,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 	private BitmapText keysText;
 	private BitmapText loadingText;
 	private BitmapText speedText;
+	private BitmapText replayLabel;           // lower-left "REPLAY: <file>" indicator, clickable to copy path
 	private BitmapText toggleStatusText;
 	private BitmapText competitionScoreText;  // compact score at top
 	private BitmapText competitionPhaseText;  // current phase label below score
@@ -234,16 +235,32 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 	 * Standalone entry point: launches a full JME window (no Swing). Works on macOS with -XstartOnFirstThread.
 	 */
 	public static void main(String[] args) {
-		long seed =
-				args.length > 0 ? Long.parseLong(args[0]) : java.util.concurrent.ThreadLocalRandom.current().nextLong();
+		// A .srl path launches straight into replay of that recorded match; otherwise the
+		// first arg (if any) is a seed for a fresh match.
+		String replayPath = (args.length > 0 && args[0].toLowerCase().endsWith(".srl")) ? args[0] : null;
+		long seed;
+		if (replayPath != null) {
+			try {
+				seed = new se.hirt.searobots.engine.replay.ReplayReader(java.nio.file.Path.of(replayPath)).header()
+						.seed();
+			} catch (java.io.IOException e) {
+				System.err.println("Cannot read replay " + replayPath + ": " + e.getMessage());
+				return;
+			}
+		} else {
+			seed = args.length > 0 ? Long.parseLong(args[0])
+					: java.util.concurrent.ThreadLocalRandom.current().nextLong();
+		}
 
 		var app = new SubmarineScene3D();
 		app.standalone = true;
+		app.replayPath = replayPath;
 
 		var settings = new AppSettings(true);
 		settings.setWidth(1920);
 		settings.setHeight(1080);
-		settings.setTitle("SeaRobots [seed: " + Long.toHexString(seed) + "]");
+		settings.setTitle(replayPath != null ? "SeaRobots [replay: " + new java.io.File(replayPath).getName() + "]"
+				: "SeaRobots [seed: " + Long.toHexString(seed) + "]");
 		settings.setFrameRate(60);
 		settings.setVSync(true);
 		settings.setResizable(true);
@@ -252,7 +269,9 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 		app.setShowSettings(false);
 		app.setPauseOnLostFocus(false);
 
-		// Wire up simulation
+		// Wire up simulation. For a replay the world is regenerated from the header seed
+		// inside SimulationManager.startReplay(); here we just need a world for the initial
+		// setWorld()/MapRenderer wiring.
 		var generator = new se.hirt.searobots.engine.WorldGenerator();
 		var world = generator.generate(se.hirt.searobots.api.MatchConfig.withDefaults(seed));
 		app.standaloneSeed = seed;
@@ -265,6 +284,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 	// Standalone mode state (null/false when embedded in Swing)
 	private boolean standalone;
 	volatile boolean dialogOpen; // suppresses game key mappings when a text-input dialog is open
+	private volatile String replayPath; // non-null when launched to play a recorded .srl match
 	private long standaloneSeed;
 	private se.hirt.searobots.engine.WorldGenerator standaloneGenerator;
 	private volatile GeneratedWorld standaloneWorld;
@@ -441,12 +461,20 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 		speedText.setText("");
 		guiNode.attachChild(speedText);
 
+		// HUD overlay - bottom left: clickable replay-filename indicator (shown only during replay)
+		replayLabel = new BitmapText(guiFont);
+		replayLabel.setSize(guiFont.getCharSet().getRenderedSize());
+		replayLabel.setColor(REPLAY_COLOR.clone());
+		replayLabel.setText("");
+		replayLabel.setCullHint(Spatial.CullHint.Always);
+		guiNode.attachChild(replayLabel);
+
 		// HUD overlay - bottom right: keybindings
 		keysText = new BitmapText(guiFont);
 		keysText.setSize(guiFont.getCharSet().getRenderedSize());
 		keysText.setColor(new ColorRGBA(0.7f, 0.7f, 0.7f, 1f));
 		keysText.setText(
-				"[1-6] Speed  [0] Max  [P] Pause  [N] Step  [F11] Fullscreen\n" + "[Tab] Cycle sub  [V] Camera  [Space] New map  [Esc] Menu\n" + "[T] Trails  [R] Route  [E] Contacts  [W] Waypoints  [G] Strategic\n" + "[B] Collision  [D] Pause death  [F] Pause solution  [L] Pause launch\n" + "[I] Score details  [F2] Config  [F3] Render  [Ctrl+C] Copy seed");
+				"[1-6] Speed  [0] Max  [P] Pause  [N] Step  [.] FFW to event  [F11] Fullscreen\n" + "[Tab] Cycle sub  [V] Camera  [Space] New map  [Esc] Menu\n" + "[T] Trails  [R] Route  [E] Contacts  [W] Waypoints  [G] Strategic\n" + "[B] Collision  [D] Pause death  [F] Pause solution  [L] Pause launch\n" + "[I] Score details  [F2] Config  [F3] Render  [Ctrl+C] Copy seed");
 		float keysWidth = keysText.getLineWidth();
 		float keysHeight = keysText.getHeight();
 		keysText.setLocalTranslation(settings.getWidth() - keysWidth - 10, keysHeight + 10, 0);
@@ -555,11 +583,17 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 			setWorld(standaloneWorld);
 			standaloneSimManager = new SimulationManager();
 			standaloneSimManager.addListener(this);
-			var controllers = SimConfigState.currentControllers();
-			var vehicleConfigs = SimConfigState.currentVehicleConfigs();
-			if (!controllers.isEmpty()) {
-				standaloneSimManager.start(standaloneWorld, controllers, vehicleConfigs);
+			if (replayPath != null) {
+				// Play a recorded match instead of running controllers live.
+				standaloneSimManager.startReplay(java.nio.file.Path.of(replayPath));
 				standaloneSimManager.play();
+			} else {
+				var controllers = SimConfigState.currentControllers();
+				var vehicleConfigs = SimConfigState.currentVehicleConfigs();
+				if (!controllers.isEmpty()) {
+					standaloneSimManager.start(standaloneWorld, controllers, vehicleConfigs);
+					standaloneSimManager.play();
+				}
 			}
 
 			// Register 2D map view with speed/pause suppliers
@@ -603,6 +637,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 			palette.onRerun = this::restartSim;
 			palette.onConfigure = () -> simConfigState.setEnabled(true);
 			palette.onFlatOcean = () -> {
+				replayPath = null;
 				standaloneWorld = se.hirt.searobots.engine.GeneratedWorld.deepFlat();
 				enqueue(() -> {
 					setWorld(standaloneWorld);
@@ -620,6 +655,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 				}
 			};
 			palette.onLIsland = () -> {
+				replayPath = null;
 				standaloneWorld = se.hirt.searobots.engine.GeneratedWorld.lIslandRecovery();
 				enqueue(() -> {
 					setWorld(standaloneWorld);
@@ -642,6 +678,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 				org.lwjgl.glfw.GLFW.glfwSetClipboardString(window, hex);
 				System.out.println("Seed copied to clipboard: " + hex);
 			};
+			palette.onLoadReplay = this::loadLatestReplay;
 			stateManager.attach(palette);
 			palette.setEnabled(false);
 
@@ -760,6 +797,24 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 			}
 		}, "Speed1", "Speed2", "Speed4", "Speed8", "Speed16", "Speed24", "SpeedMax");
 
+		// . : fast-forward to the next pause event. Boost to max speed and unpause; whichever
+		// pause-on-event triggers are enabled (D/F/L) halt playback at the next such event, and
+		// the prior speed is restored automatically. Works identically for live and replay.
+		inputManager.addMapping("FastForwardEvent", new KeyTrigger(KeyInput.KEY_PERIOD));
+		inputManager.addListener((ActionListener) (name, isPressed, tpf) -> {
+			if (!isPressed || dialogOpen)
+				return;
+			var sim = getActiveSim();
+			if (sim == null)
+				return;
+			if (!ffwActive)
+				ffwRestoreSpeed = sim.getSpeedMultiplier();
+			ffwActive = true;
+			sim.setSpeedMultiplier(FFW_MAX_SPEED);
+			sim.setPaused(false);
+			System.out.println("Fast-forward to next pause event (enable pause-on death/solution/launch with D/F/L)");
+		}, "FastForwardEvent");
+
 		// F11: toggle fullscreen
 		inputManager.addMapping("Fullscreen", new KeyTrigger(KeyInput.KEY_F11));
 		inputManager.addListener((ActionListener) (name, isPressed, tpf) -> {
@@ -876,6 +931,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 	}
 
 	private void runFreePatrol() {
+		replayPath = null; // leaving replay for a live match
 		var world = standaloneGenerator.generate(se.hirt.searobots.api.MatchConfig.withDefaults(standaloneSeed));
 		standaloneWorld = world;
 		enqueue(() -> {
@@ -903,7 +959,60 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 		}
 	}
 
+	/**
+	 * Finds the newest {@code .srl} under {@code replays/} and plays it back. Wired to the command palette's "Load
+	 * latest replay" action.
+	 */
+	private void loadLatestReplay() {
+		java.nio.file.Path dir = java.nio.file.Path.of("replays");
+		try (var files = java.nio.file.Files.list(dir)) {
+			var latest = files.filter(p -> p.toString().toLowerCase().endsWith(".srl"))
+					.max(java.util.Comparator.comparingLong(p -> p.toFile().lastModified()));
+			if (latest.isEmpty()) {
+				System.out.println("No replays found in " + dir.toAbsolutePath());
+				return;
+			}
+			loadReplay(latest.get());
+		} catch (java.io.IOException e) {
+			System.out.println("No replays directory yet (" + dir.toAbsolutePath() + ")");
+		}
+	}
+
+	/**
+	 * Switches the running viewer over to replaying a recorded {@code .srl} match. Parsing happens on a background
+	 * thread so the render loop never stalls; the world is regenerated from the header seed for terrain and the map.
+	 */
+	private void loadReplay(java.nio.file.Path srl) {
+		if (activeCompetition != null) {
+			activeCompetition.stopAll();
+			activeCompetition = null;
+		}
+		Thread.ofPlatform().daemon().name("replay-load").start(() -> {
+			var header = standaloneSimManager.startReplay(srl);
+			if (header == null)
+				return;
+			replayPath = srl.toString();
+			standaloneSeed = header.seed();
+			var world = standaloneGenerator.generate(se.hirt.searobots.api.MatchConfig.withDefaults(header.seed()));
+			standaloneWorld = world;
+			if (standaloneMapRenderer != null)
+				standaloneMapRenderer.setWorld(world);
+			enqueue(() -> {
+				competitionScoreText.setText("");
+				competitionPhaseText.setText("");
+				competitionDetailText.setText("");
+				try {
+					long win = org.lwjgl.glfw.GLFW.glfwGetCurrentContext();
+					org.lwjgl.glfw.GLFW.glfwSetWindowTitle(win, "SeaRobots [replay: " + srl.getFileName() + "]");
+				} catch (Exception e) { /* ignore */ }
+				return null;
+			});
+			standaloneSimManager.play();
+		});
+	}
+
 	private void runCompetition() {
+		replayPath = null; // leaving replay for a live competition
 		var names = SimConfigState.currentNames();
 		var factories = SimConfigState.currentFactories();
 		if (factories.size() < 2) {
@@ -1006,9 +1115,77 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 	}
 
 	/**
-	 * Returns the active sim loop (competition or free patrol).
+	 * Fast-forward-to-event: while active, we've boosted the clock to max speed. Once a pause-on-event trigger has
+	 * paused it (or the match ended), restore the speed the user had before.
 	 */
-	private se.hirt.searobots.engine.SimulationLoop getActiveSim() {
+	private void updateFastForward() {
+		if (!ffwActive)
+			return;
+		var sim = getActiveSim();
+		if (sim == null || sim.isPaused() || sim.getState() == se.hirt.searobots.engine.SimulationLoop.State.STOPPED) {
+			if (sim != null)
+				sim.setSpeedMultiplier(ffwRestoreSpeed);
+			ffwActive = false;
+		}
+	}
+
+	/**
+	 * Keeps the lower-left replay indicator in sync: shows "REPLAY: &lt;file&gt;" while a replay is active (hidden
+	 * otherwise), and animates the brief highlight flash triggered by a click.
+	 */
+	private void updateReplayLabel(float tpf) {
+		if (replayLabel == null)
+			return;
+		String rp = replayPath;
+		if (rp == null) {
+			replayLabel.setCullHint(Spatial.CullHint.Always);
+			return;
+		}
+		if (!rp.equals(replayLabelPath)) {
+			replayLabelPath = rp;
+			replayFullPath = new java.io.File(rp).getAbsolutePath();
+			replayLabel.setText("REPLAY: " + new java.io.File(rp).getName());
+		}
+		replayLabel.setCullHint(Spatial.CullHint.Never);
+		replayLabel.setLocalTranslation(12, replayLabel.getHeight() + 10, 0);
+		if (replayFlash > 0) {
+			replayFlash = Math.max(0, replayFlash - tpf);
+			float t = replayFlash / REPLAY_FLASH_DURATION; // 1 at click, fading to 0
+			replayLabel.setColor(REPLAY_COLOR.clone().interpolateLocal(REPLAY_FLASH_COLOR, t));
+		} else {
+			replayLabel.setColor(REPLAY_COLOR.clone());
+		}
+	}
+
+	/** True if the cursor is currently over the visible replay indicator. */
+	private boolean replayLabelHit() {
+		if (replayLabel == null || replayPath == null || replayLabel.getCullHint() == Spatial.CullHint.Always)
+			return false;
+		var cursor = inputManager.getCursorPosition();
+		float tx = replayLabel.getLocalTranslation().x;
+		float ty = replayLabel.getLocalTranslation().y; // top of the text block (jME gui y is up)
+		float w = replayLabel.getLineWidth();
+		float h = replayLabel.getHeight();
+		return cursor.x >= tx && cursor.x <= tx + w && cursor.y >= ty - h && cursor.y <= ty;
+	}
+
+	/** Copies the full replay path to the clipboard and starts the highlight flash. */
+	private void onReplayLabelClicked() {
+		String path = replayFullPath;
+		if (path == null)
+			return;
+		try {
+			long win = org.lwjgl.glfw.GLFW.glfwGetCurrentContext();
+			org.lwjgl.glfw.GLFW.glfwSetClipboardString(win, path);
+		} catch (Exception e) { /* clipboard is best-effort */ }
+		replayFlash = REPLAY_FLASH_DURATION;
+		System.out.println("Copied replay path to clipboard: " + path);
+	}
+
+	/**
+	 * Returns the active clock (competition loop, free-patrol loop, or replay player).
+	 */
+	private se.hirt.searobots.engine.SimClock getActiveSim() {
 		if (activeCompetition != null && activeCompetition.isRunning()) {
 			return activeCompetition.currentSim();
 		}
@@ -1030,6 +1207,21 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 	}
 
 	private long frameCount = 0;
+
+	// Fast-forward-to-next-event: boost the active clock to max speed, then restore the
+	// prior speed once a pause-on-event trigger (or end of match) halts it.
+	private static final double FFW_MAX_SPEED = 1_000_000;
+	private volatile boolean ffwActive;
+	private volatile double ffwRestoreSpeed = 1.0;
+
+	// Clickable replay-filename indicator (lower-left). Clicking copies the full path
+	// to the clipboard and plays a brief highlight flash.
+	private volatile String replayFullPath;      // absolute path shown, copied on click
+	private String replayLabelPath;              // last replayPath the label text was built for
+	private float replayFlash;                   // seconds remaining in the click-highlight flash
+	private static final float REPLAY_FLASH_DURATION = 0.5f;
+	private static final ColorRGBA REPLAY_COLOR = new ColorRGBA(0.55f, 0.85f, 1f, 0.9f);
+	private static final ColorRGBA REPLAY_FLASH_COLOR = new ColorRGBA(1f, 0.95f, 0.35f, 1f);
 
 	@Override
 	public void handleError(String errMsg, Throwable t) {
@@ -1056,6 +1248,8 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 			updateHud();
 			updateCrosshair();
 			updateOverlays();
+			updateFastForward();
+			updateReplayLabel(tpf);
 			// Loading indicator
 			if (loadingText != null) {
 				var simSt = simStateSupplier.get();
@@ -2571,7 +2765,16 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 		inputManager.addMapping("ZoomOut", new MouseAxisTrigger(MouseInput.AXIS_WHEEL, true));
 		inputManager.addMapping("DragStart", new MouseButtonTrigger(MouseInput.BUTTON_LEFT));
 
-		inputManager.addListener((ActionListener) (name, isPressed, tpf) -> dragging = isPressed, "DragStart");
+		inputManager.addListener((ActionListener) (name, isPressed, tpf) -> {
+			// A press on the lower-left replay indicator copies its path and flashes, and does
+			// not start a camera drag.
+			if (isPressed && replayLabelHit()) {
+				onReplayLabelClicked();
+				dragging = false;
+				return;
+			}
+			dragging = isPressed;
+		}, "DragStart");
 
 		inputManager.addListener((AnalogListener) (name, value, tpf) -> {
 			// When 2D map is visible, redirect mouse events to map

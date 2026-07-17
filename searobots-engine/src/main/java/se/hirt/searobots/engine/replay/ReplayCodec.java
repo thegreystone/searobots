@@ -91,6 +91,10 @@ public final class ReplayCodec {
 	public static final List<Col> WAYPOINT_COLS = List.of(c("x", "m"), c("y", "m"), c("z", "m"), c("active", "bool"),
 			c("reverse", "bool"));
 
+	/** Firing-solution line ({@code f}); child of the preceding {@code s}, at most one per sub per frame. */
+	public static final List<Col> FIRING_COLS = List.of(c("targetX", "m"), c("targetY", "m"), c("targetHeading", "rad"),
+			c("targetSpeed", "m/s"), c("quality", "frac"));
+
 	/** Per-tick torpedo state line ({@code p}). */
 	public static final List<Col> TORPEDO_COLS = List.of(c("id", ""), c("ownerId", ""), c("colorArgb", ""), c("x", "m"),
 			c("y", "m"), c("z", "m"), c("heading", "rad"), c("pitch", "rad"), c("roll", "rad"), c("velX", "m/s"),
@@ -104,7 +108,7 @@ public final class ReplayCodec {
 	/** All data tags that get a {@code COLS} declaration, keyed by record tag. */
 	public static final Map<String, List<Col>> SCHEMAS = Map.of(ReplayFormat.TAG_SUBDEF, SUBDEF_COLS,
 			ReplayFormat.TAG_SUB, SUB_COLS, ReplayFormat.TAG_CONTACT, CONTACT_COLS, ReplayFormat.TAG_WAYPOINT,
-			WAYPOINT_COLS, ReplayFormat.TAG_TORPEDO, TORPEDO_COLS);
+			WAYPOINT_COLS, ReplayFormat.TAG_FIRING, FIRING_COLS, ReplayFormat.TAG_TORPEDO, TORPEDO_COLS);
 
 	// ---- COLS header line ----
 
@@ -239,6 +243,15 @@ public final class ReplayCodec {
 		f(sb, bool(wp.reverse()));
 	}
 
+	public static void encodeFiring(StringBuilder sb, FiringSolution fs) {
+		sb.append(ReplayFormat.TAG_FIRING);
+		f(sb, num(fs.targetX()));
+		f(sb, num(fs.targetY()));
+		f(sb, num(fs.targetHeading()));
+		f(sb, num(fs.targetSpeed()));
+		f(sb, num(fs.quality()));
+	}
+
 	public static void encodeTorpedo(StringBuilder sb, TorpedoSnapshot t) {
 		Pose pose = t.pose();
 		Vec3 pos = pose.position();
@@ -290,6 +303,11 @@ public final class ReplayCodec {
 
 	public static Waypoint decodeWaypoint(String[] f, Schema s) {
 		return new Waypoint(s.d(f, "x", 0), s.d(f, "y", 0), s.d(f, "z", 0), s.b(f, "active"), s.b(f, "reverse"));
+	}
+
+	public static FiringSolution decodeFiring(String[] f, Schema s) {
+		return new FiringSolution(s.d(f, "targetX", 0), s.d(f, "targetY", 0), s.d(f, "targetHeading", Double.NaN),
+				s.d(f, "targetSpeed", -1), s.d(f, "quality", 0));
 	}
 
 	public static TorpedoSnapshot decodeTorpedo(String[] f, Schema s) {

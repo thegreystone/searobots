@@ -50,8 +50,8 @@ import static org.junit.jupiter.api.Assertions.*;
  * <p>
  * The key property is <b>lossless against the live match</b>: the stream a {@link ReplayReader} produces must equal the
  * stream the simulation emitted, not merely agree with the writer. Numbers are compared to the format's fixed precision
- * (4 decimals), which is far below any physically meaningful threshold; the {@code strategicWaypoints} and
- * {@code firingSolution} fields are intentionally not captured in format v1 and are excluded from the comparison.
+ * (4 decimals), which is far below any physically meaningful threshold. The {@code firingSolution} is captured (format
+ * v2) and compared; the {@code strategicWaypoints} field is still not captured and is excluded from the comparison.
  */
 class ReplayRoundTripTest {
 
@@ -183,7 +183,8 @@ class ReplayRoundTripTest {
 				List.of(new ContactEstimate(1000.0, 2000.0, 0.7, 0.9, 150.0, 2.5, 7.0, "passive"),
 						new ContactEstimate(1050.0, 1980.0, 0.4, 0.6, 300.0, Double.NaN, -1.0, "")),
 				List.of(new Waypoint(500.0, 600.0, -250.0, true, false),
-						new Waypoint(700.0, 800.0, -250.0, false, true)), List.of(), null);
+						new Waypoint(700.0, 800.0, -250.0, false, true)), List.of(),
+				new FiringSolution(1234.5, -678.25, 2.1, 8.5, 0.85));
 
 		var torp = new TorpedoSnapshot(1001, 0, new Pose(new Vec3(200.0, 300.0, -180.0), 0.75, 0.05, 0.0),
 				new Velocity(new Vec3(23.0, 0.0, 0.5), Vec3.ZERO), 23.0, new Color(255, 80, 80), 220.5, false, true,
@@ -206,6 +207,65 @@ class ReplayRoundTripTest {
 		assertEquals(1, replayed.frames.size());
 		assertSubEquals(live.frames.get(0).subs().get(0), replayed.frames.get(0).subs().get(0), "synthetic sub");
 		assertTorpedoEquals(live.frames.get(0).torps().get(0), replayed.frames.get(0).torps().get(0), "synthetic torp");
+	}
+
+	@Test
+	void readsVersion1Files(@TempDir Path dir) throws IOException {
+		// The reader accepts every version from MIN_READ_VERSION (v1) to the current one: v2
+		// only ADDED the firing-solution child line, so a v1 file is exactly a v2 file without
+		// the `f` records. Write a v2 file, mechanically downgrade it to v1, and verify the
+		// current reader still decodes everything — with the firing solution (the one thing v1
+		// cannot carry) reconstructing as null.
+		MatchConfig config = shortMatch(7L, 1);
+		Path v2File = dir.resolve("v2.srl");
+
+		var sub = new SubmarineSnapshot(0, "Claude Sub", new Pose(new Vec3(123.5, -456.25, -200.0), 1.5, -0.25, 0.0),
+				new Velocity(new Vec3(6.5, 0.0, -1.25), new Vec3(0.0, 0.0, 0.125)), 6.5, new Color(60, 220, 120), false,
+				875, 1.5, 102.5, 0.8, -0.25, 0.1, "CHASE", true, 6,
+				List.of(new ContactEstimate(1000.0, 2000.0, 0.7, 0.9, 150.0, 2.5, 7.0, "passive")),
+				List.of(new Waypoint(500.0, 600.0, -250.0, true, false)), List.of(),
+				new FiringSolution(1234.5, -678.25, 2.1, 8.5, 0.85));
+		var torp = new TorpedoSnapshot(1001, 0, new Pose(new Vec3(200.0, 300.0, -180.0), 0.75, 0.05, 0.0),
+				new Velocity(new Vec3(23.0, 0.0, 0.5), Vec3.ZERO), 23.0, new Color(255, 80, 80), 220.5, false, true,
+				140.0, false, 1000.0, 2000.0, -200.0, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN,
+				1100.0, 2100.0, -195.0, "TERMINAL");
+
+		try (var writer = new ReplayWriter(config, List.of(new Vec3(0, 0, -100)), v2File)) {
+			writer.onTick(0, List.of(sub), List.of(torp));
+			writer.onMatchEnd();
+		}
+
+		// Downgrade: rewrite the version on the magic line, drop the `f` schema + data lines.
+		Path v1File = dir.resolve("v1.srl");
+		try (var w = Files.newBufferedWriter(v1File)) {
+			for (String line : Files.readAllLines(v2File)) {
+				if (line.startsWith(ReplayFormat.MAGIC + "\t")) {
+					w.write(ReplayFormat.MAGIC + "\t1");
+				} else if (line.startsWith("COLS\t" + ReplayFormat.TAG_FIRING + "\t")
+						|| line.startsWith(ReplayFormat.TAG_FIRING + "\t")) {
+					continue;
+				} else {
+					w.write(line);
+				}
+				w.newLine();
+			}
+		}
+
+		var reader = new ReplayReader(v1File);
+		assertEquals(1, reader.header().formatVersion(), "reader reports the file's own version");
+		var replayed = new CaptureListener();
+		reader.replay(replayed);
+		assertEquals(1, replayed.frames.size());
+
+		SubmarineSnapshot got = replayed.frames.get(0).subs().get(0);
+		assertNull(got.firingSolution(), "v1 cannot carry a firing solution; must reconstruct as null");
+		// Everything else must round-trip exactly as if it had been a v2 file.
+		var expected = new SubmarineSnapshot(sub.id(), sub.name(), sub.pose(), sub.velocity(), sub.speed(), sub.color(),
+				sub.forfeited(), sub.hp(), sub.noiseLevel(), sub.sourceLevelDb(), sub.throttle(), sub.rudder(),
+				sub.sternPlanes(), sub.status(), sub.pingRequested(), sub.torpedoesRemaining(), sub.contactEstimates(),
+				sub.waypoints(), sub.strategicWaypoints(), null);
+		assertSubEquals(expected, got, "v1 sub");
+		assertTorpedoEquals(torp, replayed.frames.get(0).torps().get(0), "v1 torp");
 	}
 
 	@Test
@@ -282,6 +342,15 @@ class ReplayRoundTripTest {
 			assertClose(wa.z(), wb.z(), ctx + " wp z");
 			assertEquals(wa.active(), wb.active(), ctx + " wp active");
 			assertEquals(wa.reverse(), wb.reverse(), ctx + " wp reverse");
+		}
+		FiringSolution fa = a.firingSolution(), fb = b.firingSolution();
+		assertEquals(fa == null, fb == null, ctx + " firingSolution presence");
+		if (fa != null) {
+			assertClose(fa.targetX(), fb.targetX(), ctx + " fs targetX");
+			assertClose(fa.targetY(), fb.targetY(), ctx + " fs targetY");
+			assertCloseNaN(fa.targetHeading(), fb.targetHeading(), ctx + " fs targetHeading");
+			assertClose(fa.targetSpeed(), fb.targetSpeed(), ctx + " fs targetSpeed");
+			assertClose(fa.quality(), fb.quality(), ctx + " fs quality");
 		}
 	}
 
