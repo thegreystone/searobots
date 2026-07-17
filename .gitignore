@@ -35,3 +35,7 @@ dependency-reduced-pom.xml
 # Debug files
 SeaRobots*.png
 Batch*.txt
+# Auto-recorded match replays (viewer + headless tools write here; files are large).
+# replays/headless-d.srl predates this rule and stays tracked: it is the fixed
+# sample artifact that SampleReplayTest pins the decoder against.
+replays/
