@@ -52,6 +52,7 @@ import java.util.Locale;
  *   s   id ...fixed... status             submarine state (one per sub per frame)
  *   c   ...contact estimate...            child of the preceding s line
  *   w   ...waypoint...                    child of the preceding s line
+ *   f   ...firing solution...             child of the preceding s line (0 or 1)
  *   p   id owner colorRGB ... phase       torpedo state (one per torpedo per frame)
  *   E   reason                            end of match
  * </pre>
@@ -64,8 +65,22 @@ public final class ReplayFormat {
 
 	public static final String MAGIC = "SRREPLAY";
 
-	/** Current format version written by {@link ReplayWriter}. */
-	public static final int VERSION = 1;
+	/**
+	 * Current format version written by {@link ReplayWriter}.
+	 * <p>
+	 * v2 added the firing-solution child line ({@code f}); it is additive (a new tag plus a {@code COLS} declaration),
+	 * so older files stay readable — see {@link #MIN_READ_VERSION}.
+	 */
+	public static final int VERSION = 2;
+
+	/**
+	 * Oldest format version {@link ReplayReader} accepts. Every version from v1 on has only <em>added</em> record tags
+	 * and columns (v2: the {@code f} firing-solution line), and the reader resolves columns by name from the file's own
+	 * {@code COLS} declarations, so older files decode fine — absent records simply reconstruct as empty/null (a v1
+	 * file yields {@code firingSolution() == null}). Raise this only when a change actually breaks decoding of older
+	 * files.
+	 */
+	public static final int MIN_READ_VERSION = 1;
 
 	public static final String DELIM = "\t";
 
@@ -76,6 +91,7 @@ public final class ReplayFormat {
 	public static final String TAG_SUB = "s";
 	public static final String TAG_CONTACT = "c";
 	public static final String TAG_WAYPOINT = "w";
+	public static final String TAG_FIRING = "f";
 	public static final String TAG_TORPEDO = "p";
 	public static final String TAG_END = "E";
 

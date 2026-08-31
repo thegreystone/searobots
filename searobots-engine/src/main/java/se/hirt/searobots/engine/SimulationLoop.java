@@ -35,7 +35,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 
-public final class SimulationLoop {
+public final class SimulationLoop implements SimClock {
 
 	private static final Color[] SUB_COLORS = {new Color(60, 220, 120), new Color(220, 80, 80), new Color(80, 140, 255),
 			new Color(255, 180, 40), new Color(200, 80, 220), new Color(80, 220, 220)};

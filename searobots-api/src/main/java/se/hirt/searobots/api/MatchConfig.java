@@ -85,4 +85,11 @@ public record MatchConfig(long worldSeed, int tickRateHz, int matchDurationTicks
 				15.0,     // max sub speed: sqrt(MAX_THRUST / DRAG_COEFF)
 				LocalTime.NOON);
 	}
+
+	/** Returns a copy of this config with a different match duration, all other parameters unchanged. */
+	public MatchConfig withMatchDurationTicks(int matchDurationTicks) {
+		return new MatchConfig(worldSeed, tickRateHz, matchDurationTicks, submarineCount, torpedoCount, startingHp,
+				blastRadius, minFuseRadius, maxFuseRadius, ratedDepth, crushDepth, battleArea, terrainMarginMeters,
+				gridCellMeters, minSeaFloorZ, maxSeaFloorZ, maxSubSpeed, startTime);
+	}
 }
