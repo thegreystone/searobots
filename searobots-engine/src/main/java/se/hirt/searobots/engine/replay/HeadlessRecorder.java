@@ -61,7 +61,7 @@ public final class HeadlessRecorder {
 		Path out =
 				args.length > 2 ? Path.of(args[2]) : Path.of("replays", "headless-" + Long.toHexString(seed) + ".srl");
 
-		MatchConfig config = withDuration(MatchConfig.withDefaults(seed), duration);
+		MatchConfig config = MatchConfig.withDefaults(seed).withMatchDurationTicks(duration);
 		var world = new WorldGenerator().generate(config);
 		var sim = new SimulationLoop();
 		sim.setSpeedMultiplier(1e9); // no real-time pacing; run as fast as the CPU allows
@@ -106,12 +106,5 @@ public final class HeadlessRecorder {
 				out.toAbsolutePath());
 		System.out.printf("  firingSolution seen=%b, torpedo seen=%b%n", sawFiring[0], sawTorpedo[0]);
 		System.out.printf("Replay it with: SubmarineScene3D %s%n", out);
-	}
-
-	private static MatchConfig withDuration(MatchConfig b, int durationTicks) {
-		return new MatchConfig(b.worldSeed(), b.tickRateHz(), durationTicks, b.submarineCount(), b.torpedoCount(),
-				b.startingHp(), b.blastRadius(), b.minFuseRadius(), b.maxFuseRadius(), b.ratedDepth(), b.crushDepth(),
-				b.battleArea(), b.terrainMarginMeters(), b.gridCellMeters(), b.minSeaFloorZ(), b.maxSeaFloorZ(),
-				b.maxSubSpeed(), b.startTime());
 	}
 }

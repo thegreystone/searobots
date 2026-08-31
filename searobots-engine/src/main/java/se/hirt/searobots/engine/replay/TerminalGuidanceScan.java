@@ -122,7 +122,7 @@ public final class TerminalGuidanceScan {
 	}
 
 	private static SeedResult runSeed(long seed) {
-		MatchConfig config = withDuration(MatchConfig.withDefaults(seed), MAX_TICKS);
+		MatchConfig config = MatchConfig.withDefaults(seed).withMatchDurationTicks(MAX_TICKS);
 		var world = new WorldGenerator().generate(config);
 		var sim = new SimulationLoop();
 		sim.setSpeedMultiplier(1e9);
@@ -236,10 +236,4 @@ public final class TerminalGuidanceScan {
 		return s;
 	}
 
-	private static MatchConfig withDuration(MatchConfig b, int durationTicks) {
-		return new MatchConfig(b.worldSeed(), b.tickRateHz(), durationTicks, b.submarineCount(), b.torpedoCount(),
-				b.startingHp(), b.blastRadius(), b.minFuseRadius(), b.maxFuseRadius(), b.ratedDepth(), b.crushDepth(),
-				b.battleArea(), b.terrainMarginMeters(), b.gridCellMeters(), b.minSeaFloorZ(), b.maxSeaFloorZ(),
-				b.maxSubSpeed(), b.startTime());
-	}
 }

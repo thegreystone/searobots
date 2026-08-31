@@ -243,8 +243,8 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 			try {
 				seed = new se.hirt.searobots.engine.replay.ReplayReader(java.nio.file.Path.of(replayPath)).header()
 						.seed();
-			} catch (java.io.IOException e) {
-				System.err.println("Cannot read replay " + replayPath + ": " + e.getMessage());
+			} catch (java.io.IOException | RuntimeException e) {
+				System.err.println("Cannot read replay " + replayPath + ": " + e);
 				return;
 			}
 		} else {
@@ -269,7 +269,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 		app.setShowSettings(false);
 		app.setPauseOnLostFocus(false);
 
-		// Wire up simulation. For a replay the world is regenerated from the header seed
+		// Wire up simulation. For a replay the world is regenerated from the recorded config
 		// inside SimulationManager.startReplay(); here we just need a world for the initial
 		// setWorld()/MapRenderer wiring.
 		var generator = new se.hirt.searobots.engine.WorldGenerator();
@@ -284,7 +284,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 	// Standalone mode state (null/false when embedded in Swing)
 	private boolean standalone;
 	volatile boolean dialogOpen; // suppresses game key mappings when a text-input dialog is open
-	private volatile String replayPath; // non-null when launched to play a recorded .srl match
+	private volatile String replayPath; // last .srl loaded; the replay UI shows only while isReplayActive()
 	private long standaloneSeed;
 	private se.hirt.searobots.engine.WorldGenerator standaloneGenerator;
 	private volatile GeneratedWorld standaloneWorld;
@@ -584,9 +584,9 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 			standaloneSimManager = new SimulationManager();
 			standaloneSimManager.addListener(this);
 			if (replayPath != null) {
-				// Play a recorded match instead of running controllers live.
-				standaloneSimManager.startReplay(java.nio.file.Path.of(replayPath));
-				standaloneSimManager.play();
+				// Play a recorded match instead of running controllers live. Deferred until the
+				// viewers are registered below; loadReplay parses the file on a background
+				// thread so the first frame renders immediately.
 			} else {
 				var controllers = SimConfigState.currentControllers();
 				var vehicleConfigs = SimConfigState.currentVehicleConfigs();
@@ -637,7 +637,6 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 			palette.onRerun = this::restartSim;
 			palette.onConfigure = () -> simConfigState.setEnabled(true);
 			palette.onFlatOcean = () -> {
-				replayPath = null;
 				standaloneWorld = se.hirt.searobots.engine.GeneratedWorld.deepFlat();
 				enqueue(() -> {
 					setWorld(standaloneWorld);
@@ -655,7 +654,6 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 				}
 			};
 			palette.onLIsland = () -> {
-				replayPath = null;
 				standaloneWorld = se.hirt.searobots.engine.GeneratedWorld.lIslandRecovery();
 				enqueue(() -> {
 					setWorld(standaloneWorld);
@@ -683,6 +681,10 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 			palette.setEnabled(false);
 
 			setupStandaloneInput();
+
+			if (replayPath != null) {
+				loadReplay(java.nio.file.Path.of(replayPath));
+			}
 		}
 	}
 
@@ -791,6 +793,9 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 			};
 			if (mult > 0) {
 				sim.setSpeedMultiplier(mult);
+				// An explicit speed choice ends fast-forward; without this, the next pause
+				// event would silently restore the speed from before the fast-forward.
+				ffwActive = false;
 				// Persist speed across competition phases
 				if (activeCompetition != null)
 					activeCompetition.setSpeed(mult);
@@ -931,7 +936,6 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 	}
 
 	private void runFreePatrol() {
-		replayPath = null; // leaving replay for a live match
 		var world = standaloneGenerator.generate(se.hirt.searobots.api.MatchConfig.withDefaults(standaloneSeed));
 		standaloneWorld = world;
 		enqueue(() -> {
@@ -965,11 +969,16 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 	 */
 	private void loadLatestReplay() {
 		java.nio.file.Path dir = java.nio.file.Path.of("replays");
+		// The current live match is being recorded to an open, still-growing file; never
+		// offer it as "latest" or the reader would parse it mid-write.
+		var recording = standaloneSimManager.currentRecordingFile();
 		try (var files = java.nio.file.Files.list(dir)) {
 			var latest = files.filter(p -> p.toString().toLowerCase().endsWith(".srl"))
+					.filter(p -> recording == null
+							|| !p.toAbsolutePath().normalize().equals(recording.toAbsolutePath().normalize()))
 					.max(java.util.Comparator.comparingLong(p -> p.toFile().lastModified()));
 			if (latest.isEmpty()) {
-				System.out.println("No replays found in " + dir.toAbsolutePath());
+				System.out.println("No completed replays found in " + dir.toAbsolutePath());
 				return;
 			}
 			loadReplay(latest.get());
@@ -980,7 +989,8 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 
 	/**
 	 * Switches the running viewer over to replaying a recorded {@code .srl} match. Parsing happens on a background
-	 * thread so the render loop never stalls; the world is regenerated from the header seed for terrain and the map.
+	 * thread so the render loop never stalls; the world (rebuilt by {@code startReplay} from the recorded config) is
+	 * applied to the viewers on the render thread, and playback begins only once they have it.
 	 */
 	private void loadReplay(java.nio.file.Path srl) {
 		if (activeCompetition != null) {
@@ -988,16 +998,17 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 			activeCompetition = null;
 		}
 		Thread.ofPlatform().daemon().name("replay-load").start(() -> {
-			var header = standaloneSimManager.startReplay(srl);
-			if (header == null)
+			var start = standaloneSimManager.startReplay(srl);
+			if (start == null)
 				return;
 			replayPath = srl.toString();
-			standaloneSeed = header.seed();
-			var world = standaloneGenerator.generate(se.hirt.searobots.api.MatchConfig.withDefaults(header.seed()));
+			standaloneSeed = start.header().seed();
+			var world = start.world();
 			standaloneWorld = world;
-			if (standaloneMapRenderer != null)
-				standaloneMapRenderer.setWorld(world);
 			enqueue(() -> {
+				setWorld(world);
+				if (standaloneMapRenderer != null)
+					standaloneMapRenderer.setWorld(world);
 				competitionScoreText.setText("");
 				competitionPhaseText.setText("");
 				competitionDetailText.setText("");
@@ -1005,14 +1016,13 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 					long win = org.lwjgl.glfw.GLFW.glfwGetCurrentContext();
 					org.lwjgl.glfw.GLFW.glfwSetWindowTitle(win, "SeaRobots [replay: " + srl.getFileName() + "]");
 				} catch (Exception e) { /* ignore */ }
+				standaloneSimManager.play();
 				return null;
 			});
-			standaloneSimManager.play();
 		});
 	}
 
 	private void runCompetition() {
-		replayPath = null; // leaving replay for a live competition
 		var names = SimConfigState.currentNames();
 		var factories = SimConfigState.currentFactories();
 		if (factories.size() < 2) {
@@ -1137,7 +1147,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 		if (replayLabel == null)
 			return;
 		String rp = replayPath;
-		if (rp == null) {
+		if (rp == null || !isReplayActive()) {
 			replayLabel.setCullHint(Spatial.CullHint.Always);
 			return;
 		}
@@ -1180,6 +1190,15 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 		} catch (Exception e) { /* clipboard is best-effort */ }
 		replayFlash = REPLAY_FLASH_DURATION;
 		System.out.println("Copied replay path to clipboard: " + path);
+	}
+
+	/**
+	 * Whether a replay is what's currently playing. Derived from the active clock rather than tracked in a flag, so
+	 * starting any live match or competition hides the replay UI without bookkeeping.
+	 */
+	private boolean isReplayActive() {
+		return standaloneSimManager != null
+				&& standaloneSimManager.currentLoop() instanceof se.hirt.searobots.engine.replay.ReplayPlayer;
 	}
 
 	/**

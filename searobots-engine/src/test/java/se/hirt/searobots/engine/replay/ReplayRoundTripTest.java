@@ -291,11 +291,7 @@ class ReplayRoundTripTest {
 	// --- helpers ---
 
 	private static MatchConfig shortMatch(long seed, int durationTicks) {
-		MatchConfig b = MatchConfig.withDefaults(seed);
-		return new MatchConfig(b.worldSeed(), b.tickRateHz(), durationTicks, b.submarineCount(), b.torpedoCount(),
-				b.startingHp(), b.blastRadius(), b.minFuseRadius(), b.maxFuseRadius(), b.ratedDepth(), b.crushDepth(),
-				b.battleArea(), b.terrainMarginMeters(), b.gridCellMeters(), b.minSeaFloorZ(), b.maxSeaFloorZ(),
-				b.maxSubSpeed(), b.startTime());
+		return MatchConfig.withDefaults(seed).withMatchDurationTicks(durationTicks);
 	}
 
 	private static SubmarineSnapshot emptySub(int id) {

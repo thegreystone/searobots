@@ -39,3 +39,6 @@ Batch*.txt
 # replays/headless-d.srl predates this rule and stays tracked: it is the fixed
 # sample artifact that SampleReplayTest pins the decoder against.
 replays/
+
+# Ad-hoc viewer launch classpath dump (machine-specific absolute paths)
+viewer-cp.txt

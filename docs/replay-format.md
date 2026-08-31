@@ -139,14 +139,16 @@ new Thread(player::run).start();   // player.setPaused(false) to begin
 `ReplayPlayer` implements `SimClock` — the same pause / single-step / speed-multiplier /
 stop control surface as the live `SimulationLoop` — so the viewer drives a replay with the
 exact controls it uses for a live match (`SimulationManager.startReplay(path)` wires this
-up, regenerating the world from the header seed). Because playback flows through the same
+up, regenerating the world from the recorded match config via
+`ReplayHeader.toMatchConfig()`). Because playback flows through the same
 event-pausing fan-out, the **pause-on-event** toggles apply to replays too, and
 "fast-forward to next event" is simply *max speed until the fan-out pauses us* — no
 separate seek machinery.
 
 - Pause-on-death, pause-on-launch, and pause-on-torpedo-solution all work in replay:
   each derives from captured state (firing solutions are recorded as of format v2).
-- The world is reconstructed from the header **seed**, so hand-built worlds
+- The world is reconstructed from the recorded config (seed, arena, depths, duration);
+  parameters the header does not capture keep their defaults, and hand-built worlds
   (`GeneratedWorld.deepFlat()` / `lIslandRecovery()`) won't reproduce their terrain.
 
 ## Two tiers
