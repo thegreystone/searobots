@@ -65,7 +65,9 @@
         <profile>
             <id>mac</id>
             <activation>
-                <os><family>mac</family></os>
+                <os>
+                    <family>mac</family>
+                </os>
             </activation>
             <properties>
                 <exec.jvmArgs>-XstartOnFirstThread</exec.jvmArgs>
@@ -74,7 +76,9 @@
         <profile>
             <id>non-mac</id>
             <activation>
-                <os><family>!mac</family></os>
+                <os>
+                    <family>!mac</family>
+                </os>
             </activation>
             <properties>
                 <exec.jvmArgs>-Ddummy=true</exec.jvmArgs>
@@ -105,13 +109,17 @@
                 <executions>
                     <execution>
                         <phase>package</phase>
-                        <goals><goal>shade</goal></goals>
+                        <goals>
+                            <goal>shade</goal>
+                        </goals>
                         <configuration>
                             <transformers>
-                                <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                                <transformer
+                                        implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
                                     <mainClass>se.hirt.searobots.viewer.SubmarineScene3D</mainClass>
                                 </transformer>
-                                <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
+                                <transformer
+                                        implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
                             </transformers>
                             <filters>
                                 <filter>

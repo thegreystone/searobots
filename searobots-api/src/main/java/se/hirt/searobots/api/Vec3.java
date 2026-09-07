@@ -30,51 +30,48 @@ package se.hirt.searobots.api;
 
 public record Vec3(double x, double y, double z) {
 
-    public static final Vec3 ZERO = new Vec3(0, 0, 0);
+	public static final Vec3 ZERO = new Vec3(0, 0, 0);
 
-    public Vec3 add(Vec3 v) {
-        return new Vec3(x + v.x, y + v.y, z + v.z);
-    }
+	public Vec3 add(Vec3 v) {
+		return new Vec3(x + v.x, y + v.y, z + v.z);
+	}
 
-    public Vec3 subtract(Vec3 v) {
-        return new Vec3(x - v.x, y - v.y, z - v.z);
-    }
+	public Vec3 subtract(Vec3 v) {
+		return new Vec3(x - v.x, y - v.y, z - v.z);
+	}
 
-    public Vec3 scale(double s) {
-        return new Vec3(x * s, y * s, z * s);
-    }
+	public Vec3 scale(double s) {
+		return new Vec3(x * s, y * s, z * s);
+	}
 
-    public double length() {
-        return Math.sqrt(lengthSquared());
-    }
+	public double length() {
+		return Math.sqrt(lengthSquared());
+	}
 
-    public double lengthSquared() {
-        return x * x + y * y + z * z;
-    }
+	public double lengthSquared() {
+		return x * x + y * y + z * z;
+	}
 
-    public Vec3 normalize() {
-        double len = length();
-        return new Vec3(x / len, y / len, z / len);
-    }
+	public Vec3 normalize() {
+		double len = length();
+		return new Vec3(x / len, y / len, z / len);
+	}
 
-    public double dot(Vec3 v) {
-        return x * v.x + y * v.y + z * v.z;
-    }
+	public double dot(Vec3 v) {
+		return x * v.x + y * v.y + z * v.z;
+	}
 
-    public Vec3 cross(Vec3 v) {
-        return new Vec3(
-                y * v.z - z * v.y,
-                z * v.x - x * v.z,
-                x * v.y - y * v.x);
-    }
+	public Vec3 cross(Vec3 v) {
+		return new Vec3(y * v.z - z * v.y, z * v.x - x * v.z, x * v.y - y * v.x);
+	}
 
-    public double distanceTo(Vec3 v) {
-        return subtract(v).length();
-    }
+	public double distanceTo(Vec3 v) {
+		return subtract(v).length();
+	}
 
-    public double horizontalDistanceTo(Vec3 v) {
-        double dx = x - v.x;
-        double dy = y - v.y;
-        return Math.sqrt(dx * dx + dy * dy);
-    }
+	public double horizontalDistanceTo(Vec3 v) {
+		double dx = x - v.x;
+		double dy = y - v.y;
+		return Math.sqrt(dx * dx + dy * dy);
+	}
 }

@@ -28,4 +28,5 @@
  */
 package se.hirt.searobots.api;
 
-public record MatchResult(boolean forfeited) {}
+public record MatchResult(boolean forfeited) {
+}

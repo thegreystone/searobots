@@ -30,30 +30,30 @@ package se.hirt.searobots.api;
 
 public record Vec2(double x, double y) {
 
-    public static final Vec2 ZERO = new Vec2(0, 0);
+	public static final Vec2 ZERO = new Vec2(0, 0);
 
-    public Vec2 add(Vec2 v) {
-        return new Vec2(x + v.x, y + v.y);
-    }
+	public Vec2 add(Vec2 v) {
+		return new Vec2(x + v.x, y + v.y);
+	}
 
-    public Vec2 subtract(Vec2 v) {
-        return new Vec2(x - v.x, y - v.y);
-    }
+	public Vec2 subtract(Vec2 v) {
+		return new Vec2(x - v.x, y - v.y);
+	}
 
-    public Vec2 scale(double s) {
-        return new Vec2(x * s, y * s);
-    }
+	public Vec2 scale(double s) {
+		return new Vec2(x * s, y * s);
+	}
 
-    public double length() {
-        return Math.sqrt(x * x + y * y);
-    }
+	public double length() {
+		return Math.sqrt(x * x + y * y);
+	}
 
-    public Vec2 normalize() {
-        double len = length();
-        return new Vec2(x / len, y / len);
-    }
+	public Vec2 normalize() {
+		double len = length();
+		return new Vec2(x / len, y / len);
+	}
 
-    public double angle() {
-        return Math.atan2(y, x);
-    }
+	public double angle() {
+		return Math.atan2(y, x);
+	}
 }

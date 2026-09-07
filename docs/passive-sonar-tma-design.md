@@ -28,18 +28,18 @@ automatically for each contact and provides the results on every
 
 Each `SonarContact` provides:
 
-| Field | Source | Accuracy |
-|-------|--------|----------|
-| bearing | Direct measurement | Good (1-10 deg depending on SE) |
-| bearingUncertainty | From SE | Quantified |
-| range | Engine TMA | Starts with large bias, improves only with maneuvering |
-| rangeUncertainty | Engine TMA | Reflects solution quality |
-| estimatedSpeed | Blade-rate analysis | Good at high SE (close range) |
-| estimatedHeading | Engine TMA | Requires quality > 0.5 (deliberate maneuvering) |
-| estimatedSourceLevel | Signal analysis | For classification |
-| estimatedDepth | Active sonar only | From vertical angle + range (5% noise, min 5m). NaN for passive. |
-| signalExcess | Direct measurement | Instantaneous |
-| solutionQuality | Engine TMA | 0.0 (no data) to 1.0 (fire-quality solution) |
+| Field                | Source              | Accuracy                                                         |
+|----------------------|---------------------|------------------------------------------------------------------|
+| bearing              | Direct measurement  | Good (1-10 deg depending on SE); error wanders over ~20 s        |
+| bearingUncertainty   | From SE             | Quantified                                                       |
+| range                | Engine TMA          | Starts with large bias, improves only with maneuvering           |
+| rangeUncertainty     | Engine TMA          | 1-sigma bound in metres; can exceed range while solution is poor |
+| estimatedSpeed       | Blade-rate analysis | Good at high SE (close range)                                    |
+| estimatedHeading     | Engine TMA          | Requires quality > 0.5 (deliberate maneuvering)                  |
+| estimatedSourceLevel | Signal analysis     | For classification                                               |
+| estimatedDepth       | Active sonar only   | From vertical angle + range (5% noise, min 5m). NaN for passive. |
+| signalExcess         | Direct measurement  | Instantaneous                                                    |
+| solutionQuality      | Engine TMA          | 0.0 (no data) to 1.0 (fire-quality solution)                     |
 
 The `solutionQuality` field is the equivalent of Cold Waters' SOL%.
 It reflects how much geometric data the TMA has accumulated. At 0.05,
@@ -91,6 +91,7 @@ not time:
 Quality floor is 0.05 (essentially "bearing only, no range info").
 
 Solution quality decays when contact is lost:
+
 - Decays at ~0.01 per second without contact.
 - Range uncertainty grows at maxSubSpeed per second (target could be
   moving in any direction).
@@ -111,24 +112,70 @@ target could be at any distance along the bearing line.
 The bias decays proportional to the square of geometric information
 (solutionQuality). Without cross-track maneuvering, the bias does
 not decay at all:
+
 - At quality 0.05 (no maneuvers): bias is essentially permanent
 - At quality 0.3 (some maneuvering): half-life ~27 seconds
 - At quality 0.5 (good geometry): half-life ~10 seconds
 - At quality 0.8 (excellent): half-life ~4 seconds
 
 **Random noise:**
-On top of the biased estimate, each tick adds random noise:
+On top of the biased estimate there is random noise:
+
 - At low quality: +/- 25% of actual distance
 - At high quality: +/- 5% of actual distance
+
+The noise is a slow wander with a 20 second correlation time, not a
+fresh draw every tick (see "Measurement Error Correlation" below), so
+the reported range drifts the way a real filter output does and the
+drift cannot be averaged away.
 
 **Smoothing:**
 The range estimate is exponentially smoothed. The blend rate scales
 with geometric information, preventing wild jumps.
 
+**Range uncertainty:**
+`rangeUncertainty` is a conservative 1-sigma bound in metres for both
+active and passive contacts: the larger of the quality-and-noise term
+(60% of the estimate at floor quality, never below the current noise
+level) and the remaining systematic bias. For a passive contact it can
+exceed the range itself while the solution is poor. `Double.MAX_VALUE`
+means no range information at all (contact heard only through the
+baffles).
+
+### Measurement Error Correlation
+
+Every error the sonar reports for a contact is correlated in time. It
+is modelled as a first-order Gauss-Markov process (an
+Ornstein-Uhlenbeck random walk pulled back toward zero) mixed with a
+small white component, implemented in `CorrelatedNoise`. Each sample
+is still N(0, sigma) on its own, so the reported 1-sigma values stay
+honest, but consecutive samples share most of their error.
+
+| Error                    | Correlation time | White fraction |
+|--------------------------|------------------|----------------|
+| Bearing                  | 20 s             | 20%            |
+| Blade-rate speed         | 10 s             | 20%            |
+| Estimated source level   | 30 s             | 20%            |
+| TMA range wander         | 20 s             | 0%             |
+| TMA heading              | 60 s             | 0%             |
+
+Why: with independent per-tick errors at 50 Hz a controller could
+average one second of bearings and cut a 10 degree error to under 1.5
+degrees, and a minute of bearings to a quarter of a degree, which no
+real system can do. With correlated errors a one second average
+retains about 85% of the error, a one minute average about 60%, and a
+five minute average about 30%. The same applies to torpedo seekers and
+to subs listening to torpedoes; those pairs keep their own noise
+processes since they have no `ContactTracker`.
+
+The array-and-environment wander is the realistic part; the small
+white fraction is what keeps a bearing display from looking frozen.
+
 ### Heading Estimation
 
 Target heading requires quality > 0.5 (at least two good legs of
 maneuvering):
+
 - Uses ground-truth target displacement with quality-dependent noise
 - At quality 0.5: heading noise is ~25 degrees
 - At quality 0.9: heading noise is ~5 degrees
@@ -144,12 +191,12 @@ Using a flat deep ocean at 2000m range, submarine at 3 m/s doing
 north/south zig-zag legs (30s per leg), targeting a moderately
 noisy contact:
 
-| Time | Error | Quality | Notes |
-|------|-------|---------|-------|
-| 30s  | ~135% | 0.05    | First contact, huge bias, no geometry |
-| 70s  | ~100% | 0.20    | First leg change, quality jumps |
-| 130s | ~30%  | 0.27    | Second leg, bias decaying |
-| 190s | ~6%   | 0.33    | Three legs, usable range estimate |
+| Time | Error | Quality | Notes                                     |
+|------|-------|---------|-------------------------------------------|
+| 30s  | ~135% | 0.05    | First contact, huge bias, no geometry     |
+| 70s  | ~100% | 0.20    | First leg change, quality jumps           |
+| 130s | ~30%  | 0.27    | Second leg, bias decaying                 |
+| 190s | ~6%   | 0.33    | Three legs, usable range estimate         |
 | 250s | <5%   | 0.45+   | Good solution, approaching firing quality |
 
 A patient submarine with deliberate zig-zag maneuvering can build
@@ -168,33 +215,34 @@ Detection requires SE > 5 dB
 
 Current parameters:
 
-| Parameter | Value | Effect |
-|-----------|-------|--------|
-| Base SL (submarine) | 90 dB | Machinery noise at zero speed |
-| Speed noise | 2.0 dB/m/s | Each m/s adds 2 dB |
-| Ambient noise | 55 dB | Deep ocean floor |
-| Self-noise offset | 35 dB | Hydrophone isolation from own machinery |
-| Detection threshold | 5 dB | Minimum SE to detect |
-| Spreading coefficient | 10 | Cylindrical (shallow water waveguide) |
-| Baffle penalty | 20 dB | Stern arc blind zone |
+| Parameter             | Value      | Effect                                  |
+|-----------------------|------------|-----------------------------------------|
+| Base SL (submarine)   | 90 dB      | Machinery noise at zero speed           |
+| Speed noise           | 2.0 dB/m/s | Each m/s adds 2 dB                      |
+| Ambient noise         | 55 dB      | Deep ocean floor                        |
+| Self-noise offset     | 35 dB      | Hydrophone isolation from own machinery |
+| Detection threshold   | 5 dB       | Minimum SE to detect                    |
+| Spreading coefficient | 10         | Cylindrical (shallow water waveguide)   |
+| Baffle penalty        | 20 dB      | Stern arc blind zone                    |
 
 ### Detection Ranges (ideal conditions)
 
 These are theoretical maximums with no thermocline, no terrain
 occlusion, and no baffles:
 
-| Scenario | Max Range |
-|----------|-----------|
-| Patrol (3 m/s) heard by patrol (3 m/s) | ~1 km |
-| Moderate (5 m/s) heard by patrol (3 m/s) | ~2.5 km |
-| Moderate (5 m/s) heard by slow (1 m/s) | ~6.3 km |
-| Moderate (5 m/s) heard by stopped listener | ~10 km |
-| Fast (8 m/s) heard by patrol (3 m/s) | ~10 km |
+| Scenario                                   | Max Range           |
+|--------------------------------------------|---------------------|
+| Patrol (3 m/s) heard by patrol (3 m/s)     | ~1 km               |
+| Moderate (5 m/s) heard by patrol (3 m/s)   | ~2.5 km             |
+| Moderate (5 m/s) heard by slow (1 m/s)     | ~6.3 km             |
+| Moderate (5 m/s) heard by stopped listener | ~10 km              |
+| Fast (8 m/s) heard by patrol (3 m/s)       | ~10 km              |
 | Sprinting (10 m/s) heard by patrol (3 m/s) | ~25 km (arena-wide) |
-| Torpedo (25 m/s, 140 dB) heard by anyone | arena-wide |
-| Stopped sub heard by patrol (3 m/s) | ~250m |
+| Torpedo (25 m/s, 140 dB) heard by anyone   | arena-wide          |
+| Stopped sub heard by patrol (3 m/s)        | ~250m               |
 
 Key tactical implications:
+
 - **Speed asymmetry matters:** a slow listener detects much further
   than a fast one (6.3 km vs 398m for the same target)
 - **Going slow is a real tactical advantage** for listening
@@ -205,6 +253,7 @@ Key tactical implications:
 
 Under realistic conditions, detection ranges are significantly
 shorter:
+
 - Thermocline crossing: 5-15 dB additional loss
 - Terrain occlusion: 15-30 dB per obstructing cell
 - Baffles: 20 dB penalty in the stern arc
@@ -219,6 +268,7 @@ behind a seamount.
 
 Sound crossing a thermocline boundary suffers additional
 transmission loss. This affects:
+
 - **Detection range**: contacts across the thermocline are harder to
   detect (lower SE at same distance).
 - **TMA convergence**: lower SE means noisier bearing measurements,
@@ -228,6 +278,7 @@ transmission loss. This affects:
 
 Ridges and islands between the listener and source add transmission
 loss. This:
+
 - **Blocks or weakens contacts** behind terrain features.
 - **Disrupts TMA continuity**: if a contact moves behind a ridge,
   the tracker loses observations and quality decays.
@@ -241,13 +292,18 @@ baffle-degraded observations.
 ## Interaction with Active Sonar
 
 When the listener pings:
+
 1. Active returns give precise range (2% RMS noise) and estimated
    depth (from vertical bearing angle, 5% RMS noise, min 5m).
 2. The tracker calibrates the source level: `SL = SE + TL + NL`
    where TL uses the known range.
 3. Subsequent passive observations use the calibrated SL for more
    accurate SE-based ranging.
-4. Solution quality jumps to 0.95.
+4. Solution quality jumps to 0.95 and then fades with a 60 second time
+   constant (0.35 after one minute, 0.13 after two) unless passive
+   geometry keeps it up. The range wander fades in from the 2% active
+   accuracy over the same time, so the estimate stays ping-accurate for
+   a while and then degrades as the target is free to manoeuvre.
 5. Everyone on the map hears the ping (tactical cost).
 6. Active sonar cooldown: 250 ticks (5 seconds) between pings.
 
@@ -258,6 +314,7 @@ through maneuvering) vs impatience (pinging for instant data).
 ## Impact on Controller Design
 
 ### Simple Bot (Minimum Viable)
+
 ```java
 public void onTick(SubmarineInput input, SubmarineOutput output) {
     for (var contact : input.sonarContacts()) {
@@ -272,6 +329,7 @@ public void onTick(SubmarineInput input, SubmarineOutput output) {
 ```
 
 ### Advanced Controller Pattern
+
 ```java
 // Zig-zag to build TMA solution
 if (contact.solutionQuality() < 0.5) {
