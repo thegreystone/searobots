@@ -134,9 +134,10 @@ public final class SonarModel {
 			for (var torp : torpedoes) {
 				if (!torp.alive())
 					continue;
-				var contact = passiveDetect(listener.x(), listener.y(), listener.z(), listener.heading(),
-						listener.sourceLevelDb(), listener.vehicleConfig().sonarSelfNoiseOffsetDb(), torp.x(), torp.y(),
-						torp.z(), torp.sourceLevelDb(), torp.speed(), torp.pingRequested(), terrain, thermalLayers);
+				var contact = passiveDetect(tick, sensorNoiseFor(tick, listener.id(), torp.id()), listener.x(),
+						listener.y(), listener.z(), listener.heading(), listener.sourceLevelDb(),
+						listener.vehicleConfig().sonarSelfNoiseOffsetDb(), torp.x(), torp.y(), torp.z(),
+						torp.sourceLevelDb(), torp.speed(), torp.pingRequested(), terrain, thermalLayers);
 				if (contact != null)
 					extraPassive.add(contact);
 			}
@@ -159,9 +160,10 @@ public final class SonarModel {
 			for (var source : entities) {
 				if (source.forfeited() || source.hp() <= 0)
 					continue;
-				var contact = passiveDetect(torp.x(), torp.y(), torp.z(), torp.heading(), torp.sourceLevelDb(),
-						torpSonarOffset, source.x(), source.y(), source.z(), source.sourceLevelDb(), source.speed(),
-						source.pingRequested(), terrain, thermalLayers);
+				var contact = passiveDetect(tick, sensorNoiseFor(tick, torp.id(), source.id()), torp.x(), torp.y(),
+						torp.z(), torp.heading(), torp.sourceLevelDb(), torpSonarOffset, source.x(), source.y(),
+						source.z(), source.sourceLevelDb(), source.speed(), source.pingRequested(), terrain,
+						thermalLayers);
 				if (contact != null)
 					passive.add(contact);
 			}
@@ -184,6 +186,7 @@ public final class SonarModel {
 			results.put(torp.id(), new SonarResult(passive, active, torp.activeSonarCooldown()));
 		}
 
+		expireSensorNoise(tick);
 		return results;
 	}
 
@@ -197,9 +200,9 @@ public final class SonarModel {
 	 * Passive detection: can listener hear source? Returns contact or null.
 	 */
 	private SonarContact passiveDetect(
-			double lx, double ly, double lz, double lHeading, double lSLdB, double lSonarOffset, double sx, double sy,
-			double sz, double sSLdB, double sSpeed, boolean sPinged, TerrainMap terrain,
-			List<ThermalLayer> thermalLayers) {
+			long tick, SensorNoise noise, double lx, double ly, double lz, double lHeading, double lSLdB,
+			double lSonarOffset, double sx, double sy, double sz, double sSLdB, double sSpeed, boolean sPinged,
+			TerrainMap terrain, List<ThermalLayer> thermalLayers) {
 		double distance = Math.sqrt((sx - lx) * (sx - lx) + (sy - ly) * (sy - ly) + (sz - lz) * (sz - lz));
 		if (distance < 1.0)
 			distance = 1.0;
@@ -221,14 +224,39 @@ public final class SonarModel {
 		double se = sl - tl - nl;
 		if (se > DETECTION_THRESHOLD_DB) {
 			double bearingError = bearingStdDev(se);
-			double noisyBearing = trueBearing + bearingError * rng.nextGaussian();
+			double noisyBearing = trueBearing + bearingError * noise.bearing.next(tick, rng);
 			noisyBearing = ((noisyBearing % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
 			// Speed estimate from blade-rate analysis (noisy)
-			double estSpd = sSpeed > 0 ? sSpeed + rng.nextGaussian() * 2 : -1;
+			double estSpd = sSpeed > 0 ? sSpeed + noise.speed.next(tick, rng) * 2 : -1;
 			return new SonarContact(noisyBearing, se, 0, false, estSpd, bearingError, 0, sl, 0, Double.NaN, Double.NaN,
 					classify(se, estSpd, sl, Double.NaN));
 		}
 		return null;
+	}
+
+	/**
+	 * Correlated error processes for a listener/source pair that has no {@link ContactTracker} (torpedoes as either
+	 * side). Entries are dropped once the pair has not been evaluated for {@link #SENSOR_NOISE_EXPIRY_TICKS}.
+	 */
+	private static final class SensorNoise {
+		final CorrelatedNoise bearing = new CorrelatedNoise(ContactTracker.BEARING_CORRELATION_S,
+				ContactTracker.SENSOR_CORRELATED_FRACTION);
+		final CorrelatedNoise speed = new CorrelatedNoise(ContactTracker.SPEED_CORRELATION_S,
+				ContactTracker.SENSOR_CORRELATED_FRACTION);
+		long lastTick;
+	}
+
+	private static final long SENSOR_NOISE_EXPIRY_TICKS = 1500;
+	private final Map<Long, SensorNoise> sensorNoise = new HashMap<>();
+
+	private SensorNoise sensorNoiseFor(long tick, int listenerId, int sourceId) {
+		var noise = sensorNoise.computeIfAbsent(trackerKey(listenerId, sourceId), k -> new SensorNoise());
+		noise.lastTick = tick;
+		return noise;
+	}
+
+	private void expireSensorNoise(long tick) {
+		sensorNoise.values().removeIf(n -> tick - n.lastTick > SENSOR_NOISE_EXPIRY_TICKS);
 	}
 
 	/**
@@ -338,17 +366,19 @@ public final class SonarModel {
 
 				double se = sl - tl - nl;
 				if (se > DETECTION_THRESHOLD_DB) {
+					// Measurement errors are drawn from the tracker's correlated
+					// noise processes so consecutive ticks share most of their error.
+					var tracker = getOrCreateTracker(listener.id(), source.id());
 					double brgStdDev = bearingStdDev(se);
-					double bearingError = rng.nextGaussian() * brgStdDev;
+					double bearingError = tracker.bearingNoise.next(tick, rng) * brgStdDev;
 					double reportedBearing = normalizeBearing(trueBearing + bearingError);
-					double estSpeed = estimateTargetSpeed(source.speed(), se, rng);
+					double estSpeed = estimateTargetSpeed(source.speed(), se, tracker.speedNoise.next(tick, rng));
 					// Estimate source level from signal characteristics.
 					// Accuracy improves with SE (closer = better signal analysis).
 					double slError = Math.clamp(10.0 / Math.max(se, 1.0), 1.0, 8.0);
-					double estSL = sl + rng.nextGaussian() * slError;
+					double estSL = sl + tracker.sourceLevelNoise.next(tick, rng) * slError;
 
 					// Update contact tracker
-					var tracker = getOrCreateTracker(listener.id(), source.id());
 					tracker.update(tick, reportedBearing, se, estSpeed, estSL, listener.x(), listener.y(),
 							listener.heading(), inBaffles, distance, source.x(), source.y(), rng);
 					observedSourceIds.add(source.id());
@@ -370,7 +400,7 @@ public final class SonarModel {
 						double rangeRmsNoise = distance * RANGE_NOISE_FRACTION;
 						double rangeNoise = rangeRmsNoise * rng.nextGaussian();
 						double reportedRange = Math.max(1.0, distance + rangeNoise);
-						double estSpeed = estimateTargetSpeed(source.speed(), activeSe, rng);
+						double estSpeed = estimateTargetSpeed(source.speed(), activeSe, rng.nextGaussian());
 						double slError = Math.clamp(10.0 / Math.max(activeSe, 1.0), 1.0, 5.0);
 						double estSL = sl + rng.nextGaussian() * slError;
 						double depthNoiseRms = Math.max(5.0, distance * 0.05);
@@ -537,9 +567,11 @@ public final class SonarModel {
 	 * Estimate target speed from blade-rate tonals. Accuracy depends on signal excess: close range (high SE) → tight
 	 * estimate, long range (low SE) → noisy or unavailable.
 	 *
+	 * @param unitError
+	 * 		the N(0, 1) error sample to scale; from a {@link CorrelatedNoise} process for passive tracking
 	 * @return estimated speed in m/s, or -1 if SE too low for analysis
 	 */
-	static double estimateTargetSpeed(double actualSpeed, double signalExcess, Random rng) {
+	static double estimateTargetSpeed(double actualSpeed, double signalExcess, double unitError) {
 		if (signalExcess < SPEED_EST_MIN_SE)
 			return -1;
 
@@ -548,7 +580,7 @@ public final class SonarModel {
 		double t = Math.clamp((signalExcess - SPEED_EST_MIN_SE) / (SPEED_EST_GOOD_SE - SPEED_EST_MIN_SE), 0, 1);
 		double errorFraction = SPEED_EST_BASE_ERROR * (1.0 - t * 0.9); // 0.50 → 0.05
 
-		double noise = rng.nextGaussian() * errorFraction * Math.max(actualSpeed, 1.0);
+		double noise = unitError * errorFraction * Math.max(actualSpeed, 1.0);
 		return Math.max(0, actualSpeed + noise);
 	}
 

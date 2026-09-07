@@ -43,12 +43,27 @@ import java.util.Random;
  *   <li>Time alone gives almost nothing (no free convergence)</li>
  *   <li>Heading requires quality &gt; 0.5 (real maneuvering needed)</li>
  *   <li>Active sonar bypasses TMA: instant accurate range</li>
+ *   <li>All measurement errors are correlated over tens of seconds, so averaging a few seconds of samples does not
+ *   improve them (see {@link CorrelatedNoise})</li>
  * </ul>
  */
 final class ContactTracker {
 	// Constants
 	private static final double AMBIENT_NOISE_DB = 60.0;
 	private static final double SPREADING_COEFFICIENT = 10.0;
+
+	// Correlation times of the measurement errors (seconds). Bearing wander from
+	// array and multipath effects persists for tens of seconds; blade-rate
+	// speed tracking re-locks faster; the TMA range and heading estimates are
+	// filter outputs and drift slowly.
+	static final double BEARING_CORRELATION_S = 20.0;
+	static final double SPEED_CORRELATION_S = 10.0;
+	static final double SOURCE_LEVEL_CORRELATION_S = 30.0;
+	static final double RANGE_CORRELATION_S = 20.0;
+	static final double HEADING_CORRELATION_S = 60.0;
+	// Fraction of sensor error variance that is slow wander; the rest is
+	// tick-to-tick jitter, which is the only part averaging can remove.
+	static final double SENSOR_CORRELATED_FRACTION = 0.8;
 
 	// Bearing history (capped at 200)
 	record BearingObs(long tick, double bearing, double ownX, double ownY, double se) {
@@ -74,6 +89,12 @@ final class ContactTracker {
 
 	// Active sonar calibration of source level
 	private double calibratedSL = Double.NaN;
+	// Tick of the last active range fix, or -1. A fix anchors the range
+	// solution; its value fades over PING_FIX_MEMORY_S as the target is free
+	// to change course and speed.
+	private long pingTick = -1;
+	static final double PING_FIX_MEMORY_S = 60.0;
+	private static final double PING_RANGE_NOISE = 0.02;
 
 	// Contact continuity
 	private long lastObservationTick = -1;
@@ -83,6 +104,18 @@ final class ContactTracker {
 	// Heading estimation: uses ground truth with quality-dependent noise
 	private double prevTargetX = Double.NaN, prevTargetY = Double.NaN;
 	private long prevTargetTick = -1;
+
+	// Measurement error processes. All errors reported for this contact are
+	// correlated in time (see CorrelatedNoise) so that a controller cannot
+	// average them away over a few seconds. The sonar model draws the
+	// per-tick bearing, blade-rate speed, and source-level errors from the
+	// first three; the tracker uses the last two internally.
+	final CorrelatedNoise bearingNoise = new CorrelatedNoise(BEARING_CORRELATION_S, SENSOR_CORRELATED_FRACTION);
+	final CorrelatedNoise speedNoise = new CorrelatedNoise(SPEED_CORRELATION_S, SENSOR_CORRELATED_FRACTION);
+	final CorrelatedNoise sourceLevelNoise = new CorrelatedNoise(SOURCE_LEVEL_CORRELATION_S,
+			SENSOR_CORRELATED_FRACTION);
+	private final CorrelatedNoise rangeNoise = new CorrelatedNoise(RANGE_CORRELATION_S, 1.0);
+	private final CorrelatedNoise headingNoise = new CorrelatedNoise(HEADING_CORRELATION_S, 1.0);
 
 	/**
 	 * Update tracker with a new passive bearing observation. Range is modeled as ground-truth with a large persistent
@@ -134,6 +167,10 @@ final class ContactTracker {
 
 		// === Solution quality (must be computed before range, as it gates bias decay) ===
 		updateSolutionQuality(actualDistance);
+		// A recent active fix is worth more than any passive geometry, and
+		// fades as it ages instead of vanishing on the next passive tick.
+		double fix = pingFixFactor(tick);
+		solutionQuality = Math.max(solutionQuality, 0.95 * fix);
 
 		// === Range estimation: ground truth + persistent bias + noise ===
 		// The bias models the systematic error of a real TMA system that
@@ -159,9 +196,14 @@ final class ContactTracker {
 		rangeBias *= (1.0 - biasDecay);
 
 		// Random noise on top of biased estimate
-		// High quality: 5% noise. Low quality: 25% noise.
+		// High quality: 5% noise. Low quality: 25% noise. The noise is a slow
+		// wander (20 s correlation time), not fresh per tick: a filter output
+		// drifts, it does not jitter, and drift cannot be averaged away.
 		double noiseLevel = 0.05 + 0.20 * (1.0 - solutionQuality);
-		double noisyRange = actualDistance + rangeBias + actualDistance * rng.nextGaussian() * noiseLevel;
+		// Right after a ping the range is known to the active-return accuracy;
+		// the passive wander takes over as the fix ages.
+		noiseLevel = noiseLevel * (1.0 - fix) + PING_RANGE_NOISE * fix;
+		double noisyRange = actualDistance + rangeBias + actualDistance * rangeNoise.next(tick, rng) * noiseLevel;
 		noisyRange = Math.max(100, noisyRange);
 
 		if (Double.isNaN(estimatedRange)) {
@@ -176,10 +218,15 @@ final class ContactTracker {
 			estimatedRange = estimatedRange * (1 - alpha) + noisyRange * alpha;
 		}
 
-		// Range uncertainty: reflects both quality and remaining bias
-		double biasFraction = Math.abs(rangeBias) / Math.max(actualDistance, 100);
-		rangeUncertainty = estimatedRange * Math.max((1.0 - solutionQuality) * 0.6, biasFraction * 0.5);
-		rangeUncertainty = Math.max(rangeUncertainty, estimatedRange * 0.03);
+		// Range uncertainty: reflects both quality and remaining bias. The bias
+		// term is kept in metres on purpose: scaling it by the estimate would
+		// collapse the reported uncertainty together with the estimate when the
+		// initial guess is short and the estimate sits on the 100 m floor,
+		// telling the controller "100 m +- 60 m" about a target 500 m away.
+		// The wander passes through the smoothing largely intact, so the
+		// quality term can never drop below the current noise level.
+		double qualityFraction = Math.max((1.0 - solutionQuality) * 0.6, noiseLevel);
+		rangeUncertainty = Math.max(estimatedRange * qualityFraction, Math.abs(rangeBias));
 
 		// === Heading estimation: requires quality > 0.5 ===
 		// Uses ground-truth target displacement with quality-dependent noise.
@@ -196,8 +243,8 @@ final class ContactTracker {
 					trueHeading += 2 * Math.PI;
 
 				// Add noise: 25 degrees at q=0.5, 5 degrees at q=1.0
-				double headingNoise = Math.toRadians(50) * (1.0 - solutionQuality);
-				double noisyHeading = trueHeading + rng.nextGaussian() * headingNoise;
+				double headingSigma = Math.toRadians(50) * (1.0 - solutionQuality);
+				double noisyHeading = trueHeading + headingNoise.next(tick, rng) * headingSigma;
 				if (noisyHeading < 0)
 					noisyHeading += 2 * Math.PI;
 				if (noisyHeading >= 2 * Math.PI)
@@ -266,14 +313,22 @@ final class ContactTracker {
 	void updateFromPing(long tick, double range, double se) {
 		estimatedRange = range;
 		rangeBias = 0; // ping eliminates systematic error entirely
-		rangeUncertainty = range * 0.02; // 2% RMS
+		rangeUncertainty = range * PING_RANGE_NOISE; // 2% RMS
 		solutionQuality = 0.95;
 		lastObservationTick = tick;
+		pingTick = tick;
 
 		// Calibrate SL from active return
 		if (se > 5.0 && range > 1.0) {
 			calibratedSL = se + SPREADING_COEFFICIENT * Math.log10(range) + AMBIENT_NOISE_DB;
 		}
+	}
+
+	/** 1.0 at the moment of an active fix, decaying to 0 as the fix ages; 0 if never pinged. */
+	private double pingFixFactor(long tick) {
+		if (pingTick < 0)
+			return 0;
+		return Math.exp(-(tick - pingTick) / (PING_FIX_MEMORY_S * CorrelatedNoise.TICKS_PER_SECOND));
 	}
 
 	void decay(long tick, double maxSubSpeed) {

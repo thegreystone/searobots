@@ -30,10 +30,10 @@ Each `SonarContact` provides:
 
 | Field                | Source              | Accuracy                                                         |
 |----------------------|---------------------|------------------------------------------------------------------|
-| bearing              | Direct measurement  | Good (1-10 deg depending on SE)                                  |
+| bearing              | Direct measurement  | Good (1-10 deg depending on SE); error wanders over ~20 s        |
 | bearingUncertainty   | From SE             | Quantified                                                       |
 | range                | Engine TMA          | Starts with large bias, improves only with maneuvering           |
-| rangeUncertainty     | Engine TMA          | Reflects solution quality                                        |
+| rangeUncertainty     | Engine TMA          | 1-sigma bound in metres; can exceed range while solution is poor |
 | estimatedSpeed       | Blade-rate analysis | Good at high SE (close range)                                    |
 | estimatedHeading     | Engine TMA          | Requires quality > 0.5 (deliberate maneuvering)                  |
 | estimatedSourceLevel | Signal analysis     | For classification                                               |
@@ -119,14 +119,57 @@ not decay at all:
 - At quality 0.8 (excellent): half-life ~4 seconds
 
 **Random noise:**
-On top of the biased estimate, each tick adds random noise:
+On top of the biased estimate there is random noise:
 
 - At low quality: +/- 25% of actual distance
 - At high quality: +/- 5% of actual distance
 
+The noise is a slow wander with a 20 second correlation time, not a
+fresh draw every tick (see "Measurement Error Correlation" below), so
+the reported range drifts the way a real filter output does and the
+drift cannot be averaged away.
+
 **Smoothing:**
 The range estimate is exponentially smoothed. The blend rate scales
 with geometric information, preventing wild jumps.
+
+**Range uncertainty:**
+`rangeUncertainty` is a conservative 1-sigma bound in metres for both
+active and passive contacts: the larger of the quality-and-noise term
+(60% of the estimate at floor quality, never below the current noise
+level) and the remaining systematic bias. For a passive contact it can
+exceed the range itself while the solution is poor. `Double.MAX_VALUE`
+means no range information at all (contact heard only through the
+baffles).
+
+### Measurement Error Correlation
+
+Every error the sonar reports for a contact is correlated in time. It
+is modelled as a first-order Gauss-Markov process (an
+Ornstein-Uhlenbeck random walk pulled back toward zero) mixed with a
+small white component, implemented in `CorrelatedNoise`. Each sample
+is still N(0, sigma) on its own, so the reported 1-sigma values stay
+honest, but consecutive samples share most of their error.
+
+| Error                    | Correlation time | White fraction |
+|--------------------------|------------------|----------------|
+| Bearing                  | 20 s             | 20%            |
+| Blade-rate speed         | 10 s             | 20%            |
+| Estimated source level   | 30 s             | 20%            |
+| TMA range wander         | 20 s             | 0%             |
+| TMA heading              | 60 s             | 0%             |
+
+Why: with independent per-tick errors at 50 Hz a controller could
+average one second of bearings and cut a 10 degree error to under 1.5
+degrees, and a minute of bearings to a quarter of a degree, which no
+real system can do. With correlated errors a one second average
+retains about 85% of the error, a one minute average about 60%, and a
+five minute average about 30%. The same applies to torpedo seekers and
+to subs listening to torpedoes; those pairs keep their own noise
+processes since they have no `ContactTracker`.
+
+The array-and-environment wander is the realistic part; the small
+white fraction is what keeps a bearing display from looking frozen.
 
 ### Heading Estimation
 
@@ -256,7 +299,11 @@ When the listener pings:
    where TL uses the known range.
 3. Subsequent passive observations use the calibrated SL for more
    accurate SE-based ranging.
-4. Solution quality jumps to 0.95.
+4. Solution quality jumps to 0.95 and then fades with a 60 second time
+   constant (0.35 after one minute, 0.13 after two) unless passive
+   geometry keeps it up. The range wander fades in from the 2% active
+   accuracy over the same time, so the estimate stays ping-accurate for
+   a while and then degrades as the target is free to manoeuvre.
 5. Everyone on the map hears the ping (tactical cost).
 6. Active sonar cooldown: 250 ticks (5 seconds) between pings.
 

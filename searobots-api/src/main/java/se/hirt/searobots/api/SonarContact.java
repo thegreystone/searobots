@@ -36,15 +36,19 @@ package se.hirt.searobots.api;
  * @param signalExcess
  * 		dB above detection threshold (higher = stronger/closer)
  * @param range
- * 		meters (active sonar returns only, 0 for passive)
+ * 		estimated range in meters. Precise for active returns; for passive contacts it is the engine's TMA estimate,
+ * 		which starts with a large bias and converges only through own-ship maneuvering. 0 if no estimate exists.
  * @param isActive
  * 		true if this contact came from an active sonar return
  * @param estimatedSpeed
  * 		target speed estimate from blade-rate tonals (m/s, -1 if unavailable)
  * @param bearingUncertainty
- * 		1-sigma bearing error in radians, computed by the sonar model
+ * 		1-sigma bearing error in radians, computed by the sonar model. The error is correlated over tens of seconds, so
+ * 		averaging a few seconds of bearings does not reduce it.
  * @param rangeUncertainty
- * 		1-sigma range error in meters (active returns only, 0 for passive)
+ * 		conservative 1-sigma bound on the range error in meters, for both active and passive contacts. For a passive
+ * 		contact it can exceed the range itself while the TMA solution is poor. Double.MAX_VALUE means no range
+ * 		information at all (for example a contact heard only through the baffles).
  * @param estimatedSourceLevel
  * 		estimated source level in dB, derived from the acoustic signature. Enables classification (surface ships are much
  * 		louder than submarines) and more accurate SE-based ranging.

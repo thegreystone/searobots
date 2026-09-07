@@ -192,11 +192,16 @@ public class TMAConvergenceTest {
 		System.out.printf("Straight line: range=%.0f actual=%.0f error=%.0f%% quality=%.2f uncertainty=%.0f%n",
 				sub.lastRange, actual, errorPct(sub.lastRange, actual), sub.lastQuality, sub.lastUncertainty);
 
-		// Range error should be large: driving toward the target gives
-		// bearing but very poor range resolution
-		assertTrue(errorPct(sub.lastRange, actual) > 30 || sub.lastUncertainty > actual * 0.5,
-				"Straight line should give poor range. Error: " + errorPct(sub.lastRange,
-						actual) + "%, uncertainty: " + sub.lastUncertainty);
+		// Driving toward the target gives bearing but very poor range
+		// resolution. The initial bias draw may happen to be small, so the
+		// test is on what the tracker claims, not on the luck of the draw: the
+		// reported uncertainty must stay far above what a controller needs to
+		// shoot on passive data alone (~300 m), and it must cover the error.
+		double error = Math.abs(sub.lastRange - actual);
+		assertTrue(sub.lastUncertainty > 300,
+				"Straight line must not yield a firing solution. Uncertainty: " + sub.lastUncertainty + " m");
+		assertTrue(sub.lastUncertainty >= 0.5 * error,
+				"Reported uncertainty " + sub.lastUncertainty + " m must cover a range error of " + error + " m");
 		// Quality may build slightly from the initial turn and small bearing
 		// changes, but should remain below what a proper zig-zag achieves
 		assertTrue(sub.lastQuality < 0.50,
