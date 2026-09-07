@@ -102,6 +102,7 @@ public final class ReplayWriter implements SimulationListener, AutoCloseable {
 		writeLine(ReplayCodec.colsLine(ReplayFormat.TAG_SUB, ReplayCodec.SUB_COLS));
 		writeLine(ReplayCodec.colsLine(ReplayFormat.TAG_CONTACT, ReplayCodec.CONTACT_COLS));
 		writeLine(ReplayCodec.colsLine(ReplayFormat.TAG_WAYPOINT, ReplayCodec.WAYPOINT_COLS));
+		writeLine(ReplayCodec.colsLine(ReplayFormat.TAG_FIRING, ReplayCodec.FIRING_COLS));
 		writeLine(ReplayCodec.colsLine(ReplayFormat.TAG_TORPEDO, ReplayCodec.TORPEDO_COLS));
 	}
 
@@ -135,6 +136,11 @@ public final class ReplayWriter implements SimulationListener, AutoCloseable {
 						ReplayCodec.encodeWaypoint(wb, wp);
 						writeLine(wb.toString());
 					}
+				}
+				if (sub.firingSolution() != null) {
+					var fb = new StringBuilder(48);
+					ReplayCodec.encodeFiring(fb, sub.firingSolution());
+					writeLine(fb.toString());
 				}
 			}
 			if (torpedoes != null) {

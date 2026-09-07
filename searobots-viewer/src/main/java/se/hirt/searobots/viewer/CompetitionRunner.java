@@ -302,8 +302,9 @@ final class CompetitionRunner {
 
 		simManager.setWorld(world);
 		sim.setSpeedMultiplier(currentSpeedMultiplier);
+		var recorded = SimulationListeners.composite(listener, simManager.recorderFor(world));
 		currentThread = Thread.ofPlatform().daemon().name("competition-nav")
-				.start(() -> sim.run(world, controllers, configs, listener));
+				.start(() -> sim.run(world, controllers, configs, recorded));
 	}
 
 	SimulationLoop currentSim() {
@@ -413,8 +414,9 @@ final class CompetitionRunner {
 		// Paused state is read from sim loop via supplier
 		System.out.printf("[comp] setWorld in %dms%n", System.currentTimeMillis() - tSetWorld);
 		sim.setSpeedMultiplier(currentSpeedMultiplier);
+		var recorded = SimulationListeners.composite(listener, simManager.recorderFor(world));
 		currentThread = Thread.ofPlatform().daemon().name("competition-combat")
-				.start(() -> sim.run(world, controllers, configs, listener));
+				.start(() -> sim.run(world, controllers, configs, recorded));
 	}
 
 	private void updateScore() {

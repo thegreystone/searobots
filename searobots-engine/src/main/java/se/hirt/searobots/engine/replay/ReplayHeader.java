@@ -29,6 +29,7 @@
 package se.hirt.searobots.engine.replay;
 
 import se.hirt.searobots.api.BattleArea;
+import se.hirt.searobots.api.MatchConfig;
 
 import java.util.List;
 
@@ -74,5 +75,27 @@ public record ReplayHeader(int formatVersion, long seed, int tickRateHz, long du
 	 * 		spawn Z
 	 */
 	public record SubDef(int id, String name, int colorRgb, double spawnX, double spawnY, double spawnZ) {
+	}
+
+	/**
+	 * Reconstructs the recorded match configuration: parameters captured in the header override the defaults for the
+	 * recorded seed, so a match recorded with a non-default arena, duration, or depth limits regenerates the same world.
+	 * Parameters the format does not capture (torpedo counts, terrain generation knobs, ...) keep their defaults, and
+	 * hand-built terrain (worlds not produced by {@code WorldGenerator}) is not reproducible from a replay at all; see
+	 * {@code docs/replay-format.md}. Zero-valued header fields (older or partial files) fall back to the defaults.
+	 */
+	public MatchConfig toMatchConfig() {
+		MatchConfig d = MatchConfig.withDefaults(seed);
+		return new MatchConfig(seed,
+				tickRateHz > 0 ? tickRateHz : d.tickRateHz(),
+				durationTicks > 0 ? (int) Math.min(durationTicks, Integer.MAX_VALUE) : d.matchDurationTicks(),
+				d.submarineCount(), d.torpedoCount(),
+				startingHp > 0 ? startingHp : d.startingHp(),
+				d.blastRadius(), d.minFuseRadius(), d.maxFuseRadius(),
+				ratedDepth != 0 ? ratedDepth : d.ratedDepth(),
+				crushDepth != 0 ? crushDepth : d.crushDepth(),
+				battleArea != null ? battleArea : d.battleArea(),
+				d.terrainMarginMeters(), d.gridCellMeters(), d.minSeaFloorZ(), d.maxSeaFloorZ(), d.maxSubSpeed(),
+				d.startTime());
 	}
 }

@@ -180,8 +180,8 @@ class CodexTorpedoGuidanceTest {
 	}
 
 	private static SonarContact activeContact(
-			double bearing, double range, double depth, SonarContact.Classification classification,
-			double estimatedSpeed, double signalExcess) {
+			double bearing, double range, double depth,
+			SonarContact.Classification classification, double estimatedSpeed, double signalExcess) {
 		return new SonarContact(bearing, signalExcess, range, true, estimatedSpeed, Math.toRadians(0.3),
 				Math.max(2.0, range * 0.02), 220.0, 0.95, Double.NaN, depth, classification);
 	}
