@@ -127,7 +127,7 @@ public final class ReplayReader {
 					Schema s = schemaFor(ReplayFormat.TAG_SUBDEF, ReplayCodec.SUBDEF_COLS);
 					subs.add(new ReplayHeader.SubDef(s.i(f, "id", 0), s.s(f, "name"),
 							s.i(f, "colorArgb", Color.GRAY.getRGB()), s.d(f, "spawnX", 0), s.d(f, "spawnY", 0),
-							s.d(f, "spawnZ", 0)));
+							s.d(f, "spawnZ", 0), s.b(f, "surface")));
 				} else if (ReplayFormat.TAG_TICK.equals(tag) || ReplayFormat.TAG_END.equals(tag)) {
 					break; // header section ends at the first frame
 				}
@@ -234,6 +234,7 @@ public final class ReplayReader {
 		ReplayHeader.SubDef def = subDefsById.get(p.id);
 		p.name = def != null ? def.name() : "sub" + p.id;
 		p.color = new Color(def != null ? def.colorRgb() : Color.GRAY.getRGB(), true);
+		p.surfaceLocked = def != null && def.surfaceLocked();
 		p.pose = new Pose(new Vec3(s.d(f, "x", 0), s.d(f, "y", 0), s.d(f, "z", 0)), s.d(f, "heading", 0),
 				s.d(f, "pitch", 0), s.d(f, "roll", 0));
 		p.velocity = new Velocity(new Vec3(s.d(f, "velX", 0), s.d(f, "velY", 0), s.d(f, "velZ", 0)),
@@ -330,13 +331,14 @@ public final class ReplayReader {
 		boolean pingRequested;
 		int torpedoesRemaining;
 		FiringSolution firingSolution;
+		boolean surfaceLocked;
 		final List<ContactEstimate> contacts = new ArrayList<>();
 		final List<Waypoint> waypoints = new ArrayList<>();
 
 		SubmarineSnapshot build() {
 			return new SubmarineSnapshot(id, name, pose, velocity, speed, color, forfeited, hp, noiseLevel,
 					sourceLevelDb, throttle, rudder, sternPlanes, status, pingRequested, torpedoesRemaining,
-					List.copyOf(contacts), List.copyOf(waypoints), List.of(), firingSolution);
+					List.copyOf(contacts), List.copyOf(waypoints), List.of(), firingSolution, surfaceLocked);
 		}
 	}
 }
