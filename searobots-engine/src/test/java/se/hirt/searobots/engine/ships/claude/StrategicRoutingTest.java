@@ -44,8 +44,8 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Tests that the autopilot can plan and follow a route toward the first strategic waypoint on real generated maps. Uses
- * the full ClaudeAttackSub controller with various seeds.
+ * Tests that the autopilot can plan and follow a route toward the first strategic waypoint on real
+ * generated maps. Uses the full ClaudeAttackSub controller with various seeds.
  */
 class StrategicRoutingTest {
 
@@ -53,12 +53,13 @@ class StrategicRoutingTest {
 	static final SubmarinePhysics physics = new SubmarinePhysics();
 
 	record RunResult(double startX, double startY, double startZ, double endX, double endY, double endZ,
-	                 double strategicWpX, double strategicWpY, double distToStrategicWp, double distanceTraveled,
-	                 double avgSpeed, int finalHp, int maxHp, String topStatus) {
+			double strategicWpX, double strategicWpY, double distToStrategicWp, double distanceTraveled,
+			double avgSpeed, int finalHp, int maxHp, String topStatus) {
 	}
 
 	/**
-	 * Runs a full simulation with ClaudeAttackSub on a generated map for the given seed. Returns performance metrics.
+	 * Runs a full simulation with ClaudeAttackSub on a generated map for the given seed. Returns
+	 * performance metrics.
 	 */
 	RunResult runSeed(long seed, int durationTicks) {
 		var config = MatchConfig.withDefaults(seed);
@@ -85,9 +86,8 @@ class StrategicRoutingTest {
 
 		for (int t = 0; t < durationTicks; t++) {
 			var pose = new Pose(new Vec3(entity.x(), entity.y(), entity.z()), entity.heading(), entity.pitch(), 0);
-			var vel = new Velocity(
-					new Vec3(entity.speed() * Math.sin(entity.heading()), entity.speed() * Math.cos(entity.heading()),
-							entity.verticalSpeed()), Vec3.ZERO);
+			var vel = new Velocity(new Vec3(entity.speed() * Math.sin(entity.heading()),
+					entity.speed() * Math.cos(entity.heading()), entity.verticalSpeed()), Vec3.ZERO);
 			var state = new SubmarineState(pose, vel, entity.hp(), 0);
 			var env = new EnvironmentSnapshot(terrain, List.of(), world.currentField());
 			var input = new TestHelpers.TestInput(t, DT, state, env, List.of(), List.of(), 0);
@@ -147,8 +147,8 @@ class StrategicRoutingTest {
 		double progress = initialDist - r.distToStrategicWp;
 		double progressPercent = initialDist > 0 ? 100.0 * progress / initialDist : 0;
 
-		System.out.printf(
-				"Seed %20d: start=(%.0f,%.0f,%.0f) -> (%.0f,%.0f,%.0f)  " + "WP=(%.0f,%.0f) dist=%.0fm->%.0fm (%.0f%% progress)  " + "traveled=%.0fm avgSpd=%.1f hp=%d  %s%n",
+		System.out.printf("Seed %20d: start=(%.0f,%.0f,%.0f) -> (%.0f,%.0f,%.0f)  "
+				+ "WP=(%.0f,%.0f) dist=%.0fm->%.0fm (%.0f%% progress)  " + "traveled=%.0fm avgSpd=%.1f hp=%d  %s%n",
 				seed, r.startX, r.startY, r.startZ, r.endX, r.endY, r.endZ, r.strategicWpX, r.strategicWpY, initialDist,
 				r.distToStrategicWp, progressPercent, r.distanceTraveled, r.avgSpeed, r.finalHp, r.topStatus);
 
@@ -161,9 +161,11 @@ class StrategicRoutingTest {
 
 		// Must make SOME progress toward the strategic waypoint
 		// (at least 10% closer, or within arrival radius)
-		assertTrue(progressPercent > 10 || r.distToStrategicWp < 300, String.format(
-				"Sub should make progress toward strategic WP. " + "Initial dist=%.0fm, final=%.0fm (%.0f%% progress)",
-				initialDist, r.distToStrategicWp, progressPercent));
+		assertTrue(progressPercent > 10 || r.distToStrategicWp < 300,
+				String.format(
+						"Sub should make progress toward strategic WP. "
+								+ "Initial dist=%.0fm, final=%.0fm (%.0f%% progress)",
+						initialDist, r.distToStrategicWp, progressPercent));
 	}
 
 	// ── Specific seed regression tests ──────────────────────────────
@@ -177,8 +179,8 @@ class StrategicRoutingTest {
 		double progress = initialDist - r.distToStrategicWp;
 		double progressPercent = initialDist > 0 ? 100.0 * progress / initialDist : 0;
 
-		System.out.printf(
-				"Seed 1977183490549486046: start=(%.0f,%.0f,%.0f) -> (%.0f,%.0f,%.0f)%n" + "  WP=(%.0f,%.0f) dist=%.0fm->%.0fm (%.0f%% progress)%n" + "  traveled=%.0fm avgSpd=%.1f hp=%d  %s%n",
+		System.out.printf("Seed 1977183490549486046: start=(%.0f,%.0f,%.0f) -> (%.0f,%.0f,%.0f)%n"
+				+ "  WP=(%.0f,%.0f) dist=%.0fm->%.0fm (%.0f%% progress)%n" + "  traveled=%.0fm avgSpd=%.1f hp=%d  %s%n",
 				r.startX, r.startY, r.startZ, r.endX, r.endY, r.endZ, r.strategicWpX, r.strategicWpY, initialDist,
 				r.distToStrategicWp, progressPercent, r.distanceTraveled, r.avgSpeed, r.finalHp, r.topStatus);
 
@@ -234,11 +236,10 @@ class StrategicRoutingTest {
 		int replanCount = 0;
 
 		int lastStratIdx = -1;
-		for (int t = 0; t < 50 * 300; t++) {  // 5 minutes
+		for (int t = 0; t < 50 * 300; t++) { // 5 minutes
 			var pose = new Pose(new Vec3(entity.x(), entity.y(), entity.z()), entity.heading(), entity.pitch(), 0);
-			var vel = new Velocity(
-					new Vec3(entity.speed() * Math.sin(entity.heading()), entity.speed() * Math.cos(entity.heading()),
-							entity.verticalSpeed()), Vec3.ZERO);
+			var vel = new Velocity(new Vec3(entity.speed() * Math.sin(entity.heading()),
+					entity.speed() * Math.cos(entity.heading()), entity.verticalSpeed()), Vec3.ZERO);
 			var state = new SubmarineState(pose, vel, entity.hp(), 0);
 			var env = new EnvironmentSnapshot(terrain, List.of(), world.currentField());
 			var input = new TestHelpers.TestInput(t, DT, state, env, List.of(), List.of(), 0);

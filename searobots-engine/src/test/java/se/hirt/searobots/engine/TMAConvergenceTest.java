@@ -38,10 +38,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * Tests that passive TMA (Target Motion Analysis) behaves realistically:
  * <ul>
- *   <li>Straight-line running gives bearing but poor range</li>
- *   <li>Cross-track maneuvering converges range within ~90 seconds</li>
- *   <li>Multiple legs give a good firing solution without active pings</li>
- *   <li>Active ping gives instant accurate range</li>
+ * <li>Straight-line running gives bearing but poor range</li>
+ * <li>Cross-track maneuvering converges range within ~90 seconds</li>
+ * <li>Multiple legs give a good firing solution without active pings</li>
+ * <li>Active ping gives instant accurate range</li>
  * </ul>
  */
 public class TMAConvergenceTest {
@@ -210,9 +210,9 @@ public class TMAConvergenceTest {
 
 	@Test
 	void twoLegManeuverConvergesRange() {
-		var sub = new ScriptedSub(List.of(new ScriptedSub.Leg(Math.toRadians(60), 1500),   // NE, 30s
-				new ScriptedSub.Leg(Math.toRadians(120), 1500),  // SE, 30s
-				new ScriptedSub.Leg(Math.toRadians(60), 1500)    // NE again, 30s
+		var sub = new ScriptedSub(List.of(new ScriptedSub.Leg(Math.toRadians(60), 1500), // NE, 30s
+				new ScriptedSub.Leg(Math.toRadians(120), 1500), // SE, 30s
+				new ScriptedSub.Leg(Math.toRadians(60), 1500) // NE again, 30s
 		), -100, 7, false);
 		var target = new NoisyTarget();
 
@@ -265,13 +265,13 @@ public class TMAConvergenceTest {
 		// Sub starts west of target (target is at +1000, sub at -1000).
 		// Slow speed (3 m/s) keeps self-noise low for detection.
 		// North/south legs give maximum cross-track relative to bearing line.
-		var sub = new ScriptedSub(List.of(new ScriptedSub.Leg(Math.toRadians(0), 1500),    // north, 30s
-				new ScriptedSub.Leg(Math.toRadians(180), 1500),  // south, 30s
-				new ScriptedSub.Leg(Math.toRadians(0), 1500),    // north, 30s
-				new ScriptedSub.Leg(Math.toRadians(180), 1500),  // south, 30s
-				new ScriptedSub.Leg(Math.toRadians(0), 1500),    // north, 30s
-				new ScriptedSub.Leg(Math.toRadians(180), 1500),  // south, 30s
-				new ScriptedSub.Leg(Math.toRadians(0), 1500)     // north, 30s
+		var sub = new ScriptedSub(List.of(new ScriptedSub.Leg(Math.toRadians(0), 1500), // north, 30s
+				new ScriptedSub.Leg(Math.toRadians(180), 1500), // south, 30s
+				new ScriptedSub.Leg(Math.toRadians(0), 1500), // north, 30s
+				new ScriptedSub.Leg(Math.toRadians(180), 1500), // south, 30s
+				new ScriptedSub.Leg(Math.toRadians(0), 1500), // north, 30s
+				new ScriptedSub.Leg(Math.toRadians(180), 1500), // south, 30s
+				new ScriptedSub.Leg(Math.toRadians(0), 1500) // north, 30s
 		), -100, 3, false);
 		var target = new NoisyTarget();
 

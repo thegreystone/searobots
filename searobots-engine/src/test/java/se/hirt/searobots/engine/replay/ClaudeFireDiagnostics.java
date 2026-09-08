@@ -41,14 +41,15 @@ import java.util.List;
 import java.util.Locale;
 
 /**
- * Diagnostic harness focused on the Claude controller's combat conversion: why Claude so rarely fires torpedoes. It
- * reconstructs Claude's firing gates from the data Claude itself publishes each tick (status mode, contact estimate
- * with uncertaintyRadius and ping/passive label, and the firing solution), plus the true geometry, so no change to the
- * controller is needed.
+ * Diagnostic harness focused on the Claude controller's combat conversion: why Claude so rarely
+ * fires torpedoes. It reconstructs Claude's firing gates from the data Claude itself publishes each
+ * tick (status mode, contact estimate with uncertaintyRadius and ping/passive label, and the firing
+ * solution), plus the true geometry, so no change to the controller is needed.
  * <p>
- * Claude (index 1) only fires when ALL hold simultaneously: mode==CHASE, contactAlive>=0.5, true-track distance in
- * [800,2000]m, uncertaintyRadius<=300 (effectively requires a fresh active ping, since passive is floored ~450), and
- * heading aligned within 25 degrees. The counters below show which link is the binding constraint.
+ * Claude (index 1) only fires when ALL hold simultaneously: mode==CHASE, contactAlive>=0.5,
+ * true-track distance in [800,2000]m, uncertaintyRadius<=300 (effectively requires a fresh active
+ * ping, since passive is floored ~450), and heading aligned within 25 degrees. The counters below
+ * show which link is the binding constraint.
  * <p>
  * Assertion-free dev tool: skipped on normal builds, run on demand with
  * {@code mvn test -Dsearobots.diag=true -Dtest=ClaudeFireDiagnostics}.
@@ -64,12 +65,12 @@ class ClaudeFireDiagnostics {
 		long ticks;
 		long ticksChase, ticksTrack, ticksPatrolOrObj;
 		long ticksWithContact;
-		long ticksContactAlive50;          // contactAlive >= 0.5
-		long ticksPingFresh;               // contact label == "ping" (range active-confirmed)
+		long ticksContactAlive50; // contactAlive >= 0.5
+		long ticksPingFresh; // contact label == "ping" (range active-confirmed)
 		double minUncertainty = Double.MAX_VALUE;
-		long ticksInTrueWindow;            // true enemy dist in [800,2000]
-		long ticksFireSolutionPublished;   // Claude says "I'd fire now if I could"
-		long ticksAllGatesButHeading;      // CHASE & alive>=.5 & dist 800-2000 & uncertOK
+		long ticksInTrueWindow; // true enemy dist in [800,2000]
+		long ticksFireSolutionPublished; // Claude says "I'd fire now if I could"
+		long ticksAllGatesButHeading; // CHASE & alive>=.5 & dist 800-2000 & uncertOK
 		double closestTrueApproach = Double.MAX_VALUE;
 		int torpedoesFired;
 	}
@@ -103,7 +104,8 @@ class ClaudeFireDiagnostics {
 			return "fired " + s.torpedoesFired + " - conversion working at least sometimes";
 		}
 		if (s.ticksChase == 0) {
-			return "NEVER reached CHASE mode (needs active-confirmed range, or dist<3500 & alive>0.18, " + "or uncertainty<300) - tracking never firmed up enough to commit";
+			return "NEVER reached CHASE mode (needs active-confirmed range, or dist<3500 & alive>0.18, "
+					+ "or uncertainty<300) - tracking never firmed up enough to commit";
 		}
 		if (s.ticksInTrueWindow == 0) {
 			return String.format(Locale.US,
@@ -111,12 +113,15 @@ class ClaudeFireDiagnostics {
 					s.closestTrueApproach);
 		}
 		if (s.minUncertainty > 300 && s.ticksPingFresh == 0) {
-			return "range never confirmed: passive uncertaintyRadius floored ~450 and Claude never got a " + "fresh active ping while in window - the uncertainty<=300 gate is the blocker";
+			return "range never confirmed: passive uncertaintyRadius floored ~450 and Claude never got a "
+					+ "fresh active ping while in window - the uncertainty<=300 gate is the blocker";
 		}
 		if (s.ticksFireSolutionPublished == 0) {
-			return "all individual gates occur but never SIMULTANEOUSLY (CHASE + alive + window + low " + "uncertainty never coincide) - the conjunction is too tight";
+			return "all individual gates occur but never SIMULTANEOUSLY (CHASE + alive + window + low "
+					+ "uncertainty never coincide) - the conjunction is too tight";
 		}
-		return "had a fireable solution for " + s.ticksFireSolutionPublished + " ticks but the 25-degree heading-alignment (or refire cooldown) blocked every shot";
+		return "had a fireable solution for " + s.ticksFireSolutionPublished
+				+ " ticks but the 25-degree heading-alignment (or refire cooldown) blocked every shot";
 	}
 
 	private static double pct(long n, long d) {

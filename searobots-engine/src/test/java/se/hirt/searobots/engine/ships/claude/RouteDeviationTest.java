@@ -42,8 +42,8 @@ import se.hirt.searobots.engine.ships.SubmarineDrone;
 import java.util.List;
 
 /**
- * Diagnostic test: tracks how far the sub deviates from its planned waypoints and what the floor looks like along the
- * actual path.
+ * Diagnostic test: tracks how far the sub deviates from its planned waypoints and what the floor
+ * looks like along the actual path.
  */
 class RouteDeviationTest {
 
@@ -74,8 +74,8 @@ class RouteDeviationTest {
 
 			@Override
 			public void onTick(
-					long tick, List<SubmarineSnapshot> submarines,
-					List<se.hirt.searobots.engine.TorpedoSnapshot> torpedoes) {
+				long tick, List<SubmarineSnapshot> submarines,
+				List<se.hirt.searobots.engine.TorpedoSnapshot> torpedoes) {
 				if (submarines.isEmpty() || dead)
 					return;
 				var s0 = submarines.get(0);
@@ -126,9 +126,8 @@ class RouteDeviationTest {
 
 				// Log when floor is dangerously shallow
 				if (tick % 250 == 0 && floor > -80) {
-					var wpInfo = waypoints.isEmpty() ? "NO WAYPOINTS"
-							: String.format("wp=[%.0f,%.0f] #%d/%d", waypoints.getFirst().x(), waypoints.getFirst().y(),
-									1, waypoints.size());
+					var wpInfo = waypoints.isEmpty() ? "NO WAYPOINTS" : String.format("wp=[%.0f,%.0f] #%d/%d",
+							waypoints.getFirst().x(), waypoints.getFirst().y(), 1, waypoints.size());
 					boolean wpSafe = true;
 					if (!waypoints.isEmpty()) {
 						for (var wp : waypoints) {

@@ -29,7 +29,8 @@
 package se.hirt.searobots.api;
 
 /**
- * Position and orientation of an entity. Angles in radians. Heading is measured clockwise from north (positive Y).
+ * Position and orientation of an entity. Angles in radians. Heading is measured clockwise from
+ * north (positive Y).
  */
 public record Pose(Vec3 position, double heading, double pitch, double roll) {
 

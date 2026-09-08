@@ -33,12 +33,12 @@ import se.hirt.searobots.api.*;
 /**
  * Claude's torpedo controller. Three-phase approach:
  * <ol>
- *   <li><b>Transit:</b> Head toward mission data target at full throttle.
- *       No pinging. Use passive sonar bearings to refine heading.</li>
- *   <li><b>Acquisition:</b> Near target area, start pinging. Use consecutive
- *       fixes to estimate target velocity. Steer toward intercept point.</li>
- *   <li><b>Terminal:</b> Within 800m, slow down for tight turning.
- *       True proportional navigation using line-of-sight rate.</li>
+ * <li><b>Transit:</b> Head toward mission data target at full throttle. No pinging. Use passive
+ * sonar bearings to refine heading.</li>
+ * <li><b>Acquisition:</b> Near target area, start pinging. Use consecutive fixes to estimate target
+ * velocity. Steer toward intercept point.</li>
+ * <li><b>Terminal:</b> Within 800m, slow down for tight turning. True proportional navigation using
+ * line-of-sight rate.</li>
  * </ol>
  */
 public class ClaudeTorpedoController implements TorpedoController {
@@ -56,7 +56,9 @@ public class ClaudeTorpedoController implements TorpedoController {
 	private double lastActiveRange = Double.MAX_VALUE; // closest active return range
 
 	// Phase management
-	private enum Phase {TRANSIT, ACQUISITION, TERMINAL}
+	private enum Phase {
+		TRANSIT, ACQUISITION, TERMINAL
+	}
 
 	private Phase phase = Phase.TRANSIT;
 
@@ -457,9 +459,10 @@ public class ClaudeTorpedoController implements TorpedoController {
 	}
 
 	/**
-	 * Earliest positive time at which a pursuer of the given speed, starting at the origin, can reach a target
-	 * currently at (px, py) moving at velocity (vx, vy): solves |(px,py) + (vx,vy)·t| = speed·t. Returns -1 if there is
-	 * no positive solution (target faster than the torpedo and opening the range).
+	 * Earliest positive time at which a pursuer of the given speed, starting at the origin, can
+	 * reach a target currently at (px, py) moving at velocity (vx, vy): solves |(px,py) +
+	 * (vx,vy)·t| = speed·t. Returns -1 if there is no positive solution (target faster than the
+	 * torpedo and opening the range).
 	 */
 	private static double solveInterceptTime(double px, double py, double vx, double vy, double speed) {
 		double a = (vx * vx + vy * vy) - speed * speed;

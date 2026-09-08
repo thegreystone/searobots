@@ -34,15 +34,17 @@ import java.util.List;
 import java.util.PriorityQueue;
 
 /**
- * A* path planner for submarine navigation. Builds a coarse navigation grid from the terrain map where cells shallower
- * than a configurable depth limit are blocked. Routes through safe deep water, with a cost penalty for cells near
- * shallow terrain to keep the path away from danger.
- * <p>Intended as a shared utility that any {@link SubmarineController}
- * can use for route planning.
- * <p>Usage:
+ * A* path planner for submarine navigation. Builds a coarse navigation grid from the terrain map
+ * where cells shallower than a configurable depth limit are blocked. Routes through safe deep
+ * water, with a cost penalty for cells near shallow terrain to keep the path away from danger.
+ * <p>
+ * Intended as a shared utility that any {@link SubmarineController} can use for route planning.
+ * <p>
+ * Usage:
+ *
  * <pre>
- *   var planner = new PathPlanner(terrain, -80, 200, 50);
- *   List&lt;Vec3&gt; path = planner.findPath(startX, startY, goalX, goalY, -100);
+ * var planner = new PathPlanner(terrain, -80, 200, 50);
+ * List&lt;Vec3&gt; path = planner.findPath(startX, startY, goalX, goalY, -100);
  * </pre>
  */
 public final class PathPlanner {
@@ -65,13 +67,14 @@ public final class PathPlanner {
 	 * Creates a path planner for the given terrain.
 	 *
 	 * @param terrain
-	 * 		the sea floor heightmap
+	 *            the sea floor heightmap
 	 * @param minFloorDepth
-	 * 		floor elevation above which cells are blocked (e.g. -80)
+	 *            floor elevation above which cells are blocked (e.g. -80)
 	 * @param safetyMargin
-	 * 		distance in meters to keep from blocked cells; cells within this distance have increased traversal cost
+	 *            distance in meters to keep from blocked cells; cells within this distance have
+	 *            increased traversal cost
 	 * @param gridStep
-	 * 		navigation grid resolution in meters (e.g. 50-100)
+	 *            navigation grid resolution in meters (e.g. 50-100)
 	 */
 	public PathPlanner(TerrainMap terrain, double minFloorDepth, double safetyMargin, double gridStep) {
 		this(terrain, minFloorDepth, safetyMargin, gridStep, 300.0, 3.0);
@@ -81,12 +84,11 @@ public final class PathPlanner {
 	 * Creates a path planner with configurable depth preference.
 	 *
 	 * @param depthComfort
-	 * 		cells deeper than this (absolute meters) get minimum cost
+	 *            cells deeper than this (absolute meters) get minimum cost
 	 * @param depthPenalty
-	 * 		maximum cost multiplier for cells at the blocking threshold
+	 *            maximum cost multiplier for cells at the blocking threshold
 	 */
-	public PathPlanner(
-			TerrainMap terrain, double minFloorDepth, double safetyMargin, double gridStep,
+	public PathPlanner(TerrainMap terrain, double minFloorDepth, double safetyMargin, double gridStep,
 			double depthComfort, double depthPenalty) {
 		this.terrain = terrain;
 		this.minFloorDepth = minFloorDepth;
@@ -106,31 +108,34 @@ public final class PathPlanner {
 	}
 
 	/**
-	 * Finds a path from (startX, startY) to (goalX, goalY) through safe water. Returns a list of world-coordinate
-	 * waypoints with the specified operating depth, or an empty list if no safe path exists.
-	 * <p>The depth planning and corner smoothing use the physics-derived constraints
-	 * to ensure the route stays within the submarine's tractable envelope.
+	 * Finds a path from (startX, startY) to (goalX, goalY) through safe water. Returns a list of
+	 * world-coordinate waypoints with the specified operating depth, or an empty list if no safe
+	 * path exists.
+	 * <p>
+	 * The depth planning and corner smoothing use the physics-derived constraints to ensure the
+	 * route stays within the submarine's tractable envelope.
 	 *
 	 * @param startX
-	 * 		start world X
+	 *            start world X
 	 * @param startY
-	 * 		start world Y
+	 *            start world Y
 	 * @param goalX
-	 * 		goal world X
+	 *            goal world X
 	 * @param goalY
-	 * 		goal world Y
+	 *            goal world Y
 	 * @param operatingDepth
-	 * 		the Z depth for waypoints (e.g. -100); will be adjusted upward if the floor is too shallow
+	 *            the Z depth for waypoints (e.g. -100); will be adjusted upward if the floor is too
+	 *            shallow
 	 * @param depthChangeRatio
-	 * 		max meters of depth change per meter of horizontal travel (symmetric for rise and dive); derived from physics
-	 * 		characterization at the expected speed
+	 *            max meters of depth change per meter of horizontal travel (symmetric for rise and
+	 *            dive); derived from physics characterization at the expected speed
 	 * @param turnRadius
-	 * 		minimum turn radius in meters at the expected speed
+	 *            minimum turn radius in meters at the expected speed
 	 * @return list of waypoints (may be empty if no path found)
 	 */
 	public List<Vec3> findPath(
-			double startX, double startY, double goalX, double goalY, double operatingDepth, double depthChangeRatio,
-			double turnRadius) {
+		double startX, double startY, double goalX, double goalY, double operatingDepth, double depthChangeRatio,
+		double turnRadius) {
 		int sc = worldToCol(startX);
 		int sr = worldToRow(startY);
 		int gc = worldToCol(goalX);
@@ -230,24 +235,24 @@ public final class PathPlanner {
 	}
 
 	/**
-	 * Finds a path using default depth/turn constraints (for backward compatibility). Uses conservative values: depth
-	 * ratio 1:10, turn radius 250m.
+	 * Finds a path using default depth/turn constraints (for backward compatibility). Uses
+	 * conservative values: depth ratio 1:10, turn radius 250m.
 	 */
 	public List<Vec3> findPath(double startX, double startY, double goalX, double goalY, double operatingDepth) {
 		return findPath(startX, startY, goalX, goalY, operatingDepth, 0.10, 250);
 	}
 
 	/**
-	 * A 2D corridor waypoint with terrain metadata. Used by the trajectory projector to plan physically-feasible 3D
-	 * routes through the corridor.
+	 * A 2D corridor waypoint with terrain metadata. Used by the trajectory projector to plan
+	 * physically-feasible 3D routes through the corridor.
 	 */
 	public record CorridorPoint(double x, double y, double floorElevation) {
 	}
 
 	/**
-	 * Finds a 2D corridor from start to goal through safe deep water. Returns corridor points with terrain metadata but
-	 * no depth assignment or corner smoothing. The caller (trajectory projector) handles 3D feasibility using the sub's
-	 * kinematic state.
+	 * Finds a 2D corridor from start to goal through safe deep water. Returns corridor points with
+	 * terrain metadata but no depth assignment or corner smoothing. The caller (trajectory
+	 * projector) handles 3D feasibility using the sub's kinematic state.
 	 */
 	public List<CorridorPoint> findCorridor(double startX, double startY, double goalX, double goalY) {
 		var gridPath = runAstar(startX, startY, goalX, goalY);
@@ -389,8 +394,8 @@ public final class PathPlanner {
 	}
 
 	/**
-	 * Returns the traversal cost at the given world position. 0 = blocked, 1 = clear open water, >1 = near shallow
-	 * terrain.
+	 * Returns the traversal cost at the given world position. 0 = blocked, 1 = clear open water, >1
+	 * = near shallow terrain.
 	 */
 	public float costAt(double worldX, double worldY) {
 		int c = worldToCol(worldX);
@@ -505,8 +510,7 @@ public final class PathPlanner {
 	}
 
 	private List<Vec3> simplifyPath(
-			List<int[]> gridPath, double operatingDepth, double depthChangeRatio,
-			double turnRadius) {
+		List<int[]> gridPath, double operatingDepth, double depthChangeRatio, double turnRadius) {
 		if (gridPath.size() <= 2) {
 			// Short path: still apply depth lookahead by scanning terrain
 			// between start and end for the worst floor
@@ -577,7 +581,7 @@ public final class PathPlanner {
 		// to rise 200m at the given ratio, it needs 200/ratio meters of
 		// horizontal travel. Cap at 3000m to bound the scan.
 		double depthLookahead = Math.min(3000, 200.0 / Math.max(depthChangeRatio, 0.01));
-		double CLEARANCE = 75;      // must exceed EMERGENCY_GAP (60) + margin
+		double CLEARANCE = 75; // must exceed EMERGENCY_GAP (60) + margin
 		double[] targetDepths = new double[worldPoints.size()];
 		for (int i = 0; i < worldPoints.size(); i++) {
 			double worstFloor = worldPoints.get(i)[2];

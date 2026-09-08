@@ -35,8 +35,8 @@ import com.jme3.util.BufferUtils;
 import se.hirt.searobots.api.TerrainMap;
 
 /**
- * Builds a jMonkeyEngine {@link Mesh} from a {@link TerrainMap} heightmap, with downsampled vertices, smooth normals,
- * and depth-based vertex colours.
+ * Builds a jMonkeyEngine {@link Mesh} from a {@link TerrainMap} heightmap, with downsampled
+ * vertices, smooth normals, and depth-based vertex colours.
  */
 final class TerrainMeshBuilder {
 
@@ -47,9 +47,9 @@ final class TerrainMeshBuilder {
 	 * Build a terrain mesh from the given map.
 	 *
 	 * @param terrain
-	 * 		the heightmap
+	 *            the heightmap
 	 * @param downsample
-	 * 		skip factor (e.g. 4 means sample every 4th cell)
+	 *            skip factor (e.g. 4 means sample every 4th cell)
 	 * @return a jME Mesh ready to attach to a Geometry
 	 */
 	static Mesh build(TerrainMap terrain, int downsample) {

@@ -35,7 +35,8 @@ import com.simsilica.lemur.*;
 import com.simsilica.lemur.component.SpringGridLayout;
 
 /**
- * Lemur-based command palette shown on Escape. Provides quick access to simulation actions and toggle states.
+ * Lemur-based command palette shown on Escape. Provides quick access to simulation actions and
+ * toggle states.
  */
 final class CommandPaletteState extends BaseAppState {
 
@@ -118,8 +119,7 @@ final class CommandPaletteState extends BaseAppState {
 	}
 
 	private void addToggle(
-			Container parent, String label, boolean initial,
-			java.util.function.Consumer<Boolean> onChange) {
+		Container parent, String label, boolean initial, java.util.function.Consumer<Boolean> onChange) {
 		var btn = parent.addChild(new Button((initial ? "[x] " : "[ ] ") + label));
 		final boolean[] state = {initial};
 		btn.addClickCommands(b -> {

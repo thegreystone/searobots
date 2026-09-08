@@ -34,14 +34,15 @@ import java.util.Random;
  * Unit-variance Gaussian measurement error that is correlated in time: a first-order Gauss-Markov
  * (Ornstein-Uhlenbeck) process sampled at tick resolution, optionally mixed with a white component.
  * <p>
- * Real sonar errors are not fresh every 20 ms. Array calibration, multipath, and the integration time of the
- * beamformer make consecutive bearing estimates share most of their error for tens of seconds. Modelling the error
- * as independent per tick would let a controller average 50 samples over one second and cut a 10 degree error to
- * under 1.5 degrees, which no real system can do. With this process, averaging over a window shorter than the
- * correlation time gives almost nothing; a window of ten correlation times is needed for a four-fold gain.
+ * Real sonar errors are not fresh every 20 ms. Array calibration, multipath, and the integration
+ * time of the beamformer make consecutive bearing estimates share most of their error for tens of
+ * seconds. Modelling the error as independent per tick would let a controller average 50 samples
+ * over one second and cut a 10 degree error to under 1.5 degrees, which no real system can do. With
+ * this process, averaging over a window shorter than the correlation time gives almost nothing; a
+ * window of ten correlation times is needed for a four-fold gain.
  * <p>
- * Every sample is marginally N(0, 1) regardless of how it is correlated with its neighbours, so callers scale by the
- * current 1-sigma error and the uncertainty they report stays honest.
+ * Every sample is marginally N(0, 1) regardless of how it is correlated with its neighbours, so
+ * callers scale by the current 1-sigma error and the uncertainty they report stays honest.
  */
 final class CorrelatedNoise {
 	static final double TICKS_PER_SECOND = 50.0;
@@ -55,9 +56,11 @@ final class CorrelatedNoise {
 
 	/**
 	 * @param correlationTimeSeconds
-	 * 		time constant of the slow component; the autocorrelation drops to 1/e over this interval
+	 *            time constant of the slow component; the autocorrelation drops to 1/e over this
+	 *            interval
 	 * @param correlatedFraction
-	 * 		fraction of the variance carried by the slow component (1.0 = no white jitter at all)
+	 *            fraction of the variance carried by the slow component (1.0 = no white jitter at
+	 *            all)
 	 */
 	CorrelatedNoise(double correlationTimeSeconds, double correlatedFraction) {
 		this.tauTicks = correlationTimeSeconds * TICKS_PER_SECOND;
@@ -66,8 +69,9 @@ final class CorrelatedNoise {
 	}
 
 	/**
-	 * Advance to {@code tick} and return the unit-variance error sample for it. Gaps between calls (contact lost and
-	 * regained) decorrelate the slow component by the elapsed time, so a long gap gives a fresh draw.
+	 * Advance to {@code tick} and return the unit-variance error sample for it. Gaps between calls
+	 * (contact lost and regained) decorrelate the slow component by the elapsed time, so a long gap
+	 * gives a fresh draw.
 	 */
 	double next(long tick, Random rng) {
 		double w = rng.nextGaussian();

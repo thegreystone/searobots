@@ -37,22 +37,23 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Verifies passive sonar detection ranges under ideal conditions (flat deep ocean, no thermocline, no baffles). Tests
- * use the sonar model directly to measure maximum detection distance.
- * <p>Expected ranges with current parameters (baseSlDb=90, ambient=55,
- * selfNoiseOffset=35, spreading=10*log10, threshold=5):
+ * Verifies passive sonar detection ranges under ideal conditions (flat deep ocean, no thermocline,
+ * no baffles). Tests use the sonar model directly to measure maximum detection distance.
+ * <p>
+ * Expected ranges with current parameters (baseSlDb=90, ambient=55, selfNoiseOffset=35,
+ * spreading=10*log10, threshold=5):
  * <ul>
- *   <li>Patrol (3 m/s) heard by patrol (3 m/s): ~1.0 km</li>
- *   <li>Moderate (5 m/s) heard by slow (1 m/s): ~6.3 km</li>
- *   <li>Sprinting (10 m/s) heard by patrol (3 m/s): arena-wide</li>
- *   <li>Torpedo heard by patrol (same layer, ideal): 8+ km</li>
+ * <li>Patrol (3 m/s) heard by patrol (3 m/s): ~1.0 km</li>
+ * <li>Moderate (5 m/s) heard by slow (1 m/s): ~6.3 km</li>
+ * <li>Sprinting (10 m/s) heard by patrol (3 m/s): arena-wide</li>
+ * <li>Torpedo heard by patrol (same layer, ideal): 8+ km</li>
  * </ul>
  */
 public class PassiveDetectionRangeTest {
 
 	/**
-	 * Compute the theoretical max detection range from the sonar equation. SE = SL_target - 10*log10(R) - NL >
-	 * threshold R_max = 10^((SL_target - NL - threshold) / spreading)
+	 * Compute the theoretical max detection range from the sonar equation. SE = SL_target -
+	 * 10*log10(R) - NL > threshold R_max = 10^((SL_target - NL - threshold) / spreading)
 	 */
 	private static double theoreticalRange(double targetSL, double listenerSL, double sonarOffset) {
 		double selfNoise = listenerSL - sonarOffset;
@@ -95,14 +96,14 @@ public class PassiveDetectionRangeTest {
 
 		double[][] scenarios = {
 				// {target_speed, listener_speed}
-				{3, 3},    // patrol vs patrol
-				{5, 3},    // moderate vs patrol
-				{5, 1},    // moderate vs slow
-				{5, 0},    // moderate vs stopped
-				{8, 3},    // fast vs patrol
-				{10, 3},   // sprinting vs patrol
-				{10, 0},   // sprinting vs stopped
-				{25, 3},   // torpedo vs patrol (torpedo speed)
+				{3, 3}, // patrol vs patrol
+				{5, 3}, // moderate vs patrol
+				{5, 1}, // moderate vs slow
+				{5, 0}, // moderate vs stopped
+				{8, 3}, // fast vs patrol
+				{10, 3}, // sprinting vs patrol
+				{10, 0}, // sprinting vs stopped
+				{25, 3}, // torpedo vs patrol (torpedo speed)
 		};
 
 		for (var s : scenarios) {
@@ -188,7 +189,8 @@ public class PassiveDetectionRangeTest {
 	}
 
 	/**
-	 * End-to-end verification: run actual sonar model and confirm detection at expected ranges on flat deep ocean.
+	 * End-to-end verification: run actual sonar model and confirm detection at expected ranges on
+	 * flat deep ocean.
 	 */
 	@Test
 	void endToEndDetectionOnFlatOcean() {

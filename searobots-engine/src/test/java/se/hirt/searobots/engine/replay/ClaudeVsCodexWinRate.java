@@ -43,9 +43,10 @@ import java.util.Locale;
 import java.util.Set;
 
 /**
- * Head-to-head outcome scoreboard: Claude (index 1) vs Codex (index 0) over a range of seeds. The bottom line for
- * "conclusively win" work: wins, losses, draws, and how stealthily Claude fought (ping fraction) versus how much it
- * fired. Run on demand with {@code mvn test -Dsearobots.diag=true -Dtest=ClaudeVsCodexWinRate}.
+ * Head-to-head outcome scoreboard: Claude (index 1) vs Codex (index 0) over a range of seeds. The
+ * bottom line for "conclusively win" work: wins, losses, draws, and how stealthily Claude fought
+ * (ping fraction) versus how much it fired. Run on demand with
+ * {@code mvn test -Dsearobots.diag=true -Dtest=ClaudeVsCodexWinRate}.
  */
 @EnabledIfSystemProperty(named = "searobots.diag", matches = "true")
 class ClaudeVsCodexWinRate {
@@ -99,7 +100,7 @@ class ClaudeVsCodexWinRate {
 	}
 
 	private record SeedResult(long ticks, boolean claudeDead, boolean codexDead, int claudeHp, int codexHp,
-	                          int claudeFired, int codexFired, long claudePingTicks) {
+			int claudeFired, int codexFired, long claudePingTicks) {
 	}
 
 	private SeedResult runSeed(int seed) {

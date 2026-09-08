@@ -29,10 +29,11 @@
 package se.hirt.searobots.api;
 
 /**
- * Heightmap of the sea floor. Stores the Z elevation (negative values) of the ocean bottom at each grid cell.
+ * Heightmap of the sea floor. Stores the Z elevation (negative values) of the ocean bottom at each
+ * grid cell.
  * <p>
- * Grid cell (col, row) maps to world position (originX + col * cellSize, originY + row * cellSize). Row 0 is the
- * southernmost row (lowest Y).
+ * Grid cell (col, row) maps to world position (originX + col * cellSize, originY + row * cellSize).
+ * Row 0 is the southernmost row (lowest Y).
  */
 public final class TerrainMap {
 

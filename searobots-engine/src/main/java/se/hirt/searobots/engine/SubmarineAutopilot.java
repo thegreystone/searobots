@@ -34,11 +34,12 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Autopilot layer that translates strategic waypoints into physical control inputs (rudder, stern planes, throttle,
- * ballast). Handles A* route planning, steering, depth control, terrain avoidance, movement pattern execution, and
- * emergency recovery.
- * <p>The strategic layer sets waypoints via {@link #setWaypoints};
- * the autopilot plans A* routes immediately and steers the sub through them on each {@link #tick}.
+ * Autopilot layer that translates strategic waypoints into physical control inputs (rudder, stern
+ * planes, throttle, ballast). Handles A* route planning, steering, depth control, terrain
+ * avoidance, movement pattern execution, and emergency recovery.
+ * <p>
+ * The strategic layer sets waypoints via {@link #setWaypoints}; the autopilot plans A* routes
+ * immediately and steers the sub through them on each {@link #tick}.
  */
 public final class SubmarineAutopilot {
 
@@ -92,8 +93,8 @@ public final class SubmarineAutopilot {
 	}
 
 	/**
-	 * Depth change ratio: meters of depth change per meter of horizontal travel. Applies a safety factor (65%) because
-	 * the PD controller doesn't sustain optimal plane deflection continuously.
+	 * Depth change ratio: meters of depth change per meter of horizontal travel. Applies a safety
+	 * factor (65%) because the PD controller doesn't sustain optimal plane deflection continuously.
 	 */
 	static double depthChangeRatio(double speed) {
 		if (speed < 1)
@@ -124,8 +125,8 @@ public final class SubmarineAutopilot {
 	}
 
 	/**
-	 * Maximum speed to make a turn between three consecutive points. The turn radius required is: r = distance / (2 *
-	 * sin(turnAngle/2)).
+	 * Maximum speed to make a turn between three consecutive points. The turn radius required is: r
+	 * = distance / (2 * sin(turnAngle/2)).
 	 */
 	static double maxSpeedForTurn(double turnAngle, double legDistance) {
 		if (Math.abs(turnAngle) < Math.toRadians(5))
@@ -146,8 +147,8 @@ public final class SubmarineAutopilot {
 	// Movement pattern constants
 	private static final double ZIGZAG_ANGLE = Math.toRadians(30);
 	private static final int ZIGZAG_LEG_DURATION = 750; // 15 seconds at 50Hz
-	private static final int SPRINT_PHASE_DURATION = 750;  // 15s
-	private static final int DRIFT_PHASE_DURATION = 1000;  // 20s
+	private static final int SPRINT_PHASE_DURATION = 750; // 15s
+	private static final int DRIFT_PHASE_DURATION = 1000; // 20s
 
 	// Cavitation constants
 	private static final double BASE_CAVITATION_SPEED = 5.0;
@@ -215,8 +216,7 @@ public final class SubmarineAutopilot {
 	 * Sets new strategic waypoints. Plans A* routes immediately (not deferred to first tick).
 	 */
 	public void setWaypoints(
-			List<StrategicWaypoint> waypoints, double posX, double posY, double posZ, double heading,
-			double speed) {
+		List<StrategicWaypoint> waypoints, double posX, double posY, double posZ, double heading, double speed) {
 		this.strategicWaypoints = List.copyOf(waypoints);
 		this.strategicWaypointIndex = 0;
 		this.arrived = false;
@@ -246,8 +246,8 @@ public final class SubmarineAutopilot {
 		double depth = pos.z();
 		long tick = input.tick();
 
-		StrategicWaypoint currentStrategic =
-				strategicWaypoints.isEmpty() ? null : strategicWaypoints.get(strategicWaypointIndex);
+		StrategicWaypoint currentStrategic = strategicWaypoints.isEmpty() ? null
+				: strategicWaypoints.get(strategicWaypointIndex);
 
 		// Check strategic waypoint arrival
 		if (currentStrategic != null) {
@@ -307,9 +307,8 @@ public final class SubmarineAutopilot {
 		}
 
 		// ── 2. Throttle from noise policy ──────────────────────────
-		double tacticalThrottle =
-				currentStrategic != null ? noiseToThrottle(currentStrategic.noise(), currentStrategic.targetSpeed(),
-						depth) : NORMAL_THROTTLE;
+		double tacticalThrottle = currentStrategic != null
+				? noiseToThrottle(currentStrategic.noise(), currentStrategic.targetSpeed(), depth) : NORMAL_THROTTLE;
 
 		// Modulate throttle for SPRINT_DRIFT pattern
 		if (currentStrategic != null && currentStrategic.pattern() == MovementPattern.SPRINT_DRIFT) {
@@ -367,8 +366,9 @@ public final class SubmarineAutopilot {
 		// the sub's current cell to be safe because the A* route may pass through
 		// cells adjacent to high-cost terrain (the route is valid but the grid
 		// cell's worstFloorNear includes nearby shallow features).
-		boolean onSafeRoute = !navWaypoints.isEmpty() && currentNavIndex < navWaypoints.size() && pathPlanner != null && !emergencyActive && pathPlanner.isSafe(
-				navWaypoints.get(currentNavIndex).x(), navWaypoints.get(currentNavIndex).y());
+		boolean onSafeRoute = !navWaypoints.isEmpty() && currentNavIndex < navWaypoints.size() && pathPlanner != null
+				&& !emergencyActive
+				&& pathPlanner.isSafe(navWaypoints.get(currentNavIndex).x(), navWaypoints.get(currentNavIndex).y());
 
 		// Step 3a: Imminent wall check. Only triggers when NOT on a safe route,
 		// or when terrain is dangerously close (< 100m). On a safe route the
@@ -386,7 +386,8 @@ public final class SubmarineAutopilot {
 			}
 			if (firstWallDist <= 200 && speed > 2) {
 				planThreePointTurn(pos.x(), pos.y(), pos.z(), heading, speed);
-			} else if (firstWallDist < Double.MAX_VALUE && !navWaypoints.isEmpty() && currentNavIndex < navWaypoints.size()) {
+			} else if (firstWallDist < Double.MAX_VALUE && !navWaypoints.isEmpty()
+					&& currentNavIndex < navWaypoints.size()) {
 				var wp = navWaypoints.get(currentNavIndex);
 				boolean wpUnsafe = pathPlanner != null && !pathPlanner.isSafe(wp.x(), wp.y());
 				double wpBearing = Math.atan2(wp.x() - pos.x(), wp.y() - pos.y());
@@ -447,8 +448,8 @@ public final class SubmarineAutopilot {
 						var firstWp = route.getFirst();
 						double bearingToFirst = Math.atan2(firstWp.x() - pos.x(), firstWp.y() - pos.y());
 						double firstTurnAngle = Math.abs(angleDiff(bearingToFirst, heading));
-						double distToFirst = Math.sqrt(
-								Math.pow(firstWp.x() - pos.x(), 2) + Math.pow(firstWp.y() - pos.y(), 2));
+						double distToFirst = Math
+								.sqrt(Math.pow(firstWp.x() - pos.x(), 2) + Math.pow(firstWp.y() - pos.y(), 2));
 						double requiredSpeed = maxSpeedForTurn(firstTurnAngle, distToFirst);
 
 						// Accept if the turn is feasible at a reasonable speed (sub will
@@ -755,8 +756,8 @@ public final class SubmarineAutopilot {
 
 		// Step 9b: Three-point turn (legacy, for unsafe terrain only)
 		// Skip when the new waypoint-based three-point turn is active.
-		if (!threePointTurnActive && pathPlanner != null && !pathPlanner.isSafe(pos.x(),
-				pos.y()) && speed < 3 && !navWaypoints.isEmpty() && currentNavIndex < navWaypoints.size()) {
+		if (!threePointTurnActive && pathPlanner != null && !pathPlanner.isSafe(pos.x(), pos.y()) && speed < 3
+				&& !navWaypoints.isEmpty() && currentNavIndex < navWaypoints.size()) {
 			var wp = navWaypoints.get(currentNavIndex);
 			double wpBearing = Math.atan2(wp.x() - pos.x(), wp.y() - pos.y());
 			double diff = angleDiff(wpBearing, heading);
@@ -954,8 +955,7 @@ public final class SubmarineAutopilot {
 	// ── Route planning ──────────────────────────────────────────────
 
 	private void planRouteToWaypoint(
-			double posX, double posY, double posZ, double heading, double speed,
-			StrategicWaypoint target) {
+		double posX, double posY, double posZ, double heading, double speed, StrategicWaypoint target) {
 		navWaypoints.clear();
 		currentNavIndex = 0;
 
@@ -984,17 +984,17 @@ public final class SubmarineAutopilot {
 		if (wp.targetSpeed() > 0)
 			return wp.targetSpeed();
 		return switch (wp.noise()) {
-			case SILENT -> 3.0;
-			case QUIET -> 5.0;
-			case NORMAL -> 7.0;
-			case SPRINT -> 12.0;
+		case SILENT -> 3.0;
+		case QUIET -> 5.0;
+		case NORMAL -> 7.0;
+		case SPRINT -> 12.0;
 		};
 	}
 
 	/**
-	 * Plans a three-point turn when the sub faces a wall. Creates two nav waypoints: WP0 (reverse): 150m directly
-	 * behind the sub (the sub reverses to here). WP1 (exit): 500m along the safest escape heading from WP0. The safe
-	 * heading prefers perpendicular escape (least turning > 60°).
+	 * Plans a three-point turn when the sub faces a wall. Creates two nav waypoints: WP0 (reverse):
+	 * 150m directly behind the sub (the sub reverses to here). WP1 (exit): 500m along the safest
+	 * escape heading from WP0. The safe heading prefers perpendicular escape (least turning > 60°).
 	 */
 	private void planThreePointTurn(double posX, double posY, double posZ, double heading, double speed) {
 		// Find the best escape heading: safe for 500m, prefer least turning > 60°
@@ -1027,8 +1027,8 @@ public final class SubmarineAutopilot {
 		// WP0: reverse waypoint, 250m behind and offset OPPOSITE the safe heading.
 		// When the stern tracks toward this waypoint, it naturally swings the
 		// bow toward the safe heading (like a car three-point turn).
-		double revBack = 200;  // distance behind
-		double revSide = 200;  // lateral offset opposite safe heading (aggressive with coast turning)
+		double revBack = 200; // distance behind
+		double revSide = 200; // lateral offset opposite safe heading (aggressive with coast turning)
 		double oppSafe = normalizeBearing(safeHeading + Math.PI);
 		double revX = posX - Math.sin(heading) * revBack + Math.sin(oppSafe) * revSide;
 		double revY = posY - Math.cos(heading) * revBack + Math.cos(oppSafe) * revSide;
@@ -1053,8 +1053,8 @@ public final class SubmarineAutopilot {
 		double exitY = posY + Math.cos(safeHeading) * exitDist;
 
 		navWaypoints.clear();
-		navWaypoints.add(new Vec3(revX, revY, posZ));                           // WP0: reverse
-		navWaypoints.add(new Vec3(exitX, exitY, safeDepthAt(exitX, exitY)));    // WP1: exit
+		navWaypoints.add(new Vec3(revX, revY, posZ)); // WP0: reverse
+		navWaypoints.add(new Vec3(exitX, exitY, safeDepthAt(exitX, exitY))); // WP1: exit
 		currentNavIndex = 0;
 
 		threePointTurnActive = true;
@@ -1091,20 +1091,20 @@ public final class SubmarineAutopilot {
 
 	private double noiseToThrottle(NoisePolicy policy, double targetSpeed, double depth) {
 		double baseThrottle = switch (policy) {
-			case SILENT -> (SILENT_THROTTLE_MIN + SILENT_THROTTLE_MAX) / 2;
-			case QUIET -> (QUIET_THROTTLE_MIN + QUIET_THROTTLE_MAX) / 2;
-			case NORMAL -> NORMAL_THROTTLE;
-			case SPRINT -> (SPRINT_THROTTLE_MIN + SPRINT_THROTTLE_MAX) / 2;
+		case SILENT -> (SILENT_THROTTLE_MIN + SILENT_THROTTLE_MAX) / 2;
+		case QUIET -> (QUIET_THROTTLE_MIN + QUIET_THROTTLE_MAX) / 2;
+		case NORMAL -> NORMAL_THROTTLE;
+		case SPRINT -> (SPRINT_THROTTLE_MIN + SPRINT_THROTTLE_MAX) / 2;
 		};
 
 		// Target speed override
 		if (targetSpeed > 0) {
 			double speedThrottle = targetSpeed / maxSubSpeed;
 			baseThrottle = switch (policy) {
-				case SILENT -> Math.clamp(speedThrottle, SILENT_THROTTLE_MIN, SILENT_THROTTLE_MAX);
-				case QUIET -> Math.clamp(speedThrottle, QUIET_THROTTLE_MIN, QUIET_THROTTLE_MAX);
-				case NORMAL -> Math.clamp(speedThrottle, QUIET_THROTTLE_MIN, SPRINT_THROTTLE_MIN);
-				case SPRINT -> Math.clamp(speedThrottle, SPRINT_THROTTLE_MIN, SPRINT_THROTTLE_MAX);
+			case SILENT -> Math.clamp(speedThrottle, SILENT_THROTTLE_MIN, SILENT_THROTTLE_MAX);
+			case QUIET -> Math.clamp(speedThrottle, QUIET_THROTTLE_MIN, QUIET_THROTTLE_MAX);
+			case NORMAL -> Math.clamp(speedThrottle, QUIET_THROTTLE_MIN, SPRINT_THROTTLE_MIN);
+			case SPRINT -> Math.clamp(speedThrottle, SPRINT_THROTTLE_MIN, SPRINT_THROTTLE_MAX);
 			};
 		}
 
@@ -1120,30 +1120,29 @@ public final class SubmarineAutopilot {
 	// ── Movement patterns ───────────────────────────────────────────
 
 	private double applyMovementPattern(
-			double baseRudder, double heading, double posX, double posY,
-			StrategicWaypoint wp, long tick) {
+		double baseRudder, double heading, double posX, double posY, StrategicWaypoint wp, long tick) {
 		return switch (wp.pattern()) {
-			case DIRECT -> baseRudder;
-			case ZIGZAG_TMA -> {
-				long elapsed = tick - patternStartTick;
-				long cycle = ZIGZAG_LEG_DURATION * 2L;
-				boolean zigLeft = (elapsed % cycle) < ZIGZAG_LEG_DURATION;
+		case DIRECT -> baseRudder;
+		case ZIGZAG_TMA -> {
+			long elapsed = tick - patternStartTick;
+			long cycle = ZIGZAG_LEG_DURATION * 2L;
+			boolean zigLeft = (elapsed % cycle) < ZIGZAG_LEG_DURATION;
 
-				// Direct bearing to waypoint
-				double directBearing = Math.atan2(wp.x() - posX, wp.y() - posY);
-				if (directBearing < 0)
-					directBearing += 2 * Math.PI;
+			// Direct bearing to waypoint
+			double directBearing = Math.atan2(wp.x() - posX, wp.y() - posY);
+			if (directBearing < 0)
+				directBearing += 2 * Math.PI;
 
-				// Distance-adaptive angle reduction
-				double dist = Math.sqrt(Math.pow(wp.x() - posX, 2) + Math.pow(wp.y() - posY, 2));
-				double angleFactor = Math.clamp(dist / 3000, 0.3, 1.0);
-				double offset = ZIGZAG_ANGLE * angleFactor * (zigLeft ? -1 : 1);
-				double targetBearing = normalizeBearing(directBearing + offset);
+			// Distance-adaptive angle reduction
+			double dist = Math.sqrt(Math.pow(wp.x() - posX, 2) + Math.pow(wp.y() - posY, 2));
+			double angleFactor = Math.clamp(dist / 3000, 0.3, 1.0);
+			double offset = ZIGZAG_ANGLE * angleFactor * (zigLeft ? -1 : 1);
+			double targetBearing = normalizeBearing(directBearing + offset);
 
-				double diff = angleDiff(targetBearing, heading);
-				yield Math.clamp(diff * 2.0, -OPTIMAL_RUDDER, OPTIMAL_RUDDER);
-			}
-			case SPRINT_DRIFT -> baseRudder; // throttle handled separately
+			double diff = angleDiff(targetBearing, heading);
+			yield Math.clamp(diff * 2.0, -OPTIMAL_RUDDER, OPTIMAL_RUDDER);
+		}
+		case SPRINT_DRIFT -> baseRudder; // throttle handled separately
 		};
 	}
 

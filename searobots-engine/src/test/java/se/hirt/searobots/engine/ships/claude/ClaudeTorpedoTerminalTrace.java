@@ -40,8 +40,8 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Traces Claude torpedo terminal approach to diagnose miss patterns. Tracks target error, speed, ping timing, and
- * closing geometry.
+ * Traces Claude torpedo terminal approach to diagnose miss patterns. Tracks target error, speed,
+ * ping timing, and closing geometry.
  */
 public class ClaudeTorpedoTerminalTrace {
 

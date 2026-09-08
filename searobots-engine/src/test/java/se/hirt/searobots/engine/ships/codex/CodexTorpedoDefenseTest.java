@@ -49,8 +49,10 @@ class CodexTorpedoDefenseTest {
 
 		var self = submarineState(new Vec3(0.0, 0.0, -140.0), 0.0, 7.5);
 		var output = new TestHelpers.CapturedOutput();
-		controller.onTick(new TestHelpers.TestInput(700L, DT, self, environment(world), List.of(),
-				List.of(activeSubmarine(0.0, 1_000.0), activeTorpedo(Math.toRadians(24.0), 700.0)), 250), output);
+		controller.onTick(
+				new TestHelpers.TestInput(700L, DT, self, environment(world), List.of(),
+						List.of(activeSubmarine(0.0, 1_000.0), activeTorpedo(Math.toRadians(24.0), 700.0)), 250),
+				output);
 
 		assertTrue(output.status != null && output.status.startsWith("!"),
 				"A live torpedo threat should be visible in status, got " + output.status);
@@ -72,12 +74,12 @@ class CodexTorpedoDefenseTest {
 
 		var self = submarineState(new Vec3(0.0, 0.0, -140.0), 0.0, 7.5);
 		controller.onTick(new TestHelpers.TestInput(700L, DT, self, environment(world),
-						List.of(passiveTorpedo(Math.toRadians(18.0), 4.0)), List.of(activeSubmarine(0.0, 1_000.0)), 250),
+				List.of(passiveTorpedo(Math.toRadians(18.0), 4.0)), List.of(activeSubmarine(0.0, 1_000.0)), 250),
 				new TestHelpers.CapturedOutput());
 
 		var output = new TestHelpers.CapturedOutput();
 		controller.onTick(new TestHelpers.TestInput(701L, DT, self, environment(world),
-						List.of(passiveTorpedo(Math.toRadians(18.0), 4.0)), List.of(activeSubmarine(0.0, 1_000.0)), 250),
+				List.of(passiveTorpedo(Math.toRadians(18.0), 4.0)), List.of(activeSubmarine(0.0, 1_000.0)), 250),
 				output);
 
 		assertTrue(output.status != null && output.status.startsWith("!"),
@@ -98,11 +100,12 @@ class CodexTorpedoDefenseTest {
 		var self = submarineState(new Vec3(0.0, 0.0, -140.0), 0.0, 7.5);
 		var output = new TestHelpers.CapturedOutput();
 		controller.onTick(new TestHelpers.TestInput(700L, DT, self, environment(world),
-						List.of(passiveTorpedo(Math.toRadians(18.0), 4.0)), List.of(activeSubmarine(0.0, 2_600.0)), 250),
+				List.of(passiveTorpedo(Math.toRadians(18.0), 4.0)), List.of(activeSubmarine(0.0, 2_600.0)), 250),
 				output);
 
 		assertTrue(output.status != null && !output.status.startsWith("!"),
-				"A faint passive torpedo contact at long enemy range should not force immediate defense. Got " + output.status);
+				"A faint passive torpedo contact at long enemy range should not force immediate defense. Got "
+						+ output.status);
 	}
 
 	@Test
@@ -121,8 +124,10 @@ class CodexTorpedoDefenseTest {
 
 		double ownTorpedoBearing = launchOutput.launchedTorpedo.bearing();
 		var output = new TestHelpers.CapturedOutput();
-		controller.onTick(new TestHelpers.TestInput(701L, DT, self, environment(world),
-				List.of(passiveTorpedo(ownTorpedoBearing, 8.0)), List.of(activeSubmarine(0.0, 1_000.0)), 250), output);
+		controller.onTick(
+				new TestHelpers.TestInput(701L, DT, self, environment(world),
+						List.of(passiveTorpedo(ownTorpedoBearing, 8.0)), List.of(activeSubmarine(0.0, 1_000.0)), 250),
+				output);
 
 		assertTrue(output.status != null && !output.status.startsWith("!"),
 				"Codex should not mistake its own outbound torpedo for an inbound threat. Got " + output.status);
@@ -170,8 +175,7 @@ class CodexTorpedoDefenseTest {
 	}
 
 	private static SonarContact activeSubmarine(
-			double bearing, double range, double estimatedHeading,
-			double estimatedSpeed) {
+		double bearing, double range, double estimatedHeading, double estimatedSpeed) {
 		return new SonarContact(bearing, 30.0, range, true, estimatedSpeed, Math.toRadians(0.4), 70.0, 210.0, 0.86,
 				estimatedHeading, -140.0, SonarContact.Classification.SUBMARINE);
 	}

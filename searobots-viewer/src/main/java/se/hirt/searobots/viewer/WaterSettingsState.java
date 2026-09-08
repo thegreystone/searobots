@@ -40,7 +40,8 @@ import com.simsilica.lemur.component.SpringGridLayout;
 import java.util.function.IntConsumer;
 
 /**
- * Lemur-based render settings panel. Includes atmosphere/effects toggles and water filter parameter sliders.
+ * Lemur-based render settings panel. Includes atmosphere/effects toggles and water filter parameter
+ * sliders.
  */
 final class WaterSettingsState extends BaseAppState {
 
@@ -50,7 +51,7 @@ final class WaterSettingsState extends BaseAppState {
 
 	// Track slider refs for polling in update()
 	private record SliderBinding(com.simsilica.lemur.core.VersionedReference<Double> ref, Slider slider, Label label,
-	                             String name, IntConsumer onChange) {
+			String name, IntConsumer onChange) {
 	}
 
 	private final java.util.List<SliderBinding> sliderBindings = new java.util.ArrayList<>();
@@ -205,8 +206,7 @@ final class WaterSettingsState extends BaseAppState {
 	}
 
 	private void addToggle(
-			Container parent, String label, boolean initial,
-			java.util.function.Consumer<Boolean> onChange) {
+		Container parent, String label, boolean initial, java.util.function.Consumer<Boolean> onChange) {
 		var btn = parent.addChild(new Button((initial ? "[x] " : "[ ] ") + label));
 		final boolean[] state = {initial};
 		btn.addClickCommands(b -> {

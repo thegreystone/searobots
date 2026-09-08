@@ -29,28 +29,28 @@
 package se.hirt.searobots.api;
 
 /**
- * A high-level mission waypoint set by the tactical AI. Specifies where and why the submarine should go, without
- * dictating how.
+ * A high-level mission waypoint set by the tactical AI. Specifies where and why the submarine
+ * should go, without dictating how.
  *
  * @param x
- * 		world X coordinate (meters)
+ *            world X coordinate (meters)
  * @param y
- * 		world Y coordinate (meters)
+ *            world Y coordinate (meters)
  * @param preferredDepth
- * 		preferred operating depth (negative, meters below sea level)
+ *            preferred operating depth (negative, meters below sea level)
  * @param purpose
- * 		tactical reason for heading to this position
+ *            tactical reason for heading to this position
  * @param noise
- * 		noise discipline policy
+ *            noise discipline policy
  * @param pattern
- * 		movement pattern to use en route
+ *            movement pattern to use en route
  * @param arrivalRadius
- * 		distance in meters at which the waypoint is considered reached
+ *            distance in meters at which the waypoint is considered reached
  * @param targetSpeed
- * 		desired speed in m/s, or -1 if the autopilot should decide
+ *            desired speed in m/s, or -1 if the autopilot should decide
  */
 public record StrategicWaypoint(double x, double y, double preferredDepth, Purpose purpose, NoisePolicy noise,
-                                MovementPattern pattern, double arrivalRadius, double targetSpeed) {
+		MovementPattern pattern, double arrivalRadius, double targetSpeed) {
 	public StrategicWaypoint {
 		if (arrivalRadius <= 0)
 			arrivalRadius = 200;

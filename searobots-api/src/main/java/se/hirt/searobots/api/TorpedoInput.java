@@ -6,8 +6,8 @@ package se.hirt.searobots.api;
 import java.util.List;
 
 /**
- * Input provided to a torpedo controller each tick. The torpedo knows its own state and has its own sonar contacts, but
- * receives no information from the launching submarine.
+ * Input provided to a torpedo controller each tick. The torpedo knows its own state and has its own
+ * sonar contacts, but receives no information from the launching submarine.
  */
 public interface TorpedoInput {
 	/**

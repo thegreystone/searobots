@@ -51,15 +51,15 @@ public final class SonarModel {
 
 	// Active sonar
 	static final double ACTIVE_PING_SL_DB = 220.0;
-	static final int ACTIVE_PING_COOLDOWN_TICKS = 250;     // subs: 5 seconds
-	static final int TORPEDO_PING_COOLDOWN_TICKS = 50;    // torpedoes: 1 second (small transducer, fast cycle)
+	static final int ACTIVE_PING_COOLDOWN_TICKS = 250; // subs: 5 seconds
+	static final int TORPEDO_PING_COOLDOWN_TICKS = 50; // torpedoes: 1 second (small transducer, fast cycle)
 	static final double TARGET_STRENGTH_DB = 20.0;
 	static final double RANGE_NOISE_FRACTION = 0.02; // 2% RMS range noise on active returns
 
 	// Terrain occlusion: per-cell penalties (samples step at half-cell, so halved per sample)
 	// Underwater ridge: up to 15 dB per cell of terrain above the sound path
 	static final double RIDGE_OCCLUSION_PER_CELL_DB = 15.0;
-	static final double RIDGE_FULL_EXCESS = 50.0;  // meters above path for max per-cell penalty
+	static final double RIDGE_FULL_EXCESS = 50.0; // meters above path for max per-cell penalty
 	// Island (terrain above sea level): rock is essentially opaque to sound
 	static final double ISLAND_OCCLUSION_PER_CELL_DB = 30.0;
 
@@ -80,16 +80,16 @@ public final class SonarModel {
 	}
 
 	/**
-	 * Classify a sonar contact from its acoustic signature. Requires sufficient signal excess to classify; faint
-	 * contacts are UNKNOWN.
+	 * Classify a sonar contact from its acoustic signature. Requires sufficient signal excess to
+	 * classify; faint contacts are UNKNOWN.
 	 * <p>
-	 * Classification rules (modelling blade-rate tonal analysis): - TORPEDO: high speed (>18 m/s) = small fast high-RPM
-	 * prop - SURFACE_SHIP: loud (SL>108) + moderate speed (<12) = big slow prop - SUBMARINE: submerged, moderate noise,
-	 * moderate speed - UNKNOWN: insufficient signal excess to classify (<8 dB)
+	 * Classification rules (modelling blade-rate tonal analysis): - TORPEDO: high speed (>18 m/s) =
+	 * small fast high-RPM prop - SURFACE_SHIP: loud (SL>108) + moderate speed (<12) = big slow prop
+	 * - SUBMARINE: submerged, moderate noise, moderate speed - UNKNOWN: insufficient signal excess
+	 * to classify (<8 dB)
 	 */
 	private static SonarContact.Classification classify(
-			double signalExcess, double estimatedSpeed, double estimatedSL,
-			double estimatedDepth) {
+		double signalExcess, double estimatedSpeed, double estimatedSL, double estimatedDepth) {
 		// Need enough signal to analyse the tonal structure
 		if (signalExcess < 8)
 			return SonarContact.Classification.UNKNOWN;
@@ -100,8 +100,8 @@ public final class SonarModel {
 
 		// Very loud + moderate speed = surface ship (big slow prop, machinery noise)
 		// But only if near the surface: anything deeper than -30m is submerged.
-		if (estimatedSL > 108 && estimatedSpeed >= 0 && estimatedSpeed < 12 && (Double.isNaN(
-				estimatedDepth) || estimatedDepth > -30)) {
+		if (estimatedSL > 108 && estimatedSpeed >= 0 && estimatedSpeed < 12
+				&& (Double.isNaN(estimatedDepth) || estimatedDepth > -30)) {
 			return SonarContact.Classification.SURFACE_SHIP;
 		}
 
@@ -110,15 +110,15 @@ public final class SonarModel {
 	}
 
 	/**
-	 * Compute all sonar contacts for each entity this tick.
-	 * Returns a map from entity ID to its sonar result.
+	 * Compute all sonar contacts for each entity this tick. Returns a map from entity ID to its
+	 * sonar result.
 	 */
 	/**
 	 * Compute sonar contacts including torpedoes as sources and listeners.
 	 */
 	public Map<Integer, SonarResult> computeContacts(
-			long tick, List<SubmarineEntity> entities,
-			List<TorpedoEntity> torpedoes, TerrainMap terrain, List<ThermalLayer> thermalLayers) {
+		long tick, List<SubmarineEntity> entities, List<TorpedoEntity> torpedoes, TerrainMap terrain,
+		List<ThermalLayer> thermalLayers) {
 
 		// First: compute sub-to-sub contacts using the existing logic
 		var results = computeSubToSubContacts(tick, entities, terrain, thermalLayers);
@@ -191,8 +191,7 @@ public final class SonarModel {
 	}
 
 	public Map<Integer, SonarResult> computeContacts(
-			long tick, List<SubmarineEntity> entities, TerrainMap terrain,
-			List<ThermalLayer> thermalLayers) {
+		long tick, List<SubmarineEntity> entities, TerrainMap terrain, List<ThermalLayer> thermalLayers) {
 		return computeContacts(tick, entities, List.of(), terrain, thermalLayers);
 	}
 
@@ -200,9 +199,9 @@ public final class SonarModel {
 	 * Passive detection: can listener hear source? Returns contact or null.
 	 */
 	private SonarContact passiveDetect(
-			long tick, SensorNoise noise, double lx, double ly, double lz, double lHeading, double lSLdB,
-			double lSonarOffset, double sx, double sy, double sz, double sSLdB, double sSpeed, boolean sPinged,
-			TerrainMap terrain, List<ThermalLayer> thermalLayers) {
+		long tick, SensorNoise noise, double lx, double ly, double lz, double lHeading, double lSLdB,
+		double lSonarOffset, double sx, double sy, double sz, double sSLdB, double sSpeed, boolean sPinged,
+		TerrainMap terrain, List<ThermalLayer> thermalLayers) {
 		double distance = Math.sqrt((sx - lx) * (sx - lx) + (sy - ly) * (sy - ly) + (sz - lz) * (sz - lz));
 		if (distance < 1.0)
 			distance = 1.0;
@@ -235,8 +234,9 @@ public final class SonarModel {
 	}
 
 	/**
-	 * Correlated error processes for a listener/source pair that has no {@link ContactTracker} (torpedoes as either
-	 * side). Entries are dropped once the pair has not been evaluated for {@link #SENSOR_NOISE_EXPIRY_TICKS}.
+	 * Correlated error processes for a listener/source pair that has no {@link ContactTracker}
+	 * (torpedoes as either side). Entries are dropped once the pair has not been evaluated for
+	 * {@link #SENSOR_NOISE_EXPIRY_TICKS}.
 	 */
 	private static final class SensorNoise {
 		final CorrelatedNoise bearing = new CorrelatedNoise(ContactTracker.BEARING_CORRELATION_S,
@@ -263,8 +263,8 @@ public final class SonarModel {
 	 * Active sonar return: does the ping illuminate the target? Returns contact or null.
 	 */
 	private SonarContact activeDetect(
-			double lx, double ly, double lz, double lSLdB, double lSonarOffset, double sx,
-			double sy, double sz, double sSpeed, TerrainMap terrain, List<ThermalLayer> thermalLayers) {
+		double lx, double ly, double lz, double lSLdB, double lSonarOffset, double sx, double sy, double sz,
+		double sSpeed, TerrainMap terrain, List<ThermalLayer> thermalLayers) {
 		double distance = Math.sqrt((sx - lx) * (sx - lx) + (sy - ly) * (sy - ly) + (sz - lz) * (sz - lz));
 		if (distance < 1.0)
 			distance = 1.0;
@@ -307,8 +307,7 @@ public final class SonarModel {
 	 * Original submarine-to-submarine sonar computation (unchanged).
 	 */
 	private Map<Integer, SonarResult> computeSubToSubContacts(
-			long tick, List<SubmarineEntity> entities,
-			TerrainMap terrain, List<ThermalLayer> thermalLayers) {
+		long tick, List<SubmarineEntity> entities, TerrainMap terrain, List<ThermalLayer> thermalLayers) {
 
 		var results = new HashMap<Integer, SonarResult>();
 
@@ -383,10 +382,9 @@ public final class SonarModel {
 							listener.heading(), inBaffles, distance, source.x(), source.y(), rng);
 					observedSourceIds.add(source.id());
 
-					passive.add(
-							new SonarContact(reportedBearing, se, tracker.estimatedRange(), false, estSpeed, brgStdDev,
-									tracker.rangeUncertainty(), estSL, tracker.solutionQuality(),
-									tracker.estimatedHeading(), Double.NaN, classify(se, estSpeed, estSL, Double.NaN)));
+					passive.add(new SonarContact(reportedBearing, se, tracker.estimatedRange(), false, estSpeed,
+							brgStdDev, tracker.rangeUncertainty(), estSL, tracker.solutionQuality(),
+							tracker.estimatedHeading(), Double.NaN, classify(se, estSpeed, estSL, Double.NaN)));
 				}
 
 				// --- Active sonar returns (for the listener's own ping) ---
@@ -441,9 +439,9 @@ public final class SonarModel {
 	}
 
 	/**
-	 * Post-tick: tick cooldowns only. Ping requests are NOT cleared here. They persist until sonar's computeContacts
-	 * processes them on the next tick (sonar runs before the controller, so a ping requested on tick N must be visible
-	 * to sonar on tick N+1).
+	 * Post-tick: tick cooldowns only. Ping requests are NOT cleared here. They persist until
+	 * sonar's computeContacts processes them on the next tick (sonar runs before the controller, so
+	 * a ping requested on tick N must be visible to sonar on tick N+1).
 	 */
 	public void postTick(List<SubmarineEntity> entities) {
 		for (var entity : entities) {
@@ -456,8 +454,7 @@ public final class SonarModel {
 	// ── Transmission loss ────────────────────────────────────────────
 
 	static double transmissionLossDb(
-			double distance, Vec3 src, Vec3 dst, TerrainMap terrain,
-			List<ThermalLayer> layers) {
+		double distance, Vec3 src, Vec3 dst, TerrainMap terrain, List<ThermalLayer> layers) {
 		double tl = SPREADING_COEFFICIENT * Math.log10(Math.max(distance, 1.0));
 		tl += terrainOcclusionDb(src, dst, terrain);
 		tl += thermoclineDb(src.z(), dst.z(), layers);
@@ -564,11 +561,12 @@ public final class SonarModel {
 	private static final double SPEED_EST_GOOD_SE = 30.0;
 
 	/**
-	 * Estimate target speed from blade-rate tonals. Accuracy depends on signal excess: close range (high SE) → tight
-	 * estimate, long range (low SE) → noisy or unavailable.
+	 * Estimate target speed from blade-rate tonals. Accuracy depends on signal excess: close range
+	 * (high SE) → tight estimate, long range (low SE) → noisy or unavailable.
 	 *
 	 * @param unitError
-	 * 		the N(0, 1) error sample to scale; from a {@link CorrelatedNoise} process for passive tracking
+	 *            the N(0, 1) error sample to scale; from a {@link CorrelatedNoise} process for
+	 *            passive tracking
 	 * @return estimated speed in m/s, or -1 if SE too low for analysis
 	 */
 	static double estimateTargetSpeed(double actualSpeed, double signalExcess, double unitError) {

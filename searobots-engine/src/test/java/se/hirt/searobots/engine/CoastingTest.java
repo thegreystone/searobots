@@ -35,8 +35,8 @@ import se.hirt.searobots.api.VehicleConfig;
 import java.awt.*;
 
 /**
- * Measures coasting distance and time from max speed to 1 m/s under various conditions: clutch engaged (prop drag),
- * clutch disengaged (freewheeling), and with rudder deflection.
+ * Measures coasting distance and time from max speed to 1 m/s under various conditions: clutch
+ * engaged (prop drag), clutch disengaged (freewheeling), and with rudder deflection.
  */
 class CoastingTest {
 

@@ -37,11 +37,13 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Projects a submarine's trajectory forward from its kinematic state, placing waypoints that are each physically
- * reachable from the previous one given the sub's turn radius and depth change rate.
- * <p>Works with a 2D corridor from the A* planner: the corridor defines
- * which zones of the map are safe and deep, and the projector generates a 3D route through that corridor that respects
- * the sub's momentum.
+ * Projects a submarine's trajectory forward from its kinematic state, placing waypoints that are
+ * each physically reachable from the previous one given the sub's turn radius and depth change
+ * rate.
+ * <p>
+ * Works with a 2D corridor from the A* planner: the corridor defines which zones of the map are
+ * safe and deep, and the projector generates a 3D route through that corridor that respects the
+ * sub's momentum.
  */
 final class TrajectoryProjector {
 
@@ -59,30 +61,30 @@ final class TrajectoryProjector {
 	}
 
 	/**
-	 * Projects a route from the sub's current kinematic state through the corridor to the goal. Returns 3D waypoints
-	 * that are each physically reachable from the previous one.
+	 * Projects a route from the sub's current kinematic state through the corridor to the goal.
+	 * Returns 3D waypoints that are each physically reachable from the previous one.
 	 *
 	 * @param x
-	 * 		current position X
+	 *            current position X
 	 * @param y
-	 * 		current position Y
+	 *            current position Y
 	 * @param z
-	 * 		current depth
+	 *            current depth
 	 * @param heading
-	 * 		current heading (radians)
+	 *            current heading (radians)
 	 * @param speed
-	 * 		current speed (m/s, used to determine turn radius)
+	 *            current speed (m/s, used to determine turn radius)
 	 * @param corridor
-	 * 		2D corridor waypoints from A*
+	 *            2D corridor waypoints from A*
 	 * @param preferredDepth
-	 * 		strategic depth preference (NaN = as deep as possible)
+	 *            strategic depth preference (NaN = as deep as possible)
 	 * @param expectedSpeed
-	 * 		expected cruising speed for envelope computation
+	 *            expected cruising speed for envelope computation
 	 * @return list of 3D nav waypoints
 	 */
 	List<Vec3> projectRoute(
-			double x, double y, double z, double heading, double speed, List<CorridorPoint> corridor,
-			double preferredDepth, double expectedSpeed) {
+		double x, double y, double z, double heading, double speed, List<CorridorPoint> corridor, double preferredDepth,
+		double expectedSpeed) {
 		if (corridor.isEmpty())
 			return List.of();
 
@@ -171,12 +173,13 @@ final class TrajectoryProjector {
 	}
 
 	/**
-	 * Projects an arc from the current state toward a target point. Returns a waypoint at the point where the arc
-	 * completes and the sub can head straight toward the target, or null if no arc is needed.
+	 * Projects an arc from the current state toward a target point. Returns a waypoint at the point
+	 * where the arc completes and the sub can head straight toward the target, or null if no arc is
+	 * needed.
 	 */
 	private Vec3 projectArcToward(
-			double fromX, double fromY, double fromZ, double heading, double targetX, double targetY, double turnRadius,
-			double depthRatio, double preferredDepth) {
+		double fromX, double fromY, double fromZ, double heading, double targetX, double targetY, double turnRadius,
+		double depthRatio, double preferredDepth) {
 		double dx = targetX - fromX;
 		double dy = targetY - fromY;
 		double bearingToTarget = Math.atan2(dx, dy);
@@ -238,12 +241,13 @@ final class TrajectoryProjector {
 	}
 
 	/**
-	 * Computes the achievable depth for a waypoint, given the sub's current depth, horizontal distance, depth change
-	 * ratio, and preferred depth. Scans terrain along the leg to ensure clearance.
+	 * Computes the achievable depth for a waypoint, given the sub's current depth, horizontal
+	 * distance, depth change ratio, and preferred depth. Scans terrain along the leg to ensure
+	 * clearance.
 	 */
 	private double computeDepth(
-			double fromX, double fromY, double fromZ, double toX, double toY, double dist,
-			double depthRatio, double preferredDepth) {
+		double fromX, double fromY, double fromZ, double toX, double toY, double dist, double depthRatio,
+		double preferredDepth) {
 		// Scan terrain along the leg
 		double worstFloor = terrain.elevationAt(toX, toY);
 		int samples = Math.max(3, (int) (dist / 75));
@@ -270,7 +274,7 @@ final class TrajectoryProjector {
 		// Clamp by achievable depth change
 		double maxChange = dist * depthRatio;
 		double clampedZ = Math.max(targetZ, fromZ - maxChange); // can't dive faster
-		clampedZ = Math.min(clampedZ, fromZ + maxChange);       // can't rise faster
+		clampedZ = Math.min(clampedZ, fromZ + maxChange); // can't rise faster
 
 		return clampedZ;
 	}

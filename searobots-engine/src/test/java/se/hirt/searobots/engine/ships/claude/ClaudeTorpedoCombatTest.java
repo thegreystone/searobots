@@ -43,8 +43,8 @@ import java.util.function.Supplier;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Combat tests for Claude's torpedo system (sub + torpedo controller). Tests against drones first (easy targets), then
- * against active opponents.
+ * Combat tests for Claude's torpedo system (sub + torpedo controller). Tests against drones first
+ * (easy targets), then against active opponents.
  */
 public class ClaudeTorpedoCombatTest {
 
@@ -67,8 +67,7 @@ public class ClaudeTorpedoCombatTest {
 	}
 
 	private CombatOutcome runCombat(
-			Supplier<SubmarineController> a, Supplier<SubmarineController> b, long seed,
-			int maxTicks) {
+		Supplier<SubmarineController> a, Supplier<SubmarineController> b, long seed, int maxTicks) {
 		var config = MatchConfig.withDefaults(seed);
 		var world = new WorldGenerator().generate(config);
 		var sim = new SimulationLoop();
@@ -214,8 +213,8 @@ public class ClaudeTorpedoCombatTest {
 
 		for (long seed : seeds) {
 			var r = runCombat(ClaudeAttackSub::new, CodexAttackSub::new, seed, TICKS_30MIN);
-			int claudeDmg = 1000 - r.hpB;  // damage Claude dealt to Codex
-			int codexDmg = 1000 - r.hpA;   // damage Codex dealt to Claude
+			int claudeDmg = 1000 - r.hpB; // damage Claude dealt to Codex
+			int codexDmg = 1000 - r.hpA; // damage Codex dealt to Claude
 			totalClaudeDmg += claudeDmg;
 			totalCodexDmg += codexDmg;
 			claudeTorps += r.torpsAFired;
@@ -289,8 +288,8 @@ public class ClaudeTorpedoCombatTest {
 
 		for (long seed : seeds) {
 			var r = runCombat(ClaudeAttackSub::new, CodexAttackSub::new, seed, TICKS_30MIN);
-			int claudeDmg = 1000 - r.hpB;  // damage Claude dealt to Codex
-			int codexDmg = 1000 - r.hpA;   // damage Codex dealt to Claude
+			int claudeDmg = 1000 - r.hpB; // damage Claude dealt to Codex
+			int codexDmg = 1000 - r.hpA; // damage Codex dealt to Claude
 			totalClaudeDmg += claudeDmg;
 			totalCodexDmg += codexDmg;
 			claudeTorps += r.torpsAFired;

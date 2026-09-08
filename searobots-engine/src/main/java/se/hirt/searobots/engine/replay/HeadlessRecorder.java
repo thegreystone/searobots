@@ -40,13 +40,14 @@ import java.nio.file.Path;
 import java.util.List;
 
 /**
- * Records a full-fidelity {@code .srl} replay of a headless combat match (no rendering), for feeding to the viewer's
- * replay playback. Runs two torpedo-firing controllers (Claude vs Codex) at maximum speed so the log exercises the
- * interesting cases: contacts, firing solutions, torpedo launches and detonations.
+ * Records a full-fidelity {@code .srl} replay of a headless combat match (no rendering), for
+ * feeding to the viewer's replay playback. Runs two torpedo-firing controllers (Claude vs Codex) at
+ * maximum speed so the log exercises the interesting cases: contacts, firing solutions, torpedo
+ * launches and detonations.
  * <p>
- * Usage: {@code HeadlessRecorder [seed] [durationTicks] [outputPath]}. Defaults: seed 13 (a known fast engagement),
- * {@value #DEFAULT_DURATION} ticks, and {@code replays/headless-<seedHex>.srl}. The match also ends early once a
- * submarine is destroyed.
+ * Usage: {@code HeadlessRecorder [seed] [durationTicks] [outputPath]}. Defaults: seed 13 (a known
+ * fast engagement), {@value #DEFAULT_DURATION} ticks, and {@code replays/headless-<seedHex>.srl}.
+ * The match also ends early once a submarine is destroyed.
  */
 public final class HeadlessRecorder {
 
@@ -58,8 +59,8 @@ public final class HeadlessRecorder {
 	public static void main(String[] args) throws IOException {
 		long seed = args.length > 0 ? Long.parseLong(args[0]) : 13L;
 		int duration = args.length > 1 ? Integer.parseInt(args[1]) : DEFAULT_DURATION;
-		Path out =
-				args.length > 2 ? Path.of(args[2]) : Path.of("replays", "headless-" + Long.toHexString(seed) + ".srl");
+		Path out = args.length > 2 ? Path.of(args[2])
+				: Path.of("replays", "headless-" + Long.toHexString(seed) + ".srl");
 
 		MatchConfig config = MatchConfig.withDefaults(seed).withMatchDurationTicks(duration);
 		var world = new WorldGenerator().generate(config);

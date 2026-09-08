@@ -85,26 +85,30 @@ public final class CodexCombatInvestigation {
 		var listener = new SimulationListener() {
 			@Override
 			public void onTick(
-					long tick, List<SubmarineSnapshot> submarines,
-					List<se.hirt.searobots.engine.TorpedoSnapshot> torpedoes) {
+				long tick, List<SubmarineSnapshot> submarines,
+				List<se.hirt.searobots.engine.TorpedoSnapshot> torpedoes) {
 				if (submarines.size() < 2)
 					return;
 
 				var codex = submarines.get(0);
 				var claude = submarines.get(1);
 
-				double codexBoundary = config.battleArea()
-						.distanceToBoundary(codex.pose().position().x(), codex.pose().position().y());
-				double claudeBoundary = config.battleArea()
-						.distanceToBoundary(claude.pose().position().x(), claude.pose().position().y());
+				double codexBoundary = config.battleArea().distanceToBoundary(codex.pose().position().x(),
+						codex.pose().position().y());
+				double claudeBoundary = config.battleArea().distanceToBoundary(claude.pose().position().x(),
+						claude.pose().position().y());
 				minBoundaryCodex[0] = Math.min(minBoundaryCodex[0], codexBoundary);
 				minBoundaryClaude[0] = Math.min(minBoundaryClaude[0], claudeBoundary);
 
-				boolean event = tick % 250 == 0 || codex.pingRequested() || claude.pingRequested() || codex.firingSolution() != null || claude.firingSolution() != null || codex.hp() != lastCodexHp[0] || claude.hp() != lastClaudeHp[0] || codex.forfeited() || claude.forfeited();
+				boolean event = tick % 250 == 0 || codex.pingRequested() || claude.pingRequested()
+						|| codex.firingSolution() != null || claude.firingSolution() != null
+						|| codex.hp() != lastCodexHp[0] || claude.hp() != lastClaudeHp[0] || codex.forfeited()
+						|| claude.forfeited();
 
 				if (event) {
 					System.out.printf(Locale.US,
-							"t=%5d rng=%5.0f  C[%4d hp %5.0f b %4.1f spd %4.1f %s %s]  " + "L[%4d hp %5.0f b %4.1f spd %4.1f %s %s]%n",
+							"t=%5d rng=%5.0f  C[%4d hp %5.0f b %4.1f spd %4.1f %s %s]  "
+									+ "L[%4d hp %5.0f b %4.1f spd %4.1f %s %s]%n",
 							tick, codex.pose().position().distanceTo(claude.pose().position()), codex.hp(),
 							codexBoundary, codex.speed(), codex.throttle(), statusString(codex),
 							estimateString(codex.contactEstimates()), claude.hp(), claudeBoundary, claude.speed(),

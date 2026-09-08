@@ -40,15 +40,16 @@ import java.util.List;
 import static se.hirt.searobots.api.VehicleConfig.submarine;
 
 /**
- * Diagnostic test for the three-point turn behavior near the L-shaped island. Prints detailed per-tick state so we can
- * trace: 1. What safe heading is chosen 2. Where the exit waypoint is placed 3. What happens when the reverse phase
- * ends 4. What causes the replan into the island
+ * Diagnostic test for the three-point turn behavior near the L-shaped island. Prints detailed
+ * per-tick state so we can trace: 1. What safe heading is chosen 2. Where the exit waypoint is
+ * placed 3. What happens when the reverse phase ends 4. What causes the replan into the island
  */
 class ThreePointTurnDiagnosticTest {
 
 	/**
-	 * Unit-level diagnostic: directly call the autopilot's planThreePointTurn logic to see what safe heading and exit
-	 * waypoint it computes. This avoids running the full sim and isolates the geometry.
+	 * Unit-level diagnostic: directly call the autopilot's planThreePointTurn logic to see what
+	 * safe heading and exit waypoint it computes. This avoids running the full sim and isolates the
+	 * geometry.
 	 */
 	@Test
 	void diagnoseThreePointTurnGeometry() {
@@ -149,9 +150,9 @@ class ThreePointTurnDiagnosticTest {
 	}
 
 	/**
-	 * Full simulation trace: runs the L-island scenario for 8000 ticks (160 seconds) and prints diagnostic output.
-	 * Detects: - When three-point turn waypoints appear - Whether exit WP is in the island - The reverse/forward phase
-	 * transitions - Replans after the turn completes
+	 * Full simulation trace: runs the L-island scenario for 8000 ticks (160 seconds) and prints
+	 * diagnostic output. Detects: - When three-point turn waypoints appear - Whether exit WP is in
+	 * the island - The reverse/forward phase transitions - Replans after the turn completes
 	 */
 	@Test
 	void traceThreePointTurnAtLIsland() {
@@ -194,8 +195,8 @@ class ThreePointTurnDiagnosticTest {
 
 			@Override
 			public void onTick(
-					long tick, List<SubmarineSnapshot> submarines,
-					List<se.hirt.searobots.engine.TorpedoSnapshot> torpedoes) {
+				long tick, List<SubmarineSnapshot> submarines,
+				List<se.hirt.searobots.engine.TorpedoSnapshot> torpedoes) {
 				if (submarines.isEmpty())
 					return;
 				var s = submarines.get(0);
@@ -240,8 +241,8 @@ class ThreePointTurnDiagnosticTest {
 				boolean replanDetected = false;
 				if (wpCount != lastWpCount) {
 					replanDetected = true;
-				} else if (activeIdx >= 0 && (!Double.isNaN(lastActiveWpX)) && (Math.abs(
-						activeX - lastActiveWpX) > 50 || Math.abs(activeY - lastActiveWpY) > 50)) {
+				} else if (activeIdx >= 0 && (!Double.isNaN(lastActiveWpX))
+						&& (Math.abs(activeX - lastActiveWpX) > 50 || Math.abs(activeY - lastActiveWpY) > 50)) {
 					replanDetected = true;
 				}
 				// Detect three-point turn start/end
@@ -288,9 +289,8 @@ class ThreePointTurnDiagnosticTest {
 					for (int i = 0; i < s.waypoints().size(); i++) {
 						var wp = s.waypoints().get(i);
 						double wpElev = terrain.elevationAt(wp.x(), wp.y());
-						allWps.append(
-								String.format("[%d](%.0f,%.0f,%.0f elev=%.0f%s%s) ", i, wp.x(), wp.y(), wp.z(), wpElev,
-										wp.active() ? " ACTIVE" : "", wp.reverse() ? " REV" : ""));
+						allWps.append(String.format("[%d](%.0f,%.0f,%.0f elev=%.0f%s%s) ", i, wp.x(), wp.y(), wp.z(),
+								wpElev, wp.active() ? " ACTIVE" : "", wp.reverse() ? " REV" : ""));
 					}
 					log.add(allWps.toString());
 				}

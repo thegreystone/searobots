@@ -31,9 +31,9 @@ package se.hirt.searobots.engine.ships;
 import se.hirt.searobots.api.*;
 
 /**
- * A simple target drone that cruises near the surface at high speed, making lots of noise. Never attacks, never tracks
- * contacts. Just drives around avoiding islands and the arena boundary. Useful for testing sonar, tracking, and torpedo
- * mechanics.
+ * A simple target drone that cruises near the surface at high speed, making lots of noise. Never
+ * attacks, never tracks contacts. Just drives around avoiding islands and the arena boundary.
+ * Useful for testing sonar, tracking, and torpedo mechanics.
  */
 public final class TargetDrone implements SubmarineController {
 

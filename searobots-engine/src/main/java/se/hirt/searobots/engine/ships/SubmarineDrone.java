@@ -31,9 +31,10 @@ package se.hirt.searobots.engine.ships;
 import se.hirt.searobots.api.*;
 
 /**
- * A simple submarine drone that cruises at a fixed depth (~40m below surface), making moderate noise. Never attacks,
- * never tracks contacts. Just drives around avoiding islands, terrain, and the arena boundary. Quieter than the surface
- * ship drone, harder to detect and track. Useful for testing submarine-vs-submarine engagement scenarios.
+ * A simple submarine drone that cruises at a fixed depth (~40m below surface), making moderate
+ * noise. Never attacks, never tracks contacts. Just drives around avoiding islands, terrain, and
+ * the arena boundary. Quieter than the surface ship drone, harder to detect and track. Useful for
+ * testing submarine-vs-submarine engagement scenarios.
  */
 public final class SubmarineDrone implements SubmarineController {
 
@@ -42,8 +43,8 @@ public final class SubmarineDrone implements SubmarineController {
 		return "Sub Drone";
 	}
 
-	private static final double CRUISE_THROTTLE = 0.2;  // quiet patrol, ~6 m/s
-	private static final double TARGET_DEPTH = -40;      // fixed operating depth
+	private static final double CRUISE_THROTTLE = 0.2; // quiet patrol, ~6 m/s
+	private static final double TARGET_DEPTH = -40; // fixed operating depth
 	private static final double BOUNDARY_MARGIN = 1500;
 	private static final double TERRAIN_SCAN_DIST = 1200;
 	private static final double FLOOR_CLEARANCE = 80;

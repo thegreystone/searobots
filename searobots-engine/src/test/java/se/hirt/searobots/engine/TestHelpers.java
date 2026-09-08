@@ -34,7 +34,8 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Shared test helpers for submarine controller testing. Public so that controller-specific test packages can use them.
+ * Shared test helpers for submarine controller testing. Public so that controller-specific test
+ * packages can use them.
  */
 public final class TestHelpers {
 
@@ -42,8 +43,8 @@ public final class TestHelpers {
 	}
 
 	public record TestInput(long tick, double deltaTimeSeconds, SubmarineState self, EnvironmentSnapshot environment,
-	                        List<SonarContact> sonarContacts, List<SonarContact> activeSonarReturns,
-	                        int activeSonarCooldownTicks) implements SubmarineInput {
+			List<SonarContact> sonarContacts, List<SonarContact> activeSonarReturns,
+			int activeSonarCooldownTicks) implements SubmarineInput {
 	}
 
 	public static final class CapturedOutput implements SubmarineOutput {
@@ -117,12 +118,10 @@ public final class TestHelpers {
 	}
 
 	public static TestInput makeInput(
-			long tick, SubmarineEntity entity, TerrainMap terrain,
-			CurrentField currentField) {
+		long tick, SubmarineEntity entity, TerrainMap terrain, CurrentField currentField) {
 		var pose = new Pose(new Vec3(entity.x(), entity.y(), entity.z()), entity.heading(), entity.pitch(), 0);
-		var vel = new Velocity(
-				new Vec3(entity.speed() * Math.sin(entity.heading()), entity.speed() * Math.cos(entity.heading()),
-						entity.verticalSpeed()), Vec3.ZERO);
+		var vel = new Velocity(new Vec3(entity.speed() * Math.sin(entity.heading()),
+				entity.speed() * Math.cos(entity.heading()), entity.verticalSpeed()), Vec3.ZERO);
 		var state = new SubmarineState(pose, vel, entity.hp(), 0);
 		var env = new EnvironmentSnapshot(terrain, List.of(), currentField);
 		return new TestInput(tick, 1.0 / 50, state, env, List.of(), List.of(), 0);

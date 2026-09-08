@@ -39,11 +39,13 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Tests Claude torpedo passive/active guidance against moving targets in controlled geometry. Each scenario places a
- * launcher at a specific position and angle relative to the target, fires one torpedo, and checks if it hits.
+ * Tests Claude torpedo passive/active guidance against moving targets in controlled geometry. Each
+ * scenario places a launcher at a specific position and angle relative to the target, fires one
+ * torpedo, and checks if it hits.
  * <p>
- * Geometry: launcher is always at origin (0,0), target is placed at (distance, 0) heading in the specified direction.
- * Launcher faces the target. This gives clean control over approach angle and aspect.
+ * Geometry: launcher is always at origin (0,0), target is placed at (distance, 0) heading in the
+ * specified direction. Launcher faces the target. This gives clean control over approach angle and
+ * aspect.
  */
 public class ClaudeTorpedoTrackingTest {
 
@@ -151,7 +153,7 @@ public class ClaudeTorpedoTrackingTest {
 		private final double throttle;
 		private final double targetDepth;
 		private final double desiredHeading; // NaN = keep spawn heading
-		private final boolean maneuver;      // if true, weave every ~30s
+		private final boolean maneuver; // if true, weave every ~30s
 		private TerrainMap terrain;
 		private long maneuverTick = 0;
 		private double maneuverDir = 1;
@@ -216,8 +218,8 @@ public class ClaudeTorpedoTrackingTest {
 	// ── Scenario runner ──
 
 	private TrackResult runScenario(
-			Vec3 launcherPos, double launcherHeading, Vec3 targetPos, double targetHeading,
-			SubmarineController launcher, SubmarineController target, VehicleConfig targetConfig) {
+		Vec3 launcherPos, double launcherHeading, Vec3 targetPos, double targetHeading, SubmarineController launcher,
+		SubmarineController target, VehicleConfig targetConfig) {
 		var world = controlledWorld(launcherPos, targetPos);
 		var sim = new SimulationLoop();
 		sim.setSpeedMultiplier(1_000_000);
@@ -277,8 +279,8 @@ public class ClaudeTorpedoTrackingTest {
 	 * Place launcher behind the target (in its baffles).
 	 */
 	private TrackResult bafflesShot(
-			double range, double launcherDepth, double targetDepth, double targetSpeed,
-			double targetHeading, boolean maneuver) {
+		double range, double launcherDepth, double targetDepth, double targetSpeed, double targetHeading,
+		boolean maneuver) {
 		// Target at origin heading in targetHeading direction
 		// Launcher behind the target at given range
 		double behindX = -Math.sin(targetHeading) * range;
@@ -297,8 +299,8 @@ public class ClaudeTorpedoTrackingTest {
 	 * Place launcher to the side (beam shot).
 	 */
 	private TrackResult beamShot(
-			double range, double launcherDepth, double targetDepth, double targetSpeed,
-			double targetHeading, boolean maneuver) {
+		double range, double launcherDepth, double targetDepth, double targetSpeed, double targetHeading,
+		boolean maneuver) {
 		// Target at origin heading in targetHeading direction
 		// Launcher perpendicular to target's course
 		double sideAngle = targetHeading + Math.PI / 2;
@@ -321,8 +323,8 @@ public class ClaudeTorpedoTrackingTest {
 		// Surface ship at origin heading north, launcher south of it
 		double targetHeading = 0;
 		var launcher = new AlignedLauncher(targetHeading, 8.0);
-		SubmarineController target =
-				maneuver ? new ScriptedTarget("ship", 1.0, 0, targetHeading, true) : new TargetDrone();
+		SubmarineController target = maneuver ? new ScriptedTarget("ship", 1.0, 0, targetHeading, true)
+				: new TargetDrone();
 
 		return runScenario(new Vec3(0, -range, launcherDepth), targetHeading, new Vec3(0, 0, -5), targetHeading,
 				launcher, target, maneuver ? VehicleConfig.surfaceShip() : VehicleConfig.surfaceShip());

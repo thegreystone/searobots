@@ -37,67 +37,66 @@ import java.util.List;
  * Match-level metadata parsed from a replay file's header lines.
  *
  * @param formatVersion
- * 		the format version from line 1 of the file
+ *            the format version from line 1 of the file
  * @param seed
- * 		world seed
+ *            world seed
  * @param tickRateHz
- * 		simulation tick rate
+ *            simulation tick rate
  * @param durationTicks
- * 		configured match duration in ticks
+ *            configured match duration in ticks
  * @param startingHp
- * 		starting hull points
+ *            starting hull points
  * @param crushDepth
- * 		crush depth (meters, negative)
+ *            crush depth (meters, negative)
  * @param ratedDepth
- * 		rated depth (meters, negative)
+ *            rated depth (meters, negative)
  * @param battleArea
- * 		arena shape
+ *            arena shape
  * @param submarines
- * 		submarine definitions (id, name, color, spawn)
+ *            submarine definitions (id, name, color, spawn)
  */
 public record ReplayHeader(int formatVersion, long seed, int tickRateHz, long durationTicks, int startingHp,
-                           double crushDepth, double ratedDepth, BattleArea battleArea, List<SubDef> submarines) {
+		double crushDepth, double ratedDepth, BattleArea battleArea, List<SubDef> submarines) {
 
 	/**
 	 * A submarine's identity, fixed for the whole match.
 	 *
 	 * @param id
-	 * 		engine id
+	 *            engine id
 	 * @param name
-	 * 		display name
+	 *            display name
 	 * @param colorRgb
-	 * 		ARGB color (as from {@link java.awt.Color#getRGB()})
+	 *            ARGB color (as from {@link java.awt.Color#getRGB()})
 	 * @param spawnX
-	 * 		spawn X
+	 *            spawn X
 	 * @param spawnY
-	 * 		spawn Y
+	 *            spawn Y
 	 * @param spawnZ
-	 * 		spawn Z
+	 *            spawn Z
 	 * @param surfaceLocked
-	 * 		true for a surface vessel (rendered with the ship model); absent in files written before the column existed
+	 *            true for a surface vessel (rendered with the ship model); absent in files written
+	 *            before the column existed
 	 */
 	public record SubDef(int id, String name, int colorRgb, double spawnX, double spawnY, double spawnZ,
-	                     boolean surfaceLocked) {
+			boolean surfaceLocked) {
 	}
 
 	/**
-	 * Reconstructs the recorded match configuration: parameters captured in the header override the defaults for the
-	 * recorded seed, so a match recorded with a non-default arena, duration, or depth limits regenerates the same world.
-	 * Parameters the format does not capture (torpedo counts, terrain generation knobs, ...) keep their defaults, and
-	 * hand-built terrain (worlds not produced by {@code WorldGenerator}) is not reproducible from a replay at all; see
-	 * {@code docs/replay-format.md}. Zero-valued header fields (older or partial files) fall back to the defaults.
+	 * Reconstructs the recorded match configuration: parameters captured in the header override the
+	 * defaults for the recorded seed, so a match recorded with a non-default arena, duration, or
+	 * depth limits regenerates the same world. Parameters the format does not capture (torpedo
+	 * counts, terrain generation knobs, ...) keep their defaults, and hand-built terrain (worlds
+	 * not produced by {@code WorldGenerator}) is not reproducible from a replay at all; see
+	 * {@code docs/replay-format.md}. Zero-valued header fields (older or partial files) fall back
+	 * to the defaults.
 	 */
 	public MatchConfig toMatchConfig() {
 		MatchConfig d = MatchConfig.withDefaults(seed);
-		return new MatchConfig(seed,
-				tickRateHz > 0 ? tickRateHz : d.tickRateHz(),
+		return new MatchConfig(seed, tickRateHz > 0 ? tickRateHz : d.tickRateHz(),
 				durationTicks > 0 ? (int) Math.min(durationTicks, Integer.MAX_VALUE) : d.matchDurationTicks(),
-				d.submarineCount(), d.torpedoCount(),
-				startingHp > 0 ? startingHp : d.startingHp(),
-				d.blastRadius(), d.minFuseRadius(), d.maxFuseRadius(),
-				ratedDepth != 0 ? ratedDepth : d.ratedDepth(),
-				crushDepth != 0 ? crushDepth : d.crushDepth(),
-				battleArea != null ? battleArea : d.battleArea(),
+				d.submarineCount(), d.torpedoCount(), startingHp > 0 ? startingHp : d.startingHp(), d.blastRadius(),
+				d.minFuseRadius(), d.maxFuseRadius(), ratedDepth != 0 ? ratedDepth : d.ratedDepth(),
+				crushDepth != 0 ? crushDepth : d.crushDepth(), battleArea != null ? battleArea : d.battleArea(),
 				d.terrainMarginMeters(), d.gridCellMeters(), d.minSeaFloorZ(), d.maxSeaFloorZ(), d.maxSubSpeed(),
 				d.startTime());
 	}

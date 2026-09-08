@@ -48,15 +48,17 @@ import static se.hirt.searobots.engine.replay.ReplayFormat.DELIM;
 import static se.hirt.searobots.engine.replay.ReplayFormat.parseD;
 
 /**
- * Reads a {@link ReplayFormat} file and replays it through a {@link SimulationListener}, reconstructing the per-tick
- * snapshots that were recorded. Because the viewers are {@code SimulationListener}s, this lets the existing 2D/3D
- * viewers play back a recorded match unchanged, and lets tests verify a recording is lossless against the live match.
+ * Reads a {@link ReplayFormat} file and replays it through a {@link SimulationListener},
+ * reconstructing the per-tick snapshots that were recorded. Because the viewers are
+ * {@code SimulationListener}s, this lets the existing 2D/3D viewers play back a recorded match
+ * unchanged, and lets tests verify a recording is lossless against the live match.
  * <p>
- * All record decoding is delegated to {@link ReplayCodec}, resolving columns by the names declared in the file's
- * {@code COLS} header lines, so the reader is tolerant of additive schema changes within a format version.
+ * All record decoding is delegated to {@link ReplayCodec}, resolving columns by the names declared
+ * in the file's {@code COLS} header lines, so the reader is tolerant of additive schema changes
+ * within a format version.
  * <p>
- * The header is parsed eagerly in the constructor; tick data is streamed in {@link #replay(SimulationListener)}, so
- * memory use is bounded by one frame.
+ * The header is parsed eagerly in the constructor; tick data is streamed in
+ * {@link #replay(SimulationListener)}, so memory use is bounded by one frame.
  */
 public final class ReplayReader {
 
@@ -89,8 +91,8 @@ public final class ReplayReader {
 			}
 			int version = Integer.parseInt(magic[1]);
 			if (version < ReplayFormat.MIN_READ_VERSION || version > ReplayFormat.VERSION) {
-				throw new IOException(
-						"Unsupported replay format version " + version + " (this build reads versions " + ReplayFormat.MIN_READ_VERSION + ".." + ReplayFormat.VERSION + ")");
+				throw new IOException("Unsupported replay format version " + version + " (this build reads versions "
+						+ ReplayFormat.MIN_READ_VERSION + ".." + ReplayFormat.VERSION + ")");
 			}
 
 			long seed = 0;
@@ -152,8 +154,9 @@ public final class ReplayReader {
 	}
 
 	/**
-	 * Streams the recorded match through {@code listener}, calling {@link SimulationListener#onTick} once per recorded
-	 * tick and {@link SimulationListener#onMatchEnd} at the end.
+	 * Streams the recorded match through {@code listener}, calling
+	 * {@link SimulationListener#onTick} once per recorded tick and
+	 * {@link SimulationListener#onMatchEnd} at the end.
 	 *
 	 * @return the number of ticks replayed
 	 */
@@ -164,10 +167,10 @@ public final class ReplayReader {
 	}
 
 	/**
-	 * Reads the entire match into memory as a list of {@link ReplayFrame}s, one per recorded tick. This is what enables
-	 * a {@link ReplayPlayer} to walk the match under viewer control (pause / step / speed / fast-forward), including
-	 * jumping straight to a later frame. A full match is ~120k frames of small snapshot lists, which fits comfortably
-	 * in memory.
+	 * Reads the entire match into memory as a list of {@link ReplayFrame}s, one per recorded tick.
+	 * This is what enables a {@link ReplayPlayer} to walk the match under viewer control (pause /
+	 * step / speed / fast-forward), including jumping straight to a later frame. A full match is
+	 * ~120k frames of small snapshot lists, which fits comfortably in memory.
 	 */
 	public List<ReplayFrame> readAll() throws IOException {
 		List<ReplayFrame> frames = new ArrayList<>();
@@ -176,9 +179,10 @@ public final class ReplayReader {
 	}
 
 	/**
-	 * Parses the file frame by frame, handing each completed frame to {@code sink} in tick order. Bounded to one frame
-	 * of working memory regardless of how the sink accumulates. Does not signal match end; callers decide what that
-	 * means (a listener's {@code onMatchEnd}, or simply the end of the returned list).
+	 * Parses the file frame by frame, handing each completed frame to {@code sink} in tick order.
+	 * Bounded to one frame of working memory regardless of how the sink accumulates. Does not
+	 * signal match end; callers decide what that means (a listener's {@code onMatchEnd}, or simply
+	 * the end of the returned list).
 	 *
 	 * @return the number of frames streamed
 	 */

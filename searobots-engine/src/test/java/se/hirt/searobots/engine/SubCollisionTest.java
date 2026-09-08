@@ -52,8 +52,8 @@ class SubCollisionTest {
 	void headOnRamIsMutuallyFatal() {
 		// Two subs 20m apart, heading toward each other at 10 m/s each
 		// Closing speed = 20 m/s → damage = 5 * 400 = 2000 → both dead
-		var sub1 = makeSub(0, new Vec3(0, -10, -200), 10, 0);      // heading north
-		var sub2 = makeSub(1, new Vec3(0, 10, -200), 10, Math.PI);  // heading south
+		var sub1 = makeSub(0, new Vec3(0, -10, -200), 10, 0); // heading north
+		var sub2 = makeSub(1, new Vec3(0, 10, -200), 10, Math.PI); // heading south
 
 		SimulationLoop.checkSubCollisions(List.of(sub1, sub2));
 
@@ -66,7 +66,7 @@ class SubCollisionTest {
 		// Two subs close together, slow closing speed (~2 m/s)
 		// damage = 5 * 4 = 20 HP
 		var sub1 = makeSub(0, new Vec3(0, -10, -200), 2, 0);
-		var sub2 = makeSub(1, new Vec3(0, 10, -200), 0, 0);  // stationary
+		var sub2 = makeSub(1, new Vec3(0, 10, -200), 0, 0); // stationary
 
 		SimulationLoop.checkSubCollisions(List.of(sub1, sub2));
 
@@ -118,8 +118,8 @@ class SubCollisionTest {
 	@Test
 	void separatingSubsDontCollide() {
 		// Subs overlapping but moving apart → no damage
-		var sub1 = makeSub(0, new Vec3(0, -5, -200), 5, Math.PI);  // heading south (away)
-		var sub2 = makeSub(1, new Vec3(0, 5, -200), 5, 0);          // heading north (away)
+		var sub1 = makeSub(0, new Vec3(0, -5, -200), 5, Math.PI); // heading south (away)
+		var sub2 = makeSub(1, new Vec3(0, 5, -200), 5, 0); // heading north (away)
 
 		SimulationLoop.checkSubCollisions(List.of(sub1, sub2));
 

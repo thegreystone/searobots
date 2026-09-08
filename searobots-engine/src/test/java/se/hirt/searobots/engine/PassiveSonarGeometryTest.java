@@ -45,19 +45,24 @@ import static org.junit.jupiter.api.Assertions.*;
 import static se.hirt.searobots.api.VehicleConfig.submarine;
 
 /**
- * Verifies the passive-sonar geometry rules that a stalking submarine relies on, by driving {@link SonarModel}
- * tick-by-tick with scripted poses (no physics loop, no controllers):
+ * Verifies the passive-sonar geometry rules that a stalking submarine relies on, by driving
+ * {@link SonarModel} tick-by-tick with scripted poses (no physics loop, no controllers):
  * <ul>
- *   <li>The detection arc is the full forward 260 degrees with uniform signal; only the stern baffles are blind.</li>
- *   <li>A contact that is only heard through the baffles yields no TMA solution.</li>
- *   <li>Lateral (cross-bearing) motion builds a range solution; driving straight down the bearing does not.</li>
- *   <li>More lateral baseline and more course changes give progressively better solutions.</li>
- *   <li>Terrain between listener and source degrades bearing and speed estimates before it kills detection.</li>
- *   <li>A hunter sitting in the target's baffles hears the target and builds a firing solution while never being heard.</li>
- *   <li>Terrain cover costs both sides the same dB, so the quieter sub is the one that disappears.</li>
+ * <li>The detection arc is the full forward 260 degrees with uniform signal; only the stern baffles
+ * are blind.</li>
+ * <li>A contact that is only heard through the baffles yields no TMA solution.</li>
+ * <li>Lateral (cross-bearing) motion builds a range solution; driving straight down the bearing
+ * does not.</li>
+ * <li>More lateral baseline and more course changes give progressively better solutions.</li>
+ * <li>Terrain between listener and source degrades bearing and speed estimates before it kills
+ * detection.</li>
+ * <li>A hunter sitting in the target's baffles hears the target and builds a firing solution while
+ * never being heard.</li>
+ * <li>Terrain cover costs both sides the same dB, so the quieter sub is the one that
+ * disappears.</li>
  * </ul>
- * Noise model used for scripted entities mirrors SubmarinePhysics below cavitation: SL = 80 + 2 * speed dB, and the
- * hydrophones hear own noise at SL - 35 dB (VehicleConfig.submarine()).
+ * Noise model used for scripted entities mirrors SubmarinePhysics below cavitation: SL = 80 + 2 *
+ * speed dB, and the hydrophones hear own noise at SL - 35 dB (VehicleConfig.submarine()).
  */
 class PassiveSonarGeometryTest {
 
@@ -78,9 +83,10 @@ class PassiveSonarGeometryTest {
 	}
 
 	/**
-	 * Deep flat ocean (-500 m, 10 m cells, +-2 km) with a thin east-west ridge. The ridge occupies {@code rows}
-	 * consecutive grid rows starting at y = 0 and rises to {@code elevation}. A one-row ridge at -100 m costs a path at
-	 * -200 m about 7.5 dB; each additional row adds roughly 15 dB.
+	 * Deep flat ocean (-500 m, 10 m cells, +-2 km) with a thin east-west ridge. The ridge occupies
+	 * {@code rows} consecutive grid rows starting at y = 0 and rises to {@code elevation}. A
+	 * one-row ridge at -100 m costs a path at -200 m about 7.5 dB; each additional row adds roughly
+	 * 15 dB.
 	 */
 	private static TerrainMap thinRidge(int rows, double elevation) {
 		int size = 401;
@@ -144,8 +150,8 @@ class PassiveSonarGeometryTest {
 		return d;
 	}
 
-	private static List<SonarContact> passive(SonarModel sonar, long tick, SubmarineEntity listener,
-			SubmarineEntity source, TerrainMap terrain) {
+	private static List<SonarContact> passive(
+		SonarModel sonar, long tick, SubmarineEntity listener, SubmarineEntity source, TerrainMap terrain) {
 		return sonar.computeContacts(tick, List.of(listener, source), terrain, NO_LAYERS).get(listener.id())
 				.passiveContacts();
 	}
@@ -172,9 +178,9 @@ class PassiveSonarGeometryTest {
 	}
 
 	/**
-	 * Well-mixed seed for the i-th independent sonar model (splitmix64 finaliser). java.util.Random scrambles its seed
-	 * poorly: the first draws of consecutive seeds are strongly correlated, which would bias any statistic taken over
-	 * many single-draw models.
+	 * Well-mixed seed for the i-th independent sonar model (splitmix64 finaliser). java.util.Random
+	 * scrambles its seed poorly: the first draws of consecutive seeds are strongly correlated,
+	 * which would bias any statistic taken over many single-draw models.
 	 */
 	private static long seedFor(long i) {
 		long z = (i + 1) * 0x9E3779B97F4A7C15L;
@@ -220,8 +226,8 @@ class PassiveSonarGeometryTest {
 	}
 
 	/**
-	 * Moves the listener along {@code motion} against a stationary target (speed only sets its radiated level) and
-	 * records the listener's passive contact each tick.
+	 * Moves the listener along {@code motion} against a stationary target (speed only sets its
+	 * radiated level) and records the listener's passive contact each tick.
 	 */
 	private static List<Sample> track(long seed, int ticks, Motion motion, Vec3 targetPos, double targetSpeed) {
 		var sonar = new SonarModel(seed);
@@ -243,8 +249,8 @@ class PassiveSonarGeometryTest {
 	}
 
 	/** Median over seeds of some statistic of the final sample. */
-	private static double medianOverSeeds(int seeds, int ticks, Motion motion, Vec3 targetPos, double targetSpeed,
-			ToDoubleFunction<Sample> stat) {
+	private static double medianOverSeeds(
+		int seeds, int ticks, Motion motion, Vec3 targetPos, double targetSpeed, ToDoubleFunction<Sample> stat) {
 		double[] values = new double[seeds];
 		for (int s = 0; s < seeds; s++) {
 			var samples = track(1000 + s, ticks, motion, targetPos, targetSpeed);
@@ -373,7 +379,8 @@ class PassiveSonarGeometryTest {
 			quality[s] = end.contact().solutionQuality();
 			uncertainty[s] = end.contact().rangeUncertainty() / end.actualRange();
 			error[s] = errorPct(end.contact().range(), end.actualRange());
-			System.out.printf("[TMA along-bearing seed %d] est=%.0f actual=%.0f error=%.0f%% uncertainty=%.0f%% quality=%.2f%n",
+			System.out.printf(
+					"[TMA along-bearing seed %d] est=%.0f actual=%.0f error=%.0f%% uncertainty=%.0f%% quality=%.2f%n",
 					s, end.contact().range(), end.actualRange(), error[s], uncertainty[s] * 100, quality[s]);
 
 			// Honesty: the tracker must never claim a tight solution it does not have.
@@ -381,7 +388,8 @@ class PassiveSonarGeometryTest {
 			// on a phantom range.
 			assertTrue(end.contact().rangeUncertainty() >= 0.5 * Math.abs(end.contact().range() - end.actualRange()),
 					"Seed " + s + ": reported uncertainty " + end.contact().rangeUncertainty()
-							+ " m under-reports a true error of " + Math.abs(end.contact().range() - end.actualRange()) + " m");
+							+ " m under-reports a true error of " + Math.abs(end.contact().range() - end.actualRange())
+							+ " m");
 		}
 
 		assertTrue(median(quality) < 0.15,
@@ -411,7 +419,8 @@ class PassiveSonarGeometryTest {
 		double eAlong = medianOverSeeds(TMA_SEEDS, TMA_TICKS, along, TMA_TARGET, TMA_TARGET_SPEED, error);
 		double eLateral = medianOverSeeds(TMA_SEEDS, TMA_TICKS, lateral, TMA_TARGET, TMA_TARGET_SPEED, error);
 
-		System.out.printf("[TMA along vs lateral] quality %.2f vs %.2f, uncertainty %.0f%% vs %.0f%%, error %.0f%% vs %.0f%%%n",
+		System.out.printf(
+				"[TMA along vs lateral] quality %.2f vs %.2f, uncertainty %.0f%% vs %.0f%%, error %.0f%% vs %.0f%%%n",
 				qAlong, qLateral, uAlong * 100, uLateral * 100, eAlong, eLateral);
 
 		assertTrue(qLateral > qAlong + 0.1,
@@ -485,9 +494,9 @@ class PassiveSonarGeometryTest {
 	// ══════════════════════════════════════════════════════════════════
 
 	/**
-	 * Standard deviation, across {@code seeds} independent sonar models, of the bearing error averaged over
-	 * {@code windowTicks} consecutive ticks of a static geometry. Returned as a fraction of the single-sample sigma
-	 * the model reports.
+	 * Standard deviation, across {@code seeds} independent sonar models, of the bearing error
+	 * averaged over {@code windowTicks} consecutive ticks of a static geometry. Returned as a
+	 * fraction of the single-sample sigma the model reports.
 	 */
 	private static double averagedBearingErrorFraction(int seeds, int windowTicks) {
 		var listener = makeSub(0, new Vec3(0, 0, DEPTH), 0, 2);
@@ -579,7 +588,8 @@ class PassiveSonarGeometryTest {
 		assertEquals(n, behind.count, "Behind ridge: still detected (loud source)");
 		assertEquals(flat.se - occlusion, behind.se, 0.05, "Ridge costs exactly its occlusion in signal excess");
 
-		System.out.printf("[Terrain] occlusion=%.1f dB  SE %.1f -> %.1f dB  bearing sigma %.2f -> %.2f deg (reported %.2f -> %.2f)  speed sigma %.2f -> %.2f m/s%n",
+		System.out.printf(
+				"[Terrain] occlusion=%.1f dB  SE %.1f -> %.1f dB  bearing sigma %.2f -> %.2f deg (reported %.2f -> %.2f)  speed sigma %.2f -> %.2f m/s%n",
 				occlusion, flat.se, behind.se, Math.toDegrees(flat.bearingSigma), Math.toDegrees(behind.bearingSigma),
 				Math.toDegrees(flat.reportedBearingSigma), Math.toDegrees(behind.reportedBearingSigma), flat.speedSigma,
 				behind.speedSigma);
@@ -605,9 +615,10 @@ class PassiveSonarGeometryTest {
 	}
 
 	/**
-	 * Static listener at {@code lPos} facing {@code sPos}; samples the detection {@code n} times with an independent
-	 * sonar model (seed) each time. Consecutive ticks of one model share most of their error by design, so the
-	 * marginal error distribution has to be measured across independent realisations.
+	 * Static listener at {@code lPos} facing {@code sPos}; samples the detection {@code n} times
+	 * with an independent sonar model (seed) each time. Consecutive ticks of one model share most
+	 * of their error by design, so the marginal error distribution has to be measured across
+	 * independent realisations.
 	 */
 	private static StaticStats sampleStaticContact(TerrainMap terrain, Vec3 lPos, Vec3 sPos, double sourceSl, int n) {
 		double heading = Math.atan2(sPos.x() - lPos.x(), sPos.y() - lPos.y());
@@ -735,15 +746,16 @@ class PassiveSonarGeometryTest {
 			initialUncertainty[s] = first.rangeUncertainty() / standoff;
 			finalUncertainty[s] = lastContact.rangeUncertainty() / actualRange;
 
-			System.out.printf("[Stalk seed %d] quality %.2f, range %.0f m (actual %.0f m, error %.0f%%), uncertainty %.0f%% -> %.0f%%%n",
+			System.out.printf(
+					"[Stalk seed %d] quality %.2f, range %.0f m (actual %.0f m, error %.0f%%), uncertainty %.0f%% -> %.0f%%%n",
 					s, lastContact.solutionQuality(), lastContact.range(), actualRange, finalError[s],
 					initialUncertainty[s] * 100, finalUncertainty[s] * 100);
 		}
 
-		assertTrue(median(finalQuality) > 0.5, "Weaving in the baffles should reach firing-solution quality, got "
-				+ median(finalQuality));
-		assertTrue(median(finalError) < 20, "Range error after 300 s of weaving should be under 20%, got "
-				+ median(finalError) + "%");
+		assertTrue(median(finalQuality) > 0.5,
+				"Weaving in the baffles should reach firing-solution quality, got " + median(finalQuality));
+		assertTrue(median(finalError) < 20,
+				"Range error after 300 s of weaving should be under 20%, got " + median(finalError) + "%");
 		assertTrue(median(finalUncertainty) < median(initialUncertainty) / 2,
 				"Range uncertainty should at least halve while weaving");
 	}

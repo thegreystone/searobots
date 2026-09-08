@@ -36,15 +36,16 @@ import java.util.List;
 
 /**
  * One reconstructed frame of a recorded match: the exact arguments the simulation passed to
- * {@link SimulationListener#onTick} at this tick. {@link ReplayReader#readAll()} buffers a whole match as a list of
- * these so a {@link ReplayPlayer} can walk them under viewer control (pause / step / speed / fast-forward).
+ * {@link SimulationListener#onTick} at this tick. {@link ReplayReader#readAll()} buffers a whole
+ * match as a list of these so a {@link ReplayPlayer} can walk them under viewer control (pause /
+ * step / speed / fast-forward).
  *
  * @param tick
- * 		the simulation tick this frame was captured at
+ *            the simulation tick this frame was captured at
  * @param submarines
- * 		submarine snapshots for this tick
+ *            submarine snapshots for this tick
  * @param torpedoes
- * 		torpedo snapshots for this tick (possibly empty)
+ *            torpedo snapshots for this tick (possibly empty)
  */
 public record ReplayFrame(long tick, List<SubmarineSnapshot> submarines, List<TorpedoSnapshot> torpedoes) {
 

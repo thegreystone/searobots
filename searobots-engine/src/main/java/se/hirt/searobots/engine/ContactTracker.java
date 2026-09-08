@@ -33,18 +33,20 @@ import java.util.List;
 import java.util.Random;
 
 /**
- * Engine-side contact tracker that simulates the output of a Kalman-filter / batch least-squares TMA system. Uses
- * ground-truth distance with quality-dependent noise and bias to model realistic convergence behavior.
- * <p>Key behaviors:
+ * Engine-side contact tracker that simulates the output of a Kalman-filter / batch least-squares
+ * TMA system. Uses ground-truth distance with quality-dependent noise and bias to model realistic
+ * convergence behavior.
+ * <p>
+ * Key behaviors:
  * <ul>
- *   <li>Bearing is always available when a contact is detected</li>
- *   <li>Range starts with a large systematic bias (factor 1.5-2x)</li>
- *   <li>Bias only decays with cross-track maneuvering and leg changes</li>
- *   <li>Time alone gives almost nothing (no free convergence)</li>
- *   <li>Heading requires quality &gt; 0.5 (real maneuvering needed)</li>
- *   <li>Active sonar bypasses TMA: instant accurate range</li>
- *   <li>All measurement errors are correlated over tens of seconds, so averaging a few seconds of samples does not
- *   improve them (see {@link CorrelatedNoise})</li>
+ * <li>Bearing is always available when a contact is detected</li>
+ * <li>Range starts with a large systematic bias (factor 1.5-2x)</li>
+ * <li>Bias only decays with cross-track maneuvering and leg changes</li>
+ * <li>Time alone gives almost nothing (no free convergence)</li>
+ * <li>Heading requires quality &gt; 0.5 (real maneuvering needed)</li>
+ * <li>Active sonar bypasses TMA: instant accurate range</li>
+ * <li>All measurement errors are correlated over tens of seconds, so averaging a few seconds of
+ * samples does not improve them (see {@link CorrelatedNoise})</li>
  * </ul>
  */
 final class ContactTracker {
@@ -78,7 +80,7 @@ final class ContactTracker {
 
 	// Range estimation
 	private double estimatedRange = Double.NaN;
-	private double rangeBias = Double.NaN;  // systematic error, decays with geometry
+	private double rangeBias = Double.NaN; // systematic error, decays with geometry
 	private double rangeUncertainty = Double.MAX_VALUE;
 
 	// Heading estimation
@@ -118,13 +120,14 @@ final class ContactTracker {
 	private final CorrelatedNoise headingNoise = new CorrelatedNoise(HEADING_CORRELATION_S, 1.0);
 
 	/**
-	 * Update tracker with a new passive bearing observation. Range is modeled as ground-truth with a large persistent
-	 * bias that decays only through cross-track maneuvering. This simulates the output of a real TMA filter.
+	 * Update tracker with a new passive bearing observation. Range is modeled as ground-truth with
+	 * a large persistent bias that decays only through cross-track maneuvering. This simulates the
+	 * output of a real TMA filter.
 	 */
 	void update(
-			long tick, double bearing, double se, double estSpeed, double estSL, double ownX, double ownY,
-			double ownHeading, boolean inBaffles, double actualDistance, double actualTargetX, double actualTargetY,
-			Random rng) {
+		long tick, double bearing, double se, double estSpeed, double estSL, double ownX, double ownY,
+		double ownHeading, boolean inBaffles, double actualDistance, double actualTargetX, double actualTargetY,
+		Random rng) {
 		lastObservationTick = tick;
 
 		// Don't update TMA from baffle-degraded observations
@@ -231,8 +234,7 @@ final class ContactTracker {
 		// === Heading estimation: requires quality > 0.5 ===
 		// Uses ground-truth target displacement with quality-dependent noise.
 		// Needs real maneuvering (multiple legs) before heading is available.
-		if (solutionQuality > 0.5 && !Double.isNaN(
-				prevTargetX) && tick - prevTargetTick >= 250) { // 5 seconds between samples
+		if (solutionQuality > 0.5 && !Double.isNaN(prevTargetX) && tick - prevTargetTick >= 250) { // 5 seconds between samples
 			double tdx = actualTargetX - prevTargetX;
 			double tdy = actualTargetY - prevTargetY;
 			double targetMoved = Math.sqrt(tdx * tdx + tdy * tdy);
@@ -278,9 +280,9 @@ final class ContactTracker {
 	/**
 	 * Solution quality comes from actual geometric information, not time. Three components:
 	 * <ol>
-	 *   <li>Cross-track ratio: accumulated cross-track motion / estimated range</li>
-	 *   <li>Leg bonus: each course change adds information</li>
-	 *   <li>Tiny time bonus: just observation count stability, capped very low</li>
+	 * <li>Cross-track ratio: accumulated cross-track motion / estimated range</li>
+	 * <li>Leg bonus: each course change adds information</li>
+	 * <li>Tiny time bonus: just observation count stability, capped very low</li>
 	 * </ol>
 	 */
 	private void updateSolutionQuality(double actualDistance) {

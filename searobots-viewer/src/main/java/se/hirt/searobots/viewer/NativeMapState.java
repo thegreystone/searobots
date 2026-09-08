@@ -58,21 +58,24 @@ import java.util.Arrays;
 import java.util.List;
 
 /**
- * jME3-native tactical map overlay. Renders the 2D map using GPU-accelerated geometry in an offscreen viewport,
- * eliminating the Java2D freeze that would happen on Mac when trying to use the Map.
+ * jME3-native tactical map overlay. Renders the 2D map using GPU-accelerated geometry in an
+ * offscreen viewport, eliminating the Java2D freeze that would happen on Mac when trying to use the
+ * Map.
  * <p>
  * {@link MapViewState}.
  */
 final class NativeMapState extends BaseAppState {
 
 	// ── Map display modes ──
-	enum MapMode {HIDDEN, MINIMAP, FULLSCREEN}
+	enum MapMode {
+		HIDDEN, MINIMAP, FULLSCREEN
+	}
 
 	private static final float MINIMAP_SCALE = 0.28f;
 	private static final float MINIMAP_MARGIN = 15f;
 	private static final float MINIMAP_ALPHA = 0.9f;
-	private static final float FADE_SPEED = 4f;      // alpha units per second
-	private static final float RESIZE_SPEED = 10f;    // exponential lerp speed
+	private static final float FADE_SPEED = 4f; // alpha units per second
+	private static final float RESIZE_SPEED = 10f; // exponential lerp speed
 
 	// ── Zoom ──
 	private static final float ZOOM_LERP_SPEED = 12f;
@@ -624,8 +627,8 @@ final class NativeMapState extends BaseAppState {
 		if (battleAreaGeom != null)
 			battleAreaGeom.removeFromParent();
 		Mesh mesh = switch (world.config().battleArea()) {
-			case BattleArea.Circular(var r) -> makeCircleMesh((float) r, 128);
-			case BattleArea.Rectangular(var hw, var hh) -> makeRectMesh((float) hw, (float) hh);
+		case BattleArea.Circular(var r) -> makeCircleMesh((float) r, 128);
+		case BattleArea.Rectangular(var hw, var hh) -> makeRectMesh((float) hw, (float) hh);
 		};
 		battleAreaGeom = new Geometry("BattleArea", mesh);
 		battleAreaGeom.setLocalTranslation(0, 0, Z_BATTLE_AREA);
@@ -687,8 +690,8 @@ final class NativeMapState extends BaseAppState {
 	}
 
 	private void contourSegH(
-			FloatList v, int col, int row, double cx, double cy, double cell, double ox, double oy, double interval,
-			double e00, double e10, double e01, double e11) {
+		FloatList v, int col, int row, double cx, double cy, double cell, double ox, double oy, double interval,
+		double e00, double e10, double e01, double e11) {
 		double ce = Math.max(Math.floor(e00 / interval), Math.floor(e10 / interval)) * interval;
 		if (crosses(e01, e11, interval)) {
 			double t = (ce - e01) / (e11 - e01);
@@ -712,8 +715,8 @@ final class NativeMapState extends BaseAppState {
 	}
 
 	private void contourSegV(
-			FloatList v, int col, int row, double cx, double cy, double cell, double ox, double oy, double interval,
-			double e00, double e10, double e01, double e11) {
+		FloatList v, int col, int row, double cx, double cy, double cell, double ox, double oy, double interval,
+		double e00, double e10, double e01, double e11) {
 		double ce = Math.max(Math.floor(e00 / interval), Math.floor(e01 / interval)) * interval;
 		if (crosses(e10, e11, interval)) {
 			double t = (ce - e10) / (e11 - e10);

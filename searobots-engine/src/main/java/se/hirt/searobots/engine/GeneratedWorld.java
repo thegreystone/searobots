@@ -33,15 +33,15 @@ import se.hirt.searobots.api.*;
 import java.util.List;
 
 /**
- * The result of procedural world generation: everything needed to run or display a match. Can also be constructed
- * directly for test scenarios.
+ * The result of procedural world generation: everything needed to run or display a match. Can also
+ * be constructed directly for test scenarios.
  */
 public record GeneratedWorld(MatchConfig config, TerrainMap terrain, List<ThermalLayer> thermalLayers,
-                             CurrentField currentField, List<Vec3> spawnPoints) {
+		CurrentField currentField, List<Vec3> spawnPoints) {
 
 	/**
-	 * Flat ocean floor at the given depth, no thermal layers, no currents. Spawn points are placed 2000m apart at the
-	 * specified operating depth.
+	 * Flat ocean floor at the given depth, no thermal layers, no currents. Spawn points are placed
+	 * 2000m apart at the specified operating depth.
 	 */
 	public static GeneratedWorld flatOcean(double floorDepth, double operatingDepth) {
 		var config = MatchConfig.withDefaults(0);
@@ -62,16 +62,16 @@ public record GeneratedWorld(MatchConfig config, TerrainMap terrain, List<Therma
 	}
 
 	/**
-	 * Flat ocean at 1000m depth, subs at 100m depth. No terrain, no thermoclines, no currents. Pure open-water physics
-	 * testbed.
+	 * Flat ocean at 1000m depth, subs at 100m depth. No terrain, no thermoclines, no currents. Pure
+	 * open-water physics testbed.
 	 */
 	public static GeneratedWorld deepFlat() {
 		return flatOcean(-1000, -100);
 	}
 
 	/**
-	 * L-shaped island on deep ocean for testing three-point turn recovery. Sub 0 spawns 900m south of the island,
-	 * facing north (into the wall).
+	 * L-shaped island on deep ocean for testing three-point turn recovery. Sub 0 spawns 900m south
+	 * of the island, facing north (into the wall).
 	 */
 	public static GeneratedWorld lIslandRecovery() {
 		var config = MatchConfig.withDefaults(0);
@@ -94,7 +94,7 @@ public record GeneratedWorld(MatchConfig config, TerrainMap terrain, List<Therma
 		}
 		var terrain = new TerrainMap(data, gridSize, gridSize, origin, origin, cellSize);
 
-		var spawns = List.of(new Vec3(0, -900, -150),    // sub 0: south of island, facing north
+		var spawns = List.of(new Vec3(0, -900, -150), // sub 0: south of island, facing north
 				new Vec3(5000, -5000, -200));
 
 		return new GeneratedWorld(config, terrain, List.of(), new CurrentField(List.of()), spawns);

@@ -78,8 +78,7 @@ final class CodexAutopilot {
 	}
 
 	void setWaypoints(
-			List<StrategicWaypoint> waypoints, double posX, double posY, double posZ, double heading,
-			double speed) {
+		List<StrategicWaypoint> waypoints, double posX, double posY, double posZ, double heading, double speed) {
 		this.strategicWaypoints = List.copyOf(waypoints);
 		this.strategicWaypointIndex = 0;
 		this.routeIndex = 0;
@@ -100,8 +99,8 @@ final class CodexAutopilot {
 		double verticalSpeed = self.velocity().linear().z();
 		double depth = pos.z();
 
-		StrategicWaypoint current =
-				strategicWaypoints.isEmpty() ? null : strategicWaypoints.get(strategicWaypointIndex);
+		StrategicWaypoint current = strategicWaypoints.isEmpty() ? null
+				: strategicWaypoints.get(strategicWaypointIndex);
 		if (current == null) {
 			blocked = true;
 			lastStatus = "NO ROUTE";
@@ -224,8 +223,7 @@ final class CodexAutopilot {
 	}
 
 	private void planRoute(
-			double posX, double posY, double posZ, double heading, double speed,
-			StrategicWaypoint target) {
+		double posX, double posY, double posZ, double heading, double speed, StrategicWaypoint target) {
 		route.clear();
 		routeIndex = 0;
 
@@ -247,8 +245,7 @@ final class CodexAutopilot {
 	}
 
 	private List<Vec3> buildRoute(
-			List<Vec3> raw, double preferredDepth, double startZ, double startX, double startY,
-			double expectedSpeed) {
+		List<Vec3> raw, double preferredDepth, double startZ, double startX, double startY, double expectedSpeed) {
 		var dense = new ArrayList<Vec3>();
 		double carried = 0.0;
 		for (int i = 1; i < raw.size(); i++) {
@@ -347,8 +344,8 @@ final class CodexAutopilot {
 			}
 		}
 		routeIndex = best;
-		while (routeIndex < route.size() - 1 && hdist(x, y, route.get(routeIndex).x(),
-				route.get(routeIndex).y()) < NAV_ACCEPTANCE) {
+		while (routeIndex < route.size() - 1
+				&& hdist(x, y, route.get(routeIndex).x(), route.get(routeIndex).y()) < NAV_ACCEPTANCE) {
 			routeIndex++;
 		}
 	}
@@ -438,8 +435,7 @@ final class CodexAutopilot {
 	}
 
 	private double approachSpeedLimit(
-			StrategicWaypoint current, double navDistance, double strategicDistance,
-			double limitedSpeed) {
+		StrategicWaypoint current, double navDistance, double strategicDistance, double limitedSpeed) {
 		double limited = limitedSpeed;
 		if (navDistance < 260.0)
 			limited = Math.min(limited, 7.8);
@@ -457,10 +453,10 @@ final class CodexAutopilot {
 		if (wp.targetSpeed() > 0.0)
 			return Math.min(maxSubSpeed, wp.targetSpeed());
 		return switch (wp.noise()) {
-			case SILENT -> 3.5;
-			case QUIET -> 5.7;
-			case NORMAL -> 9.4;
-			case SPRINT -> 12.2;
+		case SILENT -> 3.5;
+		case QUIET -> 5.7;
+		case NORMAL -> 9.4;
+		case SPRINT -> 12.2;
 		};
 	}
 

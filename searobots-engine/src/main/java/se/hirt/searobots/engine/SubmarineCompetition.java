@@ -44,8 +44,9 @@ import java.util.function.Supplier;
  */
 
 /**
- * Runs a competition between submarine controller implementations. Each controller is run through the same set of
- * seeded maps with the same spawn points and conditions. Metrics are collected and compared in a table.
+ * Runs a competition between submarine controller implementations. Each controller is run through
+ * the same set of seeded maps with the same spawn points and conditions. Metrics are collected and
+ * compared in a table.
  */
 public class SubmarineCompetition {
 
@@ -56,15 +57,18 @@ public class SubmarineCompetition {
 	public static final int STANDARD_NAV_SEEDS = 5;
 	public static final int STANDARD_NAV_DURATION_SECONDS = 2400; // 40 minutes per nav
 	public static final int STANDARD_COMBAT_DURATION_SECONDS = 7200; // 2 hours per combat (ends early once decided)
-	/** Wall-clock safety net per combat match; a match that hits it is truncated and reported as such. */
+	/**
+	 * Wall-clock safety net per combat match; a match that hits it is truncated and reported as
+	 * such.
+	 */
 	static final long COMBAT_WALL_CLOCK_LIMIT_MS = 30 * 60_000L;
 
 	/**
-	 * A competition format: fully determined by a single master seed. The master seed deterministically generates all
-	 * individual match seeds.
+	 * A competition format: fully determined by a single master seed. The master seed
+	 * deterministically generates all individual match seeds.
 	 */
 	public record CompetitionFormat(long masterSeed, int navSeeds, int navDurationSeconds, int combatDurationSeconds,
-	                                long[] matchSeeds) {
+			long[] matchSeeds) {
 
 		/**
 		 * Standard format with the given master seed.
@@ -78,8 +82,7 @@ public class SubmarineCompetition {
 		 * Create a format with custom parameters.
 		 */
 		public static CompetitionFormat create(
-				long masterSeed, int navSeeds, int navDurationSeconds,
-				int combatDurationSeconds) {
+			long masterSeed, int navSeeds, int navDurationSeconds, int combatDurationSeconds) {
 			var rng = new java.util.Random(masterSeed);
 			long[] seeds = new long[navSeeds];
 			for (int i = 0; i < navSeeds; i++) {
@@ -93,14 +96,15 @@ public class SubmarineCompetition {
 	}
 
 	/**
-	 * Per-seed H2H scoring result for two competitors on one seed. Points include absolute objective points + relative
-	 * metric wins.
+	 * Per-seed H2H scoring result for two competitors on one seed. Points include absolute
+	 * objective points + relative metric wins.
 	 */
 	public record SeedScore(int pointsA, List<String> breakdownA, int pointsB, List<String> breakdownB) {
 	}
 
 	/**
-	 * Scores two competitors' metrics for a single seed. This is the single source of truth for nav scoring.
+	 * Scores two competitors' metrics for a single seed. This is the single source of truth for nav
+	 * scoring.
 	 */
 	public static SeedScore scoreNavSeed(Metrics mA, Metrics mB) {
 		var winsA = new ArrayList<String>();
@@ -210,27 +214,27 @@ public class SubmarineCompetition {
 
 	public record Metrics(
 			// Navigation
-			int longestWaypointChain,    // consecutive waypoints reached without replan
-			double waypointHitAccuracy,  // avg distance to waypoint center at arrival (m)
-			int waypointsReached,        // total waypoints arrived at
-			int waypointsAttempted,      // total strategic waypoints generated
-			double timeToFirstWaypoint,  // seconds to reach first waypoint (-1 = never)
+			int longestWaypointChain, // consecutive waypoints reached without replan
+			double waypointHitAccuracy, // avg distance to waypoint center at arrival (m)
+			int waypointsReached, // total waypoints arrived at
+			int waypointsAttempted, // total strategic waypoints generated
+			double timeToFirstWaypoint, // seconds to reach first waypoint (-1 = never)
 			// Objective waypoints (fixed per seed, same for all competitors)
-			int objectivesHit,           // 0, 1, or 2
-			double closestToObj1,        // closest approach to objective 1 (m)
-			double closestToObj2,        // closest approach to objective 2 (m)
+			int objectivesHit, // 0, 1, or 2
+			double closestToObj1, // closest approach to objective 1 (m)
+			double closestToObj2, // closest approach to objective 2 (m)
 			// Stealth
-			double avgDepth,             // average operating depth (more negative = better)
-			double peakDepthShallowest,  // closest to surface (more negative = better)
-			double avgNoiseDb,           // average source level in dB (lower = better)
-			double peakNoiseDb,          // max source level in dB
+			double avgDepth, // average operating depth (more negative = better)
+			double peakDepthShallowest, // closest to surface (more negative = better)
+			double avgNoiseDb, // average source level in dB (lower = better)
+			double peakNoiseDb, // max source level in dB
 			// Efficiency
-			double avgSpeed,             // m/s
-			double pathEfficiency,       // straight-line progress / distance traveled
-			double normalPatrolPct,      // % of time in normal (not emergency) states
+			double avgSpeed, // m/s
+			double pathEfficiency, // straight-line progress / distance traveled
+			double normalPatrolPct, // % of time in normal (not emergency) states
 			// Survivability
-			double timeOfFirstDamage,    // seconds until first HP loss (-1 = no damage)
-			double timeToDeath           // seconds alive (-1 = survived)
+			double timeOfFirstDamage, // seconds until first HP loss (-1 = no damage)
+			double timeToDeath // seconds alive (-1 = survived)
 	) {
 	}
 
@@ -291,8 +295,9 @@ public class SubmarineCompetition {
 	}
 
 	/**
-	 * Runs one competitor on one seed using SimulationLoop + NavMetricsTracker. This is the same simulation path used
-	 * by the live viewer, ensuring identical results whether running headless or with the UI.
+	 * Runs one competitor on one seed using SimulationLoop + NavMetricsTracker. This is the same
+	 * simulation path used by the live viewer, ensuring identical results whether running headless
+	 * or with the UI.
 	 */
 	static Metrics runOne(Supplier<SubmarineController> factory, long seed, int durationTicks, Objectives objectives) {
 		var config = MatchConfig.withDefaults(seed);
@@ -305,8 +310,9 @@ public class SubmarineCompetition {
 		if (objectives != null) {
 			double depth1 = Math.max(-300, terrain.elevationAt(objectives.x1, objectives.y1) + 90);
 			double depth2 = Math.max(-300, terrain.elevationAt(objectives.x2, objectives.y2) + 90);
-			controller.setObjectives(List.of(new StrategicWaypoint(objectives.x1, objectives.y1, depth1, Purpose.PATROL,
-							NoisePolicy.NORMAL, MovementPattern.DIRECT, 300, -1),
+			controller.setObjectives(List.of(
+					new StrategicWaypoint(objectives.x1, objectives.y1, depth1, Purpose.PATROL, NoisePolicy.NORMAL,
+							MovementPattern.DIRECT, 300, -1),
 					new StrategicWaypoint(objectives.x2, objectives.y2, depth2, Purpose.PATROL, NoisePolicy.NORMAL,
 							MovementPattern.DIRECT, 300, -1)));
 		}
@@ -321,8 +327,8 @@ public class SubmarineCompetition {
 		var listener = new SimulationListener() {
 			@Override
 			public void onTick(
-					long tick, List<SubmarineSnapshot> submarines,
-					List<se.hirt.searobots.engine.TorpedoSnapshot> torpedoes) {
+				long tick, List<SubmarineSnapshot> submarines,
+				List<se.hirt.searobots.engine.TorpedoSnapshot> torpedoes) {
 				tracker.onTick(tick, submarines, java.util.List.of());
 				if (submarines.isEmpty())
 					return;
@@ -416,28 +422,27 @@ public class SubmarineCompetition {
 		for (var entry : aggregated.entrySet()) {
 			var list = entry.getValue();
 			int n = list.size();
-			avgMetrics.put(entry.getKey(),
-					new Metrics((int) list.stream().mapToInt(Metrics::longestWaypointChain).average().orElse(0),
-							list.stream().mapToDouble(m -> m.waypointHitAccuracy() >= 0 ? m.waypointHitAccuracy() : 999)
-									.average().orElse(-1),
-							(int) list.stream().mapToInt(Metrics::waypointsReached).average().orElse(0),
-							(int) list.stream().mapToInt(Metrics::waypointsAttempted).average().orElse(0),
-							list.stream().mapToDouble(m -> m.timeToFirstWaypoint() >= 0 ? m.timeToFirstWaypoint() : 999)
-									.average().orElse(-1),
-							(int) Math.round(list.stream().mapToInt(Metrics::objectivesHit).average().orElse(0)),
-							list.stream().mapToDouble(Metrics::closestToObj1).average().orElse(9999),
-							list.stream().mapToDouble(Metrics::closestToObj2).average().orElse(9999),
-							list.stream().mapToDouble(Metrics::avgDepth).average().orElse(0),
-							list.stream().mapToDouble(Metrics::peakDepthShallowest).average().orElse(0),
-							list.stream().mapToDouble(Metrics::avgNoiseDb).average().orElse(0),
-							list.stream().mapToDouble(Metrics::peakNoiseDb).average().orElse(0),
-							list.stream().mapToDouble(Metrics::avgSpeed).average().orElse(0),
-							list.stream().mapToDouble(Metrics::pathEfficiency).average().orElse(0),
-							list.stream().mapToDouble(Metrics::normalPatrolPct).average().orElse(0),
-							list.stream().mapToDouble(m -> m.timeOfFirstDamage() >= 0 ? m.timeOfFirstDamage() : 999)
-									.average().orElse(-1),
-							list.stream().mapToDouble(m -> m.timeToDeath() >= 0 ? m.timeToDeath() : 999).average()
-									.orElse(-1)));
+			avgMetrics.put(entry.getKey(), new Metrics(
+					(int) list.stream().mapToInt(Metrics::longestWaypointChain).average().orElse(0),
+					list.stream().mapToDouble(m -> m.waypointHitAccuracy() >= 0 ? m.waypointHitAccuracy() : 999)
+							.average().orElse(-1),
+					(int) list.stream().mapToInt(Metrics::waypointsReached).average().orElse(0),
+					(int) list.stream().mapToInt(Metrics::waypointsAttempted).average().orElse(0),
+					list.stream().mapToDouble(m -> m.timeToFirstWaypoint() >= 0 ? m.timeToFirstWaypoint() : 999)
+							.average().orElse(-1),
+					(int) Math.round(list.stream().mapToInt(Metrics::objectivesHit).average().orElse(0)),
+					list.stream().mapToDouble(Metrics::closestToObj1).average().orElse(9999),
+					list.stream().mapToDouble(Metrics::closestToObj2).average().orElse(9999),
+					list.stream().mapToDouble(Metrics::avgDepth).average().orElse(0),
+					list.stream().mapToDouble(Metrics::peakDepthShallowest).average().orElse(0),
+					list.stream().mapToDouble(Metrics::avgNoiseDb).average().orElse(0),
+					list.stream().mapToDouble(Metrics::peakNoiseDb).average().orElse(0),
+					list.stream().mapToDouble(Metrics::avgSpeed).average().orElse(0),
+					list.stream().mapToDouble(Metrics::pathEfficiency).average().orElse(0),
+					list.stream().mapToDouble(Metrics::normalPatrolPct).average().orElse(0),
+					list.stream().mapToDouble(m -> m.timeOfFirstDamage() >= 0 ? m.timeOfFirstDamage() : 999).average()
+							.orElse(-1),
+					list.stream().mapToDouble(m -> m.timeToDeath() >= 0 ? m.timeToDeath() : 999).average().orElse(-1)));
 		}
 
 		// Per-seed H2H scoring using the shared scoreNavSeed() method
@@ -510,20 +515,20 @@ public class SubmarineCompetition {
 	// ── Combat scenario ──────────────────────────────────────────────
 
 	/**
-	 * Combat result: points for each competitor + description. Scoring: kill enemy = 5pts, survive = 5pts. Max 10pts
-	 * per side.
+	 * Combat result: points for each competitor + description. Scoring: kill enemy = 5pts, survive
+	 * = 5pts. Max 10pts per side.
 	 */
 	record CombatResult(int pointsA, int pointsB, String description, long ticks) {
 	}
 
 	/**
-	 * Pits two competitors head-to-head on a seed. The match runs until the simulation decides the outcome (see
-	 * {@link SimulationLoop#matchDecided}) or {@code durationTicks} elapse, whichever comes first. Both sides score
-	 * independently: 5pts for killing the enemy, 5pts for surviving.
+	 * Pits two competitors head-to-head on a seed. The match runs until the simulation decides the
+	 * outcome (see {@link SimulationLoop#matchDecided}) or {@code durationTicks} elapse, whichever
+	 * comes first. Both sides score independently: 5pts for killing the enemy, 5pts for surviving.
 	 */
 	static CombatResult runCombat(
-			Supplier<SubmarineController> factoryA, String nameA, Supplier<SubmarineController> factoryB, String nameB,
-			long seed, int durationTicks) {
+		Supplier<SubmarineController> factoryA, String nameA, Supplier<SubmarineController> factoryB, String nameB,
+		long seed, int durationTicks) {
 		// The controllers see the real duration (Codex plans its endgame from matchDurationTicks).
 		var config = MatchConfig.withDefaults(seed).withMatchDurationTicks(durationTicks);
 		var world = new WorldGenerator().generate(config);
@@ -564,8 +569,9 @@ public class SubmarineCompetition {
 		} catch (InterruptedException e) {
 		}
 		if (thread.isAlive()) {
-			System.out.printf("  WARNING: %s vs %s on seed %s exceeded the wall-clock limit after %d ticks; truncating%n",
-					nameA, nameB, Long.toHexString(seed), ticksRun[0]);
+			System.out.printf(
+					"  WARNING: %s vs %s on seed %s exceeded the wall-clock limit after %d ticks; truncating%n", nameA,
+					nameB, Long.toHexString(seed), ticksRun[0]);
 		}
 		sim.stop();
 		try {
@@ -615,8 +621,7 @@ public class SubmarineCompetition {
 	}
 
 	public static void runCombatScenario(
-			List<Competitor> competitors, long[] seeds, int durationTicks,
-			Map<String, Integer> navPoints) {
+		List<Competitor> competitors, long[] seeds, int durationTicks, Map<String, Integer> navPoints) {
 		System.out.println("=".repeat(120));
 		System.out.println("COMBAT SCENARIO - Head-to-head");
 		System.out.println("=".repeat(120));
@@ -663,9 +668,10 @@ public class SubmarineCompetition {
 	/**
 	 * Usage: SubmarineCompetition [masterSeed_hex] [--combat-only]
 	 * <p>
-	 * With no arguments: generates a random master seed for a standard competition. With a hex seed: runs a
-	 * reproducible standard competition with that master seed. With --combat-only: skips the navigation phase and runs
-	 * combat only (faster iteration). The master seed deterministically generates all match seeds.
+	 * With no arguments: generates a random master seed for a standard competition. With a hex
+	 * seed: runs a reproducible standard competition with that master seed. With --combat-only:
+	 * skips the navigation phase and runs combat only (faster iteration). The master seed
+	 * deterministically generates all match seeds.
 	 */
 	public static void main(String[] args) {
 		var competitors = List.of(new Competitor("CodexAttackSub", CodexAttackSub::new),

@@ -41,8 +41,8 @@ import static org.junit.jupiter.api.Assertions.*;
 import static se.hirt.searobots.api.VehicleConfig.submarine;
 
 /**
- * Tests for submarine navigation planning around islands and terrain, and the balance between terrain tracking and
- * waypoint following.
+ * Tests for submarine navigation planning around islands and terrain, and the balance between
+ * terrain tracking and waypoint following.
  */
 class NavigationSimTest {
 
@@ -58,12 +58,11 @@ class NavigationSimTest {
 	// ── Terrain helpers ──────────────────────────────────────────────
 
 	/**
-	 * Creates a terrain map with deep water everywhere except a rectangular island (above sea level) at the specified
-	 * world coordinates.
+	 * Creates a terrain map with deep water everywhere except a rectangular island (above sea
+	 * level) at the specified world coordinates.
 	 */
 	static TerrainMap terrainWithIsland(
-			double baseDepth, double islandMinX, double islandMaxX, double islandMinY,
-			double islandMaxY) {
+		double baseDepth, double islandMinX, double islandMaxX, double islandMinY, double islandMaxY) {
 		int size = 201;
 		double cellSize = 100;
 		double origin = -(size / 2) * cellSize;
@@ -95,8 +94,8 @@ class NavigationSimTest {
 	}
 
 	/**
-	 * Creates terrain with a shallow quadrant. The quadrant where x > 0 and y > 0 has shallowElevation; everything else
-	 * has baseDepth.
+	 * Creates terrain with a shallow quadrant. The quadrant where x > 0 and y > 0 has
+	 * shallowElevation; everything else has baseDepth.
 	 */
 	static TerrainMap terrainWithShallowQuadrant(double baseDepth, double shallowElevation) {
 		int size = 201;
@@ -118,8 +117,9 @@ class NavigationSimTest {
 	}
 
 	/**
-	 * Creates terrain with a narrow deep-water channel running along the X axis. The channel (floor at channelDepth)
-	 * extends from y=-channelHalfWidth to y=+channelHalfWidth. The shelves on either side have shelfDepth.
+	 * Creates terrain with a narrow deep-water channel running along the X axis. The channel (floor
+	 * at channelDepth) extends from y=-channelHalfWidth to y=+channelHalfWidth. The shelves on
+	 * either side have shelfDepth.
 	 */
 	static TerrainMap terrainWithNarrowChannel(double channelDepth, double shelfDepth, double channelHalfWidth) {
 		int size = 201;
@@ -147,8 +147,7 @@ class NavigationSimTest {
 	}
 
 	private CapturedOutput tickFull(
-			TerrainMap terrain, long tick, double x, double y, double z, double heading,
-			Vec3 linearVelocity, int hp) {
+		TerrainMap terrain, long tick, double x, double y, double z, double heading, Vec3 linearVelocity, int hp) {
 		var pose = new Pose(new Vec3(x, y, z), heading, 0, 0);
 		var velocity = new Velocity(linearVelocity, Vec3.ZERO);
 		var state = new SubmarineState(pose, velocity, hp, 0);
@@ -160,8 +159,8 @@ class NavigationSimTest {
 	}
 
 	record TestInputFull(long tick, double deltaTimeSeconds, SubmarineState self, EnvironmentSnapshot environment,
-	                     List<SonarContact> sonarContacts, List<SonarContact> activeSonarReturns,
-	                     int activeSonarCooldownTicks) implements SubmarineInput {
+			List<SonarContact> sonarContacts, List<SonarContact> activeSonarReturns,
+			int activeSonarCooldownTicks) implements SubmarineInput {
 	}
 
 	static final class CapturedOutput implements SubmarineOutput {
@@ -298,8 +297,8 @@ class NavigationSimTest {
 		var listener = new SimulationListener() {
 			@Override
 			public void onTick(
-					long tick, List<SubmarineSnapshot> submarines,
-					List<se.hirt.searobots.engine.TorpedoSnapshot> torpedoes) {
+				long tick, List<SubmarineSnapshot> submarines,
+				List<se.hirt.searobots.engine.TorpedoSnapshot> torpedoes) {
 				ticked[0] = true;
 				if (tick % 100 == 0 && submarines.size() >= 2) {
 					var s0 = submarines.get(0);
@@ -345,10 +344,10 @@ class NavigationSimTest {
 		// at least a few hundred meters.
 		double[] firstEntry = positionLog.getFirst();
 		double[] lastEntry = positionLog.getLast();
-		double sub0Moved = Math.sqrt(
-				Math.pow(lastEntry[1] - firstEntry[1], 2) + Math.pow(lastEntry[2] - firstEntry[2], 2));
-		double sub1Moved = Math.sqrt(
-				Math.pow(lastEntry[3] - firstEntry[3], 2) + Math.pow(lastEntry[4] - firstEntry[4], 2));
+		double sub0Moved = Math
+				.sqrt(Math.pow(lastEntry[1] - firstEntry[1], 2) + Math.pow(lastEntry[2] - firstEntry[2], 2));
+		double sub1Moved = Math
+				.sqrt(Math.pow(lastEntry[3] - firstEntry[3], 2) + Math.pow(lastEntry[4] - firstEntry[4], 2));
 		assertTrue(sub0Moved > 100, "Sub 0 should have moved from spawn, moved only " + sub0Moved + "m");
 		assertTrue(sub1Moved > 100, "Sub 1 should have moved from spawn, moved only " + sub1Moved + "m");
 
@@ -432,9 +431,8 @@ class NavigationSimTest {
 
 		assertTrue(totalTests > 0, "Should have tested with waypoints");
 		double ratio = (double) correctSteering / totalTests;
-		assertTrue(ratio > 0.5,
-				"Rudder should steer toward active waypoint in most test headings, got " + String.format("%.1f%%",
-						ratio * 100) + " (" + correctSteering + "/" + totalTests + ")");
+		assertTrue(ratio > 0.5, "Rudder should steer toward active waypoint in most test headings, got "
+				+ String.format("%.1f%%", ratio * 100) + " (" + correctSteering + "/" + totalTests + ")");
 	}
 
 	// ── Test 6: terrainAvoidanceDoesNotOverrideWaypointsInSafeWater ─
@@ -509,11 +507,10 @@ class NavigationSimTest {
 		// The rudder should point toward the waypoint (same sign as bearing error)
 		// or the sub is already heading toward it (small bearing error)
 		boolean aligned = Math.abs(bearingErr) < Math.toRadians(15);
-		boolean rudderCorrect = Math.abs(
-				lastOut.rudder) < 0.01 || (bearingErr > 0 && lastOut.rudder > 0) || (bearingErr < 0 && lastOut.rudder < 0);
-		assertTrue(aligned || rudderCorrect,
-				"In safe water (z=-130, floor=-300), rudder should steer toward waypoint. " + "Bearing error=" + Math.toDegrees(
-						bearingErr) + " deg, rudder=" + lastOut.rudder);
+		boolean rudderCorrect = Math.abs(lastOut.rudder) < 0.01 || (bearingErr > 0 && lastOut.rudder > 0)
+				|| (bearingErr < 0 && lastOut.rudder < 0);
+		assertTrue(aligned || rudderCorrect, "In safe water (z=-130, floor=-300), rudder should steer toward waypoint. "
+				+ "Bearing error=" + Math.toDegrees(bearingErr) + " deg, rudder=" + lastOut.rudder);
 	}
 
 	// ── Test 7: subSurvivesNarrowPassage ────────────────────────────
@@ -525,8 +522,7 @@ class NavigationSimTest {
 		var terrain = terrainWithNarrowChannel(-300, -40, 200);
 
 		// Spawn the sub on the left side of the channel, heading east (along x)
-		var spawnPoints = List.of(new Vec3(-5000, 0, -200),
-				new Vec3(5000, 0, -200) // dummy second spawn for 2-sub config
+		var spawnPoints = List.of(new Vec3(-5000, 0, -200), new Vec3(5000, 0, -200) // dummy second spawn for 2-sub config
 		);
 
 		var world = new GeneratedWorld(CONFIG, terrain, List.of(), new CurrentField(List.of()), spawnPoints);
@@ -543,8 +539,8 @@ class NavigationSimTest {
 		var listener = new SimulationListener() {
 			@Override
 			public void onTick(
-					long tick, List<SubmarineSnapshot> submarines,
-					List<se.hirt.searobots.engine.TorpedoSnapshot> torpedoes) {
+				long tick, List<SubmarineSnapshot> submarines,
+				List<se.hirt.searobots.engine.TorpedoSnapshot> torpedoes) {
 				ticked[0] = true;
 				if (submarines.size() >= 2) {
 					finalHp[0] = submarines.get(0).hp();
@@ -589,8 +585,8 @@ class NavigationSimTest {
 	// ── Seed-based full simulation tests ─────────────────────────────
 
 	/**
-	 * Runs a full simulation for a given seed and prints detailed autopilot performance analysis: distance traveled,
-	 * terrain damage, depth profile, status breakdown, and waypoint progression.
+	 * Runs a full simulation for a given seed and prints detailed autopilot performance analysis:
+	 * distance traveled, terrain damage, depth profile, status breakdown, and waypoint progression.
 	 */
 	private void runSeedAnalysis(long seed, int durationTicks) {
 		var config = MatchConfig.withDefaults(seed);
@@ -623,8 +619,8 @@ class NavigationSimTest {
 		var listener = new SimulationListener() {
 			@Override
 			public void onTick(
-					long tick, List<SubmarineSnapshot> submarines,
-					List<se.hirt.searobots.engine.TorpedoSnapshot> torpedoes) {
+				long tick, List<SubmarineSnapshot> submarines,
+				List<se.hirt.searobots.engine.TorpedoSnapshot> torpedoes) {
 				tickCount[0]++;
 				for (int i = 0; i < Math.min(subCount, submarines.size()); i++) {
 					var s = submarines.get(i);
@@ -701,9 +697,9 @@ class NavigationSimTest {
 			String name = i == 0 ? "DefaultAttackSub" : "SubmarineDrone";
 			System.out.printf("--- %s (sub %d) ---%n", name, i);
 			System.out.printf("  HP: %d/1000%s%n", finalHp[i],
-					finalHp[i] < 1000 ? " (DAMAGED" + (firstDamageTick[0] >= 0 && i == 0
-													   ? " at tick " + firstDamageTick[0] + " / " + String.format(
-							"%.1fs", firstDamageTick[0] / 50.0) : "") + ")" : "");
+					finalHp[i] < 1000 ? " (DAMAGED" + (firstDamageTick[0] >= 0 && i == 0 ? " at tick "
+							+ firstDamageTick[0] + " / " + String.format("%.1fs", firstDamageTick[0] / 50.0) : "") + ")"
+							: "");
 			System.out.printf("  Distance traveled: %.0fm%n", totalDist[i]);
 			System.out.printf("  Avg speed: %.1f m/s%n", totalDist[i] / seconds);
 			System.out.printf("  Max speed: %.1f m/s%n", maxSpeed[i]);
@@ -714,8 +710,8 @@ class NavigationSimTest {
 
 		System.out.println("--- Sub 0 status breakdown ---");
 		int totalStatusTicks = statusCounts.values().stream().mapToInt(Integer::intValue).sum();
-		statusCounts.entrySet().stream().sorted((a, b) -> b.getValue() - a.getValue()).forEach(
-				e -> System.out.printf("  %-25s %5d ticks (%4.1f%%)%n", e.getKey(), e.getValue(),
+		statusCounts.entrySet().stream().sorted((a, b) -> b.getValue() - a.getValue())
+				.forEach(e -> System.out.printf("  %-25s %5d ticks (%4.1f%%)%n", e.getKey(), e.getValue(),
 						100.0 * e.getValue() / totalStatusTicks));
 		System.out.println();
 
@@ -824,8 +820,8 @@ class NavigationSimTest {
 		var listener = new SimulationListener() {
 			@Override
 			public void onTick(
-					long tick, List<SubmarineSnapshot> submarines,
-					List<se.hirt.searobots.engine.TorpedoSnapshot> torpedoes) {
+				long tick, List<SubmarineSnapshot> submarines,
+				List<se.hirt.searobots.engine.TorpedoSnapshot> torpedoes) {
 				if (submarines.isEmpty())
 					return;
 				var s = submarines.get(0);
@@ -836,7 +832,8 @@ class NavigationSimTest {
 
 				if (tick % 50 == 0 && !dead[0]) { // every 1 second
 					System.out.printf(
-							"t=%3.0fs  pos=(%6.0f,%6.0f,%5.0f)  floor=%5.0f  gap=%4.0f  " + "spd=%4.1f  hdg=%3.0f°  pitch=%+5.1f°  hp=%4d  status=%s%n",
+							"t=%3.0fs  pos=(%6.0f,%6.0f,%5.0f)  floor=%5.0f  gap=%4.0f  "
+									+ "spd=%4.1f  hdg=%3.0f°  pitch=%+5.1f°  hp=%4d  status=%s%n",
 							tick / 50.0, pos.x(), pos.y(), pos.z(), floor, gap, spd, Math.toDegrees(s.pose().heading()),
 							Math.toDegrees(s.pose().pitch()), s.hp(), s.status());
 				}
@@ -877,8 +874,8 @@ class NavigationSimTest {
 	}
 
 	/**
-	 * Diagnostic: dump the initial route the autopilot plans for sub 0, along with terrain elevation at each waypoint
-	 * and along each leg.
+	 * Diagnostic: dump the initial route the autopilot plans for sub 0, along with terrain
+	 * elevation at each waypoint and along each leg.
 	 */
 	@Test
 	void seed_3823285984661543777_routeDiagnostic() {

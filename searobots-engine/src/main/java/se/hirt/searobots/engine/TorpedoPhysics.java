@@ -33,9 +33,9 @@ import se.hirt.searobots.api.CurrentField;
 import se.hirt.searobots.api.TerrainMap;
 
 /**
- * Physics model for torpedoes. Simplified relative to submarine physics: no ballast, no clutch, no reverse thrust.
- * Torpedoes are slightly negatively buoyant and rely on hydrodynamic lift from forward motion to maintain depth. Below
- * minimum speed (~3 m/s), lift fails and the torpedo sinks.
+ * Physics model for torpedoes. Simplified relative to submarine physics: no ballast, no clutch, no
+ * reverse thrust. Torpedoes are slightly negatively buoyant and rely on hydrodynamic lift from
+ * forward motion to maintain depth. Below minimum speed (~3 m/s), lift fails and the torpedo sinks.
  */
 public final class TorpedoPhysics {
 
@@ -44,7 +44,8 @@ public final class TorpedoPhysics {
 	private static final double LIFT_COEFFICIENT = 0.3; // lift per m/s^2 at depth
 
 	/**
-	 * Lift coefficient as a function of angle of attack, with stall. Same formula as SubmarinePhysics.
+	 * Lift coefficient as a function of angle of attack, with stall. Same formula as
+	 * SubmarinePhysics.
 	 */
 	private static double liftCoefficient(double alpha, double stallAngle) {
 		if (Math.abs(alpha) <= stallAngle) {
@@ -59,19 +60,18 @@ public final class TorpedoPhysics {
 	 * Steps the torpedo physics by one tick.
 	 *
 	 * @param torp
-	 * 		torpedo entity to update
+	 *            torpedo entity to update
 	 * @param dt
-	 * 		time step in seconds
+	 *            time step in seconds
 	 * @param terrain
-	 * 		terrain map for collision checking
+	 *            terrain map for collision checking
 	 * @param currentField
-	 * 		ocean currents
+	 *            ocean currents
 	 * @param battleArea
-	 * 		battle area boundary
+	 *            battle area boundary
 	 */
 	public void step(
-			TorpedoEntity torp, double dt, TerrainMap terrain, CurrentField currentField,
-			BattleArea battleArea) {
+		TorpedoEntity torp, double dt, TerrainMap terrain, CurrentField currentField, BattleArea battleArea) {
 		if (!torp.alive())
 			return;
 
@@ -130,8 +130,8 @@ public final class TorpedoPhysics {
 		// 5. Yaw dynamics (same first-order model as submarine, different coefficients)
 		double rudderAngle = actualRudder * Math.PI / 4;
 		double rudderCl = liftCoefficient(rudderAngle, cfg.stallAngle());
-		double rudderMoment = 0.5 * WATER_DENSITY * speed * Math.abs(
-				speed) * cfg.rudderArea() * rudderCl * cfg.rudderArm();
+		double rudderMoment = 0.5 * WATER_DENSITY * speed * Math.abs(speed) * cfg.rudderArea() * rudderCl
+				* cfg.rudderArm();
 
 		double baseInertia = cfg.massSurge() * cfg.rotationalInertia();
 		// Torpedo: long narrow body generates enormous rotational resistance at speed.
@@ -162,8 +162,8 @@ public final class TorpedoPhysics {
 		if (cfg.planesArea() > 0) {
 			double planesAngle = actualPlanes * Math.PI / 4;
 			double planesCl = liftCoefficient(planesAngle, cfg.stallAngle());
-			double pitchMoment = 0.5 * WATER_DENSITY * speed * Math.abs(
-					speed) * cfg.planesArea() * planesCl * cfg.planesArm();
+			double pitchMoment = 0.5 * WATER_DENSITY * speed * Math.abs(speed) * cfg.planesArea() * planesCl
+					* cfg.planesArm();
 
 			// Torpedoes should answer depth commands faster than they answer yaw.
 			// Keeping pitch damping as high as yaw made deep targets effectively

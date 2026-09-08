@@ -43,14 +43,15 @@ import java.util.Locale;
 import java.util.Map;
 
 /**
- * Diagnostic harness (not an assertion test): finds a match where torpedoes are fired but no clean kill results, then
- * explains why each torpedo missed.
+ * Diagnostic harness (not an assertion test): finds a match where torpedoes are fired but no clean
+ * kill results, then explains why each torpedo missed.
  * <p>
- * For every torpedo it tracks the minimum <em>bow-to-hull</em> distance to each enemy submarine over the torpedo's
- * whole life: this is exactly the metric the proximity fuse compares against the fuse radius (5-30m), so the closest
- * approach tells the story directly. It also records the torpedo's fate, fuel and speed at death, and the guidance
- * phase it was in, which separates the miss causes: ran out of fuel, stalled, hit terrain, or flew past outside the
- * fuse radius (a terminal-geometry miss).
+ * For every torpedo it tracks the minimum <em>bow-to-hull</em> distance to each enemy submarine
+ * over the torpedo's whole life: this is exactly the metric the proximity fuse compares against the
+ * fuse radius (5-30m), so the closest approach tells the story directly. It also records the
+ * torpedo's fate, fuel and speed at death, and the guidance phase it was in, which separates the
+ * miss causes: ran out of fuel, stalled, hit terrain, or flew past outside the fuse radius (a
+ * terminal-geometry miss).
  * <p>
  * Assertion-free dev tool: skipped on normal builds, run on demand with
  * {@code mvn test -Dsearobots.diag=true -Dtest=TorpedoMissAnalysis}.
@@ -84,7 +85,7 @@ class TorpedoMissAnalysis {
 
 	@Test
 	void analyzeTorpedoMisses() {
-		var missSeeds = new java.util.ArrayList<long[]>();   // {seed} list
+		var missSeeds = new java.util.ArrayList<long[]>(); // {seed} list
 		var missTracks = new java.util.ArrayList<Map<Integer, TorpTrack>>();
 
 		for (long seed : SEEDS) {

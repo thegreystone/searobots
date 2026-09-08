@@ -127,8 +127,8 @@ class SubmarineAutopilotTest {
 	}
 
 	private CapturedOutput tickAutopilot(
-			SubmarineAutopilot ap, TerrainMap terrain, long tick, double x, double y,
-			double z, double heading, Vec3 velocity) {
+		SubmarineAutopilot ap, TerrainMap terrain, long tick, double x, double y, double z, double heading,
+		Vec3 velocity) {
 		var pose = new Pose(new Vec3(x, y, z), heading, 0, 0);
 		var vel = new Velocity(velocity, Vec3.ZERO);
 		var state = new SubmarineState(pose, vel, 1000, 0);
@@ -140,8 +140,7 @@ class SubmarineAutopilotTest {
 	}
 
 	private CapturedOutput tickAutopilot(
-			SubmarineAutopilot ap, TerrainMap terrain, long tick, double x, double y,
-			double z, double heading) {
+		SubmarineAutopilot ap, TerrainMap terrain, long tick, double x, double y, double z, double heading) {
 		return tickAutopilot(ap, terrain, tick, x, y, z, heading, Vec3.ZERO);
 	}
 
@@ -163,13 +162,12 @@ class SubmarineAutopilotTest {
 	}
 
 	private static StrategicWaypoint wpWithSpeed(
-			double x, double y, double depth, NoisePolicy noise,
-			double targetSpeed) {
+		double x, double y, double depth, NoisePolicy noise, double targetSpeed) {
 		return new StrategicWaypoint(x, y, depth, Purpose.PATROL, noise, MovementPattern.DIRECT, 200, targetSpeed);
 	}
 
-	record TestInput(long tick, double deltaTimeSeconds, SubmarineState self, EnvironmentSnapshot environment)
-			implements SubmarineInput {
+	record TestInput(long tick, double deltaTimeSeconds, SubmarineState self,
+			EnvironmentSnapshot environment) implements SubmarineInput {
 	}
 
 	static final class CapturedOutput implements SubmarineOutput {
@@ -605,8 +603,8 @@ class SubmarineAutopilotTest {
 			// Drift phase: ticks 750-1749
 			var outDrift = tickAutopilot(ap, terrain, 900, 0, 0, -200, 0);
 
-			assertTrue(outSprint.throttle > outDrift.throttle,
-					"Sprint phase throttle (" + outSprint.throttle + ") should be higher than drift phase (" + outDrift.throttle + ")");
+			assertTrue(outSprint.throttle > outDrift.throttle, "Sprint phase throttle (" + outSprint.throttle
+					+ ") should be higher than drift phase (" + outDrift.throttle + ")");
 		}
 	}
 
@@ -625,8 +623,8 @@ class SubmarineAutopilotTest {
 			var out = tickAutopilot(ap, terrain, 1, 0, 0, -200, 0, new Vec3(0, 5, 0));
 			// Should see depth adjustment or throttle reduction
 			boolean adjusted = out.throttle < 0.40 || out.ballast > 0.5 || out.sternPlanes > 0;
-			assertTrue(adjusted,
-					"Rising terrain ahead should trigger avoidance response (throttle=" + out.throttle + ", ballast=" + out.ballast + ", sternPlanes=" + out.sternPlanes + ")");
+			assertTrue(adjusted, "Rising terrain ahead should trigger avoidance response (throttle=" + out.throttle
+					+ ", ballast=" + out.ballast + ", sternPlanes=" + out.sternPlanes + ")");
 		}
 
 		@Test

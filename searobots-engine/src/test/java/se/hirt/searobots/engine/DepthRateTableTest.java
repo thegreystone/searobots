@@ -35,12 +35,12 @@ import se.hirt.searobots.api.VehicleConfig;
 import java.awt.*;
 
 /**
- * Measures steady-state depth change rates at 1 m/s increments from 1 to 15 m/s, using stern planes, ballast, and
- * combined. Results feed into the autopilot's depth control tables.
+ * Measures steady-state depth change rates at 1 m/s increments from 1 to 15 m/s, using stern
+ * planes, ballast, and combined. Results feed into the autopilot's depth control tables.
  * <p>
- * Conventions: z is negative underwater. Positive depth rate = ascending (toward surface). Stern planes: +1 = full rise
- * (nose up), -1 = full dive (nose down). Ballast: 0.0 = full flood (heavy, sink), 0.5 = neutral, 1.0 = full blow
- * (light, rise).
+ * Conventions: z is negative underwater. Positive depth rate = ascending (toward surface). Stern
+ * planes: +1 = full rise (nose up), -1 = full dive (nose down). Ballast: 0.0 = full flood (heavy,
+ * sink), 0.5 = neutral, 1.0 = full blow (light, rise).
  */
 class DepthRateTableTest {
 
@@ -274,8 +274,9 @@ class DepthRateTableTest {
 	// ── Helpers ──
 
 	/**
-	 * Measures steady-state depth change rate with given planes and ballast. Starts deep enough that the sub won't hit
-	 * surface or floor during measurement. Returns {depthRate_m_per_s, steadyPitch_deg, verticalSpeed_m_per_s}.
+	 * Measures steady-state depth change rate with given planes and ballast. Starts deep enough
+	 * that the sub won't hit surface or floor during measurement. Returns {depthRate_m_per_s,
+	 * steadyPitch_deg, verticalSpeed_m_per_s}.
 	 */
 	double[] measureDepthRate(double throttle, double planes, double ballast, double nominalDepth) {
 		// For ascending tests, start deep so we don't hit the surface during stabilization.
@@ -306,7 +307,8 @@ class DepthRateTableTest {
 	}
 
 	/**
-	 * Measures ballast-only depth rate (planes neutral). Returns {depthRate_m_per_s, verticalSpeed_m_per_s}.
+	 * Measures ballast-only depth rate (planes neutral). Returns {depthRate_m_per_s,
+	 * verticalSpeed_m_per_s}.
 	 */
 	double[] measureBallastRate(double throttle, double ballast, double startDepth) {
 		boolean ascending = ballast > 0.5;
@@ -337,8 +339,8 @@ class DepthRateTableTest {
 		sub.setBallast(0.5);
 		runTicks(sub, 50 * 90); // reach steady speed
 
-		sub.setBallast(1.0);       // full blow
-		sub.setSternPlanes(0.55);  // optimal rise
+		sub.setBallast(1.0); // full blow
+		sub.setSternPlanes(0.55); // optimal rise
 
 		int maxTicks = 50 * 600; // 10 minute timeout
 		for (int t = 0; t < maxTicks; t++) {

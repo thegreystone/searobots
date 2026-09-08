@@ -33,8 +33,8 @@ import se.hirt.searobots.api.CurrentField;
 import se.hirt.searobots.api.TerrainMap;
 
 /**
- * Simplified submarine physics based on Fossen's 6-DOF formulation. See docs/physics-model.md for full documentation,
- * references, and characterization results.
+ * Simplified submarine physics based on Fossen's 6-DOF formulation. See docs/physics-model.md for
+ * full documentation, references, and characterization results.
  */
 public final class SubmarinePhysics {
 
@@ -42,7 +42,8 @@ public final class SubmarinePhysics {
 	private static final double CL_SLOPE = 2 * Math.PI; // thin airfoil theory
 
 	/**
-	 * Lift coefficient with stall. Linear below stallAngle, smooth rolloff above (drops to ~60% at full deflection).
+	 * Lift coefficient with stall. Linear below stallAngle, smooth rolloff above (drops to ~60% at
+	 * full deflection).
 	 */
 	static double liftCoefficient(double alpha, double stallAngle) {
 		double absAlpha = Math.abs(alpha);
@@ -59,8 +60,7 @@ public final class SubmarinePhysics {
 	}
 
 	public void step(
-			SubmarineEntity sub, double dt, TerrainMap terrain, CurrentField currentField,
-			BattleArea battleArea) {
+		SubmarineEntity sub, double dt, TerrainMap terrain, CurrentField currentField, BattleArea battleArea) {
 		if (sub.forfeited())
 			return;
 		// Dead subs still get physics (sinking to the bottom)
@@ -73,9 +73,9 @@ public final class SubmarinePhysics {
 		// At 75% HP: 94% performance. At 50%: 75%. At 25%: 44%. At 10%: 16%.
 		double hpRatio = sub.maxHp() > 0 ? (double) sub.hp() / sub.maxHp() : 1.0;
 		double damageEffect = hpRatio * hpRatio; // quadratic: light damage barely matters
-		double thrustFactor = 0.3 + 0.7 * damageEffect;       // 30-100% thrust
-		double controlFactor = 0.4 + 0.6 * damageEffect;      // 40-100% rudder/planes
-		double damageNoiseDb = (1.0 - hpRatio) * 10.0;        // up to +10 dB from hull damage
+		double thrustFactor = 0.3 + 0.7 * damageEffect; // 30-100% thrust
+		double controlFactor = 0.4 + 0.6 * damageEffect; // 40-100% rudder/planes
+		double damageNoiseDb = (1.0 - hpRatio) * 10.0; // up to +10 dB from hull damage
 
 		// 1. Thrust lag: actual throttle tracks commanded with slew limit
 		double commandedThrottle = sub.throttle();
@@ -138,10 +138,10 @@ public final class SubmarinePhysics {
 		// The actual yaw rate exponentially approaches this with a time constant tau.
 		// This gives realistic transients (gradual buildup, overshoot in zigzag) while
 		// remaining unconditionally stable (no oscillation risk).
-		double rudderAngle = actualRudder * Math.PI / 4;  // -1..1 maps to -45..+45 deg
+		double rudderAngle = actualRudder * Math.PI / 4; // -1..1 maps to -45..+45 deg
 		double rudderCl = liftCoefficient(rudderAngle, cfg.stallAngle());
-		double rudderMoment = 0.5 * WATER_DENSITY * speed * Math.abs(
-				speed) * cfg.rudderArea() * rudderCl * cfg.rudderArm() * controlFactor;
+		double rudderMoment = 0.5 * WATER_DENSITY * speed * Math.abs(speed) * cfg.rudderArea() * rudderCl
+				* cfg.rudderArm() * controlFactor;
 
 		// Effective inertia increases with v² (centrifugal resistance at high speed).
 		// Higher coefficient = bigger difference between slow-speed and flank-speed turning.
@@ -174,8 +174,8 @@ public final class SubmarinePhysics {
 		if (!cfg.surfaceLocked() && cfg.planesArea() > 0) {
 			double planesAngle = actualPlanes * Math.PI / 4;
 			double planesCl = liftCoefficient(planesAngle, cfg.stallAngle());
-			double pitchMoment = 0.5 * WATER_DENSITY * speed * Math.abs(
-					speed) * cfg.planesArea() * planesCl * cfg.planesArm() * controlFactor;
+			double pitchMoment = 0.5 * WATER_DENSITY * speed * Math.abs(speed) * cfg.planesArea() * planesCl
+					* cfg.planesArm() * controlFactor;
 			// Hydrostatic restoring moment (metacentric height ~1.0m)
 			double restoringMoment = cfg.dryMass() * 9.81 * 1.0 * Math.sin(sub.pitch());
 
@@ -186,8 +186,8 @@ public final class SubmarinePhysics {
 			double lateralArea = 4.0 * cfg.hullHalfLength() * cfg.hullHalfBeam();
 			double hullPitchArm = cfg.hullHalfLength() / 3.0;
 			double hullPitchCl = 0.10;
-			restoringMoment += 0.5 * WATER_DENSITY * speed * Math.abs(
-					speed) * lateralArea * hullPitchCl * hullPitchArm * Math.sin(sub.pitch());
+			restoringMoment += 0.5 * WATER_DENSITY * speed * Math.abs(speed) * lateralArea * hullPitchCl * hullPitchArm
+					* Math.sin(sub.pitch());
 			// Effective inertia with speed-dependent resistance
 			double pitchBaseInertia = cfg.massHeave() * cfg.rotationalInertia();
 			double pitchSpeedDamping = pitchBaseInertia * 0.05 * speed * Math.abs(speed);
@@ -288,13 +288,13 @@ public final class SubmarinePhysics {
 
 		// Sample terrain at each point; for each point also compute its Z offset
 		// from center so we can check clearance at the actual hull extremity
-		double[][] points = {{newX, newY, 0},           // center
-				{newX + fwdX * bowDist, newY + fwdY * bowDist, fwdZ * bowDist},    // bow
+		double[][] points = {{newX, newY, 0}, // center
+				{newX + fwdX * bowDist, newY + fwdY * bowDist, fwdZ * bowDist}, // bow
 				{newX - fwdX * sternDist, newY - fwdY * sternDist, -fwdZ * sternDist}, // stern
-				{newX + rightX * beamDist, newY + rightY * beamDist, 0},           // port
-				{newX - rightX * beamDist, newY - rightY * beamDist, 0},           // starboard
-				{newX + upX * towerUp, newY + upY * towerUp, upZ * towerUp},     // tower
-				{newX - upX * keelDown, newY - upY * keelDown, -upZ * keelDown},   // keel
+				{newX + rightX * beamDist, newY + rightY * beamDist, 0}, // port
+				{newX - rightX * beamDist, newY - rightY * beamDist, 0}, // starboard
+				{newX + upX * towerUp, newY + upY * towerUp, upZ * towerUp}, // tower
+				{newX - upX * keelDown, newY - upY * keelDown, -upZ * keelDown}, // keel
 		};
 
 		// Dead subs rest directly on the seabed (no clearance buffer).

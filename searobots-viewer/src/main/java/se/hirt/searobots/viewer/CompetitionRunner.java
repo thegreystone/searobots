@@ -39,8 +39,8 @@ import java.util.Map;
 import java.util.function.Supplier;
 
 /**
- * Runs a competition through the viewer, showing each match live. The viewer stays connected throughout; press 0 for
- * max speed, Space to skip to next match.
+ * Runs a competition through the viewer, showing each match live. The viewer stays connected
+ * throughout; press 0 for max speed, Space to skip to next match.
  */
 final class CompetitionRunner {
 
@@ -104,10 +104,12 @@ final class CompetitionRunner {
 	private volatile boolean cancelled;
 
 	record Phase(String description, long seed, PhaseType type, String nameA, Supplier<SubmarineController> factoryA,
-	             String nameB, Supplier<SubmarineController> factoryB) {
+			String nameB, Supplier<SubmarineController> factoryB) {
 	}
 
-	enum PhaseType {NAV, COMBAT}
+	enum PhaseType {
+		NAV, COMBAT
+	}
 
 	// Persist speed across phases so the user doesn't have to press 0 every time
 	private int currentSpeedMultiplier = 8;
@@ -142,9 +144,8 @@ final class CompetitionRunner {
 		// then combat phases for each pair on each seed
 		for (long seed : seeds) {
 			for (var c : competitors) {
-				phases.add(
-						new Phase(String.format("NAV: %s #%s", shortName(c.name()), hexSeed(seed)), seed, PhaseType.NAV,
-								c.name(), c.factory(), null, null));
+				phases.add(new Phase(String.format("NAV: %s #%s", shortName(c.name()), hexSeed(seed)), seed,
+						PhaseType.NAV, c.name(), c.factory(), null, null));
 			}
 		}
 		for (long seed : seeds) {
@@ -152,8 +153,10 @@ final class CompetitionRunner {
 				for (int j = i + 1; j < competitors.size(); j++) {
 					var a = competitors.get(i);
 					var b = competitors.get(j);
-					phases.add(new Phase(String.format("COMBAT: %s vs %s #%s", shortName(a.name()), shortName(b.name()),
-							hexSeed(seed)), seed, PhaseType.COMBAT, a.name(), a.factory(), b.name(), b.factory()));
+					phases.add(new Phase(
+							String.format("COMBAT: %s vs %s #%s", shortName(a.name()), shortName(b.name()),
+									hexSeed(seed)),
+							seed, PhaseType.COMBAT, a.name(), a.factory(), b.name(), b.factory()));
 				}
 			}
 		}
@@ -192,8 +195,8 @@ final class CompetitionRunner {
 		// Check if we just completed a seed round (all phases for that seed/type)
 		if (currentPhase > 0) {
 			var prev = phases.get(currentPhase - 1);
-			boolean seedDone = currentPhase >= phases.size() || phases.get(currentPhase)
-					.seed() != prev.seed() || phases.get(currentPhase).type() != prev.type();
+			boolean seedDone = currentPhase >= phases.size() || phases.get(currentPhase).seed() != prev.seed()
+					|| phases.get(currentPhase).type() != prev.type();
 			if (seedDone) {
 				printSeedSummary(prev.seed(), prev.type());
 			}
@@ -253,8 +256,8 @@ final class CompetitionRunner {
 		var listener = new SimulationListener() {
 			@Override
 			public void onTick(
-					long tick, List<SubmarineSnapshot> submarines,
-					List<se.hirt.searobots.engine.TorpedoSnapshot> torpedoes) {
+				long tick, List<SubmarineSnapshot> submarines,
+				List<se.hirt.searobots.engine.TorpedoSnapshot> torpedoes) {
 				if (cancelled) {
 					sim.stop();
 					return;
@@ -343,8 +346,8 @@ final class CompetitionRunner {
 		var listener = new SimulationListener() {
 			@Override
 			public void onTick(
-					long tick, List<SubmarineSnapshot> submarines,
-					List<se.hirt.searobots.engine.TorpedoSnapshot> torpedoes) {
+				long tick, List<SubmarineSnapshot> submarines,
+				List<se.hirt.searobots.engine.TorpedoSnapshot> torpedoes) {
 				if (cancelled) {
 					sim.stop();
 					return;
@@ -528,9 +531,8 @@ final class CompetitionRunner {
 		for (var c : competitors) {
 			int nav = navPoints.getOrDefault(c.name(), 0);
 			int combat = combatPoints.getOrDefault(c.name(), 0);
-			viewer.addDetailLine(
-					String.format("%-12s Nav:%dpt Combat:%dpt TOTAL:%dpt", shortName(c.name()), nav, combat,
-							nav + combat));
+			viewer.addDetailLine(String.format("%-12s Nav:%dpt Combat:%dpt TOTAL:%dpt", shortName(c.name()), nav,
+					combat, nav + combat));
 		}
 
 		viewer.showResultsDialog(sb.toString());

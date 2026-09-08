@@ -43,14 +43,14 @@ import java.util.Locale;
 /**
  * Records match data to a JSONL file for post-match analysis.
  * <p>
- * Logs every N ticks (default 10 → 5 Hz at 50 Hz tick rate), plus every tick where damage occurs or a sub
- * dies/forfeits.
+ * Logs every N ticks (default 10 → 5 Hz at 50 Hz tick rate), plus every tick where damage occurs or
+ * a sub dies/forfeits.
  * <p>
  * Format: first line is match header, subsequent lines are tick data.
  */
 public final class MatchRecorder implements SimulationListener {
 
-	private static final int LOG_INTERVAL = 10;  // log every 10 ticks (5 Hz)
+	private static final int LOG_INTERVAL = 10; // log every 10 ticks (5 Hz)
 	private static final DateTimeFormatter TS_FMT = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss");
 
 	private final BufferedWriter writer;
@@ -82,10 +82,9 @@ public final class MatchRecorder implements SimulationListener {
 		var arena = config.battleArea();
 		switch (arena) {
 		case se.hirt.searobots.api.BattleArea.Circular c ->
-				sb.append(",\"arena\":{\"type\":\"circle\",\"radius\":").append(c.radius()).append("}");
-		case se.hirt.searobots.api.BattleArea.Rectangular r ->
-				sb.append(",\"arena\":{\"type\":\"rect\",\"halfWidth\":").append(r.halfWidth())
-						.append(",\"halfHeight\":").append(r.halfHeight()).append("}");
+			sb.append(",\"arena\":{\"type\":\"circle\",\"radius\":").append(c.radius()).append("}");
+		case se.hirt.searobots.api.BattleArea.Rectangular r -> sb.append(",\"arena\":{\"type\":\"rect\",\"halfWidth\":")
+				.append(r.halfWidth()).append(",\"halfHeight\":").append(r.halfHeight()).append("}");
 		}
 		sb.append(",\"spawns\":[");
 		for (int i = 0; i < spawnPoints.size(); i++) {
@@ -99,8 +98,7 @@ public final class MatchRecorder implements SimulationListener {
 
 	@Override
 	public void onTick(
-			long tick, List<SubmarineSnapshot> submarines,
-			List<se.hirt.searobots.engine.TorpedoSnapshot> torpedoes) {
+		long tick, List<SubmarineSnapshot> submarines, List<se.hirt.searobots.engine.TorpedoSnapshot> torpedoes) {
 		// Initialize HP tracking on first tick
 		if (lastHp == null) {
 			lastHp = new int[submarines.size()];

@@ -46,20 +46,21 @@ import static se.hirt.searobots.engine.replay.ReplayFormat.DELIM;
 import static se.hirt.searobots.engine.replay.ReplayFormat.num;
 
 /**
- * A {@link SimulationListener} that writes a complete, replayable record of a match to a file in the
- * {@link ReplayFormat}, delegating all record encoding to {@link ReplayCodec} (the single source of truth shared with
- * the reader).
+ * A {@link SimulationListener} that writes a complete, replayable record of a match to a file in
+ * the {@link ReplayFormat}, delegating all record encoding to {@link ReplayCodec} (the single
+ * source of truth shared with the reader).
  * <p>
- * Unlike {@code MatchRecorder} (which downsamples and omits torpedoes for human-readable analysis), this captures
- * <em>every</em> tick at full fidelity, including torpedoes, so the match replays directly from the log with no
- * re-simulation. That sidesteps determinism entirely: controllers may use randomness, but the replay reproduces what
- * actually happened.
+ * Unlike {@code MatchRecorder} (which downsamples and omits torpedoes for human-readable analysis),
+ * this captures <em>every</em> tick at full fidelity, including torpedoes, so the match replays
+ * directly from the log with no re-simulation. That sidesteps determinism entirely: controllers may
+ * use randomness, but the replay reproduces what actually happened.
  * <p>
- * The {@code SimulationLoop} accepts only one listener, so to record a live match while rendering it, wrap this and the
- * viewer with {@link se.hirt.searobots.engine.SimulationListeners#composite}.
- * <p><b>v1 limitations (documented extension points):</b> strategic-waypoint
- * visualization and firing solutions are not yet captured; they reconstruct as empty/null. Adding them is an additive
- * column change plus a {@link ReplayFormat#VERSION} bump.
+ * The {@code SimulationLoop} accepts only one listener, so to record a live match while rendering
+ * it, wrap this and the viewer with {@link se.hirt.searobots.engine.SimulationListeners#composite}.
+ * <p>
+ * <b>v1 limitations (documented extension points):</b> strategic-waypoint visualization and firing
+ * solutions are not yet captured; they reconstruct as empty/null. Adding them is an additive column
+ * change plus a {@link ReplayFormat#VERSION} bump.
  */
 public final class ReplayWriter implements SimulationListener, AutoCloseable {
 
@@ -89,8 +90,8 @@ public final class ReplayWriter implements SimulationListener, AutoCloseable {
 
 		// Match parameters as self-describing key=value tokens.
 		String arena = switch (config.battleArea()) {
-			case BattleArea.Circular c -> "circle:" + num(c.radius());
-			case BattleArea.Rectangular r -> "rect:" + num(r.halfWidth()) + ":" + num(r.halfHeight());
+		case BattleArea.Circular c -> "circle:" + num(c.radius());
+		case BattleArea.Rectangular r -> "rect:" + num(r.halfWidth()) + ":" + num(r.halfHeight());
 		};
 		writeLine(String.join(DELIM, ReplayFormat.TAG_HEADER, "seed=" + config.worldSeed(),
 				"tickRate=" + config.tickRateHz(), "durationTicks=" + config.matchDurationTicks(),

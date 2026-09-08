@@ -29,28 +29,32 @@
 package se.hirt.searobots.api;
 
 /**
- * A submarine's best guess for a contact's position. Published via {@link SubmarineOutput#publishContactEstimate} for
- * viewer visualization and replay recording. Has no effect on the simulation.
+ * A submarine's best guess for a contact's position. Published via
+ * {@link SubmarineOutput#publishContactEstimate} for viewer visualization and replay recording. Has
+ * no effect on the simulation.
  *
  * @param x
- * 		estimated world X coordinate (meters)
+ *            estimated world X coordinate (meters)
  * @param y
- * 		estimated world Y coordinate (meters)
+ *            estimated world Y coordinate (meters)
  * @param confidence
- * 		overall confidence 0.0 (wild guess) to 1.0 (high), combines position accuracy and contact-alive belief
+ *            overall confidence 0.0 (wild guess) to 1.0 (high), combines position accuracy and
+ *            contact-alive belief
  * @param contactAlive
- * 		belief that the contact still exists (0.0 to 1.0), decays without sonar evidence, independent of position accuracy
+ *            belief that the contact still exists (0.0 to 1.0), decays without sonar evidence,
+ *            independent of position accuracy
  * @param uncertaintyRadius
- * 		radius in meters of the area where the contact could realistically be (grows over time without a fresh fix)
+ *            radius in meters of the area where the contact could realistically be (grows over time
+ *            without a fresh fix)
  * @param estimatedHeading
- * 		estimated target heading in radians [0, 2pi), or NaN if unknown
+ *            estimated target heading in radians [0, 2pi), or NaN if unknown
  * @param estimatedSpeed
- * 		estimated target speed in m/s, or -1 if unknown
+ *            estimated target speed in m/s, or -1 if unknown
  * @param label
- * 		optional short label (e.g. "passive", "ping"), may be empty
+ *            optional short label (e.g. "passive", "ping"), may be empty
  */
 public record ContactEstimate(double x, double y, double confidence, double contactAlive, double uncertaintyRadius,
-                              double estimatedHeading, double estimatedSpeed, String label) {
+		double estimatedHeading, double estimatedSpeed, String label) {
 	public ContactEstimate {
 		confidence = Math.clamp(confidence, 0.0, 1.0);
 		contactAlive = Math.clamp(contactAlive, 0.0, 1.0);

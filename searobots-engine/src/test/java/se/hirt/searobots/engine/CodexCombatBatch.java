@@ -34,7 +34,8 @@ import se.hirt.searobots.engine.ships.codex.CodexAttackSub;
 import java.util.*;
 
 public final class CodexCombatBatch {
-	private static final int DEFAULT_MATCH_TICKS = SubmarineCompetition.STANDARD_COMBAT_DURATION_SECONDS * SubmarineCompetition.TICKS_PER_SECOND;
+	private static final int DEFAULT_MATCH_TICKS = SubmarineCompetition.STANDARD_COMBAT_DURATION_SECONDS
+			* SubmarineCompetition.TICKS_PER_SECOND;
 	private static final int DEFAULT_MASTER_COUNT = 10;
 
 	private CodexCombatBatch() {

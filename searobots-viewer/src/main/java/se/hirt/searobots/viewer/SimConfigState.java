@@ -50,8 +50,8 @@ import java.util.List;
 import java.util.function.Supplier;
 
 /**
- * Lemur-based simulation configuration dialog, replacing the Swing SimConfigDialog. Shown as a modal popup via
- * PopupState.
+ * Lemur-based simulation configuration dialog, replacing the Swing SimConfigDialog. Shown as a
+ * modal popup via PopupState.
  */
 final class SimConfigState extends BaseAppState {
 
@@ -97,6 +97,7 @@ final class SimConfigState extends BaseAppState {
 		System.err.println(property + "=" + value + " matches no ship option; using default");
 		return defaultIndex;
 	}
+
 	static int selectedSpeedMultiplier = 1;
 	static int selectedSimType = 0;
 
@@ -153,11 +154,11 @@ final class SimConfigState extends BaseAppState {
 		window.addChild(new Label("")); // spacer
 
 		// Seed field
-		var seedRow = window.addChild(
-				new Container(new SpringGridLayout(Axis.X, Axis.Y, FillMode.None, FillMode.Last)));
+		var seedRow = window
+				.addChild(new Container(new SpringGridLayout(Axis.X, Axis.Y, FillMode.None, FillMode.Last)));
 		seedRow.addChild(new Label("Seed (hex):"));
-		seedField = seedRow.addChild(
-				new TextField(seedSupplier != null ? Long.toHexString(seedSupplier.getAsLong()) : ""));
+		seedField = seedRow
+				.addChild(new TextField(seedSupplier != null ? Long.toHexString(seedSupplier.getAsLong()) : ""));
 		seedField.setPreferredSize(new com.jme3.math.Vector3f(200, 22, 0));
 		pendingSeed = null;
 
@@ -208,8 +209,7 @@ final class SimConfigState extends BaseAppState {
 	}
 
 	private void addToggle(
-			Container parent, String label, boolean initial,
-			java.util.function.Consumer<Boolean> onChange) {
+		Container parent, String label, boolean initial, java.util.function.Consumer<Boolean> onChange) {
 		var btn = parent.addChild(new Button((initial ? "[x] " : "[ ] ") + label));
 		final boolean[] state = {initial};
 		btn.addClickCommands(b -> {
@@ -220,8 +220,7 @@ final class SimConfigState extends BaseAppState {
 	}
 
 	private void addSelector(
-			Container parent, String label, String[] options, int selectedIndex,
-			java.util.function.IntConsumer onChange) {
+		Container parent, String label, String[] options, int selectedIndex, java.util.function.IntConsumer onChange) {
 		var row = parent.addChild(new Container(new SpringGridLayout(Axis.X, Axis.Y, FillMode.None, FillMode.Last)));
 		row.addChild(new Label(label));
 

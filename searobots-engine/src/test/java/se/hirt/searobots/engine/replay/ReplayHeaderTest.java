@@ -37,9 +37,9 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Tests {@link ReplayHeader#toMatchConfig()}: header-captured parameters must override the defaults so a match
- * recorded with a non-default config regenerates the same world, while zero/null fields (older or partial files)
- * fall back to the defaults for the recorded seed.
+ * Tests {@link ReplayHeader#toMatchConfig()}: header-captured parameters must override the defaults
+ * so a match recorded with a non-default config regenerates the same world, while zero/null fields
+ * (older or partial files) fall back to the defaults for the recorded seed.
  */
 class ReplayHeaderTest {
 
