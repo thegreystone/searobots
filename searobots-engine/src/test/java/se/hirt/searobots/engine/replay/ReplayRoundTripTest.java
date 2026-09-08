@@ -184,7 +184,7 @@ class ReplayRoundTripTest {
 						new ContactEstimate(1050.0, 1980.0, 0.4, 0.6, 300.0, Double.NaN, -1.0, "")),
 				List.of(new Waypoint(500.0, 600.0, -250.0, true, false),
 						new Waypoint(700.0, 800.0, -250.0, false, true)), List.of(),
-				new FiringSolution(1234.5, -678.25, 2.1, 8.5, 0.85));
+				new FiringSolution(1234.5, -678.25, 2.1, 8.5, 0.85), true);
 
 		var torp = new TorpedoSnapshot(1001, 0, new Pose(new Vec3(200.0, 300.0, -180.0), 0.75, 0.05, 0.0),
 				new Velocity(new Vec3(23.0, 0.0, 0.5), Vec3.ZERO), 23.0, new Color(255, 80, 80), 220.5, false, true,
@@ -224,7 +224,7 @@ class ReplayRoundTripTest {
 				875, 1.5, 102.5, 0.8, -0.25, 0.1, "CHASE", true, 6,
 				List.of(new ContactEstimate(1000.0, 2000.0, 0.7, 0.9, 150.0, 2.5, 7.0, "passive")),
 				List.of(new Waypoint(500.0, 600.0, -250.0, true, false)), List.of(),
-				new FiringSolution(1234.5, -678.25, 2.1, 8.5, 0.85));
+				new FiringSolution(1234.5, -678.25, 2.1, 8.5, 0.85), false);
 		var torp = new TorpedoSnapshot(1001, 0, new Pose(new Vec3(200.0, 300.0, -180.0), 0.75, 0.05, 0.0),
 				new Velocity(new Vec3(23.0, 0.0, 0.5), Vec3.ZERO), 23.0, new Color(255, 80, 80), 220.5, false, true,
 				140.0, false, 1000.0, 2000.0, -200.0, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN,
@@ -263,7 +263,7 @@ class ReplayRoundTripTest {
 		var expected = new SubmarineSnapshot(sub.id(), sub.name(), sub.pose(), sub.velocity(), sub.speed(), sub.color(),
 				sub.forfeited(), sub.hp(), sub.noiseLevel(), sub.sourceLevelDb(), sub.throttle(), sub.rudder(),
 				sub.sternPlanes(), sub.status(), sub.pingRequested(), sub.torpedoesRemaining(), sub.contactEstimates(),
-				sub.waypoints(), sub.strategicWaypoints(), null);
+				sub.waypoints(), sub.strategicWaypoints(), null, sub.surfaceLocked());
 		assertSubEquals(expected, got, "v1 sub");
 		assertTorpedoEquals(torp, replayed.frames.get(0).torps().get(0), "v1 torp");
 	}
@@ -296,7 +296,7 @@ class ReplayRoundTripTest {
 
 	private static SubmarineSnapshot emptySub(int id) {
 		return new SubmarineSnapshot(id, "Sub" + id, Pose.at(Vec3.ZERO), Velocity.ZERO, 0, new Color(60, 220, 120),
-				false, 1000, 0, 90, 0, 0, 0, "PATROL", false, 8, List.of(), List.of(), List.of(), null);
+				false, 1000, 0, 90, 0, 0, 0, "PATROL", false, 8, List.of(), List.of(), List.of(), null, false);
 	}
 
 	private static void assertSubEquals(SubmarineSnapshot a, SubmarineSnapshot b, String ctx) {
@@ -305,6 +305,7 @@ class ReplayRoundTripTest {
 		assertEquals(a.color().getRGB(), b.color().getRGB(), ctx + " color");
 		assertEquals(a.hp(), b.hp(), ctx + " hp");
 		assertEquals(a.forfeited(), b.forfeited(), ctx + " forfeited");
+		assertEquals(a.surfaceLocked(), b.surfaceLocked(), ctx + " surfaceLocked");
 		assertEquals(a.pingRequested(), b.pingRequested(), ctx + " ping");
 		assertEquals(a.torpedoesRemaining(), b.torpedoesRemaining(), ctx + " torpedoesRemaining");
 		assertEquals(a.status(), b.status(), ctx + " status");

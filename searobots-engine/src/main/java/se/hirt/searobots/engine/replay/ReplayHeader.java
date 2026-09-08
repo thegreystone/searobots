@@ -73,8 +73,11 @@ public record ReplayHeader(int formatVersion, long seed, int tickRateHz, long du
 	 * 		spawn Y
 	 * @param spawnZ
 	 * 		spawn Z
+	 * @param surfaceLocked
+	 * 		true for a surface vessel (rendered with the ship model); absent in files written before the column existed
 	 */
-	public record SubDef(int id, String name, int colorRgb, double spawnX, double spawnY, double spawnZ) {
+	public record SubDef(int id, String name, int colorRgb, double spawnX, double spawnY, double spawnZ,
+	                     boolean surfaceLocked) {
 	}
 
 	/**

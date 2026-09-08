@@ -72,7 +72,7 @@ public final class ReplayCodec {
 
 	/** Submarine definition line ({@code S}); identity that is fixed for the match. */
 	public static final List<Col> SUBDEF_COLS = List.of(c("id", ""), c("name", "text"), c("colorArgb", ""),
-			c("spawnX", "m"), c("spawnY", "m"), c("spawnZ", "m"));
+			c("spawnX", "m"), c("spawnY", "m"), c("spawnZ", "m"), c("surface", "bool"));
 
 	/** Per-tick submarine state line ({@code s}). */
 	public static final List<Col> SUB_COLS = List.of(c("id", ""), c("x", "m"), c("y", "m"), c("z", "m"),
@@ -188,6 +188,7 @@ public final class ReplayCodec {
 		f(sb, num(spawn.x()));
 		f(sb, num(spawn.y()));
 		f(sb, num(spawn.z()));
+		f(sb, bool(sub.surfaceLocked()));
 	}
 
 	public static void encodeSub(StringBuilder sb, SubmarineSnapshot sub) {

@@ -77,7 +77,16 @@ import java.util.Map;
  */
 public final class SubmarineScene3D extends SimpleApplication implements se.hirt.searobots.engine.SimulationListener {
 
-	private Node modelNode; // template, loaded at init
+	private Node modelNode; // submarine template, loaded at init
+	private Node shipModelNode; // surface ship template, loaded at init
+	// Propeller hub positions in model (OBJ) coordinates: X across, Y fore-aft (stern at +Y), Z up.
+	// Used both as the propeller pivot and as the cavitation bubble source.
+	private static final Vector3f SUB_PROP_LOCAL = new Vector3f(0f, 37f, 0.11f);
+	private static final Vector3f SHIP_PROP_LOCAL = new Vector3f(0f, 67.9f, -5.0f);
+	// Ship rudder stock (hinge axis is vertical, so only X and Y matter)
+	private static final Vector3f SHIP_RUDDER_LOCAL = new Vector3f(0f, 71.6f, -3.9f);
+	// Control-surface group names: the submarine has upper/lower rudders, the ship a single one
+	private static final String[] RUDDER_GROUPS = {"rudderu", "rudderl", "Rudder"};
 	private Geometry terrainGeometry;
 	private Spatial sky;
 	private Geometry sunBillboard;
@@ -387,7 +396,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 			setupPivotAt(modelNode, "rudderu", new Vector3f(0f, 34f, 0.09f));
 			setupPivotAt(modelNode, "elevatorl", new Vector3f(4.3f, -10f, 0f));  // under tower center
 			setupPivotAt(modelNode, "elevatorr", new Vector3f(-4.4f, -10f, 0f));  // under tower center
-			setupPivotAt(modelNode, "Propeller", new Vector3f(0f, 37f, 0.11f));
+			setupPivotAt(modelNode, "Propeller", SUB_PROP_LOCAL);
 			System.out.println("Loaded submarine-hybrid.obj");
 		} catch (Exception e) {
 			System.err.println("Failed to load submarine model: " + e.getMessage());
@@ -402,6 +411,29 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 		// Rotate so it faces along Z (model is built along Y axis)
 		modelNode.setLocalRotation(new Quaternion().fromAngles(-FastMath.HALF_PI, 0, 0));
 		// modelNode is a template for cloning - don't attach to rootNode
+
+		// Load surface ship model template. Same OBJ convention as the submarine
+		// (Y fore-aft with the bow at -Y, Z up, metres, waterline at Z=0), so it
+		// gets the same rotation and needs no scaling.
+		shipModelNode = new Node("surfaceShipTemplate");
+		try {
+			Spatial shipHull = assetManager.loadModel("models/surface-ship.obj");
+			generateSmoothNormals(shipHull);
+			disableBackFaceCulling(shipHull);
+			shipModelNode.attachChild(shipHull);
+			// Single screw on the centreline under the counter; spins about the fore-aft axis
+			setupPivotAt(shipModelNode, "Propeller", SHIP_PROP_LOCAL);
+			setupPivotAt(shipModelNode, "Rudder", SHIP_RUDDER_LOCAL);
+			System.out.println("Loaded surface-ship.obj");
+		} catch (Exception e) {
+			System.err.println("Failed to load surface ship model: " + e.getMessage());
+			Geometry ph = new Geometry("shipPlaceholder", new Box(15f, 75f, 8f));
+			Material mat = new Material(assetManager, "Common/MatDefs/Misc/Unshaded.j3md");
+			mat.setColor("Color", ColorRGBA.Gray);
+			ph.setMaterial(mat);
+			shipModelNode.attachChild(ph);
+		}
+		shipModelNode.setLocalRotation(new Quaternion().fromAngles(-FastMath.HALF_PI, 0, 0));
 
 		// Load torpedo model template (scaled to ~5m, sub is ~75m so torpedo is ~1/15th)
 		torpedoModelNode = new Node("torpedoTemplate");
@@ -2104,8 +2136,9 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 			var targetRot = new Quaternion().fromAngles(-FastMath.HALF_PI - pitch, heading, roll);
 
 			if (subNode == null) {
-				// Create a new sub model by cloning the template
-				subNode = (Node) modelNode.deepClone();
+				// Create a new vehicle model by cloning the matching template
+				Node template = snap.surfaceLocked() ? shipModelNode : modelNode;
+				subNode = (Node) template.deepClone();
 				subNode.setName("sub-" + snap.id());
 				subNodes.put(snap.id(), subNode);
 				rootNode.attachChild(subNode);
@@ -2181,13 +2214,11 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 			var targetRudder = new Quaternion().fromAngles(0, 0, rudderAngle);
 			var targetElev = new Quaternion().fromAngles(elevAngle, 0, 0);
 
-			Spatial ru = findChild(subNode, "rudderu");
-			Spatial rl = findChild(subNode, "rudderl");
-			if (ru != null) {
-				ru.getLocalRotation().slerp(targetRudder, surfaceLerp);
-			}
-			if (rl != null) {
-				rl.getLocalRotation().slerp(targetRudder, surfaceLerp);
+			for (String rudderGroup : RUDDER_GROUPS) {
+				Spatial rudder = findChild(subNode, rudderGroup);
+				if (rudder != null) {
+					rudder.getLocalRotation().slerp(targetRudder, surfaceLerp);
+				}
 			}
 
 			Spatial el = findChild(subNode, "elevatorl");
@@ -2219,7 +2250,8 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 				bubbles.setHighLife(2f);
 				bubbles.getParticleInfluencer().setInitialVelocity(new Vector3f(0, 2f, 0));
 				bubbles.getParticleInfluencer().setVelocityVariation(0.5f);
-				bubbles.setLocalTranslation(0, 37f, 0); // stern: model Y=37, try jME Y
+				// Emit from the propeller hub; subNode's local frame is the model frame.
+				bubbles.setLocalTranslation(snap.surfaceLocked() ? SHIP_PROP_LOCAL : SUB_PROP_LOCAL);
 				subNode.attachChild(bubbles);
 				bubbleEmitters.put(snap.id(), bubbles);
 			}

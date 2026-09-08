@@ -73,8 +73,30 @@ final class SimConfigState extends BaseAppState {
 	private static final String[] SPEED_OPTIONS = {"1x", "2x", "4x", "8x", "16x"};
 
 	// Persistent selections (survive dialog close/reopen)
-	static int selectedShip1Index = 2; // Claude Sub
-	static int selectedShip2Index = 1; // Codex Sub
+	// Defaults: Claude Sub vs Codex Sub. Overridable from the command line for
+	// development, e.g. -Dsearobots.ship1="Ship Drone" -Dsearobots.ship2="Claude Sub"
+	// (case-insensitive substring of the display name, or a numeric index).
+	static int selectedShip1Index = shipIndexFromProperty("searobots.ship1", 2);
+	static int selectedShip2Index = shipIndexFromProperty("searobots.ship2", 1);
+
+	private static int shipIndexFromProperty(String property, int defaultIndex) {
+		String value = System.getProperty(property);
+		if (value == null || value.isBlank())
+			return defaultIndex;
+		String needle = value.trim().toLowerCase();
+		for (int i = 0; i < SHIP_OPTIONS.size(); i++) {
+			if (SHIP_OPTIONS.get(i).displayName().toLowerCase().contains(needle))
+				return i;
+		}
+		try {
+			int index = Integer.parseInt(value.trim());
+			if (index >= 0 && index < SHIP_OPTIONS.size())
+				return index;
+		} catch (NumberFormatException ignored) {
+		}
+		System.err.println(property + "=" + value + " matches no ship option; using default");
+		return defaultIndex;
+	}
 	static int selectedSpeedMultiplier = 1;
 	static int selectedSimType = 0;
 

@@ -1,35 +1,123 @@
-# Surface warship materials
+# Surface ship (container ship) materials
 #
-newmtl hull_grey
-Ka  0.15 0.15 0.15
-Kd  0.55 0.56 0.54
-Ks  0.60 0.60 0.60
-d   1.0
-Ns  18.0
+newmtl hull_dark
+Ka  0.100 0.130 0.220
+Kd  0.100 0.130 0.220
+Ks  0.25 0.25 0.25
+d  1.0
+Ns  12.0
 illum 2
 #
-newmtl superstructure_grey
-Ka  0.20 0.20 0.20
-Kd  0.65 0.65 0.63
-Ks  0.70 0.70 0.70
-d   1.0
-Ns  22.0
+newmtl hull_red
+Ka  0.550 0.140 0.100
+Kd  0.550 0.140 0.100
+Ks  0.25 0.25 0.25
+d  1.0
+Ns  12.0
+illum 2
+#
+newmtl deck
+Ka  0.300 0.340 0.300
+Kd  0.300 0.340 0.300
+Ks  0.25 0.25 0.25
+d  1.0
+Ns  12.0
+illum 2
+#
+newmtl hatch
+Ka  0.360 0.380 0.360
+Kd  0.360 0.380 0.360
+Ks  0.25 0.25 0.25
+d  1.0
+Ns  12.0
+illum 2
+#
+newmtl superstructure
+Ka  0.880 0.880 0.860
+Kd  0.880 0.880 0.860
+Ks  0.25 0.25 0.25
+d  1.0
+Ns  12.0
+illum 2
+#
+newmtl glass
+Ka  0.050 0.080 0.120
+Kd  0.050 0.080 0.120
+Ks  0.25 0.25 0.25
+d  1.0
+Ns  60.0
+illum 2
+#
+newmtl funnel
+Ka  0.720 0.140 0.120
+Kd  0.720 0.140 0.120
+Ks  0.25 0.25 0.25
+d  1.0
+Ns  12.0
 illum 2
 #
 newmtl metal_dark
-Ka  0.05 0.05 0.05
-Kd  0.20 0.20 0.20
-Ks  0.50 0.50 0.50
-d   1.0
-Ns  10.0
+Ka  0.150 0.150 0.150
+Kd  0.150 0.150 0.150
+Ks  0.25 0.25 0.25
+d  1.0
+Ns  12.0
 illum 2
 #
 newmtl Metal_Chrome
-Ka  0.40 0.40 0.40
-Kd  0.40 0.40 0.40
+Ka  0.550 0.520 0.420
+Kd  0.550 0.520 0.420
 Ks  0.90 0.90 0.90
-d   1.0
-Ns  15.0
+d  1.0
+Ns  40.0
+illum 2
+#
+newmtl lifeboat
+Ka  0.900 0.450 0.080
+Kd  0.900 0.450 0.080
+Ks  0.25 0.25 0.25
+d  1.0
+Ns  12.0
+illum 2
+#
+newmtl container_red
+Ka  0.620 0.160 0.120
+Kd  0.620 0.160 0.120
+Ks  0.25 0.25 0.25
+d  1.0
+Ns  12.0
+illum 2
+#
+newmtl container_blue
+Ka  0.120 0.250 0.550
+Kd  0.120 0.250 0.550
+Ks  0.25 0.25 0.25
+d  1.0
+Ns  12.0
+illum 2
+#
+newmtl container_green
+Ka  0.120 0.420 0.250
+Kd  0.120 0.420 0.250
+Ks  0.25 0.25 0.25
+d  1.0
+Ns  12.0
+illum 2
+#
+newmtl container_grey
+Ka  0.550 0.560 0.550
+Kd  0.550 0.560 0.550
+Ks  0.25 0.25 0.25
+d  1.0
+Ns  12.0
+illum 2
+#
+newmtl container_rust
+Ka  0.550 0.320 0.140
+Kd  0.550 0.320 0.140
+Ks  0.25 0.25 0.25
+d  1.0
+Ns  12.0
 illum 2
 #
 # EOF
