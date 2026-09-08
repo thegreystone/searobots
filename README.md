@@ -193,14 +193,18 @@ solo through mandatory waypoints. Scoring is head-to-head per seed:
 - Stealth metrics: depth, noise (lower wins)
 - Efficiency: speed, path efficiency
 
-**Combat phase** (same 5 seeds, 30 minutes each): every pair of
+**Combat phase** (same 5 seeds, up to 2 hours each): every pair of
 controllers fights on each seed. Each sub has 8 torpedoes.
 Scoring per match:
 
 - **Kill the enemy**: 5 points
 - **Survive the match**: 5 points
 - Both survive (timeout): 5 points each
-- Both die: 0 points each
+- Both die (mutual kill): 5 points each
+
+A combat match ends as soon as the outcome is decided: at most one submarine
+is alive and no torpedo fired by a dead submarine is still running. The
+2-hour limit only applies when neither side manages a kill.
 
 The final standings combine navigation and combat points.
 

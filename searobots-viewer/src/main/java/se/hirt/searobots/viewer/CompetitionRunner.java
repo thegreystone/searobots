@@ -319,7 +319,9 @@ final class CompetitionRunner {
 
 	private void runCombatPhase(Phase phase) {
 		long t0 = System.currentTimeMillis();
-		var config = MatchConfig.withDefaults(phase.seed());
+		// Same duration as SubmarineCompetition: the loop stops at it, and it ends early once the
+		// outcome is decided. Controllers see the real value (Codex plans its endgame from it).
+		var config = MatchConfig.withDefaults(phase.seed()).withMatchDurationTicks(combatDurationTicks);
 		var world = generator.generate(config);
 		System.out.printf("[comp] Combat world generated in %dms%n", System.currentTimeMillis() - t0);
 		viewer.setObjectives(null); // no objectives in combat phase
@@ -355,13 +357,7 @@ final class CompetitionRunner {
 
 				aAlive[0] = s0.hp() > 0 && !s0.forfeited();
 				bAlive[0] = s1.hp() > 0 && !s1.forfeited();
-
-				// End match early if both are dead
-				if (!aAlive[0] && !bAlive[0])
-					sim.stop();
-
-				if (tick >= combatDurationTicks)
-					sim.stop();
+				// The simulation loop itself ends the match once it is decided or the duration elapses.
 			}
 
 			@Override

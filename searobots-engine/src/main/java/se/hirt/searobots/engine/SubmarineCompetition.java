@@ -55,7 +55,9 @@ public class SubmarineCompetition {
 	// Standard competition format
 	public static final int STANDARD_NAV_SEEDS = 5;
 	public static final int STANDARD_NAV_DURATION_SECONDS = 2400; // 40 minutes per nav
-	public static final int STANDARD_COMBAT_DURATION_SECONDS = 3600; // 60 minutes per combat
+	public static final int STANDARD_COMBAT_DURATION_SECONDS = 7200; // 2 hours per combat (ends early once decided)
+	/** Wall-clock safety net per combat match; a match that hits it is truncated and reported as such. */
+	static final long COMBAT_WALL_CLOCK_LIMIT_MS = 30 * 60_000L;
 
 	/**
 	 * A competition format: fully determined by a single master seed. The master seed deterministically generates all
@@ -515,13 +517,15 @@ public class SubmarineCompetition {
 	}
 
 	/**
-	 * Pits two competitors head-to-head on a seed. Match runs to completion (or time limit). Both sides score
+	 * Pits two competitors head-to-head on a seed. The match runs until the simulation decides the outcome (see
+	 * {@link SimulationLoop#matchDecided}) or {@code durationTicks} elapse, whichever comes first. Both sides score
 	 * independently: 5pts for killing the enemy, 5pts for surviving.
 	 */
 	static CombatResult runCombat(
 			Supplier<SubmarineController> factoryA, String nameA, Supplier<SubmarineController> factoryB, String nameB,
 			long seed, int durationTicks) {
-		var config = MatchConfig.withDefaults(seed);
+		// The controllers see the real duration (Codex plans its endgame from matchDurationTicks).
+		var config = MatchConfig.withDefaults(seed).withMatchDurationTicks(durationTicks);
 		var world = new WorldGenerator().generate(config);
 
 		var sim = new SimulationLoop();
@@ -533,11 +537,12 @@ public class SubmarineCompetition {
 		List<VehicleConfig> configs = List.of(VehicleConfig.submarine(), VehicleConfig.submarine());
 
 		boolean[] aAlive = {true}, bAlive = {true};
-		long[] endTick = {durationTicks};
+		long[] ticksRun = {0};
 
 		var listener = new SimulationListener() {
 			@Override
 			public void onTick(long tick, List<SubmarineSnapshot> submarines, List<TorpedoSnapshot> torpedoes) {
+				ticksRun[0] = tick + 1;
 				if (submarines.size() < 2)
 					return;
 				var s0 = submarines.get(0);
@@ -545,15 +550,6 @@ public class SubmarineCompetition {
 
 				aAlive[0] = s0.hp() > 0 && !s0.forfeited();
 				bAlive[0] = s1.hp() > 0 && !s1.forfeited();
-
-				// End match early if both are dead
-				if (!aAlive[0] && !bAlive[0]) {
-					endTick[0] = tick;
-					sim.stop();
-				}
-
-				if (tick >= durationTicks)
-					sim.stop();
 			}
 
 			@Override
@@ -564,8 +560,12 @@ public class SubmarineCompetition {
 		var thread = new Thread(() -> sim.run(world, controllers, configs, listener));
 		thread.start();
 		try {
-			thread.join(120_000);
+			thread.join(COMBAT_WALL_CLOCK_LIMIT_MS);
 		} catch (InterruptedException e) {
+		}
+		if (thread.isAlive()) {
+			System.out.printf("  WARNING: %s vs %s on seed %s exceeded the wall-clock limit after %d ticks; truncating%n",
+					nameA, nameB, Long.toHexString(seed), ticksRun[0]);
 		}
 		sim.stop();
 		try {
@@ -593,7 +593,7 @@ public class SubmarineCompetition {
 			reasons.add(nameB + " SURVIVED");
 		}
 
-		return new CombatResult(ptsA, ptsB, String.join(", ", reasons), endTick[0]);
+		return new CombatResult(ptsA, ptsB, String.join(", ", reasons), ticksRun[0]);
 	}
 
 	/**

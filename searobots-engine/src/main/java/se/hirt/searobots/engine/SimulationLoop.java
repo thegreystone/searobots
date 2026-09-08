@@ -425,6 +425,14 @@ public final class SimulationLoop implements SimClock {
 					return true;
 				});
 
+				// End the match as soon as the outcome is decided: no point simulating
+				// a lone survivor for the remaining duration.
+				if (matchDecided(entities, torpedoes)) {
+					System.out.printf("[Match] Outcome decided at tick %d (%ds): ending early%n", tick,
+							tick / config.tickRateHz());
+					break;
+				}
+
 				// Timing
 				long sleepMs = (long) (1000.0 / config.tickRateHz() / speedMultiplier);
 				if (sleepMs > 0 && !paused) {
@@ -443,6 +451,30 @@ public final class SimulationLoop implements SimClock {
 			}
 			listener.onMatchEnd();
 		}
+	}
+
+	/**
+	 * True once a multi-submarine match can no longer change outcome: at most one submarine is still alive and no
+	 * torpedo is still running. Any live torpedo counts, not only those of dead submarines: the blast damage in
+	 * {@link #handleDetonation} has no owner exemption and the proximity fuse only spares the launcher for its first
+	 * five seconds, so a lone survivor can still be sunk by its own weapon. Solo runs (navigation scenarios) never end
+	 * early.
+	 */
+	static boolean matchDecided(List<SubmarineEntity> entities, List<TorpedoEntity> torpedoes) {
+		if (entities.size() < 2)
+			return false;
+		int alive = 0;
+		for (var e : entities) {
+			if (e.hp() > 0 && !e.forfeited())
+				alive++;
+		}
+		if (alive > 1)
+			return false;
+		for (var t : torpedoes) {
+			if (t.alive())
+				return false;
+		}
+		return true;
 	}
 
 	/**
