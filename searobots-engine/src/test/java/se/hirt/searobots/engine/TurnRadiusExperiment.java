@@ -65,7 +65,7 @@ class TurnRadiusExperiment {
 						new Vec3(0, 0, -200), 0, Color.GREEN, 1000);
 				sub.setSpeed(speed);
 				// Let thrust lag settle to maintain speed
-				sub.setThrottle(speed / 15.0);  // approximate throttle for speed
+				sub.setThrottle(speed / 15.0); // approximate throttle for speed
 				sub.setActualThrottle(speed / 15.0);
 				sub.setRudder(rudder);
 

@@ -33,10 +33,12 @@ import se.hirt.searobots.api.*;
 import java.awt.*;
 
 /**
- * A torpedo entity in the simulation. Autonomous after launch: controlled by its own {@link TorpedoController},
- * receives sonar contacts independently, and has no communication link with the launching submarine.
- * <p>Torpedoes are fuel-limited, slightly negatively buoyant, and rely on
- * hydrodynamic lift from forward motion to maintain depth. Below minimum speed (~3 m/s), lift is insufficient and the
+ * A torpedo entity in the simulation. Autonomous after launch: controlled by its own
+ * {@link TorpedoController}, receives sonar contacts independently, and has no communication link
+ * with the launching submarine.
+ * <p>
+ * Torpedoes are fuel-limited, slightly negatively buoyant, and rely on hydrodynamic lift from
+ * forward motion to maintain depth. Below minimum speed (~3 m/s), lift is insufficient and the
  * torpedo sinks.
  */
 public final class TorpedoEntity {
@@ -94,8 +96,7 @@ public final class TorpedoEntity {
 	// Pending launch command output (used by TorpedoOutput impl)
 	private double cmdRudder, cmdSternPlanes, cmdThrottle = 1.0;
 
-	public TorpedoEntity(
-			int id, int ownerId, VehicleConfig vehicleConfig, TorpedoController controller, Vec3 launchPos,
+	public TorpedoEntity(int id, int ownerId, VehicleConfig vehicleConfig, TorpedoController controller, Vec3 launchPos,
 			double heading, double pitch, double fuseRadius, Color color) {
 		this.id = id;
 		this.ownerId = ownerId;
@@ -365,8 +366,8 @@ public final class TorpedoEntity {
 
 			@Override
 			public void publishDiagnostics(
-					double estX, double estY, double estZ, double estHeading, double estSpeed, double intX, double intY,
-					double intZ, String phase) {
+				double estX, double estY, double estZ, double estHeading, double estSpeed, double intX, double intY,
+				double intZ, String phase) {
 				diagEstX = estX;
 				diagEstY = estY;
 				diagEstZ = estZ;

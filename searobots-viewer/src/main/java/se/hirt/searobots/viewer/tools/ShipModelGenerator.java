@@ -41,23 +41,23 @@ import java.util.Locale;
 import java.util.Map;
 
 /**
- * Generates {@code models/surface-ship.obj} and {@code surface-ship.mtl}: the 150 m x 30 m container ship used for
- * the surface-ship drone. Pure Java, no dependencies.
+ * Generates {@code models/surface-ship.obj} and {@code surface-ship.mtl}: the 150 m x 30 m
+ * container ship used for the surface-ship drone. Pure Java, no dependencies.
  * <p>
- * The OBJ follows the same convention as {@code submarine-hybrid.obj} so the viewer treats both templates identically:
- * X is starboard, Y is fore-aft with the <b>bow at -Y</b> (the submarine's propeller is at +Y), Z is up, units are
- * metres and the waterline is at Z = 0. The viewer rotates the template -90 degrees about X so the bow faces +Z in
- * jME; no scaling is needed.
+ * The OBJ follows the same convention as {@code submarine-hybrid.obj} so the viewer treats both
+ * templates identically: X is starboard, Y is fore-aft with the <b>bow at -Y</b> (the submarine's
+ * propeller is at +Y), Z is up, units are metres and the waterline is at Z = 0. The viewer rotates
+ * the template -90 degrees about X so the bow faces +Z in jME; no scaling is needed.
  * <p>
- * Faces are emitted with outward winding and explicit normals. jME's OBJ loader merges vertices with equal position
- * unless their normals differ, and the viewer only generates normals for meshes that lack them, so the hull gets
- * smooth per-vertex normals shared across its groups (no seam at the waterline paint line) and everything box-like
- * gets one flat normal per face for crisp edges. The propeller is its own group named {@code Propeller} so the
- * viewer can spin it.
+ * Faces are emitted with outward winding and explicit normals. jME's OBJ loader merges vertices
+ * with equal position unless their normals differ, and the viewer only generates normals for meshes
+ * that lack them, so the hull gets smooth per-vertex normals shared across its groups (no seam at
+ * the waterline paint line) and everything box-like gets one flat normal per face for crisp edges.
+ * The propeller is its own group named {@code Propeller} so the viewer can spin it.
  * <p>
  * Usage: {@code ShipModelGenerator <out-dir>}, for example
- * {@code java -cp target/classes se.hirt.searobots.viewer.tools.ShipModelGenerator src/main/resources/models}. Use
- * {@link ModelRenderCheck} to look at the result under jME lighting.
+ * {@code java -cp target/classes se.hirt.searobots.viewer.tools.ShipModelGenerator src/main/resources/models}.
+ * Use {@link ModelRenderCheck} to look at the result under jME lighting.
  */
 public final class ShipModelGenerator {
 
@@ -105,7 +105,10 @@ public final class ShipModelGenerator {
 
 	// ── Mesh primitives ──────────────────────────────────────────────────────
 
-	/** A named OBJ group with one material. Smooth groups share per-vertex normals; others get flat normals. */
+	/**
+	 * A named OBJ group with one material. Smooth groups share per-vertex normals; others get flat
+	 * normals.
+	 */
 	private final class Group {
 		final String name;
 		final String material;
@@ -120,8 +123,9 @@ public final class ShipModelGenerator {
 		}
 
 		/**
-		 * Adds a triangle of 1-based vertex indices. If {@code inside} is a point known to be inside the part, the
-		 * winding is flipped so the face normal points away from it. Degenerate faces are dropped.
+		 * Adds a triangle of 1-based vertex indices. If {@code inside} is a point known to be
+		 * inside the part, the winding is flipped so the face normal points away from it.
+		 * Degenerate faces are dropped.
 		 */
 		void tri(int a, int b, int c, double[] inside) {
 			double[] p0 = verts.get(a - 1), p1 = verts.get(b - 1), p2 = verts.get(c - 1);
@@ -183,7 +187,7 @@ public final class ShipModelGenerator {
 		face(g, c, x1, y0, z0, x1, y1, z0, x1, y1, z1, x1, y0, z1); // starboard
 	}
 
-	private void face(Group g, double[] inside, double... p) {
+	private void face(Group g, double[] inside, double ... p) {
 		g.quad(v(p[0], p[1], p[2]), v(p[3], p[4], p[5]), v(p[6], p[7], p[8]), v(p[9], p[10], p[11]), inside);
 	}
 
@@ -232,7 +236,10 @@ public final class ShipModelGenerator {
 	// ── Hull lines ───────────────────────────────────────────────────────────
 	// t runs 0 (stem) to 1 (transom).
 
-	/** Half-breadth at deck level: fine entry (about 25 degrees half-angle), parallel midbody, tapered run. */
+	/**
+	 * Half-breadth at deck level: fine entry (about 25 degrees half-angle), parallel midbody,
+	 * tapered run.
+	 */
 	private static double halfBreadthAtDeck(double t) {
 		if (t < 0.40) {
 			double u = t / 0.40;
@@ -257,7 +264,9 @@ public final class ShipModelGenerator {
 		return D + 2.0 * bowSheer * bowSheer + 0.8 * sternSheer * sternSheer;
 	}
 
-	/** Fraction of the deck half-breadth that is flat bottom: V-shaped forward, narrow deadwood aft. */
+	/**
+	 * Fraction of the deck half-breadth that is flat bottom: V-shaped forward, narrow deadwood aft.
+	 */
 	private static double keelFlat(double t) {
 		if (t < 0.30)
 			return 0.45 * Math.pow(t / 0.30, 1.5);
@@ -276,10 +285,10 @@ public final class ShipModelGenerator {
 	}
 
 	/**
-	 * One hull section as a ring of vertex indices: port deck edge down to the keel, then up the starboard side.
-	 * Level 6 is exactly the waterline so the paint can change there. Centreline points (keel, and the whole
-	 * stem where the half-breadth is zero) are shared between the two sides so the smooth normal there points
-	 * forward instead of leaving a mirrored crease.
+	 * One hull section as a ring of vertex indices: port deck edge down to the keel, then up the
+	 * starboard side. Level 6 is exactly the waterline so the paint can change there. Centreline
+	 * points (keel, and the whole stem where the half-breadth is zero) are shared between the two
+	 * sides so the smooth normal there points forward instead of leaving a mirrored crease.
 	 */
 	private int[] stationRing(double t) {
 		double zk = keelZ(t), zd = deckZ(t);

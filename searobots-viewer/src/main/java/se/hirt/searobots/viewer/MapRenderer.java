@@ -42,8 +42,9 @@ import java.util.Deque;
 import java.util.List;
 
 /**
- * Top-down 2D rendering of the underwater terrain and overlays. Pure Java2D renderer (no Swing dependency). Call
- * {@link #render(int, int)} to get a BufferedImage suitable for uploading as a JME texture.
+ * Top-down 2D rendering of the underwater terrain and overlays. Pure Java2D renderer (no Swing
+ * dependency). Call {@link #render(int, int)} to get a BufferedImage suitable for uploading as a
+ * JME texture.
  */
 final class MapRenderer implements se.hirt.searobots.engine.SimulationListener {
 
@@ -51,8 +52,8 @@ final class MapRenderer implements se.hirt.searobots.engine.SimulationListener {
 	private BufferedImage terrainImage;
 
 	// view state
-	double viewX, viewY;           // world centre of the view
-	double pixelsPerMeter = 0.3;   // zoom level
+	double viewX, viewY; // world centre of the view
+	double pixelsPerMeter = 0.3; // zoom level
 
 	// Shared overlay config (read by both 2D and 3D views)
 	final OverlayConfig overlayConfig;
@@ -83,7 +84,7 @@ final class MapRenderer implements se.hirt.searobots.engine.SimulationListener {
 	private long loadingStartMs;
 
 	public void setSimStateSupplier(
-			java.util.function.Supplier<se.hirt.searobots.engine.SimulationLoop.State> supplier) {
+		java.util.function.Supplier<se.hirt.searobots.engine.SimulationLoop.State> supplier) {
 		this.simStateSupplier = supplier;
 	}
 
@@ -118,8 +119,8 @@ final class MapRenderer implements se.hirt.searobots.engine.SimulationListener {
 	final java.util.concurrent.CopyOnWriteArrayList<PingAnimation> pingAnimations = new java.util.concurrent.CopyOnWriteArrayList<>();
 	private static final double PING_VISUAL_SPEED = 1500.0; // m/s — realistic sound speed in water
 	private static final double PING_MAX_RADIUS = 10000.0; // covers full battle area diameter
-	private static final double PING_FLASH_DURATION = 1.2;  // seconds — bright origin burst
-	private static final double PING_FLASH_RADIUS = 150.0;  // meters
+	private static final double PING_FLASH_DURATION = 1.2; // seconds — bright origin burst
+	private static final double PING_FLASH_RADIUS = 150.0; // meters
 
 	// Detection highlights: when a ping ring sweeps over another sub
 	record DetectionHighlight(double x, double y, long startTick, Color color) {
@@ -127,7 +128,7 @@ final class MapRenderer implements se.hirt.searobots.engine.SimulationListener {
 
 	final java.util.ArrayList<DetectionHighlight> detectionHighlights = new java.util.ArrayList<>();
 	private static final double DETECTION_HIGHLIGHT_DURATION = 1.5; // seconds
-	private static final double DETECTION_HIGHLIGHT_RADIUS = 80.0;  // meters
+	private static final double DETECTION_HIGHLIGHT_RADIUS = 80.0; // meters
 
 	// Ping fix trace records for contact tracking visualization
 	private record PingFixRecord(double x, double y, long tick, Color color, int subId) {
@@ -172,8 +173,8 @@ final class MapRenderer implements se.hirt.searobots.engine.SimulationListener {
 
 	@Override
 	public void onTick(
-			long tick, List<se.hirt.searobots.engine.SubmarineSnapshot> submarines,
-			List<se.hirt.searobots.engine.TorpedoSnapshot> torpedoes) {
+		long tick, List<se.hirt.searobots.engine.SubmarineSnapshot> submarines,
+		List<se.hirt.searobots.engine.TorpedoSnapshot> torpedoes) {
 		updateSubmarines(tick, submarines);
 		var newTorps = torpedoes != null ? torpedoes : List.<se.hirt.searobots.engine.TorpedoSnapshot> of();
 
@@ -207,7 +208,8 @@ final class MapRenderer implements se.hirt.searobots.engine.SimulationListener {
 
 		// Grow trail/route arrays if needed
 		if (trails.length < subs.size()) {
-			@SuppressWarnings("unchecked") Deque<Vec3>[] newTrails = new Deque[subs.size()];
+			@SuppressWarnings("unchecked")
+			Deque<Vec3>[] newTrails = new Deque[subs.size()];
 			System.arraycopy(trails, 0, newTrails, 0, trails.length);
 			for (int i = trails.length; i < newTrails.length; i++) {
 				newTrails[i] = new ArrayDeque<>();
@@ -215,7 +217,8 @@ final class MapRenderer implements se.hirt.searobots.engine.SimulationListener {
 			trails = newTrails;
 		}
 		if (routes.length < subs.size()) {
-			@SuppressWarnings("unchecked") List<Vec3>[] newRoutes = new List[subs.size()];
+			@SuppressWarnings("unchecked")
+			List<Vec3>[] newRoutes = new List[subs.size()];
 			System.arraycopy(routes, 0, newRoutes, 0, routes.length);
 			for (int i = routes.length; i < newRoutes.length; i++) {
 				newRoutes[i] = new java.util.ArrayList<>();
@@ -386,7 +389,8 @@ final class MapRenderer implements se.hirt.searobots.engine.SimulationListener {
 			drawSubmarineHud(g2);
 		drawCompetitionOverlay(g2);
 		var simState = simStateSupplier.get();
-		if (simState == se.hirt.searobots.engine.SimulationLoop.State.INITIALIZING || simState == se.hirt.searobots.engine.SimulationLoop.State.CREATED) {
+		if (simState == se.hirt.searobots.engine.SimulationLoop.State.INITIALIZING
+				|| simState == se.hirt.searobots.engine.SimulationLoop.State.CREATED) {
 			if (loadingStartMs == 0)
 				loadingStartMs = System.currentTimeMillis();
 			drawLoadingSpinner(g2);
@@ -473,8 +477,8 @@ final class MapRenderer implements se.hirt.searobots.engine.SimulationListener {
 	}
 
 	private void drawContourSegmentH(
-			Graphics2D g2, TerrainMap terrain, int col, int row, double cx, double cy,
-			double cell, double ox, double oy, double interval) {
+		Graphics2D g2, TerrainMap terrain, int col, int row, double cx, double cy, double cell, double ox, double oy,
+		double interval) {
 		if (row + 1 >= terrain.getRows())
 			return;
 		double e00 = terrain.elevationAtGrid(col, row);
@@ -507,8 +511,8 @@ final class MapRenderer implements se.hirt.searobots.engine.SimulationListener {
 	}
 
 	private void drawContourSegmentV(
-			Graphics2D g2, TerrainMap terrain, int col, int row, double cx, double cy,
-			double cell, double ox, double oy, double interval) {
+		Graphics2D g2, TerrainMap terrain, int col, int row, double cx, double cy, double cell, double ox, double oy,
+		double interval) {
 		if (col + 1 >= terrain.getCols())
 			return;
 		double e00 = terrain.elevationAtGrid(col, row);
@@ -622,10 +626,10 @@ final class MapRenderer implements se.hirt.searobots.engine.SimulationListener {
 
 			// Narrow diamond shape (torpedo profile)
 			var diamond = new Path2D.Double();
-			diamond.moveTo(0, size * 0.8);          // nose
-			diamond.lineTo(-size * 0.15, 0);        // port
-			diamond.lineTo(0, -size * 0.4);         // tail
-			diamond.lineTo(size * 0.15, 0);         // starboard
+			diamond.moveTo(0, size * 0.8); // nose
+			diamond.lineTo(-size * 0.15, 0); // port
+			diamond.lineTo(0, -size * 0.4); // tail
+			diamond.lineTo(size * 0.15, 0); // starboard
 			diamond.closePath();
 
 			Color c = torp.color();
@@ -647,9 +651,8 @@ final class MapRenderer implements se.hirt.searobots.engine.SimulationListener {
 			double tx = pos.x() - Math.sin(heading) * trailLen;
 			double ty = pos.y() - Math.cos(heading) * trailLen;
 			g2.setColor(new Color(c.getRed(), c.getGreen(), c.getBlue(), 80));
-			g2.setStroke(
-					new BasicStroke((float) (1.5 / pixelsPerMeter), BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND, 0,
-							new float[] {(float) (8 / pixelsPerMeter), (float) (4 / pixelsPerMeter)}, 0));
+			g2.setStroke(new BasicStroke((float) (1.5 / pixelsPerMeter), BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND,
+					0, new float[] {(float) (8 / pixelsPerMeter), (float) (4 / pixelsPerMeter)}, 0));
 			g2.draw(new Line2D.Double(pos.x(), pos.y(), tx, ty));
 		}
 	}
@@ -712,7 +715,7 @@ final class MapRenderer implements se.hirt.searobots.engine.SimulationListener {
 			g2.rotate(-heading);
 
 			var triangle = new Path2D.Double();
-			triangle.moveTo(0, size * 0.6);        // nose (forward = +Y in body)
+			triangle.moveTo(0, size * 0.6); // nose (forward = +Y in body)
 			triangle.lineTo(-size * 0.35, -size * 0.4);
 			triangle.lineTo(size * 0.35, -size * 0.4);
 			triangle.closePath();
@@ -859,8 +862,12 @@ final class MapRenderer implements se.hirt.searobots.engine.SimulationListener {
 						double t3 = t2 * t;
 
 						// Catmull-Rom formula
-						double cx = 0.5 * ((2 * p1.x()) + (-p0.x() + p2.x()) * t + (2 * p0.x() - 5 * p1.x() + 4 * p2.x() - p3.x()) * t2 + (-p0.x() + 3 * p1.x() - 3 * p2.x() + p3.x()) * t3);
-						double cy = 0.5 * ((2 * p1.y()) + (-p0.y() + p2.y()) * t + (2 * p0.y() - 5 * p1.y() + 4 * p2.y() - p3.y()) * t2 + (-p0.y() + 3 * p1.y() - 3 * p2.y() + p3.y()) * t3);
+						double cx = 0.5 * ((2 * p1.x()) + (-p0.x() + p2.x()) * t
+								+ (2 * p0.x() - 5 * p1.x() + 4 * p2.x() - p3.x()) * t2
+								+ (-p0.x() + 3 * p1.x() - 3 * p2.x() + p3.x()) * t3);
+						double cy = 0.5 * ((2 * p1.y()) + (-p0.y() + p2.y()) * t
+								+ (2 * p0.y() - 5 * p1.y() + 4 * p2.y() - p3.y()) * t2
+								+ (-p0.y() + 3 * p1.y() - 3 * p2.y() + p3.y()) * t3);
 
 						g2.draw(new Line2D.Double(prevX, prevY, cx, cy));
 						prevX = cx;
@@ -914,7 +921,8 @@ final class MapRenderer implements se.hirt.searobots.engine.SimulationListener {
 			}
 
 			// 3. Draw strategic waypoints (larger, distinct markers)
-			if (!overlayConfig.strategicWaypoints) { /* skip */ } else {
+			if (!overlayConfig.strategicWaypoints) {
+				/* skip */ } else {
 				var strategicWps = sub.strategicWaypoints();
 				if (strategicWps != null) {
 					double sr = markerRadius * 2.5;
@@ -938,13 +946,13 @@ final class MapRenderer implements se.hirt.searobots.engine.SimulationListener {
 						// Label with purpose
 						var purpose = swp.purpose();
 						String purposeLabel = switch (purpose) {
-							case PATROL -> "P";
-							case INVESTIGATE -> "?";
-							case PING_POSITION -> "S";
-							case STEALTH_TRANSIT -> "T";
-							case INTERCEPT -> "!";
-							case EVADE -> "E";
-							case RALLY -> "R";
+						case PATROL -> "P";
+						case INVESTIGATE -> "?";
+						case PING_POSITION -> "S";
+						case STEALTH_TRANSIT -> "T";
+						case INTERCEPT -> "!";
+						case EVADE -> "E";
+						case RALLY -> "R";
 						};
 						String label = (i + 1) + purposeLabel;
 						// Flip Y for text (world transform has inverted Y)
@@ -961,8 +969,9 @@ final class MapRenderer implements se.hirt.searobots.engine.SimulationListener {
 	}
 
 	/**
-	 * Returns a depth-based color for waypoint visualization. Shallow (-20m): light cyan (150, 220, 255) Moderate
-	 * (-200m): medium blue (50, 100, 220) Deep (-500m): dark blue/purple (80, 40, 180)
+	 * Returns a depth-based color for waypoint visualization. Shallow (-20m): light cyan (150, 220,
+	 * 255) Moderate (-200m): medium blue (50, 100, 220) Deep (-500m): dark blue/purple (80, 40,
+	 * 180)
 	 */
 	private static Color waypointDepthColor(double z) {
 		// z is negative (depth below sea level)
@@ -1490,12 +1499,12 @@ final class MapRenderer implements se.hirt.searobots.engine.SimulationListener {
 	}
 
 	private static final int COLOR_KEY_BAR_WIDTH = 30;
-	private static final int COLOR_KEY_BORDER = 3;       // grey padding around the colored bar
-	private static final int COLOR_KEY_MARGIN_LEFT = 6;   // gap from panel edge to backdrop
-	private static final int COLOR_KEY_MARGIN_TOP = 250;  // gap from panel top to backdrop
+	private static final int COLOR_KEY_BORDER = 3; // grey padding around the colored bar
+	private static final int COLOR_KEY_MARGIN_LEFT = 6; // gap from panel edge to backdrop
+	private static final int COLOR_KEY_MARGIN_TOP = 250; // gap from panel top to backdrop
 	private static final int COLOR_KEY_MARGIN_BOTTOM = 250; // gap from panel bottom to backdrop
 	private static final int TICK_LENGTH = 4;
-	private static final int LABEL_OFFSET = 12;  // gap from bar edge to label text
+	private static final int LABEL_OFFSET = 12; // gap from bar edge to label text
 
 	private void drawColorKey(Graphics2D g2) {
 		var terrain = world.terrain();
@@ -1615,8 +1624,8 @@ final class MapRenderer implements se.hirt.searobots.engine.SimulationListener {
 	}
 
 	/**
-	 * Check if an island blocks line-of-sight between two surface points. Steps at half-cell resolution so no terrain
-	 * cell is skipped, regardless of distance.
+	 * Check if an island blocks line-of-sight between two surface points. Steps at half-cell
+	 * resolution so no terrain cell is skipped, regardless of distance.
 	 */
 	private boolean isTerrainBlocked(double x1, double y1, double x2, double y2) {
 		if (world == null)

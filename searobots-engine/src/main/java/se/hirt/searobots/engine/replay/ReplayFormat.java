@@ -33,17 +33,19 @@ import java.util.Locale;
 /**
  * Shared constants and field encoding for the SeaRobots replay format.
  * <p>
- * The format is line-oriented and tab-delimited, deliberately not JSON: a 50 Hz, 40-minute match produces ~120k frames,
- * and repeating field names on every line (as JSON does) would multiply file size and parse cost. Every line is parsed
- * with {@code line.split("\t")} in any language (Java for the existing viewers and tests, JavaScript for a future
- * browser visualizer), so no JSON parser is required on either side.
+ * The format is line-oriented and tab-delimited, deliberately not JSON: a 50 Hz, 40-minute match
+ * produces ~120k frames, and repeating field names on every line (as JSON does) would multiply file
+ * size and parse cost. Every line is parsed with {@code line.split("\t")} in any language (Java for
+ * the existing viewers and tests, JavaScript for a future browser visualizer), so no JSON parser is
+ * required on either side.
  * <p>
- * Each line begins with a single-character tag identifying the record type. Fixed-arity records put any free-text field
- * (status, label, phase) last; those strings are sanitized of tabs and newlines on write, so the split is always
- * unambiguous. Variable-length data (a sub's contact estimates and waypoints) is emitted as additional tagged child
- * lines following the sub.
+ * Each line begins with a single-character tag identifying the record type. Fixed-arity records put
+ * any free-text field (status, label, phase) last; those strings are sanitized of tabs and newlines
+ * on write, so the split is always unambiguous. Variable-length data (a sub's contact estimates and
+ * waypoints) is emitted as additional tagged child lines following the sub.
  * <p>
  * <b>Layout</b>
+ *
  * <pre>
  *   SRREPLAY  &lt;version&gt;                 magic + format version (line 1)
  *   H   seed tickRate durationTicks ...   match header
@@ -56,7 +58,9 @@ import java.util.Locale;
  *   p   id owner colorRGB ... phase       torpedo state (one per torpedo per frame)
  *   E   reason                            end of match
  * </pre>
- * The reader dispatches on the version on line 1, so multiple format versions can be supported side by side.
+ *
+ * The reader dispatches on the version on line 1, so multiple format versions can be supported side
+ * by side.
  */
 public final class ReplayFormat {
 
@@ -68,17 +72,18 @@ public final class ReplayFormat {
 	/**
 	 * Current format version written by {@link ReplayWriter}.
 	 * <p>
-	 * v2 added the firing-solution child line ({@code f}); it is additive (a new tag plus a {@code COLS} declaration),
-	 * so older files stay readable — see {@link #MIN_READ_VERSION}.
+	 * v2 added the firing-solution child line ({@code f}); it is additive (a new tag plus a
+	 * {@code COLS} declaration), so older files stay readable — see {@link #MIN_READ_VERSION}.
 	 */
 	public static final int VERSION = 2;
 
 	/**
-	 * Oldest format version {@link ReplayReader} accepts. Every version from v1 on has only <em>added</em> record tags
-	 * and columns (v2: the {@code f} firing-solution line), and the reader resolves columns by name from the file's own
-	 * {@code COLS} declarations, so older files decode fine — absent records simply reconstruct as empty/null (a v1
-	 * file yields {@code firingSolution() == null}). Raise this only when a change actually breaks decoding of older
-	 * files.
+	 * Oldest format version {@link ReplayReader} accepts. Every version from v1 on has only
+	 * <em>added</em> record tags and columns (v2: the {@code f} firing-solution line), and the
+	 * reader resolves columns by name from the file's own {@code COLS} declarations, so older files
+	 * decode fine — absent records simply reconstruct as empty/null (a v1 file yields
+	 * {@code firingSolution() == null}). Raise this only when a change actually breaks decoding of
+	 * older files.
 	 */
 	public static final int MIN_READ_VERSION = 1;
 
@@ -96,8 +101,9 @@ public final class ReplayFormat {
 	public static final String TAG_END = "E";
 
 	/**
-	 * Formats a double compactly: integers print without a decimal point, other values keep up to four decimals with
-	 * trailing zeros stripped. {@code NaN} round-trips as the literal {@code NaN}.
+	 * Formats a double compactly: integers print without a decimal point, other values keep up to
+	 * four decimals with trailing zeros stripped. {@code NaN} round-trips as the literal
+	 * {@code NaN}.
 	 */
 	public static String num(double v) {
 		if (Double.isNaN(v)) {
@@ -122,10 +128,10 @@ public final class ReplayFormat {
 
 	public static double parseD(String s) {
 		return switch (s) {
-			case "NaN" -> Double.NaN;
-			case "Inf" -> Double.POSITIVE_INFINITY;
-			case "-Inf" -> Double.NEGATIVE_INFINITY;
-			default -> Double.parseDouble(s);
+		case "NaN" -> Double.NaN;
+		case "Inf" -> Double.POSITIVE_INFINITY;
+		case "-Inf" -> Double.NEGATIVE_INFINITY;
+		default -> Double.parseDouble(s);
 		};
 	}
 
@@ -138,8 +144,8 @@ public final class ReplayFormat {
 	}
 
 	/**
-	 * Removes tabs and newlines from a free-text field so it cannot break the line structure. Such fields (status,
-	 * label, phase) are always written last on their line.
+	 * Removes tabs and newlines from a free-text field so it cannot break the line structure. Such
+	 * fields (status, label, phase) are always written last on their line.
 	 */
 	public static String sanitize(String s) {
 		if (s == null || s.isEmpty()) {

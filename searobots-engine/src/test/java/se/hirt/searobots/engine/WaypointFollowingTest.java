@@ -39,8 +39,9 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Measures how accurately the autopilot follows waypoints at various angles, depths, and speeds. Each test places a
- * single strategic waypoint and tracks the sub's closest approach, time to arrival, and path efficiency.
+ * Measures how accurately the autopilot follows waypoints at various angles, depths, and speeds.
+ * Each test places a single strategic waypoint and tracks the sub's closest approach, time to
+ * arrival, and path efficiency.
  */
 class WaypointFollowingTest {
 
@@ -48,22 +49,22 @@ class WaypointFollowingTest {
 	static final SubmarinePhysics physics = new SubmarinePhysics();
 	static final GeneratedWorld world = GeneratedWorld.deepFlat();
 
-	record FollowResult(double closestApproach,   // minimum distance to waypoint (m)
-	                    double timeToClosest,     // time of closest approach (s)
-	                    boolean arrived,          // came within arrival radius
-	                    double timeToArrival,     // time to arrive (s), or -1
-	                    double pathLength,        // total distance traveled (m)
-	                    double directDistance,    // straight-line distance to waypoint (m)
-	                    double pathEfficiency,    // directDistance / pathLength (1.0 = perfect)
-	                    double finalHeading,      // heading when closest (degrees)
-	                    double finalDepth,        // depth when closest
-	                    double maxCrossTrack,     // max perpendicular deviation from direct line (m)
-	                    int finalHp) {
+	record FollowResult(double closestApproach, // minimum distance to waypoint (m)
+			double timeToClosest, // time of closest approach (s)
+			boolean arrived, // came within arrival radius
+			double timeToArrival, // time to arrive (s), or -1
+			double pathLength, // total distance traveled (m)
+			double directDistance, // straight-line distance to waypoint (m)
+			double pathEfficiency, // directDistance / pathLength (1.0 = perfect)
+			double finalHeading, // heading when closest (degrees)
+			double finalDepth, // depth when closest
+			double maxCrossTrack, // max perpendicular deviation from direct line (m)
+			int finalHp) {
 	}
 
 	FollowResult runWaypointFollow(
-			double startX, double startY, double startZ, double startHeading, double startSpeed, double wpX, double wpY,
-			double wpZ, int maxTicks) {
+		double startX, double startY, double startZ, double startHeading, double startSpeed, double wpX, double wpY,
+		double wpZ, int maxTicks) {
 		var config = MatchConfig.withDefaults(0);
 		var context = new MatchContext(config, world.terrain(), List.of(), world.currentField());
 		var autopilot = new SubmarineAutopilot(context);
@@ -104,9 +105,8 @@ class WaypointFollowingTest {
 
 		for (int t = 0; t < maxTicks; t++) {
 			var pose = new Pose(new Vec3(entity.x(), entity.y(), entity.z()), entity.heading(), entity.pitch(), 0);
-			var vel = new Velocity(
-					new Vec3(entity.speed() * Math.sin(entity.heading()), entity.speed() * Math.cos(entity.heading()),
-							entity.verticalSpeed()), Vec3.ZERO);
+			var vel = new Velocity(new Vec3(entity.speed() * Math.sin(entity.heading()),
+					entity.speed() * Math.cos(entity.heading()), entity.verticalSpeed()), Vec3.ZERO);
 			var state = new SubmarineState(pose, vel, entity.hp(), 0);
 			var env = new EnvironmentSnapshot(world.terrain(), List.of(), world.currentField());
 			var input = new NavigationSimTest.TestInputFull(t, DT, state, env, List.of(), List.of(), 0);
@@ -281,9 +281,8 @@ class WaypointFollowingTest {
 		double maxXTrack = 0;
 		for (int t = 0; t < 50 * 180; t++) {
 			var pose = new Pose(new Vec3(entity.x(), entity.y(), entity.z()), entity.heading(), entity.pitch(), 0);
-			var vel = new Velocity(
-					new Vec3(entity.speed() * Math.sin(entity.heading()), entity.speed() * Math.cos(entity.heading()),
-							entity.verticalSpeed()), Vec3.ZERO);
+			var vel = new Velocity(new Vec3(entity.speed() * Math.sin(entity.heading()),
+					entity.speed() * Math.cos(entity.heading()), entity.verticalSpeed()), Vec3.ZERO);
 			var state = new SubmarineState(pose, vel, entity.hp(), 0);
 			var env = new EnvironmentSnapshot(world.terrain(), List.of(), world.currentField());
 			var input = new NavigationSimTest.TestInputFull(t, DT, state, env, List.of(), List.of(), 0);

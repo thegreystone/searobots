@@ -38,8 +38,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Basic autopilot routing exercises in flat deep water (no terrain). Verifies fundamental behavior: straight-line
- * following, turns, depth changes, and waypoint transitions.
+ * Basic autopilot routing exercises in flat deep water (no terrain). Verifies fundamental behavior:
+ * straight-line following, turns, depth changes, and waypoint transitions.
  */
 class BasicRoutingTest {
 
@@ -48,8 +48,8 @@ class BasicRoutingTest {
 	static final GeneratedWorld world = GeneratedWorld.deepFlat();
 
 	/**
-	 * Creates a sub at the given position/heading with a direct autopilot (bypassing DefaultAttackSub's patrol waypoint
-	 * generation).
+	 * Creates a sub at the given position/heading with a direct autopilot (bypassing
+	 * DefaultAttackSub's patrol waypoint generation).
 	 */
 	record SimSub(SubmarineEntity entity, SubmarineAutopilot autopilot) {
 	}
@@ -84,8 +84,10 @@ class BasicRoutingTest {
 		for (int t = 0; t < ticks; t++) {
 			var pose = new Pose(new Vec3(sim.entity.x(), sim.entity.y(), sim.entity.z()), sim.entity.heading(),
 					sim.entity.pitch(), 0);
-			var vel = new Velocity(new Vec3(sim.entity.speed() * Math.sin(sim.entity.heading()),
-					sim.entity.speed() * Math.cos(sim.entity.heading()), sim.entity.verticalSpeed()), Vec3.ZERO);
+			var vel = new Velocity(
+					new Vec3(sim.entity.speed() * Math.sin(sim.entity.heading()),
+							sim.entity.speed() * Math.cos(sim.entity.heading()), sim.entity.verticalSpeed()),
+					Vec3.ZERO);
 			var state = new SubmarineState(pose, vel, sim.entity.hp(), 0);
 			var env = new EnvironmentSnapshot(world.terrain(), List.of(), world.currentField());
 			var input = new NavigationSimTest.TestInputFull(t, DT, state, env, List.of(), List.of(), 0);
@@ -231,8 +233,10 @@ class BasicRoutingTest {
 		for (int t = 0; t < 50 * 180; t++) {
 			var pose = new Pose(new Vec3(sim.entity.x(), sim.entity.y(), sim.entity.z()), sim.entity.heading(),
 					sim.entity.pitch(), 0);
-			var vel = new Velocity(new Vec3(sim.entity.speed() * Math.sin(sim.entity.heading()),
-					sim.entity.speed() * Math.cos(sim.entity.heading()), sim.entity.verticalSpeed()), Vec3.ZERO);
+			var vel = new Velocity(
+					new Vec3(sim.entity.speed() * Math.sin(sim.entity.heading()),
+							sim.entity.speed() * Math.cos(sim.entity.heading()), sim.entity.verticalSpeed()),
+					Vec3.ZERO);
 			var state = new SubmarineState(pose, vel, sim.entity.hp(), 0);
 			var env = new EnvironmentSnapshot(world.terrain(), List.of(), world.currentField());
 			var input = new NavigationSimTest.TestInputFull(t, DT, state, env, List.of(), List.of(), 0);
@@ -292,8 +296,10 @@ class BasicRoutingTest {
 		for (int t = 0; t < 50 * 120; t++) {
 			var pose = new Pose(new Vec3(sim.entity.x(), sim.entity.y(), sim.entity.z()), sim.entity.heading(),
 					sim.entity.pitch(), 0);
-			var vel = new Velocity(new Vec3(sim.entity.speed() * Math.sin(sim.entity.heading()),
-					sim.entity.speed() * Math.cos(sim.entity.heading()), sim.entity.verticalSpeed()), Vec3.ZERO);
+			var vel = new Velocity(
+					new Vec3(sim.entity.speed() * Math.sin(sim.entity.heading()),
+							sim.entity.speed() * Math.cos(sim.entity.heading()), sim.entity.verticalSpeed()),
+					Vec3.ZERO);
 			var state = new SubmarineState(pose, vel, sim.entity.hp(), 0);
 			var env = new EnvironmentSnapshot(world.terrain(), List.of(), world.currentField());
 			var input = new NavigationSimTest.TestInputFull(t, DT, state, env, List.of(), List.of(), 0);
@@ -338,8 +344,7 @@ class BasicRoutingTest {
 	// Deep water (-500m) everywhere except a ridge from (ridgeMinX..ridgeMaxX)
 	// at y in (ridgeMinY..ridgeMaxY) with floor at ridgeDepth.
 	static GeneratedWorld worldWithRidge(
-			double ridgeMinX, double ridgeMaxX, double ridgeMinY, double ridgeMaxY,
-			double ridgeDepth) {
+		double ridgeMinX, double ridgeMaxX, double ridgeMinY, double ridgeMaxY, double ridgeDepth) {
 		int size = 201;
 		double cellSize = 100;
 		double origin = -(size / 2) * cellSize;
@@ -380,8 +385,10 @@ class BasicRoutingTest {
 		for (int t = 0; t < ticks; t++) {
 			var pose = new Pose(new Vec3(sim.entity.x(), sim.entity.y(), sim.entity.z()), sim.entity.heading(),
 					sim.entity.pitch(), 0);
-			var vel = new Velocity(new Vec3(sim.entity.speed() * Math.sin(sim.entity.heading()),
-					sim.entity.speed() * Math.cos(sim.entity.heading()), sim.entity.verticalSpeed()), Vec3.ZERO);
+			var vel = new Velocity(
+					new Vec3(sim.entity.speed() * Math.sin(sim.entity.heading()),
+							sim.entity.speed() * Math.cos(sim.entity.heading()), sim.entity.verticalSpeed()),
+					Vec3.ZERO);
 			var state = new SubmarineState(pose, vel, sim.entity.hp(), 0);
 			var env = new EnvironmentSnapshot(w.terrain(), java.util.List.of(), w.currentField());
 			var input = new NavigationSimTest.TestInputFull(t, DT, state, env, java.util.List.of(), java.util.List.of(),
@@ -629,8 +636,10 @@ class BasicRoutingTest {
 		for (int t = 0; t < 50 * 60; t++) {
 			var pose = new Pose(new Vec3(sim.entity.x(), sim.entity.y(), sim.entity.z()), sim.entity.heading(),
 					sim.entity.pitch(), 0);
-			var vel = new Velocity(new Vec3(sim.entity.speed() * Math.sin(sim.entity.heading()),
-					sim.entity.speed() * Math.cos(sim.entity.heading()), sim.entity.verticalSpeed()), Vec3.ZERO);
+			var vel = new Velocity(
+					new Vec3(sim.entity.speed() * Math.sin(sim.entity.heading()),
+							sim.entity.speed() * Math.cos(sim.entity.heading()), sim.entity.verticalSpeed()),
+					Vec3.ZERO);
 			var state = new SubmarineState(pose, vel, sim.entity.hp(), 0);
 			var env = new EnvironmentSnapshot(world.terrain(), List.of(), world.currentField());
 			var input = new NavigationSimTest.TestInputFull(t, DT, state, env, List.of(), List.of(), 0);

@@ -31,17 +31,18 @@ package se.hirt.searobots.api;
 import java.util.List;
 
 /**
- * Depth-varying ocean current field. Each band defines a horizontal current vector for a depth range.
+ * Depth-varying ocean current field. Each band defines a horizontal current vector for a depth
+ * range.
  */
 public record CurrentField(List<CurrentBand> bands) {
 
 	/**
 	 * @param minZ
-	 * 		bottom of the band (more negative = deeper)
+	 *            bottom of the band (more negative = deeper)
 	 * @param maxZ
-	 * 		top of the band
+	 *            top of the band
 	 * @param current
-	 * 		horizontal current vector (m/s)
+	 *            horizontal current vector (m/s)
 	 */
 	public record CurrentBand(double minZ, double maxZ, Vec2 current) {
 	}

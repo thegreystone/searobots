@@ -40,9 +40,10 @@ import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
- * Manages the lifecycle of SimulationLoop instances and fans out tick events to all registered listeners (2D panel, 3D
- * scene, recorders, competition scorers, etc.). Any component that needs simulation data registers once; it doesn't
- * matter whether the sim is free patrol, competition, or a test.
+ * Manages the lifecycle of SimulationLoop instances and fans out tick events to all registered
+ * listeners (2D panel, 3D scene, recorders, competition scorers, etc.). Any component that needs
+ * simulation data registers once; it doesn't matter whether the sim is free patrol, competition, or
+ * a test.
  */
 final class SimulationManager {
 
@@ -60,7 +61,10 @@ final class SimulationManager {
 	volatile boolean pauseOnTorpedoLaunch;
 	volatile boolean injectObjectives;
 
-	/** File the current live match is being recorded to, or null. Excluded from "load latest replay". */
+	/**
+	 * File the current live match is being recorded to, or null. Excluded from "load latest
+	 * replay".
+	 */
 	private volatile Path currentRecordingFile;
 
 	// ── Listener management ─────────────────────────────────────────
@@ -76,11 +80,12 @@ final class SimulationManager {
 	// ── Simulation lifecycle ────────────────────────────────────────
 
 	/**
-	 * Starts a new simulation. Stops any running simulation first and waits for its thread to finish.
+	 * Starts a new simulation. Stops any running simulation first and waits for its thread to
+	 * finish.
 	 */
 	void start(
-			GeneratedWorld world, List<SubmarineController> controllers, List<VehicleConfig> vehicleConfigs,
-			List<Double> headings) {
+		GeneratedWorld world, List<SubmarineController> controllers, List<VehicleConfig> vehicleConfigs,
+		List<Double> headings) {
 		stop();
 
 		var sim = new SimulationLoop();
@@ -131,15 +136,18 @@ final class SimulationManager {
 	}
 
 	/**
-	 * Plays a recorded {@code .srl} match back through the same viewers and controls as a live match. The world is
-	 * regenerated from the recorded match config (terrain is seed-derived; hand-built worlds are not reproducible), and
-	 * a {@link ReplayPlayer} drives the viewers as a {@link SimClock}, so pause / step / speed / fast-forward-to-event
-	 * all behave exactly as in a live simulation.
+	 * Plays a recorded {@code .srl} match back through the same viewers and controls as a live
+	 * match. The world is regenerated from the recorded match config (terrain is seed-derived;
+	 * hand-built worlds are not reproducible), and a {@link ReplayPlayer} drives the viewers as a
+	 * {@link SimClock}, so pause / step / speed / fast-forward-to-event all behave exactly as in a
+	 * live simulation.
 	 * <p>
-	 * Starts paused; call {@link #play()} once the viewers have registered, exactly like {@link #start}. This does not
-	 * push the world to the viewers; the caller applies {@link ReplayStart#world()} on its render thread.
+	 * Starts paused; call {@link #play()} once the viewers have registered, exactly like
+	 * {@link #start}. This does not push the world to the viewers; the caller applies
+	 * {@link ReplayStart#world()} on its render thread.
 	 *
-	 * @return the parsed header and rebuilt world, or {@code null} if the file could not be read or is corrupt
+	 * @return the parsed header and rebuilt world, or {@code null} if the file could not be read or
+	 *         is corrupt
 	 */
 	ReplayStart startReplay(Path srl) {
 		stop();
@@ -167,11 +175,12 @@ final class SimulationManager {
 	}
 
 	/**
-	 * The fan-out listener shared by live and replay runs: forwards every tick to the registered viewers and pauses the
-	 * clock it was built for on the enabled pause-on-event triggers. Events are edge-detected per entity, so
-	 * fast-forward-to-event stops at each <em>new</em> death, firing solution, or torpedo launch instead of latching on
-	 * the first or re-firing on the same one. Each run gets its own instance: per-run state needs no reset, and a stale
-	 * tick from a previous run's slow-to-die thread is dropped instead of pausing or polluting the new run.
+	 * The fan-out listener shared by live and replay runs: forwards every tick to the registered
+	 * viewers and pauses the clock it was built for on the enabled pause-on-event triggers. Events
+	 * are edge-detected per entity, so fast-forward-to-event stops at each <em>new</em> death,
+	 * firing solution, or torpedo launch instead of latching on the first or re-firing on the same
+	 * one. Each run gets its own instance: per-run state needs no reset, and a stale tick from a
+	 * previous run's slow-to-die thread is dropped instead of pausing or polluting the new run.
 	 */
 	private final class FanOut implements SimulationListener {
 		/** The clock this fan-out paces. Assigned before the run thread starts. */
@@ -185,8 +194,7 @@ final class SimulationManager {
 
 		@Override
 		public void onTick(
-				long tick, List<SubmarineSnapshot> submarines,
-				List<se.hirt.searobots.engine.TorpedoSnapshot> torpedoes) {
+			long tick, List<SubmarineSnapshot> submarines, List<se.hirt.searobots.engine.TorpedoSnapshot> torpedoes) {
 			var clock = owner;
 			if (clock != currentLoop) {
 				return; // a newer run has replaced this one
@@ -213,8 +221,8 @@ final class SimulationManager {
 					if (pauseOnTorpedoSolution) {
 						clock.setPaused(true);
 						System.out.printf(
-								"TORPEDO SOLUTION at tick %d: %s target=[%.0f,%.0f] hdg=%.0f spd=%.1f q=%.2f%n",
-								tick, sub.name(), sol.targetX(), sol.targetY(), Math.toDegrees(sol.targetHeading()),
+								"TORPEDO SOLUTION at tick %d: %s target=[%.0f,%.0f] hdg=%.0f spd=%.1f q=%.2f%n", tick,
+								sub.name(), sol.targetX(), sol.targetY(), Math.toDegrees(sol.targetHeading()),
 								sol.targetSpeed(), sol.quality());
 					}
 				}
@@ -246,11 +254,12 @@ final class SimulationManager {
 	}
 
 	/**
-	 * Returns a recording listener that writes the live match to a timestamped {@code .srl} under {@link #REPLAY_DIR},
-	 * so it can be replayed later. The name is uniquified so a same-seed match started within the same second (re-run,
-	 * consecutive competition phases) never truncates an earlier recording. Returns a no-op listener (never null) if the
-	 * file cannot be opened, and disables itself on a mid-match write failure, so recording failures never take down a
-	 * running match.
+	 * Returns a recording listener that writes the live match to a timestamped {@code .srl} under
+	 * {@link #REPLAY_DIR}, so it can be replayed later. The name is uniquified so a same-seed match
+	 * started within the same second (re-run, consecutive competition phases) never truncates an
+	 * earlier recording. Returns a no-op listener (never null) if the file cannot be opened, and
+	 * disables itself on a mid-match write failure, so recording failures never take down a running
+	 * match.
 	 */
 	SimulationListener recorderFor(GeneratedWorld world) {
 		try {
@@ -275,8 +284,9 @@ final class SimulationManager {
 	}
 
 	/**
-	 * Shields the sim thread from the {@link ReplayWriter}: a write failure ({@code UncheckedIOException} on disk full,
-	 * file lock, ...) disables recording for the rest of the match instead of propagating and killing the loop.
+	 * Shields the sim thread from the {@link ReplayWriter}: a write failure
+	 * ({@code UncheckedIOException} on disk full, file lock, ...) disables recording for the rest
+	 * of the match instead of propagating and killing the loop.
 	 */
 	private final class GuardedRecorder implements SimulationListener {
 		private ReplayWriter writer;
@@ -338,7 +348,8 @@ final class SimulationManager {
 	};
 
 	/**
-	 * Unpauses the simulation. Call after all viewers have registered and are ready to receive tick events.
+	 * Unpauses the simulation. Call after all viewers have registered and are ready to receive tick
+	 * events.
 	 */
 	void play() {
 		var sim = currentLoop;
@@ -367,12 +378,12 @@ final class SimulationManager {
 	}
 
 	/**
-	 * Manually fan out a tick to all registered listeners. Used by
-	 * CompetitionRunner which manages its own SimulationLoop but still
-	 * needs to update the viewers.
+	 * Manually fan out a tick to all registered listeners. Used by CompetitionRunner which manages
+	 * its own SimulationLoop but still needs to update the viewers.
 	 */
 	/**
-	 * Notifies all viewers that the world has changed. Called when switching seeds or competition phases.
+	 * Notifies all viewers that the world has changed. Called when switching seeds or competition
+	 * phases.
 	 */
 	void setWorld(GeneratedWorld world) {
 		for (var l : listeners) {
@@ -406,7 +417,8 @@ final class SimulationManager {
 	}
 
 	/**
-	 * Returns the current clock (live {@link SimulationLoop} or {@link ReplayPlayer}), or null if not running.
+	 * Returns the current clock (live {@link SimulationLoop} or {@link ReplayPlayer}), or null if
+	 * not running.
 	 */
 	SimClock currentLoop() {
 		return currentLoop;

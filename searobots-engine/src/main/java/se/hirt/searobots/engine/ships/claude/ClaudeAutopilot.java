@@ -34,8 +34,8 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Clean autopilot for ClaudeAttackSub. Uses lookahead steering on densified A* routes for smooth tracking. Minimal
- * terrain avoidance (emergency only).
+ * Clean autopilot for ClaudeAttackSub. Uses lookahead steering on densified A* routes for smooth
+ * tracking. Minimal terrain avoidance (emergency only).
  */
 final class ClaudeAutopilot {
 	private static final double MIN_DEPTH = -20.0;
@@ -87,17 +87,17 @@ final class ClaudeAutopilot {
 	}
 
 	void setWaypoints(
-			List<StrategicWaypoint> waypoints, double posX, double posY, double posZ, double heading,
-			double speed) {
+		List<StrategicWaypoint> waypoints, double posX, double posY, double posZ, double heading, double speed) {
 		setWaypoints(waypoints, posX, posY, posZ, heading, speed, false);
 	}
 
 	/**
-	 * Sets waypoints with optional direct routing (minimal depth bias). Use direct=true for speed-critical objectives.
+	 * Sets waypoints with optional direct routing (minimal depth bias). Use direct=true for
+	 * speed-critical objectives.
 	 */
 	void setWaypoints(
-			List<StrategicWaypoint> waypoints, double posX, double posY, double posZ, double heading,
-			double speed, boolean direct) {
+		List<StrategicWaypoint> waypoints, double posX, double posY, double posZ, double heading, double speed,
+		boolean direct) {
 		this.strategicWaypoints = List.copyOf(waypoints);
 		this.strategicWaypointIndex = 0;
 		this.routeIndex = 0;
@@ -111,12 +111,12 @@ final class ClaudeAutopilot {
 	}
 
 	/**
-	 * Plans a continuous route through a chain of strategic waypoints. The A* corridors are stitched together and depth
-	 * is planned with a backward pass so the sub transitions smoothly between waypoints.
+	 * Plans a continuous route through a chain of strategic waypoints. The A* corridors are
+	 * stitched together and depth is planned with a backward pass so the sub transitions smoothly
+	 * between waypoints.
 	 */
 	void setWaypointsChain(
-			List<StrategicWaypoint> waypoints, double posX, double posY, double posZ, double heading,
-			double speed) {
+		List<StrategicWaypoint> waypoints, double posX, double posY, double posZ, double heading, double speed) {
 		this.strategicWaypoints = List.copyOf(waypoints);
 		this.strategicWaypointIndex = 0;
 		this.routeIndex = 0;
@@ -143,8 +143,8 @@ final class ClaudeAutopilot {
 			var segment = pathPlanner.findPath(cx, cy, wp.x(), wp.y(), pref, ratio, radius);
 			if (!segment.isEmpty()) {
 				// Skip the first point if it overlaps with the end of the previous segment
-				int start = (!allRaw.isEmpty() && !segment.isEmpty() && allRaw.getLast()
-						.horizontalDistanceTo(segment.getFirst()) < 100) ? 1 : 0;
+				int start = (!allRaw.isEmpty() && !segment.isEmpty()
+						&& allRaw.getLast().horizontalDistanceTo(segment.getFirst()) < 100) ? 1 : 0;
 				for (int i = start; i < segment.size(); i++) {
 					allRaw.add(segment.get(i));
 				}
@@ -207,8 +207,8 @@ final class ClaudeAutopilot {
 		double verticalSpeed = self.velocity().linear().z();
 		double depth = pos.z();
 
-		StrategicWaypoint current =
-				strategicWaypoints.isEmpty() ? null : strategicWaypoints.get(strategicWaypointIndex);
+		StrategicWaypoint current = strategicWaypoints.isEmpty() ? null
+				: strategicWaypoints.get(strategicWaypointIndex);
 		if (current == null) {
 			blocked = true;
 			lastStatus = "NO ROUTE";
@@ -363,14 +363,13 @@ final class ClaudeAutopilot {
 	// ── Route planning ──────────────────────────────────────────────
 
 	private void planRoute(
-			double posX, double posY, double posZ, double heading, double speed,
-			StrategicWaypoint target) {
+		double posX, double posY, double posZ, double heading, double speed, StrategicWaypoint target) {
 		planRoute(posX, posY, posZ, heading, speed, target, pathPlanner);
 	}
 
 	private void planRoute(
-			double posX, double posY, double posZ, double heading, double speed,
-			StrategicWaypoint target, PathPlanner planner) {
+		double posX, double posY, double posZ, double heading, double speed, StrategicWaypoint target,
+		PathPlanner planner) {
 		route.clear();
 		routeIndex = 0;
 
@@ -392,12 +391,12 @@ final class ClaudeAutopilot {
 	}
 
 	/**
-	 * Builds a densified route with full terrain profile scanning and bidirectional depth passes. This ensures the sub
-	 * starts climbing before ridges and never dives faster than physics allows.
+	 * Builds a densified route with full terrain profile scanning and bidirectional depth passes.
+	 * This ensures the sub starts climbing before ridges and never dives faster than physics
+	 * allows.
 	 */
 	private List<Vec3> buildRoute(
-			List<Vec3> raw, double preferredDepth, double startZ, double startX, double startY,
-			double expectedSpeed) {
+		List<Vec3> raw, double preferredDepth, double startZ, double startX, double startY, double expectedSpeed) {
 		// Step 1: Densify into evenly-spaced waypoints
 		var dense = new ArrayList<Vec3>();
 		double carried = 0;
@@ -502,8 +501,8 @@ final class ClaudeAutopilot {
 		}
 		routeIndex = best;
 		// Advance past close waypoints
-		while (routeIndex < route.size() - 1 && hdist(x, y, route.get(routeIndex).x(),
-				route.get(routeIndex).y()) < NAV_ACCEPTANCE) {
+		while (routeIndex < route.size() - 1
+				&& hdist(x, y, route.get(routeIndex).x(), route.get(routeIndex).y()) < NAV_ACCEPTANCE) {
 			routeIndex++;
 		}
 	}
@@ -612,10 +611,10 @@ final class ClaudeAutopilot {
 		if (wp.targetSpeed() > 0)
 			return Math.min(maxSubSpeed, wp.targetSpeed());
 		return switch (wp.noise()) {
-			case SILENT -> 3.5;
-			case QUIET -> 5.5;
-			case NORMAL -> 7.5;  // stealth-optimized patrol: quieter wins noise metrics
-			case SPRINT -> 12.0;
+		case SILENT -> 3.5;
+		case QUIET -> 5.5;
+		case NORMAL -> 7.5; // stealth-optimized patrol: quieter wins noise metrics
+		case SPRINT -> 12.0;
 		};
 	}
 

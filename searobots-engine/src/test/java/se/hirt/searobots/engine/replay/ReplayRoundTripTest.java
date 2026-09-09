@@ -48,10 +48,11 @@ import static org.junit.jupiter.api.Assertions.*;
 /**
  * Verifies the replay system records and reconstructs matches faithfully.
  * <p>
- * The key property is <b>lossless against the live match</b>: the stream a {@link ReplayReader} produces must equal the
- * stream the simulation emitted, not merely agree with the writer. Numbers are compared to the format's fixed precision
- * (4 decimals), which is far below any physically meaningful threshold. The {@code firingSolution} is captured (format
- * v2) and compared; the {@code strategicWaypoints} field is still not captured and is excluded from the comparison.
+ * The key property is <b>lossless against the live match</b>: the stream a {@link ReplayReader}
+ * produces must equal the stream the simulation emitted, not merely agree with the writer. Numbers
+ * are compared to the format's fixed precision (4 decimals), which is far below any physically
+ * meaningful threshold. The {@code firingSolution} is captured (format v2) and compared; the
+ * {@code strategicWaypoints} field is still not captured and is excluded from the comparison.
  */
 class ReplayRoundTripTest {
 
@@ -77,7 +78,8 @@ class ReplayRoundTripTest {
 	}
 
 	@Test
-	void recordingIsLosslessAgainstLiveMatch(@TempDir Path dir) throws IOException {
+	void recordingIsLosslessAgainstLiveMatch(@TempDir
+	Path dir) throws IOException {
 		MatchConfig config = shortMatch(42L, 600);
 		var world = new WorldGenerator().generate(config);
 
@@ -123,7 +125,8 @@ class ReplayRoundTripTest {
 	}
 
 	@Test
-	void contactsRoundTripInLongerMatch(@TempDir Path dir) throws IOException {
+	void contactsRoundTripInLongerMatch(@TempDir
+	Path dir) throws IOException {
 		// A longer match with the combat controllers (which publish contact
 		// estimates and fire torpedoes), so the subs detect each other and the
 		// contact child-line path is exercised against a live match (not just
@@ -173,7 +176,8 @@ class ReplayRoundTripTest {
 	}
 
 	@Test
-	void roundTripPreservesTorpedoesAndEdgeCases(@TempDir Path dir) throws IOException {
+	void roundTripPreservesTorpedoesAndEdgeCases(@TempDir
+	Path dir) throws IOException {
 		MatchConfig config = shortMatch(7L, 1);
 		Path file = dir.resolve("synthetic.srl");
 
@@ -183,8 +187,8 @@ class ReplayRoundTripTest {
 				List.of(new ContactEstimate(1000.0, 2000.0, 0.7, 0.9, 150.0, 2.5, 7.0, "passive"),
 						new ContactEstimate(1050.0, 1980.0, 0.4, 0.6, 300.0, Double.NaN, -1.0, "")),
 				List.of(new Waypoint(500.0, 600.0, -250.0, true, false),
-						new Waypoint(700.0, 800.0, -250.0, false, true)), List.of(),
-				new FiringSolution(1234.5, -678.25, 2.1, 8.5, 0.85), true);
+						new Waypoint(700.0, 800.0, -250.0, false, true)),
+				List.of(), new FiringSolution(1234.5, -678.25, 2.1, 8.5, 0.85), true);
 
 		var torp = new TorpedoSnapshot(1001, 0, new Pose(new Vec3(200.0, 300.0, -180.0), 0.75, 0.05, 0.0),
 				new Velocity(new Vec3(23.0, 0.0, 0.5), Vec3.ZERO), 23.0, new Color(255, 80, 80), 220.5, false, true,
@@ -210,7 +214,8 @@ class ReplayRoundTripTest {
 	}
 
 	@Test
-	void readsVersion1Files(@TempDir Path dir) throws IOException {
+	void readsVersion1Files(@TempDir
+	Path dir) throws IOException {
 		// The reader accepts every version from MIN_READ_VERSION (v1) to the current one: v2
 		// only ADDED the firing-solution child line, so a v1 file is exactly a v2 file without
 		// the `f` records. Write a v2 file, mechanically downgrade it to v1, and verify the
@@ -269,7 +274,8 @@ class ReplayRoundTripTest {
 	}
 
 	@Test
-	void headerIsSelfDescribing(@TempDir Path dir) throws IOException {
+	void headerIsSelfDescribing(@TempDir
+	Path dir) throws IOException {
 		MatchConfig config = shortMatch(99L, 1);
 		Path file = dir.resolve("hdr.srl");
 		try (var writer = new ReplayWriter(config, List.of(Vec3.ZERO, Vec3.ZERO), file)) {

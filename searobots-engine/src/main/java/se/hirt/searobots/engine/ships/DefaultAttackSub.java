@@ -36,12 +36,12 @@ import java.util.List;
 /**
  * A smart submarine captain AI that behaves realistically:
  * <ul>
- *   <li>Sprint-drift patrol below the thermocline (sprint deep, drift up to listen)</li>
- *   <li>Passive-only TMA: builds firing solutions through maneuvering, never pings</li>
- *   <li>Stalks targets from their stern quarter (baffles)</li>
- *   <li>Fires torpedoes from concealment, then goes silent</li>
- *   <li>Evades incoming torpedoes by turning toward them, crossing the thermocline,
- *       and ducking behind terrain</li>
+ * <li>Sprint-drift patrol below the thermocline (sprint deep, drift up to listen)</li>
+ * <li>Passive-only TMA: builds firing solutions through maneuvering, never pings</li>
+ * <li>Stalks targets from their stern quarter (baffles)</li>
+ * <li>Fires torpedoes from concealment, then goes silent</li>
+ * <li>Evades incoming torpedoes by turning toward them, crossing the thermocline, and ducking
+ * behind terrain</li>
  * </ul>
  */
 public final class DefaultAttackSub implements SubmarineController {
@@ -53,35 +53,37 @@ public final class DefaultAttackSub implements SubmarineController {
 
 	// ── State machine ──
 
-	public enum State {PATROL, TRACKING, STALKING, ATTACKING, EVADING, REPOSITIONING}
+	public enum State {
+		PATROL, TRACKING, STALKING, ATTACKING, EVADING, REPOSITIONING
+	}
 
 	// ── Constants ──
 
 	// Sprint-drift cycle
-	private static final int SPRINT_TICKS = 750;         // 15 seconds
-	private static final int DRIFT_TICKS = 1250;         // 25 seconds
-	private static final double SPRINT_THROTTLE = 0.35;  // ~6 m/s, quiet repositioning
-	private static final double QUIET_THROTTLE = 0.25;   // ~5 m/s, hard to detect
-	private static final double THERMOCLINE_MARGIN = 30;  // meters below thermocline during sprint
+	private static final int SPRINT_TICKS = 750; // 15 seconds
+	private static final int DRIFT_TICKS = 1250; // 25 seconds
+	private static final double SPRINT_THROTTLE = 0.35; // ~6 m/s, quiet repositioning
+	private static final double QUIET_THROTTLE = 0.25; // ~5 m/s, hard to detect
+	private static final double THERMOCLINE_MARGIN = 30; // meters below thermocline during sprint
 
 	// TMA thresholds
-	private static final double TMA_TRACKING_QUALITY = 0.3;  // enough to start stalking
-	private static final double TMA_FIRING_QUALITY = 0.5;     // enough to fire
+	private static final double TMA_TRACKING_QUALITY = 0.3; // enough to start stalking
+	private static final double TMA_FIRING_QUALITY = 0.5; // enough to fire
 	private static final int CONTACT_CONFIRM_TICKS = 3;
 
 	// Engagement
-	private static final double STALKING_RANGE = 2000;   // desired firing distance
+	private static final double STALKING_RANGE = 2000; // desired firing distance
 	private static final double MIN_FIRING_RANGE = 800;
 	private static final double MAX_FIRING_RANGE = 2500;
-	private static final double STERN_OFFSET = 500;       // how far behind target to position
-	private static final long TORPEDO_COOLDOWN = 750;     // 15 seconds between launches
+	private static final double STERN_OFFSET = 500; // how far behind target to position
+	private static final long TORPEDO_COOLDOWN = 750; // 15 seconds between launches
 
 	// Torpedo classification
 	private static final double TORPEDO_SL_THRESHOLD = 105; // dB, above = torpedo
 
 	// Evasion and repositioning
-	private static final int REPOSITION_TICKS = 2000;     // 40 seconds silent after attack
-	private static final int EVADE_CLEAR_TICKS = 200;     // 4 seconds without torpedo = safe
+	private static final int REPOSITION_TICKS = 2000; // 40 seconds silent after attack
+	private static final int EVADE_CLEAR_TICKS = 200; // 4 seconds without torpedo = safe
 
 	// Terrain / depth
 	private static final double MIN_DEPTH = -25;
@@ -279,7 +281,8 @@ public final class DefaultAttackSub implements SubmarineController {
 			}
 		} else {
 			// Step 5: State-specific waypoint generation
-			boolean needPlan = stateChanged() || strategicWaypoints.isEmpty() || autopilot.hasArrived() || autopilot.isBlocked() || wasPinged; // immediately replan when pinged (change depth)
+			boolean needPlan = stateChanged() || strategicWaypoints.isEmpty() || autopilot.hasArrived()
+					|| autopilot.isBlocked() || wasPinged; // immediately replan when pinged (change depth)
 			if (!needPlan && hasTrackedContact) {
 				double targetMoved = hdist(trackedX, trackedY, lastPlanTargetX, lastPlanTargetY);
 				if (targetMoved > 300)
@@ -306,14 +309,16 @@ public final class DefaultAttackSub implements SubmarineController {
 
 		// Step 8: Active sonar (almost never)
 		// Ping defensively during evasion if we lost the torpedo track
-		if (state == State.EVADING && torpedoThreat == null && tick - lastTorpedoTick < 500 && input.activeSonarCooldownTicks() == 0) {
+		if (state == State.EVADING && torpedoThreat == null && tick - lastTorpedoTick < 500
+				&& input.activeSonarCooldownTicks() == 0) {
 			output.activeSonarPing();
 		}
 		// One "snapshot" ping right before firing: confirm the solution.
 		// We've been silent the whole approach; this one ping gives a precise
 		// fix and we fire immediately after. The ping reveals us, but the
 		// torpedoes are already in the water before the enemy can react.
-		if (state == State.ATTACKING && input.activeSonarCooldownTicks() == 0 && tick - lastTorpedoLaunchTick > TORPEDO_COOLDOWN) {
+		if (state == State.ATTACKING && input.activeSonarCooldownTicks() == 0
+				&& tick - lastTorpedoLaunchTick > TORPEDO_COOLDOWN) {
 			output.activeSonarPing();
 		}
 
@@ -326,9 +331,8 @@ public final class DefaultAttackSub implements SubmarineController {
 
 		if (hasTrackedContact) {
 			double confidence = Math.max(0, contactAlive * (1 - uncertaintyRadius / 3000));
-			output.publishContactEstimate(
-					new ContactEstimate(trackedX, trackedY, confidence, contactAlive, uncertaintyRadius, trackedHeading,
-							trackedSpeed, "passive"));
+			output.publishContactEstimate(new ContactEstimate(trackedX, trackedY, confidence, contactAlive,
+					uncertaintyRadius, trackedHeading, trackedSpeed, "passive"));
 		}
 
 		// Publish strategic waypoints for viewer
@@ -436,8 +440,8 @@ public final class DefaultAttackSub implements SubmarineController {
 		estimatedRange = hdist(pos.x(), pos.y(), trackedX, trackedY);
 
 		if (contact.rangeUncertainty() > 0) {
-			uncertaintyRadius =
-					contact.isActive() ? contact.rangeUncertainty() * 2 : Math.min(uncertaintyRadius, range * 0.4);
+			uncertaintyRadius = contact.isActive() ? contact.rangeUncertainty() * 2
+					: Math.min(uncertaintyRadius, range * 0.4);
 		}
 	}
 
@@ -507,8 +511,8 @@ public final class DefaultAttackSub implements SubmarineController {
 			}
 			double dist = hdist(pos.x(), pos.y(), trackedX, trackedY);
 			// Only attack when: in range, good TMA, AND behind the target
-			if (dist < MAX_FIRING_RANGE && dist > MIN_FIRING_RANGE && bestSolutionQuality >= TMA_FIRING_QUALITY && isBehindTarget(
-					pos.x(), pos.y())) {
+			if (dist < MAX_FIRING_RANGE && dist > MIN_FIRING_RANGE && bestSolutionQuality >= TMA_FIRING_QUALITY
+					&& isBehindTarget(pos.x(), pos.y())) {
 				state = State.ATTACKING;
 			}
 		}
@@ -536,12 +540,12 @@ public final class DefaultAttackSub implements SubmarineController {
 
 	private List<StrategicWaypoint> generateWaypoints(Vec3 pos, double heading, double speed, long tick) {
 		return switch (state) {
-			case PATROL -> List.of(planPatrolWaypoint(pos.x(), pos.y(), heading));
-			case TRACKING -> planTrackingWaypoints(pos, heading);
-			case STALKING -> planStalkingWaypoint(pos, heading);
-			case ATTACKING -> List.of(); // don't change waypoints during attack
-			case EVADING -> planEvadeWaypoint(pos, heading);
-			case REPOSITIONING -> planRepositionWaypoint(pos, heading);
+		case PATROL -> List.of(planPatrolWaypoint(pos.x(), pos.y(), heading));
+		case TRACKING -> planTrackingWaypoints(pos, heading);
+		case STALKING -> planStalkingWaypoint(pos, heading);
+		case ATTACKING -> List.of(); // don't change waypoints during attack
+		case EVADING -> planEvadeWaypoint(pos, heading);
+		case REPOSITIONING -> planRepositionWaypoint(pos, heading);
 		};
 	}
 
@@ -594,9 +598,8 @@ public final class DefaultAttackSub implements SubmarineController {
 		double ty = pos.y() + Math.cos(chosen) * dist;
 		double depth = safeDepth(tx, ty, tacticalDepth(lastPingedTick));
 
-		return List.of(
-				new StrategicWaypoint(tx, ty, depth, Purpose.INVESTIGATE, NoisePolicy.QUIET, MovementPattern.DIRECT,
-						200, 5.0));
+		return List.of(new StrategicWaypoint(tx, ty, depth, Purpose.INVESTIGATE, NoisePolicy.QUIET,
+				MovementPattern.DIRECT, 200, 5.0));
 	}
 
 	private List<StrategicWaypoint> planStalkingWaypoint(Vec3 pos, double heading) {
@@ -617,9 +620,8 @@ public final class DefaultAttackSub implements SubmarineController {
 			double ty = pos.y() + Math.cos(bearing) * Math.min(closeDist, 800);
 			double depth = safeDepth(tx, ty, tacticalDepth(lastPingedTick));
 			// Creep in silently
-			return List.of(
-					new StrategicWaypoint(tx, ty, depth, Purpose.INTERCEPT, NoisePolicy.SILENT, MovementPattern.DIRECT,
-							150, 3.5));
+			return List.of(new StrategicWaypoint(tx, ty, depth, Purpose.INTERCEPT, NoisePolicy.SILENT,
+					MovementPattern.DIRECT, 150, 3.5));
 		}
 
 		// Not behind yet: arc around to the stern. Pick the side that's
@@ -630,9 +632,8 @@ public final class DefaultAttackSub implements SubmarineController {
 		// Offset to one side of the stern (whichever is closer to our current bearing)
 		double sternLeft = norm(sternBearing - Math.toRadians(40));
 		double sternRight = norm(sternBearing + Math.toRadians(40));
-		double chosen =
-				Math.abs(angleDiff(sternLeft, toTargetBearing)) < Math.abs(angleDiff(sternRight, toTargetBearing))
-						? sternLeft : sternRight;
+		double chosen = Math.abs(angleDiff(sternLeft, toTargetBearing)) < Math
+				.abs(angleDiff(sternRight, toTargetBearing)) ? sternLeft : sternRight;
 
 		// Position behind the target at a comfortable standoff
 		double approachDist = Math.max(STERN_OFFSET, dist * 0.5);
@@ -648,9 +649,8 @@ public final class DefaultAttackSub implements SubmarineController {
 		double depth = safeDepth(tx, ty, tacticalDepth(lastPingedTick));
 
 		// Quiet approach: slow, clutch engaged but minimal throttle
-		return List.of(
-				new StrategicWaypoint(tx, ty, depth, Purpose.INTERCEPT, NoisePolicy.QUIET, MovementPattern.DIRECT, 250,
-						4.5));
+		return List.of(new StrategicWaypoint(tx, ty, depth, Purpose.INTERCEPT, NoisePolicy.QUIET,
+				MovementPattern.DIRECT, 250, 4.5));
 	}
 
 	private List<StrategicWaypoint> planEvadeWaypoint(Vec3 pos, double heading) {
@@ -682,9 +682,8 @@ public final class DefaultAttackSub implements SubmarineController {
 		// Go as deep as possible
 		double depth = safeDepth(tx, ty, depthLimit + 20);
 
-		return List.of(
-				new StrategicWaypoint(tx, ty, depth, Purpose.EVADE, NoisePolicy.SPRINT, MovementPattern.DIRECT, 150,
-						12.0));
+		return List.of(new StrategicWaypoint(tx, ty, depth, Purpose.EVADE, NoisePolicy.SPRINT, MovementPattern.DIRECT,
+				150, 12.0));
 	}
 
 	private List<StrategicWaypoint> planRepositionWaypoint(Vec3 pos, double heading) {
@@ -701,9 +700,8 @@ public final class DefaultAttackSub implements SubmarineController {
 
 		double depth = safeDepth(tx, ty, belowThermocline());
 
-		return List.of(
-				new StrategicWaypoint(tx, ty, depth, Purpose.PATROL, NoisePolicy.SILENT, MovementPattern.DIRECT, 300,
-						3.0));
+		return List.of(new StrategicWaypoint(tx, ty, depth, Purpose.PATROL, NoisePolicy.SILENT, MovementPattern.DIRECT,
+				300, 3.0));
 	}
 
 	// ── Sprint-drift cycle ──
@@ -816,8 +814,8 @@ public final class DefaultAttackSub implements SubmarineController {
 	// ── Depth helpers ──
 
 	/**
-	 * The preferred tactical depth: on the opposite side of the thermocline from the enemy when pinged, below it by
-	 * default.
+	 * The preferred tactical depth: on the opposite side of the thermocline from the enemy when
+	 * pinged, below it by default.
 	 */
 	private double tacticalDepth(long tick) {
 		boolean recentlyPinged = tick - lastPingedTick < 3000; // remember for 60s

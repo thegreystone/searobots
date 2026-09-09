@@ -53,8 +53,7 @@ public class SeedScannerTest {
 	}
 
 	private void runMatchups(
-			String nameA, Supplier<SubmarineController> factoryA, String nameB,
-			Supplier<SubmarineController> factoryB) {
+		String nameA, Supplier<SubmarineController> factoryA, String nameB, Supplier<SubmarineController> factoryB) {
 		int combat30min = 90_000;
 		long[] seeds = new long[10];
 		for (int i = 0; i < seeds.length; i++) {

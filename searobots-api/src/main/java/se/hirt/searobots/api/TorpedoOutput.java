@@ -4,7 +4,8 @@
 package se.hirt.searobots.api;
 
 /**
- * Output interface for torpedo controllers. Controls the torpedo's steering, propulsion, sonar, and detonation.
+ * Output interface for torpedo controllers. Controls the torpedo's steering, propulsion, sonar, and
+ * detonation.
  */
 public interface TorpedoOutput {
 	/**
@@ -44,26 +45,26 @@ public interface TorpedoOutput {
 	 * Publish torpedo guidance diagnostics for analysis.
 	 *
 	 * @param estX
-	 * 		estimated target X (where we think the target is)
+	 *            estimated target X (where we think the target is)
 	 * @param estY
-	 * 		estimated target Y
+	 *            estimated target Y
 	 * @param estZ
-	 * 		estimated target Z (depth)
+	 *            estimated target Z (depth)
 	 * @param estHeading
-	 * 		estimated target heading (radians, NaN if unknown)
+	 *            estimated target heading (radians, NaN if unknown)
 	 * @param estSpeed
-	 * 		estimated target speed (m/s)
+	 *            estimated target speed (m/s)
 	 * @param intX
-	 * 		intercept point X (where we're steering toward)
+	 *            intercept point X (where we're steering toward)
 	 * @param intY
-	 * 		intercept point Y
+	 *            intercept point Y
 	 * @param intZ
-	 * 		intercept point Z
+	 *            intercept point Z
 	 * @param phase
-	 * 		guidance phase name (e.g. "TRANSIT", "ACQUISITION", "TERMINAL")
+	 *            guidance phase name (e.g. "TRANSIT", "ACQUISITION", "TERMINAL")
 	 */
 	default void publishDiagnostics(
-			double estX, double estY, double estZ, double estHeading, double estSpeed, double intX, double intY,
-			double intZ, String phase) {
+		double estX, double estY, double estZ, double estHeading, double estSpeed, double intX, double intY,
+		double intZ, String phase) {
 	}
 }

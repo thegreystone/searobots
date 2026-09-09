@@ -38,10 +38,10 @@ public final class SimulationListeners {
 
 	/**
 	 * Returns a listener that forwards every callback to each of the given listeners in order. The
-	 * {@link SimulationLoop} accepts only one listener, so this is how a match can be recorded (e.g. with a
-	 * {@code ReplayWriter}) while it is also rendered by a viewer.
+	 * {@link SimulationLoop} accepts only one listener, so this is how a match can be recorded
+	 * (e.g. with a {@code ReplayWriter}) while it is also rendered by a viewer.
 	 */
-	public static SimulationListener composite(SimulationListener... listeners) {
+	public static SimulationListener composite(SimulationListener ... listeners) {
 		List<SimulationListener> copy = List.of(listeners);
 		return new SimulationListener() {
 			@Override

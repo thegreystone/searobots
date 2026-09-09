@@ -45,9 +45,10 @@ import java.util.concurrent.TimeUnit;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Verifies {@link ReplayPlayer} drives a listener through a recorded match under the same control surface as a live
- * {@link SimulationLoop}: it emits every recorded frame in order at full fidelity, and honours pause / single-step /
- * stop / speed. This is what lets the viewer replay a battle with the same controls it uses to run one live.
+ * Verifies {@link ReplayPlayer} drives a listener through a recorded match under the same control
+ * surface as a live {@link SimulationLoop}: it emits every recorded frame in order at full
+ * fidelity, and honours pause / single-step / stop / speed. This is what lets the viewer replay a
+ * battle with the same controls it uses to run one live.
  */
 class ReplayPlayerTest {
 
@@ -69,7 +70,8 @@ class ReplayPlayerTest {
 
 	@Test
 	@Timeout(value = 60, unit = TimeUnit.SECONDS)
-	void playsBackEveryRecordedFrameInOrder(@TempDir Path dir) throws Exception {
+	void playsBackEveryRecordedFrameInOrder(@TempDir
+	Path dir) throws Exception {
 		// Record a real short match, then play it back and confirm the player emits the same
 		// frame sequence ReplayReader.readAll() reconstructs.
 		MatchConfig config = shortMatch(42L, 400);

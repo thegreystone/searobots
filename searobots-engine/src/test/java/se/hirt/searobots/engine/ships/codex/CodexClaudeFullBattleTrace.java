@@ -99,8 +99,9 @@ public final class CodexClaudeFullBattleTrace {
 				boolean claudePing = claude.pingRequested();
 				String codexStatus = codex.status();
 				String claudeStatus = claude.status();
-				if (codexFs != lastCodexFs[0] || claudeFs != lastClaudeFs[0] || codexPing != lastCodexPing[0] || claudePing != lastClaudePing[0] || !codexStatus.equals(
-						lastCodexStatus[0]) || !claudeStatus.equals(lastClaudeStatus[0])) {
+				if (codexFs != lastCodexFs[0] || claudeFs != lastClaudeFs[0] || codexPing != lastCodexPing[0]
+						|| claudePing != lastClaudePing[0] || !codexStatus.equals(lastCodexStatus[0])
+						|| !claudeStatus.equals(lastClaudeStatus[0])) {
 					double range = codex.pose().position().distanceTo(claude.pose().position());
 					System.out.printf(Locale.US,
 							"STATE tick=%d rng=%.0f codex[hp=%d ping=%s fs=%s torps=%d %s] claude[hp=%d ping=%s fs=%s torps=%d %s]%n",
@@ -125,7 +126,8 @@ public final class CodexClaudeFullBattleTrace {
 									claude.contactEstimates().getFirst().confidence(),
 									claude.contactEstimates().getFirst().uncertaintyRadius());
 					System.out.printf(Locale.US,
-							"TICK tick=%d rng=%.0f codex[x=%.0f y=%.0f z=%.0f spd=%.1f torps=%d fs=%s %s %s] " + "claude[x=%.0f y=%.0f z=%.0f spd=%.1f torps=%d fs=%s %s %s]%n",
+							"TICK tick=%d rng=%.0f codex[x=%.0f y=%.0f z=%.0f spd=%.1f torps=%d fs=%s %s %s] "
+									+ "claude[x=%.0f y=%.0f z=%.0f spd=%.1f torps=%d fs=%s %s %s]%n",
 							tick, range, codex.pose().position().x(), codex.pose().position().y(),
 							codex.pose().position().z(), codex.speed(), codex.torpedoesRemaining(), codexFs, codexTrack,
 							codexStatus, claude.pose().position().x(), claude.pose().position().y(),

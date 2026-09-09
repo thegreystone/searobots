@@ -52,8 +52,8 @@ public class HeadlessRun {
 					double yawDeg = Math.toDegrees(s.pose().heading());
 					double pitchDeg = Math.toDegrees(s.pose().pitch());
 					// Check for crazy values
-					if (Math.abs(s.speed()) > 30 || Math.abs(s.pose().position().x()) > 20000 || Math.abs(
-							s.pose().position().y()) > 20000 || Math.abs(pitchDeg) > 60) {
+					if (Math.abs(s.speed()) > 30 || Math.abs(s.pose().position().x()) > 20000
+							|| Math.abs(s.pose().position().y()) > 20000 || Math.abs(pitchDeg) > 60) {
 						System.out.printf(
 								"ALERT tick=%d id=%d name=%s x=%.0f y=%.0f z=%.1f hdg=%.1f pitch=%.1f spd=%.1f rudder=%.2f planes=%.2f throttle=%.2f status=%s%n",
 								tick, s.id(), s.name(), s.pose().position().x(), s.pose().position().y(),

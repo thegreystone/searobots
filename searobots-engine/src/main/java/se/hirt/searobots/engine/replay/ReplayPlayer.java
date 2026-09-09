@@ -36,15 +36,16 @@ import java.util.List;
 import java.util.Objects;
 
 /**
- * Plays a recorded match back through a {@link SimulationListener} under the same control surface as a live
- * {@link SimulationLoop}. Because the viewers are {@code SimulationListener}s and this exposes {@link SimClock}, a
- * replay is driven by the exact same pause / single-step / speed controls as a live simulation, with no changes to the
- * viewer's control code.
+ * Plays a recorded match back through a {@link SimulationListener} under the same control surface
+ * as a live {@link SimulationLoop}. Because the viewers are {@code SimulationListener}s and this
+ * exposes {@link SimClock}, a replay is driven by the exact same pause / single-step / speed
+ * controls as a live simulation, with no changes to the viewer's control code.
  * <p>
- * The whole match is pre-decoded into a {@link ReplayFrame} list (see {@link ReplayReader#readAll()}), so playback is
- * pure emission: {@link #run()} walks the frames on a dedicated thread, emitting each at the recorded tick rate scaled
- * by the speed multiplier, honoring pause and single-step exactly like {@link SimulationLoop}. Fast-forward-to-event is
- * just "max speed until the fan-out pauses us", so no separate seek machinery is needed.
+ * The whole match is pre-decoded into a {@link ReplayFrame} list (see
+ * {@link ReplayReader#readAll()}), so playback is pure emission: {@link #run()} walks the frames on
+ * a dedicated thread, emitting each at the recorded tick rate scaled by the speed multiplier,
+ * honoring pause and single-step exactly like {@link SimulationLoop}. Fast-forward-to-event is just
+ * "max speed until the fan-out pauses us", so no separate seek machinery is needed.
  */
 public final class ReplayPlayer implements SimClock {
 
@@ -57,7 +58,7 @@ public final class ReplayPlayer implements SimClock {
 	private volatile boolean stepOnce;
 	private volatile boolean stopped;
 	private volatile SimulationLoop.State state = SimulationLoop.State.CREATED;
-	private volatile int index;        // next frame to emit
+	private volatile int index; // next frame to emit
 	private volatile long currentTick; // tick of the most recently emitted frame
 
 	public ReplayPlayer(List<ReplayFrame> frames, int tickRateHz, SimulationListener listener) {
@@ -67,9 +68,10 @@ public final class ReplayPlayer implements SimClock {
 	}
 
 	/**
-	 * Walks the recorded frames, emitting each to the listener at the recorded tick rate (scaled by the speed
-	 * multiplier) and honoring pause / single-step / stop. Blocks until the match ends or {@link #stop()} is called.
-	 * Always fires {@link SimulationListener#onMatchEnd()} on exit, mirroring {@link SimulationLoop}.
+	 * Walks the recorded frames, emitting each to the listener at the recorded tick rate (scaled by
+	 * the speed multiplier) and honoring pause / single-step / stop. Blocks until the match ends or
+	 * {@link #stop()} is called. Always fires {@link SimulationListener#onMatchEnd()} on exit,
+	 * mirroring {@link SimulationLoop}.
 	 */
 	public void run() {
 		state = SimulationLoop.State.INITIALIZING;

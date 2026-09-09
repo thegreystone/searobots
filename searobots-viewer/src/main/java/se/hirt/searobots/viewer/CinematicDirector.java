@@ -39,11 +39,12 @@ import java.util.*;
 import java.util.function.Supplier;
 
 /**
- * Automatic cinematic camera director. Creates dramatic, TV-broadcast-style coverage of submarine battles with no
- * player input.
- * <p>The director detects events from snapshot data (torpedo launches,
- * detonations, HP changes, proximity), selects the most dramatic camera shot, and computes camera positions. Between
- * action events, it cycles through beauty shots (orbits, fly-bys, establishing shots).
+ * Automatic cinematic camera director. Creates dramatic, TV-broadcast-style coverage of submarine
+ * battles with no player input.
+ * <p>
+ * The director detects events from snapshot data (torpedo launches, detonations, HP changes,
+ * proximity), selects the most dramatic camera shot, and computes camera positions. Between action
+ * events, it cycles through beauty shots (orbits, fly-bys, establishing shots).
  */
 final class CinematicDirector {
 
@@ -81,7 +82,7 @@ final class CinematicDirector {
 	}
 
 	record Shot(ShotType type, int subjectId, int secondaryId, float duration, float minDuration,
-	            TransitionType transition) {
+			TransitionType transition) {
 	}
 
 	// ── Scene access ──
@@ -126,7 +127,9 @@ final class CinematicDirector {
 	private int lastIdleEntityIndex = -1;
 	private final List<Integer> idleEntityIds = new ArrayList<>();
 
-	private enum IdlePhase {CLOSE_UNDERWATER, CLOSE_TOPDOWN, WIDE_OVERVIEW, PREVIEW_TOPDOWN}
+	private enum IdlePhase {
+		CLOSE_UNDERWATER, CLOSE_TOPDOWN, WIDE_OVERVIEW, PREVIEW_TOPDOWN
+	}
 
 	private IdlePhase nextIdlePhase = IdlePhase.CLOSE_UNDERWATER;
 
@@ -152,10 +155,10 @@ final class CinematicDirector {
 	private float waterOpacity = 1f;
 	private float waterOpacityTarget = 1f;
 	private float descentHoldTimer = 0f; // holds camera above surface while water fades in
-	private static final float WATER_FADE_OUT_SPEED = 0.6f;         // ~1.7s to go transparent
-	private static final float WATER_FADE_IN_SPEED = 0.3f;          // ~3.3s to go opaque (underwater-to-underwater)
-	private static final float WATER_FADE_IN_DESCENT_SPEED = 1.5f;  // ~0.67s when descending from overhead
-	private static final float DESCENT_HOLD_DURATION = 0.8f;        // hold above surface while water fades in
+	private static final float WATER_FADE_OUT_SPEED = 0.6f; // ~1.7s to go transparent
+	private static final float WATER_FADE_IN_SPEED = 0.3f; // ~3.3s to go opaque (underwater-to-underwater)
+	private static final float WATER_FADE_IN_DESCENT_SPEED = 1.5f; // ~0.67s when descending from overhead
+	private static final float DESCENT_HOLD_DURATION = 0.8f; // hold above surface while water fades in
 
 	// ── Opening fly-around state ──
 
@@ -177,8 +180,7 @@ final class CinematicDirector {
 
 	private final Random rng = new Random();
 
-	CinematicDirector(
-			Supplier<List<SubmarineSnapshot>> snapshots, Supplier<List<TorpedoSnapshot>> torpedoSnapshots,
+	CinematicDirector(Supplier<List<SubmarineSnapshot>> snapshots, Supplier<List<TorpedoSnapshot>> torpedoSnapshots,
 			Map<Integer, Node> subNodes, Map<Integer, Node> torpedoNodes, TerrainMap terrain) {
 		this.snapshotsSupplier = snapshots;
 		this.torpedoSnapshotsSupplier = torpedoSnapshots;
@@ -188,8 +190,8 @@ final class CinematicDirector {
 	}
 
 	/**
-	 * Called each frame. Detects events, evaluates shot changes, computes camera position. Returns the entity ID the
-	 * camera is tracking (for HUD).
+	 * Called each frame. Detects events, evaluates shot changes, computes camera position. Returns
+	 * the entity ID the camera is tracking (for HUD).
 	 */
 	int update(float tpf, Vector3f outPos, Vector3f outLookAt) {
 		var snapshots = snapshotsSupplier.get();
@@ -224,7 +226,8 @@ final class CinematicDirector {
 		// fade back in for all other shots. The fade-in is delayed until the
 		// camera transition is mostly complete, so the water reappears while
 		// the camera is already descending (smooth re-entry, not a hard pop).
-		boolean overheadShot = currentShot.type == ShotType.IDLE_ESTABLISHING || currentShot.type == ShotType.CONTEXT_WIDE;
+		boolean overheadShot = currentShot.type == ShotType.IDLE_ESTABLISHING
+				|| currentShot.type == ShotType.CONTEXT_WIDE;
 		// When entering from above, disable water immediately (already above it).
 		// When entering from below, wait 1 second for the camera to rise first.
 		float fadeDelay = overviewEnteredFromAbove ? 0f : 1.0f;
@@ -342,8 +345,8 @@ final class CinematicDirector {
 	}
 
 	/**
-	 * Water opacity: 1.0 = normal rendering, 0.0 = fully transparent. Establishing shots smoothly fade to 0 so the subs
-	 * become visible from above. Other shots fade back to 1.0.
+	 * Water opacity: 1.0 = normal rendering, 0.0 = fully transparent. Establishing shots smoothly
+	 * fade to 0 so the subs become visible from above. Other shots fade back to 1.0.
 	 */
 	float waterOpacity() {
 		return waterOpacity;
@@ -416,8 +419,8 @@ final class CinematicDirector {
 					shotTimer = currentShot.duration;
 				}
 
-				pendingShots.add(
-						new Shot(ShotType.DETONATION, ts.id(), nearestSub, 4.0f, minDur, TransitionType.HARD_CUT));
+				pendingShots
+						.add(new Shot(ShotType.DETONATION, ts.id(), nearestSub, 4.0f, minDur, TransitionType.HARD_CUT));
 			}
 
 			if (ts.alive() && !seenTerminal.contains(ts.id())) {
@@ -509,7 +512,9 @@ final class CinematicDirector {
 		if (expired) {
 			// If an overhead shot just finished with a queued follow-up,
 			// transition with a slow descent back into the water
-			if (afterContextShot != null && (currentShot.type == ShotType.CONTEXT_WIDE || currentShot.type == ShotType.IDLE_ESTABLISHING || currentShot.type == ShotType.OPENING_FLYAROUND)) {
+			if (afterContextShot != null
+					&& (currentShot.type == ShotType.CONTEXT_WIDE || currentShot.type == ShotType.IDLE_ESTABLISHING
+							|| currentShot.type == ShotType.OPENING_FLYAROUND)) {
 				var next = afterContextShot;
 				afterContextShot = null;
 				switchToShot(new Shot(next.type, next.subjectId, next.secondaryId, next.duration, next.minDuration,
@@ -523,8 +528,10 @@ final class CinematicDirector {
 	private void switchToShot(Shot shot) {
 		// If leaving an overhead shot, force a slow descent transition
 		// so the camera glides back into the water smoothly.
-		boolean leavingOverhead = currentShot != null && (currentShot.type == ShotType.IDLE_ESTABLISHING || currentShot.type == ShotType.CONTEXT_WIDE || currentShot.type == ShotType.OPENING_FLYAROUND);
-		if (leavingOverhead && shot.transition != TransitionType.HARD_CUT && shot.transition != TransitionType.SLOW_DESCENT) {
+		boolean leavingOverhead = currentShot != null && (currentShot.type == ShotType.IDLE_ESTABLISHING
+				|| currentShot.type == ShotType.CONTEXT_WIDE || currentShot.type == ShotType.OPENING_FLYAROUND);
+		if (leavingOverhead && shot.transition != TransitionType.HARD_CUT
+				&& shot.transition != TransitionType.SLOW_DESCENT) {
 			shot = new Shot(shot.type, shot.subjectId, shot.secondaryId, shot.duration, shot.minDuration,
 					TransitionType.SLOW_DESCENT);
 		}
@@ -641,8 +648,7 @@ final class CinematicDirector {
 	// ── Camera Computation ──
 
 	private void computeShot(
-			float tpf, List<SubmarineSnapshot> subs, List<TorpedoSnapshot> torps, Vector3f outPos,
-			Vector3f outLookAt) {
+		float tpf, List<SubmarineSnapshot> subs, List<TorpedoSnapshot> torps, Vector3f outPos, Vector3f outLookAt) {
 
 		switch (currentShot.type) {
 		case DETONATION -> computeDetonation(tpf, outPos, outLookAt);
@@ -754,8 +760,7 @@ final class CinematicDirector {
 	}
 
 	private void computeTorpedoTerminal(
-			float tpf, List<SubmarineSnapshot> subs, List<TorpedoSnapshot> torps,
-			Vector3f outPos, Vector3f outLookAt) {
+		float tpf, List<SubmarineSnapshot> subs, List<TorpedoSnapshot> torps, Vector3f outPos, Vector3f outLookAt) {
 		// Circular orbit around the midpoint of torpedo and target, keeping both in view.
 		Node torpNode = torpedoNodes.get(currentShot.subjectId);
 		Node targetNode = currentShot.secondaryId >= 0 ? subNodes.get(currentShot.secondaryId) : null;
@@ -783,8 +788,7 @@ final class CinematicDirector {
 	}
 
 	private void computeChaseShot(
-			List<SubmarineSnapshot> subs, Vector3f outPos, Vector3f outLookAt, float asternDist,
-			float aboveHeight) {
+		List<SubmarineSnapshot> subs, Vector3f outPos, Vector3f outLookAt, float asternDist, float aboveHeight) {
 		Node node = subNodes.get(currentShot.subjectId);
 		if (node == null) {
 			// Might be a torpedo ID that got used for launch shot
@@ -847,8 +851,7 @@ final class CinematicDirector {
 	}
 
 	private void computeContextWide(
-			float tpf, List<SubmarineSnapshot> subs, List<TorpedoSnapshot> torps,
-			Vector3f outPos, Vector3f outLookAt) {
+		float tpf, List<SubmarineSnapshot> subs, List<TorpedoSnapshot> torps, Vector3f outPos, Vector3f outLookAt) {
 		// High-altitude shot centered on the midpoint between all active subs.
 		// Camera height scales with the distance between subs so both are visible.
 		if (subs.isEmpty()) {
@@ -1013,9 +1016,10 @@ final class CinematicDirector {
 
 	private boolean isUnderwaterShot(ShotType type) {
 		return switch (type) {
-			case IDLE_ORBIT, IDLE_FLY_BY, TORPEDO_TRACK, TORPEDO_LAUNCH, TORPEDO_TERMINAL, NEAR_MISS, PING_DETECTION,
-			     SUB_DEATH, DETONATION -> true;
-			case OPENING_FLYAROUND, CONTEXT_WIDE, IDLE_ESTABLISHING -> false;
+		case IDLE_ORBIT, IDLE_FLY_BY, TORPEDO_TRACK, TORPEDO_LAUNCH, TORPEDO_TERMINAL, NEAR_MISS, PING_DETECTION,
+				SUB_DEATH, DETONATION ->
+			true;
+		case OPENING_FLYAROUND, CONTEXT_WIDE, IDLE_ESTABLISHING -> false;
 		};
 	}
 

@@ -40,20 +40,23 @@ import java.util.Map;
 import static se.hirt.searobots.engine.replay.ReplayFormat.*;
 
 /**
- * Single source of truth for the on-disk shape of every replay record. Both {@link ReplayWriter} (encode) and
- * {@link ReplayReader} (decode) go through this class, so the two directions cannot drift apart.
+ * Single source of truth for the on-disk shape of every replay record. Both {@link ReplayWriter}
+ * (encode) and {@link ReplayReader} (decode) go through this class, so the two directions cannot
+ * drift apart.
  * <p>
- * Each record tag has an ordered list of {@link Col}s with a name and a unit. The writer emits these as {@code COLS}
- * lines in the header, making the file fully self-describing: any reader (Java, JavaScript, or an LLM) can interpret
- * the columns and their units from the header alone, with nothing external.
+ * Each record tag has an ordered list of {@link Col}s with a name and a unit. The writer emits
+ * these as {@code COLS} lines in the header, making the file fully self-describing: any reader
+ * (Java, JavaScript, or an LLM) can interpret the columns and their units from the header alone,
+ * with nothing external.
  * <p>
- * Decoding is <b>by column name</b>, resolved against the schema declared in the file (not against hardcoded
- * positions). That is what lets a reader built for one version still read the common columns of a file written by a
- * later version that appended new columns: {@link #VERSION} gates incompatible changes, but additive columns degrade
- * gracefully.
+ * Decoding is <b>by column name</b>, resolved against the schema declared in the file (not against
+ * hardcoded positions). That is what lets a reader built for one version still read the common
+ * columns of a file written by a later version that appended new columns: {@link #VERSION} gates
+ * incompatible changes, but additive columns degrade gracefully.
  * <p>
- * Conceptually each tag is its own rectangular table; the file interleaves them in tick order for streaming replay. A
- * separate analysis pass can split them back into per-tag tables joined on {@code (seed, tick)} for SQL/DuckDB.
+ * Conceptually each tag is its own rectangular table; the file interleaves them in tick order for
+ * streaming replay. A separate analysis pass can split them back into per-tag tables joined on
+ * {@code (seed, tick)} for SQL/DuckDB.
  */
 public final class ReplayCodec {
 
@@ -91,7 +94,10 @@ public final class ReplayCodec {
 	public static final List<Col> WAYPOINT_COLS = List.of(c("x", "m"), c("y", "m"), c("z", "m"), c("active", "bool"),
 			c("reverse", "bool"));
 
-	/** Firing-solution line ({@code f}); child of the preceding {@code s}, at most one per sub per frame. */
+	/**
+	 * Firing-solution line ({@code f}); child of the preceding {@code s}, at most one per sub per
+	 * frame.
+	 */
 	public static final List<Col> FIRING_COLS = List.of(c("targetX", "m"), c("targetY", "m"), c("targetHeading", "rad"),
 			c("targetSpeed", "m/s"), c("quality", "frac"));
 
@@ -125,9 +131,10 @@ public final class ReplayCodec {
 	// ---- Schema (resolved from a file's COLS line) ----
 
 	/**
-	 * A column layout resolved from a file, mapping column name to its absolute index in a tab-split data line (the
-	 * leading record tag is index 0, so the first declared column is index 1). Reading by name through this is what
-	 * gives forward compatibility with additive schema changes.
+	 * A column layout resolved from a file, mapping column name to its absolute index in a
+	 * tab-split data line (the leading record tag is index 0, so the first declared column is index
+	 * 1). Reading by name through this is what gives forward compatibility with additive schema
+	 * changes.
 	 */
 	public static final class Schema {
 		private final Map<String, Integer> indexByName = new HashMap<>();

@@ -51,26 +51,26 @@ public final class SubmarineEntity implements SubmarineOutput {
 	private int hp;
 	private boolean forfeited;
 	private double noiseLevel;
-	private double sourceLevelDb;           // radiated noise in dB, computed by physics
-	private double actualBallast = 0.5;     // physical ballast state (lags behind commanded)
+	private double sourceLevelDb; // radiated noise in dB, computed by physics
+	private double actualBallast = 0.5; // physical ballast state (lags behind commanded)
 	private double previousActualBallast = 0.5; // for tracking ballast change rate
-	private double actualThrottle;               // physical engine state (lags behind commanded)
-	private double swaySpeed;                    // lateral velocity from turning (m/s)
-	private double yawRate;                      // angular velocity around vertical axis (rad/s)
-	private double pitchRate;                    // angular velocity around lateral axis (rad/s)
+	private double actualThrottle; // physical engine state (lags behind commanded)
+	private double swaySpeed; // lateral velocity from turning (m/s)
+	private double yawRate; // angular velocity around vertical axis (rad/s)
+	private double pitchRate; // angular velocity around lateral axis (rad/s)
 
 	// sonar state
 	private boolean pingRequested;
 	private int activeSonarCooldown;
 
 	// actuators (written by controller each tick)
-	private double rudder;           // commanded (-1..1)
-	private double actualRudder;     // slew-limited actual position
-	private double sternPlanes;      // commanded (-1..1)
+	private double rudder; // commanded (-1..1)
+	private double actualRudder; // slew-limited actual position
+	private double sternPlanes; // commanded (-1..1)
 	private double actualSternPlanes; // slew-limited actual position
 	private double throttle;
 	private double ballast = 0.5;
-	private boolean engineClutch = true;  // true = engaged
+	private boolean engineClutch = true; // true = engaged
 	private String status = "";
 
 	// contact estimates (published by controller, cleared each tick)
@@ -93,8 +93,7 @@ public final class SubmarineEntity implements SubmarineOutput {
 	private TorpedoLaunchCommand pendingTorpedoLaunch;
 	private int launchTransientTicks; // noise spike after launch
 
-	public SubmarineEntity(
-			VehicleConfig vehicleConfig, int id, SubmarineController controller, Vec3 spawn,
+	public SubmarineEntity(VehicleConfig vehicleConfig, int id, SubmarineController controller, Vec3 spawn,
 			double heading, Color color, int maxHp) {
 		this.vehicleConfig = vehicleConfig;
 		this.id = id;

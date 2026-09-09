@@ -268,7 +268,9 @@ public final class CodexAttackSub implements SubmarineController {
 		boolean modeChanged = mode != previousMode;
 
 		if (torpedoThreatActive) {
-			boolean needPlan = modeChanged || strategicWaypoints.isEmpty() || autopilot.isBlocked() || autopilot.hasArrived() || lastTorpedoThreatTick > lastCombatPlanTick || tick - lastCombatPlanTick > 90L;
+			boolean needPlan = modeChanged || strategicWaypoints.isEmpty() || autopilot.isBlocked()
+					|| autopilot.hasArrived() || lastTorpedoThreatTick > lastCombatPlanTick
+					|| tick - lastCombatPlanTick > 90L;
 			if (needPlan) {
 				StrategicWaypoint wp = planTorpedoDefenseWaypoint(pos.x(), pos.y(), pos.z(), heading, speed);
 				strategicWaypoints = List.of(wp);
@@ -299,7 +301,8 @@ public final class CodexAttackSub implements SubmarineController {
 				lastProgressTick = tick;
 			}
 		} else if (mode != Mode.PATROL && hasTrackedContact) {
-			boolean needPlan = modeChanged || strategicWaypoints.isEmpty() || autopilot.isBlocked() || autopilot.hasArrived();
+			boolean needPlan = modeChanged || strategicWaypoints.isEmpty() || autopilot.isBlocked()
+					|| autopilot.hasArrived();
 
 			if (!needPlan && !Double.isNaN(lastCombatTargetX)) {
 				double moved = CodexAutopilot.hdist(trackedX, trackedY, lastCombatTargetX, lastCombatTargetY);
@@ -323,7 +326,8 @@ public final class CodexAttackSub implements SubmarineController {
 				lastCombatTargetY = wp.y();
 			}
 		} else {
-			boolean needPlan = modeChanged || strategicWaypoints.isEmpty() || autopilot.isBlocked() || autopilot.hasArrived();
+			boolean needPlan = modeChanged || strategicWaypoints.isEmpty() || autopilot.isBlocked()
+					|| autopilot.hasArrived();
 
 			if (!needPlan && !strategicWaypoints.isEmpty()) {
 				double dist = autopilot.distanceToStrategic(pos.x(), pos.y());
@@ -417,8 +421,8 @@ public final class CodexAttackSub implements SubmarineController {
 		bearings.add(CodexAutopilot.norm(toCenter + Math.toRadians(28.0)));
 		bearings.add(CodexAutopilot.norm(toCenter - Math.toRadians(28.0)));
 
-		double[] distances =
-				firstLeg ? new double[] {1_400.0, 1_800.0, 2_200.0} : new double[] {2_600.0, 3_400.0, 4_200.0};
+		double[] distances = firstLeg ? new double[] {1_400.0, 1_800.0, 2_200.0}
+				: new double[] {2_600.0, 3_400.0, 4_200.0};
 
 		double bestScore = Double.NEGATIVE_INFINITY;
 		double bestX = x;
@@ -457,10 +461,10 @@ public final class CodexAttackSub implements SubmarineController {
 				double boundary = battleArea.distanceToBoundary(tx, ty);
 				double centerWeight = currentBoundary < PATROL_MARGIN + 600.0 ? 180.0 : 35.0;
 
-				double score = alignment * (firstLeg ? 520.0 : 460.0) + continuity * (firstLeg ? 140.0
-						: 220.0) + sweep * (firstLeg ? 20.0 : 70.0) + centering * centerWeight + Math.min(boundary,
-						2200.0) * 0.18 + Math.min(floorDepth, 550.0) * 0.65 - Math.abs(dist - desiredDist) * (firstLeg
-						? 0.06 : 0.08) - (pathRatio - 1.0) * 1800.0;
+				double score = alignment * (firstLeg ? 520.0 : 460.0) + continuity * (firstLeg ? 140.0 : 220.0)
+						+ sweep * (firstLeg ? 20.0 : 70.0) + centering * centerWeight
+						+ Math.min(boundary, 2200.0) * 0.18 + Math.min(floorDepth, 550.0) * 0.65
+						- Math.abs(dist - desiredDist) * (firstLeg ? 0.06 : 0.08) - (pathRatio - 1.0) * 1800.0;
 
 				if (!Double.isNaN(lastTargetX)) {
 					double sep = CodexAutopilot.hdist(tx, ty, lastTargetX, lastTargetY);
@@ -536,14 +540,13 @@ public final class CodexAttackSub implements SubmarineController {
 
 	private double trackContactScore(SonarContact contact, boolean active) {
 		return switch (contact.classification()) {
-			case TORPEDO -> Double.NEGATIVE_INFINITY;
-			case SUBMARINE ->
-					(active ? 1_000.0 : 0.0) + contact.signalExcess() + 180.0 + Math.max(contact.solutionQuality(),
-							0.0) * 120.0;
-			case SURFACE_SHIP ->
-					(active ? 1_000.0 : 0.0) + contact.signalExcess() + Math.max(contact.solutionQuality(), 0.0) * 40.0;
-			case UNKNOWN ->
-					(active ? 1_000.0 : 0.0) + contact.signalExcess() + Math.max(contact.solutionQuality(), 0.0) * 60.0;
+		case TORPEDO -> Double.NEGATIVE_INFINITY;
+		case SUBMARINE -> (active ? 1_000.0 : 0.0) + contact.signalExcess() + 180.0
+				+ Math.max(contact.solutionQuality(), 0.0) * 120.0;
+		case SURFACE_SHIP ->
+			(active ? 1_000.0 : 0.0) + contact.signalExcess() + Math.max(contact.solutionQuality(), 0.0) * 40.0;
+		case UNKNOWN ->
+			(active ? 1_000.0 : 0.0) + contact.signalExcess() + Math.max(contact.solutionQuality(), 0.0) * 60.0;
 		};
 	}
 
@@ -599,8 +602,8 @@ public final class CodexAttackSub implements SubmarineController {
 		double ty = pos.y() + range * Math.cos(bestContact.bearing());
 
 		if (hasTrackedContact) {
-			double blend =
-					bestContact.isActive() ? 1.0 : Math.clamp(0.08 + bestContact.solutionQuality() * 0.28, 0.08, 0.36);
+			double blend = bestContact.isActive() ? 1.0
+					: Math.clamp(0.08 + bestContact.solutionQuality() * 0.28, 0.08, 0.36);
 			trackedX = trackedX * (1.0 - blend) + tx * blend;
 			trackedY = trackedY * (1.0 - blend) + ty * blend;
 		} else {
@@ -626,16 +629,15 @@ public final class CodexAttackSub implements SubmarineController {
 					range * Math.max(bestContact.bearingUncertainty(), Math.toRadians(6.0)) * 2.5);
 			passiveSpread = Math.max(passiveSpread,
 					range * (1.0 - Math.clamp(bestContact.solutionQuality(), 0.05, 0.95)) * 0.55);
-			boolean recentActiveTrack = hasRecentActiveTrack(tick, ACTIVE_TRACK_MEMORY_TICKS) && isTrackContact(
-					bestContact);
+			boolean recentActiveTrack = hasRecentActiveTrack(tick, ACTIVE_TRACK_MEMORY_TICKS)
+					&& isTrackContact(bestContact);
 			if (recentActiveTrack) {
 				double secondsSinceFix = Math.max(0.0, tick - trackedLastFixTick) / 50.0;
 				double activeMemorySpread = Math.max(250.0,
 						refUncertainty + config.maxSubSpeed() * secondsSinceFix * 1.25);
 				passiveSpread = Math.min(passiveSpread, Math.max(activeMemorySpread, refUncertainty));
-				uncertaintyRadius =
-						hasTrackedContact ? Math.min(passiveSpread, Math.max(uncertaintyRadius, activeMemorySpread))
-								: passiveSpread;
+				uncertaintyRadius = hasTrackedContact
+						? Math.min(passiveSpread, Math.max(uncertaintyRadius, activeMemorySpread)) : passiveSpread;
 			} else {
 				uncertaintyRadius = hasTrackedContact ? Math.max(250.0, uncertaintyRadius * 0.7 + passiveSpread * 0.3)
 						: passiveSpread;
@@ -657,9 +659,14 @@ public final class CodexAttackSub implements SubmarineController {
 		double trackedDist = CodexAutopilot.hdist(pos.x(), pos.y(), trackedX, trackedY);
 		boolean freshActiveFix = hasFreshActiveFix(tick, 300L);
 		boolean recentActiveTrack = hasRecentActiveTrack(tick, ACTIVE_TRACK_MEMORY_TICKS);
-		if (freshActiveFix || (recentActiveTrack && trackedDist < ACTIVE_MEMORY_REACQUIRE_RANGE && uncertaintyRadius < 900.0) || trackedSolutionQuality > TMA_SETUP_QUALITY || (trackedSolutionQuality > 0.42 && trackedDist < CHASE_RANGE && ticksSinceContact < 400) || (uncertaintyRadius < 425.0 && ticksSinceContact < 300)) {
+		if (freshActiveFix
+				|| (recentActiveTrack && trackedDist < ACTIVE_MEMORY_REACQUIRE_RANGE && uncertaintyRadius < 900.0)
+				|| trackedSolutionQuality > TMA_SETUP_QUALITY
+				|| (trackedSolutionQuality > 0.42 && trackedDist < CHASE_RANGE && ticksSinceContact < 400)
+				|| (uncertaintyRadius < 425.0 && ticksSinceContact < 300)) {
 			mode = Mode.CHASE;
-		} else if (hasTrackedContact && (consecutiveContactTicks >= CONTACT_CONFIRM_TICKS || (contactAlive > 0.02 && ticksSinceContact < 3_000))) {
+		} else if (hasTrackedContact && (consecutiveContactTicks >= CONTACT_CONFIRM_TICKS
+				|| (contactAlive > 0.02 && ticksSinceContact < 3_000))) {
 			mode = Mode.TRACK;
 		} else {
 			mode = Mode.PATROL;
@@ -667,8 +674,7 @@ public final class CodexAttackSub implements SubmarineController {
 	}
 
 	private StrategicWaypoint planCombatWaypoint(
-			double x, double y, double z, double heading, double speed,
-			long tick) {
+		double x, double y, double z, double heading, double speed, long tick) {
 		double dist = CodexAutopilot.hdist(x, y, trackedX, trackedY);
 		double cruiseDepth = autopilot != null ? autopilot.cruiseDepth() : -220.0;
 		double targetX = trackedX;
@@ -688,9 +694,8 @@ public final class CodexAttackSub implements SubmarineController {
 			double passiveRange = passivePlanningRange(x, y);
 			double sideA = CodexAutopilot.norm(bearing + Math.PI / 2.0);
 			double sideB = CodexAutopilot.norm(bearing - Math.PI / 2.0);
-			double chosen =
-					Math.abs(CodexAutopilot.adiff(sideA, heading)) > Math.abs(CodexAutopilot.adiff(sideB, heading))
-							? sideA : sideB;
+			double chosen = Math.abs(CodexAutopilot.adiff(sideA, heading)) > Math
+					.abs(CodexAutopilot.adiff(sideB, heading)) ? sideA : sideB;
 			double forwardDist = trackedSolutionQuality < 0.25 ? Math.clamp(passiveRange * 0.18, 350.0, 800.0)
 					: Math.clamp(passiveRange * 0.28, 500.0, 1_100.0);
 			double crossDist = trackedSolutionQuality < 0.25 ? Math.clamp(passiveRange * 0.40, 950.0, 1_800.0)
@@ -710,9 +715,8 @@ public final class CodexAttackSub implements SubmarineController {
 				double centerBearing = CodexAutopilot.norm(Math.atan2(-trackedX, -trackedY));
 				double sideA = CodexAutopilot.norm(trackedHeading + Math.PI / 2.0);
 				double sideB = CodexAutopilot.norm(trackedHeading - Math.PI / 2.0);
-				double chosen =
-						Math.abs(CodexAutopilot.adiff(sideA, heading)) < Math.abs(CodexAutopilot.adiff(sideB, heading))
-								? sideA : sideB;
+				double chosen = Math.abs(CodexAutopilot.adiff(sideA, heading)) < Math
+						.abs(CodexAutopilot.adiff(sideB, heading)) ? sideA : sideB;
 				targetX += Math.sin(centerBearing) * CENTER_PULL_DISTANCE + Math.sin(chosen) * INTERCEPT_SIDE_OFFSET;
 				targetY += Math.cos(centerBearing) * CENTER_PULL_DISTANCE + Math.cos(chosen) * INTERCEPT_SIDE_OFFSET;
 				noise = NoisePolicy.SPRINT;
@@ -722,8 +726,8 @@ public final class CodexAttackSub implements SubmarineController {
 				double awayBearing = CodexAutopilot.norm(Math.atan2(x - trackedX, y - trackedY));
 				double backX = trackedX + Math.sin(awayBearing) * SHADOW_RANGE;
 				double backY = trackedY + Math.cos(awayBearing) * SHADOW_RANGE;
-				if (battleArea.distanceToBoundary(backX, backY) > PATROL_MARGIN / 2.0 && pathPlanner.isSafe(backX,
-						backY)) {
+				if (battleArea.distanceToBoundary(backX, backY) > PATROL_MARGIN / 2.0
+						&& pathPlanner.isSafe(backX, backY)) {
 					targetX = backX;
 					targetY = backY;
 					purpose = Purpose.EVADE;
@@ -740,8 +744,8 @@ public final class CodexAttackSub implements SubmarineController {
 					double sternOffset = dist < SHADOW_RANGE ? STERN_OFFSET + 250.0 : STERN_OFFSET;
 					double sternX = targetX - Math.sin(trackedHeading) * sternOffset;
 					double sternY = targetY - Math.cos(trackedHeading) * sternOffset;
-					if (battleArea.distanceToBoundary(sternX, sternY) > PATROL_MARGIN / 2.0 && pathPlanner.isSafe(
-							sternX, sternY)) {
+					if (battleArea.distanceToBoundary(sternX, sternY) > PATROL_MARGIN / 2.0
+							&& pathPlanner.isSafe(sternX, sternY)) {
 						targetX = sternX;
 						targetY = sternY;
 					}
@@ -769,9 +773,9 @@ public final class CodexAttackSub implements SubmarineController {
 	}
 
 	private StrategicWaypoint planEgressWaypoint(
-			double x, double y, double z, double heading, double dist,
-			double cruiseDepth, long tick) {
-		boolean recentLaunch = tick - lastTorpedoLaunchTick < TORPEDO_POST_LAUNCH_EGRESS_TICKS && dist < TORPEDO_MAX_RANGE + 900.0;
+		double x, double y, double z, double heading, double dist, double cruiseDepth, long tick) {
+		boolean recentLaunch = tick - lastTorpedoLaunchTick < TORPEDO_POST_LAUNCH_EGRESS_TICKS
+				&& dist < TORPEDO_MAX_RANGE + 900.0;
 		boolean recentDamage = tick - lastDamageTakenTick < DAMAGE_EGRESS_TICKS;
 		if (!recentLaunch && !recentDamage) {
 			return null;
@@ -810,8 +814,9 @@ public final class CodexAttackSub implements SubmarineController {
 			double routeBearing = CodexAutopilot.norm(Math.atan2(tx - x, ty - y));
 			double routeDistance = CodexAutopilot.hdist(x, y, tx, ty);
 			double floorDepth = Math.abs(terrain.elevationAt(tx, ty));
-			double score = boundary * 0.22 + Math.min(floorDepth, 500.0) * 0.45 + Math.min(routeDistance, 2_800.0) * (
-					recentDamage ? 0.08 : 0.05) - Math.abs(CodexAutopilot.adiff(routeBearing, heading)) * 130.0;
+			double score = boundary * 0.22 + Math.min(floorDepth, 500.0) * 0.45
+					+ Math.min(routeDistance, 2_800.0) * (recentDamage ? 0.08 : 0.05)
+					- Math.abs(CodexAutopilot.adiff(routeBearing, heading)) * 130.0;
 			double lateralAspect = 1.0 - Math.abs(Math.cos(CodexAutopilot.adiff(candidateBearing, awayBearing)));
 			score += lateralAspect * 150.0;
 			if (!Double.isNaN(trackedHeading)) {
@@ -840,9 +845,8 @@ public final class CodexAttackSub implements SubmarineController {
 
 	private StrategicWaypoint planTorpedoDefenseWaypoint(double x, double y, double z, double heading, double speed) {
 		double threatBearing = Double.isNaN(lastTorpedoThreatBearing) ? heading : lastTorpedoThreatBearing;
-		double threatRange =
-				Double.isFinite(lastTorpedoThreatRange) && lastTorpedoThreatRange > 0.0 ? lastTorpedoThreatRange
-						: 950.0;
+		double threatRange = Double.isFinite(lastTorpedoThreatRange) && lastTorpedoThreatRange > 0.0
+				? lastTorpedoThreatRange : 950.0;
 		double runDistance = Math.clamp(threatRange * 0.75, 700.0, 1_450.0);
 		double cruiseDepth = autopilot != null ? autopilot.cruiseDepth() : -220.0;
 
@@ -871,8 +875,8 @@ public final class CodexAttackSub implements SubmarineController {
 			double headingPenalty = Math.abs(CodexAutopilot.adiff(routeBearing, heading));
 			double threatAlignment = 1.0 + Math.cos(CodexAutopilot.adiff(candidateBearing, threatBearing));
 			double floorDepth = Math.abs(terrain.elevationAt(tx, ty));
-			double score = threatAlignment * 260.0 + Math.min(boundary, 2_000.0) * 0.18 + Math.min(floorDepth,
-					500.0) * 0.42 - headingPenalty * 120.0;
+			double score = threatAlignment * 260.0 + Math.min(boundary, 2_000.0) * 0.18
+					+ Math.min(floorDepth, 500.0) * 0.42 - headingPenalty * 120.0;
 			if (hasTrackedContact) {
 				double enemyBearing = CodexAutopilot.norm(Math.atan2(trackedX - x, trackedY - y));
 				double lateralAspect = 1.0 - Math.abs(Math.cos(CodexAutopilot.adiff(candidateBearing, enemyBearing)));
@@ -922,15 +926,19 @@ public final class CodexAttackSub implements SubmarineController {
 			boolean recentActiveTrack = hasRecentActiveTrack(tick, ACTIVE_TRACK_MEMORY_TICKS);
 			boolean firingSetup = trackedSolutionQuality > TMA_SETUP_QUALITY || uncertaintyRadius < 500.0;
 			boolean closePassiveTrack = trackedSolutionQuality > 0.42 && trackedDist < TORPEDO_MAX_RANGE + 600.0;
-			boolean chaseReacquire = recentActiveTrack && trackedDist < ACTIVE_MEMORY_REACQUIRE_RANGE && uncertaintyRadius > Math.max(
-					refUncertainty + 120.0, 380.0);
-			boolean longRangeFix = trackedDist < ACTIVE_MEMORY_REACQUIRE_RANGE && trackedSolutionQuality > 0.30 && uncertaintyRadius > Math.max(
-					refUncertainty + 100.0, 320.0) && ticksSinceFix > 350L;
+			boolean chaseReacquire = recentActiveTrack && trackedDist < ACTIVE_MEMORY_REACQUIRE_RANGE
+					&& uncertaintyRadius > Math.max(refUncertainty + 120.0, 380.0);
+			boolean longRangeFix = trackedDist < ACTIVE_MEMORY_REACQUIRE_RANGE && trackedSolutionQuality > 0.30
+					&& uncertaintyRadius > Math.max(refUncertainty + 100.0, 320.0) && ticksSinceFix > 350L;
 			boolean contactCooling = tick - lastContactTick > 300L;
-			shouldPing = (sincePing >= TRACK_PING_INTERVAL && (firingSetup || closePassiveTrack || chaseReacquire || longRangeFix)) || (contactCooling && sincePing >= PATROL_PING_INTERVAL);
+			shouldPing = (sincePing >= TRACK_PING_INTERVAL
+					&& (firingSetup || closePassiveTrack || chaseReacquire || longRangeFix))
+					|| (contactCooling && sincePing >= PATROL_PING_INTERVAL);
 		} else {
-			boolean urgentCloseFix = trackedDist < TORPEDO_THREAT_SNAPSHOT_RANGE && (ticksSinceFix > 80L || uncertaintyRadius > 220.0 || tick - lastDamageTakenTick < 240L);
-			shouldPing = (!postLaunchEgress && sincePing >= TRACK_PING_INTERVAL) || trackedDist < FIRING_RANGE + 200.0 || urgentCloseFix || ticksSinceFix > STALE_CONTACT_TICKS || uncertaintyRadius > 450.0;
+			boolean urgentCloseFix = trackedDist < TORPEDO_THREAT_SNAPSHOT_RANGE
+					&& (ticksSinceFix > 80L || uncertaintyRadius > 220.0 || tick - lastDamageTakenTick < 240L);
+			shouldPing = (!postLaunchEgress && sincePing >= TRACK_PING_INTERVAL) || trackedDist < FIRING_RANGE + 200.0
+					|| urgentCloseFix || ticksSinceFix > STALE_CONTACT_TICKS || uncertaintyRadius > 450.0;
 		}
 
 		if (shouldPing) {
@@ -982,8 +990,7 @@ public final class CodexAttackSub implements SubmarineController {
 	}
 
 	private void updateTorpedoThreat(
-			List<SonarContact> passive, List<SonarContact> active, double ownHeading,
-			long tick) {
+		List<SonarContact> passive, List<SonarContact> active, double ownHeading, long tick) {
 		torpedoThreat = detectTorpedoThreat(passive, active, ownHeading, tick);
 		if (torpedoThreat != null) {
 			lastTorpedoThreatTick = tick;
@@ -998,8 +1005,7 @@ public final class CodexAttackSub implements SubmarineController {
 	}
 
 	private SonarContact detectTorpedoThreat(
-			List<SonarContact> passive, List<SonarContact> active, double ownHeading,
-			long tick) {
+		List<SonarContact> passive, List<SonarContact> active, double ownHeading, long tick) {
 		SonarContact best = null;
 		double bestScore = Double.NEGATIVE_INFINITY;
 		double activeEngagementRange = activeEngagementRange(active);
@@ -1021,20 +1027,19 @@ public final class CodexAttackSub implements SubmarineController {
 	}
 
 	private double torpedoThreatScore(
-			SonarContact contact, double ownHeading, long tick,
-			double activeEngagementRange) {
+		SonarContact contact, double ownHeading, long tick, double activeEngagementRange) {
 		if (contact.classification() != SonarContact.Classification.TORPEDO) {
 			return Double.NEGATIVE_INFINITY;
 		}
-		if (!contact.isActive() && contact.signalExcess() < TORPEDO_PASSIVE_CONFIRM_SIGNAL && !passiveTorpedoThreatConfirmed(
-				activeEngagementRange, tick)) {
+		if (!contact.isActive() && contact.signalExcess() < TORPEDO_PASSIVE_CONFIRM_SIGNAL
+				&& !passiveTorpedoThreatConfirmed(activeEngagementRange, tick)) {
 			return Double.NEGATIVE_INFINITY;
 		}
 		if (looksLikeOwnOutboundTorpedo(contact, ownHeading, tick)) {
 			return Double.NEGATIVE_INFINITY;
 		}
-		double score = (contact.isActive() ? 1_000.0 : 0.0) + contact.signalExcess() + Math.min(
-				Math.max(contact.estimatedSpeed(), 0.0), 30.0);
+		double score = (contact.isActive() ? 1_000.0 : 0.0) + contact.signalExcess()
+				+ Math.min(Math.max(contact.estimatedSpeed(), 0.0), 30.0);
 		if (contact.range() > 0.0) {
 			score += Math.max(0.0, TORPEDO_THREAT_MAX_ACTIVE_RANGE - contact.range()) * 0.06;
 		}
@@ -1056,7 +1061,8 @@ public final class CodexAttackSub implements SubmarineController {
 			return true;
 		}
 		double secondsSinceLaunch = Math.max(0.0, ageTicks) / 50.0;
-		double maxExpectedRange = OWN_TORPEDO_ACTIVE_RANGE_MARGIN + (OWN_TORPEDO_RELATIVE_SPEED + config.maxSubSpeed()) * secondsSinceLaunch;
+		double maxExpectedRange = OWN_TORPEDO_ACTIVE_RANGE_MARGIN
+				+ (OWN_TORPEDO_RELATIVE_SPEED + config.maxSubSpeed()) * secondsSinceLaunch;
 		return contact.range() <= Math.min(TORPEDO_THREAT_MAX_ACTIVE_RANGE, maxExpectedRange);
 	}
 
@@ -1103,8 +1109,8 @@ public final class CodexAttackSub implements SubmarineController {
 			desiredBearing = centerBearing;
 			throttle = 0.92;
 		} else {
-			double ringAngle = Math.atan2(pos.x(), pos.y()) + (searchClockwise ? SEARCH_RING_AHEAD_ANGLE
-					: -SEARCH_RING_AHEAD_ANGLE);
+			double ringAngle = Math.atan2(pos.x(), pos.y())
+					+ (searchClockwise ? SEARCH_RING_AHEAD_ANGLE : -SEARCH_RING_AHEAD_ANGLE);
 			double tx = Math.sin(ringAngle) * SEARCH_RING_RADIUS;
 			double ty = Math.cos(ringAngle) * SEARCH_RING_RADIUS;
 			desiredBearing = CodexAutopilot.norm(Math.atan2(tx - pos.x(), ty - pos.y()));
@@ -1208,8 +1214,7 @@ public final class CodexAttackSub implements SubmarineController {
 	}
 
 	private void launchTorpedoIfReady(
-			SubmarineInput input, SubmarineOutput output, Vec3 pos, double ownHeading,
-			long tick) {
+		SubmarineInput input, SubmarineOutput output, Vec3 pos, double ownHeading, long tick) {
 		if (input.self().torpedoesRemaining() <= 0 || tick < TORPEDO_ARMING_DELAY_TICKS) {
 			return;
 		}
@@ -1287,12 +1292,15 @@ public final class CodexAttackSub implements SubmarineController {
 			}
 		}
 
-		boolean finisherWindow = trackedDist <= TORPEDO_FINISH_RANGE && absLeadHeadingError <= (behind ? Math.toRadians(
-				30.0) : Math.toRadians(18.0)) && shotUncertainty <= (behind ? 230.0 : 170.0);
-		boolean commitWindow = trackedDist <= TORPEDO_COMMIT_RANGE && absLeadHeadingError <= (behind ? Math.toRadians(
-				22.0) : Math.toRadians(14.0)) && shotUncertainty <= (behind ? 200.0 : 140.0);
-		boolean threatSnapshotWindow = torpedoThreatActive && trackedDist <= TORPEDO_THREAT_SNAPSHOT_RANGE && (commitWindow || finisherWindow || (behind && absLeadHeadingError <= Math.toRadians(
-				24.0) && shotUncertainty <= 190.0));
+		boolean finisherWindow = trackedDist <= TORPEDO_FINISH_RANGE
+				&& absLeadHeadingError <= (behind ? Math.toRadians(30.0) : Math.toRadians(18.0))
+				&& shotUncertainty <= (behind ? 230.0 : 170.0);
+		boolean commitWindow = trackedDist <= TORPEDO_COMMIT_RANGE
+				&& absLeadHeadingError <= (behind ? Math.toRadians(22.0) : Math.toRadians(14.0))
+				&& shotUncertainty <= (behind ? 200.0 : 140.0);
+		boolean threatSnapshotWindow = torpedoThreatActive && trackedDist <= TORPEDO_THREAT_SNAPSHOT_RANGE
+				&& (commitWindow || finisherWindow
+						|| (behind && absLeadHeadingError <= Math.toRadians(24.0) && shotUncertainty <= 190.0));
 		if (torpedoThreatActive && !threatSnapshotWindow) {
 			return;
 		}
@@ -1362,8 +1370,8 @@ public final class CodexAttackSub implements SubmarineController {
 	}
 
 	private boolean canSpendTorpedo(
-			int torpedoesRemaining, double trackedDist, boolean lateMatch,
-			boolean finisherWindow, boolean commitWindow, boolean recentConfirmedHit) {
+		int torpedoesRemaining, double trackedDist, boolean lateMatch, boolean finisherWindow, boolean commitWindow,
+		boolean recentConfirmedHit) {
 		int reserve = trackedDist > 2_600.0 ? 3 : 2;
 		if (lateMatch) {
 			reserve = Math.min(reserve, 1);
@@ -1398,8 +1406,7 @@ public final class CodexAttackSub implements SubmarineController {
 	}
 
 	private double selectFuseRadius(
-			double trackedDist, boolean behind, boolean finisherWindow, boolean commitWindow,
-			double shotUncertainty) {
+		double trackedDist, boolean behind, boolean finisherWindow, boolean commitWindow, double shotUncertainty) {
 		double fuseRadius = TORPEDO_DEFAULT_FUSE_RADIUS;
 		if (trackedDist < TORPEDO_CLOSE_RANGE || behind) {
 			fuseRadius = TORPEDO_CLOSE_FUSE_RADIUS;
@@ -1414,8 +1421,7 @@ public final class CodexAttackSub implements SubmarineController {
 	}
 
 	private double selectDetonationRange(
-			double fuseRadius, double trackedDist, boolean behind, boolean finisherWindow,
-			boolean commitWindow) {
+		double fuseRadius, double trackedDist, boolean behind, boolean finisherWindow, boolean commitWindow) {
 		double detonationRange = TORPEDO_DEFAULT_DETONATE_RANGE;
 		if (trackedDist < TORPEDO_CLOSE_RANGE || behind) {
 			detonationRange = TORPEDO_CLOSE_DETONATE_RANGE;
@@ -1438,8 +1444,7 @@ public final class CodexAttackSub implements SubmarineController {
 	}
 
 	private double[] chooseKillLanePosition(
-			double ownX, double ownY, double ownHeading, double cruiseDepth,
-			double anchorX, double anchorY) {
+		double ownX, double ownY, double ownHeading, double cruiseDepth, double anchorX, double anchorY) {
 		if (Double.isNaN(trackedHeading)) {
 			return null;
 		}
@@ -1500,9 +1505,9 @@ public final class CodexAttackSub implements SubmarineController {
 			double turnPenalty = Math.abs(CodexAutopilot.adiff(routeBearing, ownHeading));
 			double standoffPenalty = Math.abs(finalRange - desiredRange);
 
-			double score = sternAspect * 210.0 + centerAspect * 150.0 + Math.min(boundary, 2_000.0) * 0.18 + Math.min(
-					floorDepth,
-					650.0) * 0.70 - standoffPenalty * 0.20 - (pathRatio - 1.0) * 900.0 - turnPenalty * 110.0;
+			double score = sternAspect * 210.0 + centerAspect * 150.0 + Math.min(boundary, 2_000.0) * 0.18
+					+ Math.min(floorDepth, 650.0) * 0.70 - standoffPenalty * 0.20 - (pathRatio - 1.0) * 900.0
+					- turnPenalty * 110.0;
 
 			if (score > bestScore) {
 				bestScore = score;
@@ -1532,13 +1537,11 @@ public final class CodexAttackSub implements SubmarineController {
 	}
 
 	private double passiveTrackRange(SonarContact contact, Vec3 pos, long tick) {
-		double rawRange = contact.range() > 50.0 ? contact.range()
-				: hasTrackedContact ? CodexAutopilot.hdist(pos.x(), pos.y(), trackedX, trackedY)
-						: estimatePassiveRange(contact);
+		double rawRange = contact.range() > 50.0 ? contact.range() : hasTrackedContact
+				? CodexAutopilot.hdist(pos.x(), pos.y(), trackedX, trackedY) : estimatePassiveRange(contact);
 		double quality = Math.clamp(contact.solutionQuality(), 0.05, 0.95);
-		double clampedRange = quality < 0.20 ? Math.clamp(rawRange, 1_500.0, 3_000.0)
-				: quality < TMA_SETUP_QUALITY ? Math.clamp(rawRange, 1_200.0, 4_200.0)
-						: Math.clamp(rawRange, 900.0, 5_500.0);
+		double clampedRange = quality < 0.20 ? Math.clamp(rawRange, 1_500.0, 3_000.0) : quality < TMA_SETUP_QUALITY
+				? Math.clamp(rawRange, 1_200.0, 4_200.0) : Math.clamp(rawRange, 900.0, 5_500.0);
 		double anchorRange = clampedRange;
 		double activeX = tick - trackedLastFixTick <= 500L ? predictedActiveTargetX(tick) : Double.NaN;
 		double activeY = tick - trackedLastFixTick <= 500L ? predictedActiveTargetY(tick) : Double.NaN;

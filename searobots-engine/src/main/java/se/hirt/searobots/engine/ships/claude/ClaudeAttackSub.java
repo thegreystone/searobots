@@ -34,8 +34,8 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Claude-authored attack submarine. Stealth-optimized with full combat capabilities: sonar tracking, pursuit, active
- * pinging, firing solutions.
+ * Claude-authored attack submarine. Stealth-optimized with full combat capabilities: sonar
+ * tracking, pursuit, active pinging, firing solutions.
  */
 public final class ClaudeAttackSub implements SubmarineController {
 
@@ -46,26 +46,28 @@ public final class ClaudeAttackSub implements SubmarineController {
 	private static final double GOLDEN_ANGLE = 2.399963229728653;
 
 	// Combat: aggressive detection and pursuit
-	private static final int CONTACT_CONFIRM_TICKS = 2;   // faster confirmation
-	private static final double CONTACT_DECAY = 0.9985;    // hold contacts longer
+	private static final int CONTACT_CONFIRM_TICKS = 2; // faster confirmation
+	private static final double CONTACT_DECAY = 0.9985; // hold contacts longer
 	private static final double LOST_TRACK_RADIUS = 5000.0;
 	private static final double REPLAN_TARGET_MOVE = 250.0; // replan more often
-	private static final long COMBAT_REPLAN_TICKS = 120;    // faster replanning
-	private static final long PATROL_PING_INTERVAL = 600;   // ping more often
-	private static final long STALE_CONTACT_TICKS = 150;    // refresh sooner
-	private static final double CHASE_RANGE = 3500.0;       // enter chase earlier
-	private static final double FIRING_RANGE = 2800.0;      // torpedo has ~5km of legs; engage well out
+	private static final long COMBAT_REPLAN_TICKS = 120; // faster replanning
+	private static final long PATROL_PING_INTERVAL = 600; // ping more often
+	private static final long STALE_CONTACT_TICKS = 150; // refresh sooner
+	private static final double CHASE_RANGE = 3500.0; // enter chase earlier
+	private static final double FIRING_RANGE = 2800.0; // torpedo has ~5km of legs; engage well out
 	private static final double PASSIVE_FIRE_QUALITY = 0.45; // min engine TMA quality to fire silently (no ping)
-	private static final double STERN_OFFSET = 450.0;       // wider stern approach
-	private static final long TMA_WEAVE_PERIOD = 600;       // 12s legs to converge passive TMA
+	private static final double STERN_OFFSET = 450.0; // wider stern approach
+	private static final long TMA_WEAVE_PERIOD = 600; // 12s legs to converge passive TMA
 	private static final double TMA_WEAVE_OFFSET = Math.toRadians(35); // off-axis angle while closing
 
 	// Torpedo evasion
-	private static final double TORPEDO_EVADE_RANGE = 900.0;  // evade inbound torpedoes within this range
-	private static final long EVADE_DURATION = 2500;          // 50 seconds of evasive manoeuvring
-	private static final double NEAR_MISS_RANGE = 350.0;      // close enemy terrain explosion = near miss
+	private static final double TORPEDO_EVADE_RANGE = 900.0; // evade inbound torpedoes within this range
+	private static final long EVADE_DURATION = 2500; // 50 seconds of evasive manoeuvring
+	private static final double NEAR_MISS_RANGE = 350.0; // close enemy terrain explosion = near miss
 
-	private enum Mode {PATROL, TRACK, CHASE}
+	private enum Mode {
+		PATROL, TRACK, CHASE
+	}
 
 	private MatchConfig config;
 	private TerrainMap terrain;
@@ -106,7 +108,7 @@ public final class ClaudeAttackSub implements SubmarineController {
 	private long pendingSalvoTick = Long.MIN_VALUE / 4;
 	private double pendingSalvoBearing;
 	private String pendingSalvoMission = "";
-	private static final long SALVO_SPACING = 40;            // ~0.8s between the two shots
+	private static final long SALVO_SPACING = 40; // ~0.8s between the two shots
 	private static final double SALVO_SPREAD = Math.toRadians(3.5); // bracket angle
 	private static final long TORPEDO_REFIRE_COOLDOWN = 750; // 15 seconds between launches (2 tubes)
 	private boolean outOfTorpedoes; // set when all torpedoes expended
@@ -116,13 +118,15 @@ public final class ClaudeAttackSub implements SubmarineController {
 	private double torpedoWarningBearing = Double.NaN;
 
 	// Public accessors for tests
-	public enum State {PATROL, TRACKING, CHASE, RAM, EVADE}
+	public enum State {
+		PATROL, TRACKING, CHASE, RAM, EVADE
+	}
 
 	public State state() {
 		return switch (mode) {
-			case PATROL -> State.PATROL;
-			case TRACK -> State.TRACKING;
-			case CHASE -> State.CHASE;
+		case PATROL -> State.PATROL;
+		case TRACK -> State.TRACKING;
+		case CHASE -> State.CHASE;
 		};
 	}
 
@@ -168,7 +172,7 @@ public final class ClaudeAttackSub implements SubmarineController {
 	}
 
 	public List<StrategicWaypoint> generateTrackingWaypoints(
-			double px, double py, double h, double cb, TrackedContact c) {
+		double px, double py, double h, double cb, TrackedContact c) {
 		return List.of();
 	}
 
@@ -295,9 +299,10 @@ public final class ClaudeAttackSub implements SubmarineController {
 		} else if (mode != Mode.PATROL && hasTrackedContact) {
 			// ── Combat waypoint planning ──
 			// If we just entered evasion, force a replan so the autopilot gets the evade waypoint
-			boolean switchedToEvade = evading && !strategicWaypoints.isEmpty() && strategicWaypoints.getFirst()
-					.purpose() != Purpose.EVADE;
-			boolean needPlan = modeChanged || strategicWaypoints.isEmpty() || autopilot.isBlocked() || autopilot.hasArrived() || switchedToEvade;
+			boolean switchedToEvade = evading && !strategicWaypoints.isEmpty()
+					&& strategicWaypoints.getFirst().purpose() != Purpose.EVADE;
+			boolean needPlan = modeChanged || strategicWaypoints.isEmpty() || autopilot.isBlocked()
+					|| autopilot.hasArrived() || switchedToEvade;
 
 			if (!needPlan && !Double.isNaN(lastCombatTargetX)) {
 				double moved = ClaudeAutopilot.hdist(trackedX, trackedY, lastCombatTargetX, lastCombatTargetY);
@@ -321,7 +326,8 @@ public final class ClaudeAttackSub implements SubmarineController {
 			}
 		} else {
 			// ── Normal patrol ──
-			boolean needPlan = modeChanged || strategicWaypoints.isEmpty() || autopilot.isBlocked() || autopilot.hasArrived();
+			boolean needPlan = modeChanged || strategicWaypoints.isEmpty() || autopilot.isBlocked()
+					|| autopilot.hasArrived();
 
 			if (!needPlan && !strategicWaypoints.isEmpty()) {
 				double dist = autopilot.distanceToStrategic(pos.x(), pos.y());
@@ -441,9 +447,8 @@ public final class ClaudeAttackSub implements SubmarineController {
 		if (!Double.isNaN(contact.estimatedHeading()))
 			trackedHeading = contact.estimatedHeading();
 
-		double range = contact.range() > 50 ? contact.range()
-				: hasTrackedContact ? ClaudeAutopilot.hdist(pos.x(), pos.y(), trackedX, trackedY)
-						: estimatePassiveRange(contact);
+		double range = contact.range() > 50 ? contact.range() : hasTrackedContact
+				? ClaudeAutopilot.hdist(pos.x(), pos.y(), trackedX, trackedY) : estimatePassiveRange(contact);
 		double tx = pos.x() + range * Math.sin(contact.bearing());
 		double ty = pos.y() + range * Math.cos(contact.bearing());
 
@@ -491,7 +496,8 @@ public final class ClaudeAttackSub implements SubmarineController {
 		}
 		long since = tick - lastContactTick;
 		double dist = ClaudeAutopilot.hdist(pos.x(), pos.y(), trackedX, trackedY);
-		if (rangeConfirmedByActive || (dist < CHASE_RANGE && contactAlive > 0.18) || (uncertaintyRadius < 300 && since < 250)) {
+		if (rangeConfirmedByActive || (dist < CHASE_RANGE && contactAlive > 0.18)
+				|| (uncertaintyRadius < 300 && since < 250)) {
 			mode = Mode.CHASE;
 		} else if (consecutiveContactTicks >= CONTACT_CONFIRM_TICKS || (contactAlive > 0.05 && since < 1000)) {
 			mode = Mode.TRACK;
@@ -520,7 +526,8 @@ public final class ClaudeAttackSub implements SubmarineController {
 		// Only use active sonar returns: they give a precise range so we know the torpedo is close.
 		// Passive contacts cannot reliably distinguish close from distant torpedoes via SE alone.
 		for (var c : input.activeSonarReturns()) {
-			if (c.classification() == SonarContact.Classification.TORPEDO && c.range() > 0 && c.range() < TORPEDO_EVADE_RANGE) {
+			if (c.classification() == SonarContact.Classification.TORPEDO && c.range() > 0
+					&& c.range() < TORPEDO_EVADE_RANGE) {
 				torpedoWarningBearing = c.bearing();
 				evadeUntilTick = tick + EVADE_DURATION;
 				System.out.printf("[Claude] TORPEDO WARNING: bearing=%.0f° range=%.0fm (active)%n",
@@ -577,8 +584,8 @@ public final class ClaudeAttackSub implements SubmarineController {
 		if (input.activeSonarCooldownTicks() > 0)
 			return;
 		long since = tick - lastPingTick;
-		double dist =
-				hasTrackedContact ? ClaudeAutopilot.hdist(pos.x(), pos.y(), trackedX, trackedY) : Double.MAX_VALUE;
+		double dist = hasTrackedContact ? ClaudeAutopilot.hdist(pos.x(), pos.y(), trackedX, trackedY)
+				: Double.MAX_VALUE;
 		long sinceFix = tick - trackedLastFixTick;
 
 		boolean shouldPing = false;
@@ -743,12 +750,12 @@ public final class ClaudeAttackSub implements SubmarineController {
 
 	/** True while stalking a contact we can only fire on once the passive TMA converges. */
 	private boolean buildingPassiveTma() {
-		return mode == Mode.CHASE && hasTrackedContact && !rangeConfirmedByActive && trackSolutionQuality < PASSIVE_FIRE_QUALITY;
+		return mode == Mode.CHASE && hasTrackedContact && !rangeConfirmedByActive
+				&& trackSolutionQuality < PASSIVE_FIRE_QUALITY;
 	}
 
 	private StrategicWaypoint planCombatWaypoint(
-			double x, double y, double z, double heading, double speed,
-			boolean evading, long tick) {
+		double x, double y, double z, double heading, double speed, boolean evading, long tick) {
 		double dist = ClaudeAutopilot.hdist(x, y, trackedX, trackedY);
 		double cruiseDepth = autopilot.cruiseDepth();
 
@@ -765,8 +772,8 @@ public final class ClaudeAttackSub implements SubmarineController {
 			double toCenterBearing = Math.atan2(-x, -y);
 			if (toCenterBearing < 0)
 				toCenterBearing += 2 * Math.PI;
-			double blended = ClaudeAutopilot.norm(
-					awayBearing + 0.3 * ClaudeAutopilot.adiff(toCenterBearing, awayBearing));
+			double blended = ClaudeAutopilot
+					.norm(awayBearing + 0.3 * ClaudeAutopilot.adiff(toCenterBearing, awayBearing));
 			double evadeDist = Math.clamp(dist * 0.5 + 1500, 2000, 4000);
 			double tx = x + Math.sin(blended) * evadeDist;
 			double ty = y + Math.cos(blended) * evadeDist;
@@ -793,9 +800,8 @@ public final class ClaudeAttackSub implements SubmarineController {
 					: ClaudeAutopilot.norm(Math.atan2(trackedX - x, trackedY - y));
 			double sA = ClaudeAutopilot.norm(bearing + Math.PI / 2);
 			double sB = ClaudeAutopilot.norm(bearing - Math.PI / 2);
-			double chosen =
-					Math.abs(ClaudeAutopilot.adiff(sA, heading)) < Math.abs(ClaudeAutopilot.adiff(sB, heading)) ? sA
-							: sB;
+			double chosen = Math.abs(ClaudeAutopilot.adiff(sA, heading)) < Math.abs(ClaudeAutopilot.adiff(sB, heading))
+					? sA : sB;
 			double crossDist = Math.clamp(dist * 0.25, 350, 850);
 			tx = x + Math.sin(chosen) * crossDist;
 			ty = y + Math.cos(chosen) * crossDist;
@@ -832,8 +838,7 @@ public final class ClaudeAttackSub implements SubmarineController {
 			double minDist = 800; // never closer than this
 			if (dist < minDist) {
 				// Back away: go to a point behind the target at desired distance
-				double awayBearing = ClaudeAutopilot.norm(
-						Math.atan2(x - trackedX, y - trackedY)); // bearing FROM target TO us
+				double awayBearing = ClaudeAutopilot.norm(Math.atan2(x - trackedX, y - trackedY)); // bearing FROM target TO us
 				tx = trackedX + Math.sin(awayBearing) * desiredDist;
 				ty = trackedY + Math.cos(awayBearing) * desiredDist;
 				noise = NoisePolicy.QUIET;
@@ -843,8 +848,8 @@ public final class ClaudeAttackSub implements SubmarineController {
 				// Good range: get behind the target for torpedo shot
 				double sternX = tx - Math.sin(trackedHeading) * STERN_OFFSET;
 				double sternY = ty - Math.cos(trackedHeading) * STERN_OFFSET;
-				if (battleArea.distanceToBoundary(sternX, sternY) > PATROL_MARGIN / 2 && pathPlanner.isSafe(sternX,
-						sternY)) {
+				if (battleArea.distanceToBoundary(sternX, sternY) > PATROL_MARGIN / 2
+						&& pathPlanner.isSafe(sternX, sternY)) {
 					tx = sternX;
 					ty = sternY;
 				}
@@ -920,8 +925,8 @@ public final class ClaudeAttackSub implements SubmarineController {
 				double floorDepth = Math.abs(terrain.elevationAt(tx, ty));
 				double boundary = battleArea.distanceToBoundary(tx, ty);
 
-				double score = alignment * 250 + sweep * 150 + Math.min(boundary, 2000) * 0.10 + Math.min(floorDepth,
-						600) * 1.5  // strongly prefer deep water
+				double score = alignment * 250 + sweep * 150 + Math.min(boundary, 2000) * 0.10
+						+ Math.min(floorDepth, 600) * 1.5 // strongly prefer deep water
 						- Math.abs(dist - desiredDist) * 0.12 - (pathRatio - 1) * 1400;
 
 				if (!Double.isNaN(lastTargetX)) {

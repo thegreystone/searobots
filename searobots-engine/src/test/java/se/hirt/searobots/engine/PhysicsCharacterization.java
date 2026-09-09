@@ -33,8 +33,8 @@ import se.hirt.searobots.api.*;
 import java.awt.*;
 
 /**
- * Physics characterization: systematic verification of submarine behavior under controlled inputs. No AI, no navigation
- * - just raw physics.
+ * Physics characterization: systematic verification of submarine behavior under controlled inputs.
+ * No AI, no navigation - just raw physics.
  */
 public class PhysicsCharacterization {
 
@@ -321,7 +321,7 @@ public class PhysicsCharacterization {
 		runUntilSpeedStable(sub, 50 * 60);
 
 		double targetAngle = 10.0; // degrees
-		double rudderValue = 0.5;  // use 50% rudder (near optimal)
+		double rudderValue = 0.5; // use 50% rudder (near optimal)
 		sub.setRudder(rudderValue);
 		int direction = 1; // 1 = turning right, -1 = turning left
 		double baseHeading = Math.toDegrees(sub.heading());

@@ -17,11 +17,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static se.hirt.searobots.api.VehicleConfig.submarine;
 
 /**
- * Diagnostic sweep: verifies that the baffle zone is correctly oriented relative to the listener's heading, and maps
- * detection across the full 360° arc.
+ * Diagnostic sweep: verifies that the baffle zone is correctly oriented relative to the listener's
+ * heading, and maps detection across the full 360° arc.
  * <p>
- * Coordinate convention: bearing  0  = north (+Y) bearing  90 = east  (+X) heading  0  = sub pointing north (bow toward
- * +Y)
+ * Coordinate convention: bearing 0 = north (+Y) bearing 90 = east (+X) heading 0 = sub pointing
+ * north (bow toward +Y)
  */
 class BaffleSweepTest {
 
@@ -120,8 +120,8 @@ class BaffleSweepTest {
 	}
 
 	/**
-	 * Full passive-detection sweep: listener heading north, source at 1000m at every 15°. Source SL set to ensure
-	 * detection when not baffled but marginal when baffled.
+	 * Full passive-detection sweep: listener heading north, source at 1000m at every 15°. Source SL
+	 * set to ensure detection when not baffled but marginal when baffled.
 	 */
 	@Test
 	void passiveDetectionSweep() {
@@ -155,8 +155,8 @@ class BaffleSweepTest {
 	}
 
 	/**
-	 * Models the "just passed" scenario: two subs heading in opposite directions, post-crossing, each is dead astern of
-	 * the other.
+	 * Models the "just passed" scenario: two subs heading in opposite directions, post-crossing,
+	 * each is dead astern of the other.
 	 */
 	@Test
 	void opposingHeadingsPostCrossing() {
@@ -171,7 +171,7 @@ class BaffleSweepTest {
 		// B heading south, A is south of B (A is AHEAD of B, NOT in B's baffles!)
 		// When subs head TOWARD each other they are in each other's forward arcs.
 
-		boolean aHearB = !SonarModel.isInBaffles(0, 0);       // A heading N, B at bearing 0 (north)
+		boolean aHearB = !SonarModel.isInBaffles(0, 0); // A heading N, B at bearing 0 (north)
 		boolean bHearA = !SonarModel.isInBaffles(Math.PI, Math.PI); // B heading S, A at bearing 180° (south)
 
 		System.out.printf("A can hear B (B ahead of A): %b%n", aHearB);
@@ -185,9 +185,9 @@ class BaffleSweepTest {
 		System.out.println("Sub B: heading south (180°), A is now 1000m NORTH of B");
 
 		// A heading north, B is now SOUTH of A → bearing from A to B = 180° = dead astern
-		boolean aHearBAfter = !SonarModel.isInBaffles(0, Math.PI);       // A heading N, B at south = 180°
+		boolean aHearBAfter = !SonarModel.isInBaffles(0, Math.PI); // A heading N, B at south = 180°
 		// B heading south, A is now NORTH of B → bearing from B to A = 0° = dead astern of south-heading B
-		boolean bHearAAfter = !SonarModel.isInBaffles(Math.PI, 0);             // B heading S, A at north = 0°
+		boolean bHearAAfter = !SonarModel.isInBaffles(Math.PI, 0); // B heading S, A at north = 0°
 
 		System.out.printf("A can hear B (B astern of A): %b%n", aHearBAfter);
 		System.out.printf("B can hear A (A astern of B): %b%n", bHearAAfter);
@@ -228,15 +228,15 @@ class BaffleSweepTest {
 
 	private static String headingName(int deg) {
 		return switch (deg) {
-			case 0 -> "N";
-			case 45 -> "NE";
-			case 90 -> "E";
-			case 135 -> "SE";
-			case 180 -> "S";
-			case 225 -> "SW";
-			case 270 -> "W";
-			case 315 -> "NW";
-			default -> "?";
+		case 0 -> "N";
+		case 45 -> "NE";
+		case 90 -> "E";
+		case 135 -> "SE";
+		case 180 -> "S";
+		case 225 -> "SW";
+		case 270 -> "W";
+		case 315 -> "NW";
+		default -> "?";
 		};
 	}
 }

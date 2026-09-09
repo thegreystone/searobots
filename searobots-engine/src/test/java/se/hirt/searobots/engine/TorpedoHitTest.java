@@ -70,9 +70,8 @@ public class TorpedoHitTest {
 							continue;
 						var tp = t.pose().position();
 						var sp = target.pose().position();
-						double d = Math.sqrt(
-								Math.pow(tp.x() - sp.x(), 2) + Math.pow(tp.y() - sp.y(), 2) + Math.pow(tp.z() - sp.z(),
-										2));
+						double d = Math.sqrt(Math.pow(tp.x() - sp.x(), 2) + Math.pow(tp.y() - sp.y(), 2)
+								+ Math.pow(tp.z() - sp.z(), 2));
 						if (d < closestDist[0])
 							closestDist[0] = d;
 						if (target.hp() < 1000)
@@ -102,15 +101,13 @@ public class TorpedoHitTest {
 		System.out.println("=== Direct torpedo physics test ===");
 		var physics = new TorpedoPhysics();
 		var torpCtrl = new se.hirt.searobots.engine.ships.SimpleTorpedoController();
-		var torp = new TorpedoEntity(999, 0, VehicleConfig.torpedo(), torpCtrl, new Vec3(0, 0, -100), 0, 0,
-				30.0, // heading=0 (north), fuse=30m
+		var torp = new TorpedoEntity(999, 0, VehicleConfig.torpedo(), torpCtrl, new Vec3(0, 0, -100), 0, 0, 30.0, // heading=0 (north), fuse=30m
 				java.awt.Color.GREEN);
 		torp.setSpeed(23.0);
 
 		// Target at (0, 500, -100) = 500m north
-		torpCtrl.onLaunch(
-				new TorpedoLaunchContext(MatchConfig.withDefaults(0), world.terrain(), new Vec3(0, 0, -100), 0, 0,
-						"0,500,-100,0,5.0"));
+		torpCtrl.onLaunch(new TorpedoLaunchContext(MatchConfig.withDefaults(0), world.terrain(), new Vec3(0, 0, -100),
+				0, 0, "0,500,-100,0,5.0"));
 
 		double dt = 1.0 / 50;
 		double bestDist = 500;
@@ -152,8 +149,8 @@ public class TorpedoHitTest {
 			if (!torp.alive())
 				break;
 
-			double distToTarget = Math.sqrt(
-					torp.x() * torp.x() + Math.pow(torp.y() - 500, 2) + Math.pow(torp.z() + 100, 2));
+			double distToTarget = Math
+					.sqrt(torp.x() * torp.x() + Math.pow(torp.y() - 500, 2) + Math.pow(torp.z() + 100, 2));
 			if (distToTarget < bestDist)
 				bestDist = distToTarget;
 
@@ -209,9 +206,8 @@ public class TorpedoHitTest {
 					if (subs.size() >= 2 && t.alive()) {
 						var dp = subs.get(1).pose().position();
 						var tp = t.pose().position();
-						double d = Math.sqrt(
-								Math.pow(tp.x() - dp.x(), 2) + Math.pow(tp.y() - dp.y(), 2) + Math.pow(tp.z() - dp.z(),
-										2));
+						double d = Math.sqrt(Math.pow(tp.x() - dp.x(), 2) + Math.pow(tp.y() - dp.y(), 2)
+								+ Math.pow(tp.z() - dp.z(), 2));
 						if (tick % 500 == 0 && t.id() == 1000) {
 							System.out.printf("[CLOSE] tick=%d torp %d dist=%.1fm depth torp=%.0f drone=%.0f%n", tick,
 									t.id(), d, tp.z(), dp.z());

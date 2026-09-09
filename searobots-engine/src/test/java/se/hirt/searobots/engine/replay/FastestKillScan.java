@@ -44,10 +44,10 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Development scan (not an assertion-heavy unit test): runs several seeds with the torpedo-firing combat controllers
- * (Codex vs Claude) and reports which produces the first torpedo detonation soonest. Each match is recorded with
- * {@link ReplayWriter}, so it also confirms torpedoes are captured in the replay, and it leaves behind the fastest
- * seed's replay file for inspection.
+ * Development scan (not an assertion-heavy unit test): runs several seeds with the torpedo-firing
+ * combat controllers (Codex vs Claude) and reports which produces the first torpedo detonation
+ * soonest. Each match is recorded with {@link ReplayWriter}, so it also confirms torpedoes are
+ * captured in the replay, and it leaves behind the fastest seed's replay file for inspection.
  * <p>
  * Assertion-free dev tool: skipped on normal builds, run on demand with
  * {@code mvn test -Dsearobots.diag=true -Dtest=FastestKillScan}.
@@ -62,7 +62,8 @@ class FastestKillScan {
 	}
 
 	@Test
-	void findFastestTorpedoHit(@TempDir Path dir) throws IOException {
+	void findFastestTorpedoHit(@TempDir
+	Path dir) throws IOException {
 		List<Result> results = new ArrayList<>();
 		for (long seed : SEEDS) {
 			results.add(runSeed(seed, dir));
@@ -110,7 +111,7 @@ class FastestKillScan {
 				}
 				if (firstHit[0] < 0 && torps.stream().anyMatch(TorpedoSnapshot::detonated)) {
 					firstHit[0] = tick; // first torpedo detonation
-					sim.stop();         // early-exit this seed once it lands
+					sim.stop(); // early-exit this seed once it lands
 				}
 			}
 

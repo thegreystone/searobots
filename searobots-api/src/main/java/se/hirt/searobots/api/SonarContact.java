@@ -32,46 +32,49 @@ package se.hirt.searobots.api;
  * A sonar contact: what a submarine or torpedo knows about a detected entity.
  *
  * @param bearing
- * 		absolute bearing in radians [0, 2pi)
+ *            absolute bearing in radians [0, 2pi)
  * @param signalExcess
- * 		dB above detection threshold (higher = stronger/closer)
+ *            dB above detection threshold (higher = stronger/closer)
  * @param range
- * 		estimated range in meters. Precise for active returns; for passive contacts it is the engine's TMA estimate,
- * 		which starts with a large bias and converges only through own-ship maneuvering. 0 if no estimate exists.
+ *            estimated range in meters. Precise for active returns; for passive contacts it is the
+ *            engine's TMA estimate, which starts with a large bias and converges only through
+ *            own-ship maneuvering. 0 if no estimate exists.
  * @param isActive
- * 		true if this contact came from an active sonar return
+ *            true if this contact came from an active sonar return
  * @param estimatedSpeed
- * 		target speed estimate from blade-rate tonals (m/s, -1 if unavailable)
+ *            target speed estimate from blade-rate tonals (m/s, -1 if unavailable)
  * @param bearingUncertainty
- * 		1-sigma bearing error in radians, computed by the sonar model. The error is correlated over tens of seconds, so
- * 		averaging a few seconds of bearings does not reduce it.
+ *            1-sigma bearing error in radians, computed by the sonar model. The error is correlated
+ *            over tens of seconds, so averaging a few seconds of bearings does not reduce it.
  * @param rangeUncertainty
- * 		conservative 1-sigma bound on the range error in meters, for both active and passive contacts. For a passive
- * 		contact it can exceed the range itself while the TMA solution is poor. Double.MAX_VALUE means no range
- * 		information at all (for example a contact heard only through the baffles).
+ *            conservative 1-sigma bound on the range error in meters, for both active and passive
+ *            contacts. For a passive contact it can exceed the range itself while the TMA solution
+ *            is poor. Double.MAX_VALUE means no range information at all (for example a contact
+ *            heard only through the baffles).
  * @param estimatedSourceLevel
- * 		estimated source level in dB, derived from the acoustic signature. Enables classification (surface ships are much
- * 		louder than submarines) and more accurate SE-based ranging.
+ *            estimated source level in dB, derived from the acoustic signature. Enables
+ *            classification (surface ships are much louder than submarines) and more accurate
+ *            SE-based ranging.
  * @param solutionQuality
- * 		TMA solution quality (0.0 to 1.0), equivalent to Cold Waters SOL%
+ *            TMA solution quality (0.0 to 1.0), equivalent to Cold Waters SOL%
  * @param estimatedHeading
- * 		estimated target heading in radians [0, 2pi), or NaN if quality too low
+ *            estimated target heading in radians [0, 2pi), or NaN if quality too low
  * @param estimatedDepth
- * 		estimated target depth in meters (negative = below surface), derived from vertical bearing angle and range for
- * 		active returns. NaN if unavailable (passive contacts).
+ *            estimated target depth in meters (negative = below surface), derived from vertical
+ *            bearing angle and range for active returns. NaN if unavailable (passive contacts).
  * @param classification
- * 		acoustic classification of the contact, based on blade-rate tonals, broadband signature, and speed. Requires
- * 		sufficient signal excess to classify; faint contacts are UNKNOWN.
+ *            acoustic classification of the contact, based on blade-rate tonals, broadband
+ *            signature, and speed. Requires sufficient signal excess to classify; faint contacts
+ *            are UNKNOWN.
  */
 public record SonarContact(double bearing, double signalExcess, double range, boolean isActive, double estimatedSpeed,
-                           double bearingUncertainty, double rangeUncertainty, double estimatedSourceLevel,
-                           double solutionQuality, double estimatedHeading, double estimatedDepth,
-                           Classification classification) {
+		double bearingUncertainty, double rangeUncertainty, double estimatedSourceLevel, double solutionQuality,
+		double estimatedHeading, double estimatedDepth, Classification classification) {
 
 	/**
-	 * Acoustic classification of a sonar contact. Determined by the sonar model from the target's noise signature
-	 * (blade rate, broadband level, cavitation pattern). Classification improves with signal excess: faint contacts can
-	 * only be classified as UNKNOWN.
+	 * Acoustic classification of a sonar contact. Determined by the sonar model from the target's
+	 * noise signature (blade rate, broadband level, cavitation pattern). Classification improves
+	 * with signal excess: faint contacts can only be classified as UNKNOWN.
 	 */
 	public enum Classification {
 		/**
@@ -95,8 +98,7 @@ public record SonarContact(double bearing, double signalExcess, double range, bo
 	/**
 	 * Constructor without classification (defaults to UNKNOWN).
 	 */
-	public SonarContact(
-			double bearing, double signalExcess, double range, boolean isActive, double estimatedSpeed,
+	public SonarContact(double bearing, double signalExcess, double range, boolean isActive, double estimatedSpeed,
 			double bearingUncertainty, double rangeUncertainty, double estimatedSourceLevel, double solutionQuality,
 			double estimatedHeading, double estimatedDepth) {
 		this(bearing, signalExcess, range, isActive, estimatedSpeed, bearingUncertainty, rangeUncertainty,
@@ -106,8 +108,7 @@ public record SonarContact(double bearing, double signalExcess, double range, bo
 	/**
 	 * Constructor without depth or classification.
 	 */
-	public SonarContact(
-			double bearing, double signalExcess, double range, boolean isActive, double estimatedSpeed,
+	public SonarContact(double bearing, double signalExcess, double range, boolean isActive, double estimatedSpeed,
 			double bearingUncertainty, double rangeUncertainty, double estimatedSourceLevel, double solutionQuality,
 			double estimatedHeading) {
 		this(bearing, signalExcess, range, isActive, estimatedSpeed, bearingUncertainty, rangeUncertainty,

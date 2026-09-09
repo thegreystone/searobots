@@ -57,7 +57,8 @@ class CodexExplosionFeedbackTest {
 		assertTrue("ping".equals(estimate.label()),
 				"A confirmed torpedo hit should count as a fresh high-confidence fix, got " + estimate.label());
 		assertTrue(Math.abs(estimate.x()) < 30.0 && Math.abs(estimate.y() - 1_500.0) < 30.0,
-				"The published track should sit on the explosion position, got (" + estimate.x() + ", " + estimate.y() + ")");
+				"The published track should sit on the explosion position, got (" + estimate.x() + ", " + estimate.y()
+						+ ")");
 		assertTrue(estimate.uncertaintyRadius() <= 80.0,
 				"A confirmed hit should collapse uncertainty, got " + estimate.uncertaintyRadius());
 		assertTrue(estimate.contactAlive() > 0.95,
@@ -75,8 +76,7 @@ class CodexExplosionFeedbackTest {
 	}
 
 	private record ExplosionInput(long tick, double deltaTimeSeconds, SubmarineState self,
-	                              EnvironmentSnapshot environment, List<SonarContact> sonarContacts,
-	                              List<SonarContact> activeSonarReturns, int activeSonarCooldownTicks,
-	                              List<ExplosionEvent> explosionEvents) implements SubmarineInput {
+			EnvironmentSnapshot environment, List<SonarContact> sonarContacts, List<SonarContact> activeSonarReturns,
+			int activeSonarCooldownTicks, List<ExplosionEvent> explosionEvents) implements SubmarineInput {
 	}
 }

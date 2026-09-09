@@ -93,7 +93,8 @@ class SubmarinePhysicsTest {
 		// In reverse, water flows from stern → bow, so right rudder
 		// should turn LEFT (decrease heading)
 		assertTrue(sub.heading() < headingBefore || sub.heading() > Math.PI,
-				"Right rudder in reverse should turn left, heading went from " + headingBefore + " to " + sub.heading());
+				"Right rudder in reverse should turn left, heading went from " + headingBefore + " to "
+						+ sub.heading());
 	}
 
 	@Test
@@ -106,8 +107,8 @@ class SubmarinePhysicsTest {
 		physics.step(sub, DT, TERRAIN, NO_CURRENT, CONFIG.battleArea());
 
 		// In reverse, positive stern planes should pitch DOWN
-		assertTrue(sub.pitch() < pitchBefore,
-				"Positive stern planes in reverse should pitch down, pitch went from " + pitchBefore + " to " + sub.pitch());
+		assertTrue(sub.pitch() < pitchBefore, "Positive stern planes in reverse should pitch down, pitch went from "
+				+ pitchBefore + " to " + sub.pitch());
 	}
 
 	@Test
@@ -255,7 +256,8 @@ class SubmarinePhysicsTest {
 		physics.step(deep, DT, TERRAIN, NO_CURRENT, CONFIG.battleArea());
 
 		assertTrue(shallow.sourceLevelDb() > deep.sourceLevelDb(),
-				"Same speed should be louder at shallow depth: shallow=" + shallow.sourceLevelDb() + " deep=" + deep.sourceLevelDb());
+				"Same speed should be louder at shallow depth: shallow=" + shallow.sourceLevelDb() + " deep="
+						+ deep.sourceLevelDb());
 	}
 
 	@Test
@@ -269,7 +271,7 @@ class SubmarinePhysicsTest {
 		// Sub actively changing ballast: set commanded ballast far from actual
 		// to trigger maximum slew rate
 		var blowing = makeSub(0, 0, -200);
-		blowing.setBallast(1.0);  // command full blow (actual starts at 0.5)
+		blowing.setBallast(1.0); // command full blow (actual starts at 0.5)
 		physics.step(blowing, DT, TERRAIN, NO_CURRENT, CONFIG.battleArea());
 		double blowingSl = blowing.sourceLevelDb();
 
@@ -376,8 +378,8 @@ class SubmarinePhysicsTest {
 			physics.step(subFull, DT, TERRAIN, NO_CURRENT, CONFIG.battleArea());
 		double headingFull = subFull.heading();
 
-		assertTrue(headingModerate > headingFull,
-				"Moderate rudder should turn faster than full due to stall: moderate=" + headingModerate + " full=" + headingFull);
+		assertTrue(headingModerate > headingFull, "Moderate rudder should turn faster than full due to stall: moderate="
+				+ headingModerate + " full=" + headingFull);
 	}
 
 	@Test

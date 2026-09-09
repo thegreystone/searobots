@@ -53,6 +53,21 @@ Requires Java 25+ and Maven 3.9+.
 mvn clean install
 ```
 
+### Code Formatting
+
+Formatting is enforced by [Spotless](https://github.com/diffplug/spotless) using
+the Eclipse formatter profile in `config/formatter/searobots-formatting.xml`
+(borrowed from OpenJDK Mission Control: tabs, 120 columns). The check runs in
+the `validate` phase, so a build fails on unformatted code. To fix formatting:
+
+```bash
+mvn spotless:apply
+```
+
+IntelliJ users can import the same profile via Settings > Editor > Code Style >
+Java > Import Scheme > Eclipse XML Profile; Eclipse users via Preferences >
+Java > Code Style > Formatter > Import.
+
 ### Running the Viewer
 
 **Easiest:** download `searobots-<version>.jar` from the

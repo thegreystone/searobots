@@ -29,19 +29,19 @@
 package se.hirt.searobots.api;
 
 /**
- * A 3D navigation waypoint published by a submarine controller for viewer visualization. Has no effect on the
- * simulation.
+ * A 3D navigation waypoint published by a submarine controller for viewer visualization. Has no
+ * effect on the simulation.
  *
  * @param x
- * 		world X coordinate (meters)
+ *            world X coordinate (meters)
  * @param y
- * 		world Y coordinate (meters)
+ *            world Y coordinate (meters)
  * @param z
- * 		target depth (negative, meters below sea level)
+ *            target depth (negative, meters below sea level)
  * @param active
- * 		true if this is the waypoint the sub is currently heading toward
+ *            true if this is the waypoint the sub is currently heading toward
  * @param reverse
- * 		true if this is a reverse waypoint (sub backs toward it)
+ *            true if this is a reverse waypoint (sub backs toward it)
  */
 public record Waypoint(double x, double y, double z, boolean active, boolean reverse) {
 	public Waypoint(double x, double y, double z, boolean active) {

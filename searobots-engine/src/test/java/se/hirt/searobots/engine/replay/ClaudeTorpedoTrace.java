@@ -43,19 +43,18 @@ import java.util.Locale;
 import java.util.Map;
 
 /**
- * Deep study of why Claude's torpedoes fail terminal acquisition. For each torpedo Claude (index 1) launches, it
- * watches — every tick, purely from the published snapshot diagnostics, no controller change — three quantities:
+ * Deep study of why Claude's torpedoes fail terminal acquisition. For each torpedo Claude (index 1)
+ * launches, it watches — every tick, purely from the published snapshot diagnostics, no controller
+ * change — three quantities:
  * <ul>
- *   <li>distance from the torpedo to the TRUE enemy hull,</li>
- *   <li>distance from the torpedo's own target ESTIMATE (diagEst) to the TRUE
- *       enemy — i.e. how wrong the torpedo's solution is, and whether an active
- *       ping ever corrects it,</li>
- *   <li>the guidance phase (TRANSIT/ACQUISITION/TERMINAL).</li>
+ * <li>distance from the torpedo to the TRUE enemy hull,</li>
+ * <li>distance from the torpedo's own target ESTIMATE (diagEst) to the TRUE enemy — i.e. how wrong
+ * the torpedo's solution is, and whether an active ping ever corrects it,</li>
+ * <li>the guidance phase (TRANSIT/ACQUISITION/TERMINAL).</li>
  * </ul>
- * The decisive number is the minimum estimate-to-truth error over the run: if
- * it stays large, the torpedo NEVER acquired (active sonar never illuminated
- * the moved target); if it goes small but the torpedo still misses, the failure
- * is terminal geometry, not acquisition.
+ * The decisive number is the minimum estimate-to-truth error over the run: if it stays large, the
+ * torpedo NEVER acquired (active sonar never illuminated the moved target); if it goes small but
+ * the torpedo still misses, the failure is terminal geometry, not acquisition.
  * <p>
  * Run on demand: {@code mvn test -Dsearobots.diag=true -Dtest=ClaudeTorpedoTrace}.
  */
@@ -71,7 +70,7 @@ class ClaudeTorpedoTrace {
 		double launchDistTrue;
 		double minDistTrue = Double.MAX_VALUE; // torpedo -> true enemy
 		long minDistTrueTick;
-		double minEstError = Double.MAX_VALUE;  // estimate -> true enemy (did it ever acquire?)
+		double minEstError = Double.MAX_VALUE; // estimate -> true enemy (did it ever acquire?)
 		long minEstErrorTick;
 		double estErrorAtLaunch = Double.MAX_VALUE;
 		boolean reachedAcq, reachedTerm;
@@ -129,15 +128,15 @@ class ClaudeTorpedoTrace {
 
 	/** Coarse bucket for aggregate counting. */
 	private static String classify(Torp t) {
-		boolean acquired = t.minEstError < 150;       // active illuminated the true target
+		boolean acquired = t.minEstError < 150; // active illuminated the true target
 		if (t.detonated && t.minDistTrue < 35)
 			return "HIT";
 		if (t.minDistTrue < 180)
-			return "TERMINAL_OVERSHOOT";               // got close, couldn't close last ~50m
+			return "TERMINAL_OVERSHOOT"; // got close, couldn't close last ~50m
 		if (acquired && t.lastEstError > 400)
-			return "LOST_TRACK_AFTER_ACQ";             // acquired then estimate diverged
+			return "LOST_TRACK_AFTER_ACQ"; // acquired then estimate diverged
 		if (acquired)
-			return "ACQUIRED_NEVER_CLOSED";            // good solution but never arrived (time/closure)
+			return "ACQUIRED_NEVER_CLOSED"; // good solution but never arrived (time/closure)
 		return "NEVER_ACQUIRED";
 	}
 
@@ -147,7 +146,8 @@ class ClaudeTorpedoTrace {
 		}
 		if (t.minEstError > 250) {
 			return String.format(Locale.US,
-					"NEVER ACQUIRED: best solution was %.0fm off the true target - active ping never illuminated " + "the moved target; flew blind on the stale launch lead",
+					"NEVER ACQUIRED: best solution was %.0fm off the true target - active ping never illuminated "
+							+ "the moved target; flew blind on the stale launch lead",
 					t.minEstError);
 		}
 		if (t.minEstError < 150 && t.minDistTrue > 80) {

@@ -35,8 +35,8 @@ import se.hirt.searobots.api.VehicleConfig;
 import java.awt.*;
 
 /**
- * Measures torpedo turn radius and pitch rate at different speeds. Used to calibrate the torpedo controller's throttle
- * management and understand maneuverability at different speeds.
+ * Measures torpedo turn radius and pitch rate at different speeds. Used to calibrate the torpedo
+ * controller's throttle management and understand maneuverability at different speeds.
  */
 class TorpedoTurnRadiusTest {
 

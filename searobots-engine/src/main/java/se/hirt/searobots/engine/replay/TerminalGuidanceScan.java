@@ -41,13 +41,14 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Headless diagnostic: runs Codex vs Claude across many seeds and measures per-side <em>terminal guidance</em> quality,
- * without writing replay files. For every torpedo it records the closest it ever came to the enemy hull and whether it
- * detonated, so a systematic guidance problem (fish that track but can never close the last hundred metres) shows up as
- * a side whose torpedoes cluster far from the target and rarely detonate.
+ * Headless diagnostic: runs Codex vs Claude across many seeds and measures per-side <em>terminal
+ * guidance</em> quality, without writing replay files. For every torpedo it records the closest it
+ * ever came to the enemy hull and whether it detonated, so a systematic guidance problem (fish that
+ * track but can never close the last hundred metres) shows up as a side whose torpedoes cluster far
+ * from the target and rarely detonate.
  * <p>
- * Usage: {@code TerminalGuidanceScan [seed ...]} (defaults to a fixed spread of seeds). Sub 0 is Codex, sub 1 is
- * Claude.
+ * Usage: {@code TerminalGuidanceScan [seed ...]} (defaults to a fixed spread of seeds). Sub 0 is
+ * Codex, sub 1 is Claude.
  */
 public final class TerminalGuidanceScan {
 
@@ -67,8 +68,8 @@ public final class TerminalGuidanceScan {
 	}
 
 	private record SeedResult(long seed, int winner, int codexFired, int codexDet, int codexHit, double codexBest,
-	                          int claudeFired, int claudeDet, int claudeHit, double claudeBest,
-	                          List<Double> codexApproaches, List<Double> claudeApproaches) {
+			int claudeFired, int claudeDet, int claudeHit, double claudeBest, List<Double> codexApproaches,
+			List<Double> claudeApproaches) {
 	}
 
 	public static void main(String[] args) {
@@ -210,8 +211,8 @@ public final class TerminalGuidanceScan {
 	}
 
 	private static void reportSide(String name, int fired, int det, int hit, List<Double> appr) {
-		double med = median(appr), min =
-				appr.isEmpty() ? Double.NaN : appr.stream().mapToDouble(d -> d).min().orElse(Double.NaN);
+		double med = median(appr),
+				min = appr.isEmpty() ? Double.NaN : appr.stream().mapToDouble(d -> d).min().orElse(Double.NaN);
 		double hitPct = fired == 0 ? 0 : 100.0 * hit / fired;
 		System.out.printf("%-8s %8d %8d %8d %9.0f%% %10s %10s%n", name, fired, det, hit, hitPct, fmt(med), fmt(min));
 	}

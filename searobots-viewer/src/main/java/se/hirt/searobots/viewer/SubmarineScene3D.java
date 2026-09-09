@@ -72,8 +72,8 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 3D submarine scene using jMonkeyEngine. Standalone application with Lemur GUI, 2D map overlay, and full
- * keyboard/mouse controls.
+ * 3D submarine scene using jMonkeyEngine. Standalone application with Lemur GUI, 2D map overlay,
+ * and full keyboard/mouse controls.
  */
 public final class SubmarineScene3D extends SimpleApplication implements se.hirt.searobots.engine.SimulationListener {
 
@@ -116,8 +116,8 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 
 	// Torpedo collision cylinder dimensions (visual, shrunk from physical hull)
 	// Torpedo visual cylinder matches physics: VehicleConfig.torpedo() hullHalfLength/hullHalfBeam
-	private static final float TORP_HALF_LENGTH = 2.5f;   // 5m total (matches physics)
-	private static final float TORP_RADIUS = 0.25f;       // 0.5m diameter (matches physics)
+	private static final float TORP_HALF_LENGTH = 2.5f; // 5m total (matches physics)
+	private static final float TORP_RADIUS = 0.25f; // 0.5m diameter (matches physics)
 	private final java.util.Set<Integer> knownTorpedoIds3D = new java.util.HashSet<>();
 	// Torpedo intercept marker (3D diamond at published target)
 	private Geometry interceptMarker;
@@ -134,10 +134,10 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 	private BitmapText keysText;
 	private BitmapText loadingText;
 	private BitmapText speedText;
-	private BitmapText replayLabel;           // lower-left "REPLAY: <file>" indicator, clickable to copy path
+	private BitmapText replayLabel; // lower-left "REPLAY: <file>" indicator, clickable to copy path
 	private BitmapText toggleStatusText;
-	private BitmapText competitionScoreText;  // compact score at top
-	private BitmapText competitionPhaseText;  // current phase label below score
+	private BitmapText competitionScoreText; // compact score at top
+	private BitmapText competitionPhaseText; // current phase label below score
 	private BitmapText competitionDetailText; // detailed breakdown, toggleable
 	private boolean showCompetitionDetails = false;
 	private final java.util.concurrent.CopyOnWriteArrayList<String> competitionDetailLines = new java.util.concurrent.CopyOnWriteArrayList<>();
@@ -149,7 +149,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 	private final OverlayConfig overlayConfig = new OverlayConfig();
 	private final Map<Integer, java.util.Deque<Vector3f>> trailBuffers = new HashMap<>();
 	private final Map<Integer, Node> trailNodes = new HashMap<>();
-	private final Map<Integer, Node> waypointNodes = new HashMap<>();  // A* nav waypoints
+	private final Map<Integer, Node> waypointNodes = new HashMap<>(); // A* nav waypoints
 	private final Map<Integer, Node> strategicNodes = new HashMap<>(); // strategic waypoints
 	private final Map<Integer, Node> routeNodes = new HashMap<>();
 	private static final int MAX_TRAIL_POINTS = 750; // ~30 seconds at 25 samples/sec
@@ -188,6 +188,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 	// Camera modes
 	private enum CameraMode {
 		ORBIT, CHASE, TARGET, PERISCOPE, FREE_LOOK, FLY_BY, DIRECTOR;
+
 		private static final CameraMode[] VALUES = values();
 
 		CameraMode next() {
@@ -196,13 +197,13 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 
 		String label() {
 			return switch (this) {
-				case ORBIT -> "Orbit";
-				case CHASE -> "Chase";
-				case TARGET -> "Target";
-				case PERISCOPE -> "Periscope";
-				case FREE_LOOK -> "Free Look";
-				case FLY_BY -> "Fly-by";
-				case DIRECTOR -> "Director";
+			case ORBIT -> "Orbit";
+			case CHASE -> "Chase";
+			case TARGET -> "Target";
+			case PERISCOPE -> "Periscope";
+			case FREE_LOOK -> "Free Look";
+			case FLY_BY -> "Fly-by";
+			case DIRECTOR -> "Director";
 			};
 		}
 	}
@@ -241,7 +242,8 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 	private static final float MODE_TRANS_DURATION = 0.5f;
 
 	/**
-	 * Standalone entry point: launches a full JME window (no Swing). Works on macOS with -XstartOnFirstThread.
+	 * Standalone entry point: launches a full JME window (no Swing). Works on macOS with
+	 * -XstartOnFirstThread.
 	 */
 	public static void main(String[] args) {
 		// A .srl path launches straight into replay of that recorded match; otherwise the
@@ -394,8 +396,8 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 			// Scaled model: 75m x 12m (sx=0.4, sy=0.567, sz=0.4 from original)
 			setupPivotAt(modelNode, "rudderl", new Vector3f(0f, 34f, 0.13f));
 			setupPivotAt(modelNode, "rudderu", new Vector3f(0f, 34f, 0.09f));
-			setupPivotAt(modelNode, "elevatorl", new Vector3f(4.3f, -10f, 0f));  // under tower center
-			setupPivotAt(modelNode, "elevatorr", new Vector3f(-4.4f, -10f, 0f));  // under tower center
+			setupPivotAt(modelNode, "elevatorl", new Vector3f(4.3f, -10f, 0f)); // under tower center
+			setupPivotAt(modelNode, "elevatorr", new Vector3f(-4.4f, -10f, 0f)); // under tower center
 			setupPivotAt(modelNode, "Propeller", SUB_PROP_LOCAL);
 			System.out.println("Loaded submarine-hybrid.obj");
 		} catch (Exception e) {
@@ -505,8 +507,11 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 		keysText = new BitmapText(guiFont);
 		keysText.setSize(guiFont.getCharSet().getRenderedSize());
 		keysText.setColor(new ColorRGBA(0.7f, 0.7f, 0.7f, 1f));
-		keysText.setText(
-				"[1-6] Speed  [0] Max  [P] Pause  [N] Step  [.] FFW to event  [F11] Fullscreen\n" + "[Tab] Cycle sub  [V] Camera  [Space] New map  [Esc] Menu\n" + "[T] Trails  [R] Route  [E] Contacts  [W] Waypoints  [G] Strategic\n" + "[B] Collision  [D] Pause death  [F] Pause solution  [L] Pause launch\n" + "[I] Score details  [F2] Config  [F3] Render  [Ctrl+C] Copy seed");
+		keysText.setText("[1-6] Speed  [0] Max  [P] Pause  [N] Step  [.] FFW to event  [F11] Fullscreen\n"
+				+ "[Tab] Cycle sub  [V] Camera  [Space] New map  [Esc] Menu\n"
+				+ "[T] Trails  [R] Route  [E] Contacts  [W] Waypoints  [G] Strategic\n"
+				+ "[B] Collision  [D] Pause death  [F] Pause solution  [L] Pause launch\n"
+				+ "[I] Score details  [F2] Config  [F3] Render  [Ctrl+C] Copy seed");
 		float keysWidth = keysText.getLineWidth();
 		float keysHeight = keysText.getHeight();
 		keysText.setLocalTranslation(settings.getWidth() - keysWidth - 10, keysHeight + 10, 0);
@@ -542,9 +547,9 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 		// Firing solution crosshair (solid circle + cross, built from triangle strips)
 		crosshairNode = new Node("crosshair");
 		crosshairNode.setCullHint(Spatial.CullHint.Always);
-		float r = 37.5f;     // circle radius
+		float r = 37.5f; // circle radius
 		float cr = r * 1.5f; // cross extends past circle
-		float w = 1.5f;      // cross arm half-width (thickness)
+		float w = 1.5f; // cross arm half-width (thickness)
 
 		Material chMat = new Material(assetManager, "Common/MatDefs/Misc/Unshaded.j3md");
 		chMat.setColor("Color", ColorRGBA.Red);
@@ -572,10 +577,10 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 		crosshairNode.attachChild(circGeom);
 
 		// Cross arms: 4 filled quads (each as 2 triangles)
-		float[][] arms = {{-w, r * 0.7f, w, r * 0.7f, w, cr, -w, cr},       // top
-				{-w, -cr, w, -cr, w, -r * 0.7f, -w, -r * 0.7f},   // bottom
-				{r * 0.7f, -w, r * 0.7f, w, cr, w, cr, -w},        // right
-				{-cr, -w, -cr, w, -r * 0.7f, w, -r * 0.7f, -w},   // left
+		float[][] arms = {{-w, r * 0.7f, w, r * 0.7f, w, cr, -w, cr}, // top
+				{-w, -cr, w, -cr, w, -r * 0.7f, -w, -r * 0.7f}, // bottom
+				{r * 0.7f, -w, r * 0.7f, w, cr, w, cr, -w}, // right
+				{-cr, -w, -cr, w, -r * 0.7f, w, -r * 0.7f, -w}, // left
 		};
 		for (float[] arm : arms) {
 			Mesh armMesh = new Mesh();
@@ -731,8 +736,9 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 				return;
 			long win = org.lwjgl.glfw.GLFW.glfwGetCurrentContext();
 			if (org.lwjgl.glfw.GLFW.glfwGetKey(win,
-					org.lwjgl.glfw.GLFW.GLFW_KEY_LEFT_CONTROL) != org.lwjgl.glfw.GLFW.GLFW_PRESS && org.lwjgl.glfw.GLFW.glfwGetKey(
-					win, org.lwjgl.glfw.GLFW.GLFW_KEY_RIGHT_CONTROL) != org.lwjgl.glfw.GLFW.GLFW_PRESS)
+					org.lwjgl.glfw.GLFW.GLFW_KEY_LEFT_CONTROL) != org.lwjgl.glfw.GLFW.GLFW_PRESS
+					&& org.lwjgl.glfw.GLFW.glfwGetKey(win,
+							org.lwjgl.glfw.GLFW.GLFW_KEY_RIGHT_CONTROL) != org.lwjgl.glfw.GLFW.GLFW_PRESS)
 				return;
 			String hex = Long.toHexString(standaloneSeed);
 			org.lwjgl.glfw.GLFW.glfwSetClipboardString(win, hex);
@@ -814,14 +820,14 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 			if (sim == null)
 				return;
 			int mult = switch (name) {
-				case "Speed1" -> 1;
-				case "Speed2" -> 2;
-				case "Speed4" -> 4;
-				case "Speed8" -> 8;
-				case "Speed16" -> 16;
-				case "Speed24" -> 24;
-				case "SpeedMax" -> 1_000_000;
-				default -> -1;
+			case "Speed1" -> 1;
+			case "Speed2" -> 2;
+			case "Speed4" -> 4;
+			case "Speed8" -> 8;
+			case "Speed16" -> 16;
+			case "Speed24" -> 24;
+			case "SpeedMax" -> 1_000_000;
+			default -> -1;
 			};
 			if (mult > 0) {
 				sim.setSpeedMultiplier(mult);
@@ -980,7 +986,8 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 				long win = org.lwjgl.glfw.GLFW.glfwGetCurrentContext();
 				org.lwjgl.glfw.GLFW.glfwSetWindowTitle(win,
 						"SeaRobots [seed: " + Long.toHexString(standaloneSeed) + "]");
-			} catch (Exception e) { /* ignore */ }
+			} catch (Exception e) {
+				/* ignore */ }
 			return null;
 		});
 		if (standaloneMapRenderer != null)
@@ -996,8 +1003,8 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 	}
 
 	/**
-	 * Finds the newest {@code .srl} under {@code replays/} and plays it back. Wired to the command palette's "Load
-	 * latest replay" action.
+	 * Finds the newest {@code .srl} under {@code replays/} and plays it back. Wired to the command
+	 * palette's "Load latest replay" action.
 	 */
 	private void loadLatestReplay() {
 		java.nio.file.Path dir = java.nio.file.Path.of("replays");
@@ -1020,9 +1027,10 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 	}
 
 	/**
-	 * Switches the running viewer over to replaying a recorded {@code .srl} match. Parsing happens on a background
-	 * thread so the render loop never stalls; the world (rebuilt by {@code startReplay} from the recorded config) is
-	 * applied to the viewers on the render thread, and playback begins only once they have it.
+	 * Switches the running viewer over to replaying a recorded {@code .srl} match. Parsing happens
+	 * on a background thread so the render loop never stalls; the world (rebuilt by
+	 * {@code startReplay} from the recorded config) is applied to the viewers on the render thread,
+	 * and playback begins only once they have it.
 	 */
 	private void loadReplay(java.nio.file.Path srl) {
 		if (activeCompetition != null) {
@@ -1047,7 +1055,8 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 				try {
 					long win = org.lwjgl.glfw.GLFW.glfwGetCurrentContext();
 					org.lwjgl.glfw.GLFW.glfwSetWindowTitle(win, "SeaRobots [replay: " + srl.getFileName() + "]");
-				} catch (Exception e) { /* ignore */ }
+				} catch (Exception e) {
+					/* ignore */ }
 				standaloneSimManager.play();
 				return null;
 			});
@@ -1066,8 +1075,8 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 
 		var competitors = new java.util.ArrayList<se.hirt.searobots.engine.SubmarineCompetition.Competitor>();
 		for (int i = 0; i < factories.size(); i++) {
-			competitors.add(
-					new se.hirt.searobots.engine.SubmarineCompetition.Competitor(names.get(i), factories.get(i)));
+			competitors
+					.add(new se.hirt.searobots.engine.SubmarineCompetition.Competitor(names.get(i), factories.get(i)));
 		}
 
 		var callbacks = new CompetitionRunner.ViewerCallbacks() {
@@ -1077,7 +1086,8 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 					try {
 						long win = org.lwjgl.glfw.GLFW.glfwGetCurrentContext();
 						org.lwjgl.glfw.GLFW.glfwSetWindowTitle(win, title);
-					} catch (Exception e) { /* ignore */ }
+					} catch (Exception e) {
+						/* ignore */ }
 					return null;
 				});
 			}
@@ -1157,8 +1167,9 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 	}
 
 	/**
-	 * Fast-forward-to-event: while active, we've boosted the clock to max speed. Once a pause-on-event trigger has
-	 * paused it (or the match ended), restore the speed the user had before.
+	 * Fast-forward-to-event: while active, we've boosted the clock to max speed. Once a
+	 * pause-on-event trigger has paused it (or the match ended), restore the speed the user had
+	 * before.
 	 */
 	private void updateFastForward() {
 		if (!ffwActive)
@@ -1172,8 +1183,8 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 	}
 
 	/**
-	 * Keeps the lower-left replay indicator in sync: shows "REPLAY: &lt;file&gt;" while a replay is active (hidden
-	 * otherwise), and animates the brief highlight flash triggered by a click.
+	 * Keeps the lower-left replay indicator in sync: shows "REPLAY: &lt;file&gt;" while a replay is
+	 * active (hidden otherwise), and animates the brief highlight flash triggered by a click.
 	 */
 	private void updateReplayLabel(float tpf) {
 		if (replayLabel == null)
@@ -1219,14 +1230,16 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 		try {
 			long win = org.lwjgl.glfw.GLFW.glfwGetCurrentContext();
 			org.lwjgl.glfw.GLFW.glfwSetClipboardString(win, path);
-		} catch (Exception e) { /* clipboard is best-effort */ }
+		} catch (Exception e) {
+			/* clipboard is best-effort */ }
 		replayFlash = REPLAY_FLASH_DURATION;
 		System.out.println("Copied replay path to clipboard: " + path);
 	}
 
 	/**
-	 * Whether a replay is what's currently playing. Derived from the active clock rather than tracked in a flag, so
-	 * starting any live match or competition hides the replay UI without bookkeeping.
+	 * Whether a replay is what's currently playing. Derived from the active clock rather than
+	 * tracked in a flag, so starting any live match or competition hides the replay UI without
+	 * bookkeeping.
 	 */
 	private boolean isReplayActive() {
 		return standaloneSimManager != null
@@ -1267,9 +1280,9 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 
 	// Clickable replay-filename indicator (lower-left). Clicking copies the full path
 	// to the clipboard and plays a brief highlight flash.
-	private volatile String replayFullPath;      // absolute path shown, copied on click
-	private String replayLabelPath;              // last replayPath the label text was built for
-	private float replayFlash;                   // seconds remaining in the click-highlight flash
+	private volatile String replayFullPath; // absolute path shown, copied on click
+	private String replayLabelPath; // last replayPath the label text was built for
+	private float replayFlash; // seconds remaining in the click-highlight flash
 	private static final float REPLAY_FLASH_DURATION = 0.5f;
 	private static final ColorRGBA REPLAY_COLOR = new ColorRGBA(0.55f, 0.85f, 1f, 0.9f);
 	private static final ColorRGBA REPLAY_FLASH_COLOR = new ColorRGBA(1f, 0.95f, 0.35f, 1f);
@@ -1304,7 +1317,8 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 			// Loading indicator
 			if (loadingText != null) {
 				var simSt = simStateSupplier.get();
-				boolean showLoading = simSt == se.hirt.searobots.engine.SimulationLoop.State.INITIALIZING || simSt == se.hirt.searobots.engine.SimulationLoop.State.CREATED;
+				boolean showLoading = simSt == se.hirt.searobots.engine.SimulationLoop.State.INITIALIZING
+						|| simSt == se.hirt.searobots.engine.SimulationLoop.State.CREATED;
 				loadingText.setCullHint(showLoading ? Spatial.CullHint.Never : Spatial.CullHint.Always);
 				if (showLoading) {
 					float cx = settings.getWidth() / 2f - loadingText.getLineWidth() / 2f;
@@ -1350,8 +1364,8 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 						keysText.getHeight() + keysText.getLineHeight() + 14, 0);
 			}
 			// Toggle competition detail visibility
-			competitionDetailText.setCullHint(
-					showCompetitionDetails ? Spatial.CullHint.Never : Spatial.CullHint.Always);
+			competitionDetailText
+					.setCullHint(showCompetitionDetails ? Spatial.CullHint.Never : Spatial.CullHint.Always);
 
 			sunHour = (startTime.toSecondOfDay() / 3600f + latestTick / 50f / 3600f) % 24f;
 			updateAtmosphere();
@@ -1362,8 +1376,8 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 	}
 
 	/**
-	 * Set the world to display terrain for. Safe to call from any thread. The terrain mesh will be built and attached
-	 * on the next jME update tick.
+	 * Set the world to display terrain for. Safe to call from any thread. The terrain mesh will be
+	 * built and attached on the next jME update tick.
 	 */
 	public void setWorld(GeneratedWorld world) {
 		System.out.println("SubmarineScene3D.setWorld() called, world=" + (world != null));
@@ -1413,14 +1427,13 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 	}
 
 	public void setSimStateSupplier(
-			java.util.function.Supplier<se.hirt.searobots.engine.SimulationLoop.State> supplier) {
+		java.util.function.Supplier<se.hirt.searobots.engine.SimulationLoop.State> supplier) {
 		this.simStateSupplier = supplier;
 	}
 
 	@Override
 	public void onTick(
-			long tick, List<SubmarineSnapshot> submarines,
-			List<se.hirt.searobots.engine.TorpedoSnapshot> torpedoes) {
+		long tick, List<SubmarineSnapshot> submarines, List<se.hirt.searobots.engine.TorpedoSnapshot> torpedoes) {
 		updateSubmarines(tick, submarines);
 		latestTorpedoSnapshots = torpedoes != null ? torpedoes : List.of();
 	}
@@ -1508,7 +1521,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 		// Sun direction: east-to-west arc through zenith
 		// jME: X=east, Y=up. Light direction = where light travels (opposite of sun position)
 		if (sunUp) {
-			float sunX = FastMath.cos(arcAngle);  // +1 east, 0 overhead, -1 west
+			float sunX = FastMath.cos(arcAngle); // +1 east, 0 overhead, -1 west
 			float sunY = sunElev;
 			var sunDir = new Vector3f(-sunX, -sunY, 0.15f).normalizeLocal();
 			sun.setDirection(sunDir);
@@ -1553,7 +1566,8 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 		// Only touch transparency when actively fading; preserve user's F3 setting otherwise.
 		// Director mode: simply enable/disable water filter for overhead shots.
 		// No transparency manipulation (it causes visual glitches).
-		boolean directorHidesWater = cameraMode == CameraMode.DIRECTOR && cinematicDirector != null && cinematicDirector.waterOpacity() < 0.5f;
+		boolean directorHidesWater = cameraMode == CameraMode.DIRECTOR && cinematicDirector != null
+				&& cinematicDirector.waterOpacity() < 0.5f;
 		waterFilter.setEnabled(!directorHidesWater);
 
 		if (!atmosphereEnabled) {
@@ -1584,16 +1598,14 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 			float fogDist = 500f + 1500f * depthFactor;
 			fogFilter.setFogDistance(fogDist);
 			fogFilter.setFogDensity(1.5f + 2f * (1f - depthFactor));
-			fogFilter.setFogColor(
-					new ColorRGBA(0.01f + 0.04f * depthFactor, 0.04f + 0.08f * depthFactor, 0.10f + 0.10f * depthFactor,
-							1f));
+			fogFilter.setFogColor(new ColorRGBA(0.01f + 0.04f * depthFactor, 0.04f + 0.08f * depthFactor,
+					0.10f + 0.10f * depthFactor, 1f));
 			viewPort.setBackgroundColor(fogFilter.getFogColor());
 		} else {
 			// Above water
 			sun.setColor(sunColor);
-			fill.setColor(
-					new ColorRGBA(0.4f * sunIntensity + 0.1f, 0.5f * sunIntensity + 0.1f, 0.6f * sunIntensity + 0.1f,
-							1f));
+			fill.setColor(new ColorRGBA(0.4f * sunIntensity + 0.1f, 0.5f * sunIntensity + 0.1f,
+					0.6f * sunIntensity + 0.1f, 1f));
 			ambient.setColor(new ColorRGBA(0.15f + 0.20f * sunIntensity, 0.18f + 0.22f * sunIntensity,
 					0.25f + 0.20f * sunIntensity, 1f));
 			fogFilter.setFogDistance(5000f);
@@ -1634,11 +1646,12 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 		long tick = latestTick;
 		var elapsed = java.time.Duration.ofMillis((long) (tick * 1000.0 / 50));
 		var tod = startTime.plusSeconds((long) (tick / 50.0));
-		hudText.setText(String.format(
-				"%s  |  Speed: %.1f kn  Depth: %.0f m  Throttle: %.0f%%  HP: %d  Torps: %d\n" + "Heading: %03.0f\u00b0  Pitch: %+.1f\u00b0  Roll: %+.1f\u00b0  Rudder: %+.0f%%  Planes: %+.0f%%\n" + "Tick: %d  Elapsed: %02d:%02d:%02d  ToD: %s  Cam: %s",
-				snap.name(), snap.speed(), -pos.z(), snap.throttle() * 100, snap.hp(), snap.torpedoesRemaining(),
-				hdgDeg, pitchDeg, rollDeg, snap.rudder() * 100, snap.sternPlanes() * 100, tick, elapsed.toHoursPart(),
-				elapsed.toMinutesPart(), elapsed.toSecondsPart(), tod.toString(), camLabel()));
+		hudText.setText(String.format("%s  |  Speed: %.1f kn  Depth: %.0f m  Throttle: %.0f%%  HP: %d  Torps: %d\n"
+				+ "Heading: %03.0f\u00b0  Pitch: %+.1f\u00b0  Roll: %+.1f\u00b0  Rudder: %+.0f%%  Planes: %+.0f%%\n"
+				+ "Tick: %d  Elapsed: %02d:%02d:%02d  ToD: %s  Cam: %s", snap.name(), snap.speed(), -pos.z(),
+				snap.throttle() * 100, snap.hp(), snap.torpedoesRemaining(), hdgDeg, pitchDeg, rollDeg,
+				snap.rudder() * 100, snap.sternPlanes() * 100, tick, elapsed.toHoursPart(), elapsed.toMinutesPart(),
+				elapsed.toSecondsPart(), tod.toString(), camLabel()));
 
 		// Speed/pause indicator (separate text, top center, colored)
 		{
@@ -1695,7 +1708,9 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 		}
 
 		hudText.setText(String.format(
-				"TORPEDO #%d (from %s)  |  Speed: %.1f m/s  Depth: %.0f m\n" + "Heading: %03.0f\u00b0  Pitch: %+.1f\u00b0  %s\n" + "Fuel: %.0fs  Noise: %.0f dB  Tick: %d  Elapsed: %02d:%02d:%02d  Cam: %s",
+				"TORPEDO #%d (from %s)  |  Speed: %.1f m/s  Depth: %.0f m\n"
+						+ "Heading: %03.0f\u00b0  Pitch: %+.1f\u00b0  %s\n"
+						+ "Fuel: %.0fs  Noise: %.0f dB  Tick: %d  Elapsed: %02d:%02d:%02d  Cam: %s",
 				ts.id(), ownerName, ts.speed(), -pos.z(), hdgDeg, pitchDeg, targetLine, ts.fuelRemaining(),
 				ts.sourceLevelDb(), tick, elapsed.toHoursPart(), elapsed.toMinutesPart(), elapsed.toSecondsPart(),
 				camLabel()));
@@ -1741,9 +1756,8 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 				if (bearing < 0)
 					bearing += 360;
 				String marker = wp.active() ? "> " : "  ";
-				sb.append(
-						String.format("%s%d. %-10s %03.0f\u00b0 %5.0fm%n", marker, i + 1, sw.purpose().name(), bearing,
-								dist));
+				sb.append(String.format("%s%d. %-10s %03.0f\u00b0 %5.0fm%n", marker, i + 1, sw.purpose().name(),
+						bearing, dist));
 			}
 		}
 
@@ -1834,7 +1848,8 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 
 			// --- Trails ---
 			var trail = trailBuffers.computeIfAbsent(id, k -> new java.util.ArrayDeque<>());
-			if (tick > lastTrailTick && (lastTrailTick < 0 || tick / TRAIL_SAMPLE_INTERVAL > lastTrailTick / TRAIL_SAMPLE_INTERVAL)) {
+			if (tick > lastTrailTick
+					&& (lastTrailTick < 0 || tick / TRAIL_SAMPLE_INTERVAL > lastTrailTick / TRAIL_SAMPLE_INTERVAL)) {
 				trail.addLast(jmePos.clone());
 				if (trail.size() > MAX_TRAIL_POINTS)
 					trail.removeFirst();
@@ -2010,13 +2025,13 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 
 						// Color-code by purpose
 						ColorRGBA purposeColor = switch (sw.purpose()) {
-							case PATROL -> new ColorRGBA(0.2f, 0.8f, 0.2f, 1f);
-							case INVESTIGATE -> new ColorRGBA(1f, 1f, 0.2f, 1f);
-							case PING_POSITION -> new ColorRGBA(1f, 0.5f, 0f, 1f);
-							case STEALTH_TRANSIT -> new ColorRGBA(0.3f, 0.3f, 0.8f, 1f);
-							case INTERCEPT -> new ColorRGBA(1f, 0.2f, 0.2f, 1f);
-							case EVADE -> new ColorRGBA(0.8f, 0.2f, 0.8f, 1f);
-							case RALLY -> ColorRGBA.Cyan;
+						case PATROL -> new ColorRGBA(0.2f, 0.8f, 0.2f, 1f);
+						case INVESTIGATE -> new ColorRGBA(1f, 1f, 0.2f, 1f);
+						case PING_POSITION -> new ColorRGBA(1f, 0.5f, 0f, 1f);
+						case STEALTH_TRANSIT -> new ColorRGBA(0.3f, 0.3f, 0.8f, 1f);
+						case INTERCEPT -> new ColorRGBA(1f, 0.2f, 0.2f, 1f);
+						case EVADE -> new ColorRGBA(0.8f, 0.2f, 0.8f, 1f);
+						case RALLY -> ColorRGBA.Cyan;
 						};
 
 						float[] cpos = new float[circSegs * 2 * 3];
@@ -2059,7 +2074,8 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 			// Sample route history (less frequent than trails, full match history)
 			// Use interval-crossing check so high speed multipliers don't skip samples
 			var route = routeBuffers.computeIfAbsent(id, k -> new java.util.ArrayList<>());
-			if (tick > lastTrailTick && (lastTrailTick < 0 || tick / ROUTE_SAMPLE_INTERVAL > lastTrailTick / ROUTE_SAMPLE_INTERVAL)) {
+			if (tick > lastTrailTick
+					&& (lastTrailTick < 0 || tick / ROUTE_SAMPLE_INTERVAL > lastTrailTick / ROUTE_SAMPLE_INTERVAL)) {
 				route.add(jmePos.clone());
 			}
 
@@ -2071,10 +2087,10 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 				// Build a rectangular duct: 4 walls (top, bottom, left, right)
 				// Cross-section in YZ plane (perpendicular to travel in XZ)
 				// Each offset pair: (dY1, dZ1, dY2, dZ2)
-				float[][] offsets = {{+w, -w, +w, +w},  // top wall:    top-left to top-right
-						{-w, -w, -w, +w},  // bottom wall: bottom-left to bottom-right
-						{-w, -w, +w, -w},  // left wall:   bottom-left to top-left
-						{-w, +w, +w, +w},  // right wall:  bottom-right to top-right
+				float[][] offsets = {{+w, -w, +w, +w}, // top wall:    top-left to top-right
+						{-w, -w, -w, +w}, // bottom wall: bottom-left to bottom-right
+						{-w, -w, +w, -w}, // left wall:   bottom-left to top-left
+						{-w, +w, +w, +w}, // right wall:  bottom-right to top-right
 				};
 
 				Material rtMat = new Material(assetManager, "Common/MatDefs/Misc/Unshaded.j3md");
@@ -2209,7 +2225,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 			// ~3 deg/s actuator rate: full throw in ~8 seconds
 			float surfaceLerp = Math.min(1f, tpf * SURFACE_SPEED);
 
-			float rudderAngle = (float) snap.rudder() * 0.4f;  // +/- 0.4 rad (~23 deg)
+			float rudderAngle = (float) snap.rudder() * 0.4f; // +/- 0.4 rad (~23 deg)
 			float elevAngle = (float) -snap.sternPlanes() * 0.3f; // +/- 0.3 rad (~17 deg)
 			var targetRudder = new Quaternion().fromAngles(0, 0, rudderAngle);
 			var targetElev = new Quaternion().fromAngles(elevAngle, 0, 0);
@@ -2287,10 +2303,10 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 
 				// Ellipsoid for hull body (excluding tower):
 				// tighter vertical, offset aft since bow is longer than stern
-				float semiLength = 38f;   // covers bow to stern body
-				float semiBeam = 5.5f;    // slightly tighter than hullHalfBeam
-				float semiHeight = 4.5f;  // hull body only, tower excluded
-				float aftOffset = 2f;     // shift center slightly aft (sub local Y)
+				float semiLength = 38f; // covers bow to stern body
+				float semiBeam = 5.5f; // slightly tighter than hullHalfBeam
+				float semiHeight = 4.5f; // hull body only, tower excluded
+				float aftOffset = 2f; // shift center slightly aft (sub local Y)
 
 				ellGeom.setLocalRotation(subModelRot);
 				// Offset in sub's local frame then transform to world
@@ -2344,14 +2360,14 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 				double keelDepth = 5.0;
 
 				// Offsets in local frame -> world coords
-				double[][] pts = {{simX, simY, simZ},// center
-						{simX + fwdX * bowDist, simY + fwdY * bowDist, simZ + fwdZ * bowDist},                  // bow
-						{simX - fwdX * sternDist, simY - fwdY * sternDist, simZ - fwdZ * sternDist},            // stern
+				double[][] pts = {{simX, simY, simZ}, // center
+						{simX + fwdX * bowDist, simY + fwdY * bowDist, simZ + fwdZ * bowDist}, // bow
+						{simX - fwdX * sternDist, simY - fwdY * sternDist, simZ - fwdZ * sternDist}, // stern
 						{simX + rightX * beamDist, simY + rightY * beamDist, simZ + rightZ * beamDist},
 						// port (actually starboard, sign doesn't matter for collision)
-						{simX - rightX * beamDist, simY - rightY * beamDist, simZ - rightZ * beamDist},// starboard
-						{simX + upX * towerHeight, simY + upY * towerHeight, simZ + upZ * towerHeight},// tower top
-						{simX - upX * keelDepth, simY - upY * keelDepth, simZ - upZ * keelDepth},                // keel
+						{simX - rightX * beamDist, simY - rightY * beamDist, simZ - rightZ * beamDist}, // starboard
+						{simX + upX * towerHeight, simY + upY * towerHeight, simZ + upZ * towerHeight}, // tower top
+						{simX - upX * keelDepth, simY - upY * keelDepth, simZ - upZ * keelDepth}, // keel
 				};
 				for (int tp = 0; tp < 7; tp++) {
 					// sim (X,Y,Z) -> JME (X, Z, -Y)
@@ -2447,7 +2463,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 			float sternSimX = -(float) Math.sin(simH) * cosP * halfLen;
 			float sternSimY = -(float) Math.cos(simH) * cosP * halfLen;
 			float sternSimZ = -sinP * halfLen;
-			torpBub.setLocalTranslation(modelPos.x + sternSimX, modelPos.y + sternSimZ,  // JME Y = sim Z
+			torpBub.setLocalTranslation(modelPos.x + sternSimX, modelPos.y + sternSimZ, // JME Y = sim Z
 					modelPos.z - sternSimY); // JME Z = -sim Y
 			// Stop emission when paused (particles freeze in place)
 			var simLoop = getActiveSim();
@@ -2747,8 +2763,9 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 				// Ignore V when Ctrl is held (Ctrl+V = paste in dialogs)
 				long win = org.lwjgl.glfw.GLFW.glfwGetCurrentContext();
 				if (org.lwjgl.glfw.GLFW.glfwGetKey(win,
-						org.lwjgl.glfw.GLFW.GLFW_KEY_LEFT_CONTROL) == org.lwjgl.glfw.GLFW.GLFW_PRESS || org.lwjgl.glfw.GLFW.glfwGetKey(
-						win, org.lwjgl.glfw.GLFW.GLFW_KEY_RIGHT_CONTROL) == org.lwjgl.glfw.GLFW.GLFW_PRESS)
+						org.lwjgl.glfw.GLFW.GLFW_KEY_LEFT_CONTROL) == org.lwjgl.glfw.GLFW.GLFW_PRESS
+						|| org.lwjgl.glfw.GLFW.glfwGetKey(win,
+								org.lwjgl.glfw.GLFW.GLFW_KEY_RIGHT_CONTROL) == org.lwjgl.glfw.GLFW.GLFW_PRESS)
 					return;
 				modeTransFromPos.set(cam.getLocation());
 				modeTransFromLookAt.set(orbitCenter);
@@ -2785,26 +2802,26 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 		inputManager.addMapping("ToggleDetails", new KeyTrigger(KeyInput.KEY_I));
 		inputManager.addMapping("ToggleMap", new KeyTrigger(KeyInput.KEY_M));
 		inputManager.addListener((ActionListener) (name, isPressed, tpf) -> {
-					if (!isPressed || dialogOpen)
-						return;
-					switch (name) {
-					case "ToggleTrails" -> overlayConfig.trails = !overlayConfig.trails;
-					case "ToggleRoute" -> overlayConfig.route = !overlayConfig.route;
-					case "ToggleContacts" -> overlayConfig.contactEstimates = !overlayConfig.contactEstimates;
-					case "ToggleWaypoints" -> overlayConfig.waypoints = !overlayConfig.waypoints;
-					case "ToggleStrategic" -> overlayConfig.strategicWaypoints = !overlayConfig.strategicWaypoints;
-					case "ToggleEllipsoids" -> showCollisionEllipsoids = !showCollisionEllipsoids;
-					case "ToggleDetails" -> {
-						showCompetitionDetails = !showCompetitionDetails;
-						updateDetailHud();
-					}
-					case "ToggleMap" -> {
-						var mapState = standalone ? stateManager.getState(NativeMapState.class) : null;
-						if (mapState != null)
-							mapState.toggle();
-					}
-					}
-				}, "ToggleTrails", "ToggleRoute", "ToggleContacts", "ToggleWaypoints", "ToggleStrategic", "ToggleEllipsoids",
+			if (!isPressed || dialogOpen)
+				return;
+			switch (name) {
+			case "ToggleTrails" -> overlayConfig.trails = !overlayConfig.trails;
+			case "ToggleRoute" -> overlayConfig.route = !overlayConfig.route;
+			case "ToggleContacts" -> overlayConfig.contactEstimates = !overlayConfig.contactEstimates;
+			case "ToggleWaypoints" -> overlayConfig.waypoints = !overlayConfig.waypoints;
+			case "ToggleStrategic" -> overlayConfig.strategicWaypoints = !overlayConfig.strategicWaypoints;
+			case "ToggleEllipsoids" -> showCollisionEllipsoids = !showCollisionEllipsoids;
+			case "ToggleDetails" -> {
+				showCompetitionDetails = !showCompetitionDetails;
+				updateDetailHud();
+			}
+			case "ToggleMap" -> {
+				var mapState = standalone ? stateManager.getState(NativeMapState.class) : null;
+				if (mapState != null)
+					mapState.toggle();
+			}
+			}
+		}, "ToggleTrails", "ToggleRoute", "ToggleContacts", "ToggleWaypoints", "ToggleStrategic", "ToggleEllipsoids",
 				"ToggleDetails", "ToggleMap");
 
 		// Mouse orbit/zoom (Orbit and Free Look modes)
@@ -3123,8 +3140,8 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 	}
 
 	/**
-	 * Reparent a named child under a pivot node at a fixed hinge position. The pivot keeps the original child name so
-	 * findChild() still finds it.
+	 * Reparent a named child under a pivot node at a fixed hinge position. The pivot keeps the
+	 * original child name so findChild() still finds it.
 	 */
 	private void setupPivotAt(Node root, String childName, Vector3f hingePos) {
 		Spatial part = findChild(root, childName);
@@ -3252,13 +3269,13 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 
 	private Vector3f cubeFaceDir(int face, float s, float t) {
 		return switch (face) {
-			case 0 -> new Vector3f(+1, -t, -s);  // +X
-			case 1 -> new Vector3f(-1, -t, +s);  // -X
-			case 2 -> new Vector3f(+s, +1, +t);  // +Y
-			case 3 -> new Vector3f(+s, -1, -t);  // -Y
-			case 4 -> new Vector3f(+s, -t, +1);  // +Z
-			case 5 -> new Vector3f(-s, -t, -1);  // -Z
-			default -> throw new IllegalArgumentException();
+		case 0 -> new Vector3f(+1, -t, -s); // +X
+		case 1 -> new Vector3f(-1, -t, +s); // -X
+		case 2 -> new Vector3f(+s, +1, +t); // +Y
+		case 3 -> new Vector3f(+s, -1, -t); // -Y
+		case 4 -> new Vector3f(+s, -t, +1); // +Z
+		case 5 -> new Vector3f(-s, -t, -1); // -Z
+		default -> throw new IllegalArgumentException();
 		};
 	}
 

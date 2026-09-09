@@ -36,16 +36,16 @@ import se.hirt.searobots.engine.ships.codex.CodexAttackSub;
 import java.util.List;
 
 /**
- * Traces torpedo guidance diagnostics for analysis. Compares: estimated target position/heading vs actual, vs intercept
- * point.
+ * Traces torpedo guidance diagnostics for analysis. Compares: estimated target position/heading vs
+ * actual, vs intercept point.
  * <p>
  * Usage: java TorpedoTraceRun [torpedoId] [seed] defaults: torpedoId=1003, seed=daf0549d9456a568
  */
 public class TorpedoTraceRun {
 	public static void main(String[] args) {
 		int traceTorpId = args.length > 0 ? Integer.parseInt(args[0]) : 1003;
-		long seed =
-				args.length > 1 ? Long.parseUnsignedLong(args[1], 16) : Long.parseUnsignedLong("daf0549d9456a568", 16);
+		long seed = args.length > 1 ? Long.parseUnsignedLong(args[1], 16)
+				: Long.parseUnsignedLong("daf0549d9456a568", 16);
 
 		var world = new WorldGenerator().generate(MatchConfig.withDefaults(seed));
 		var sim = new SimulationLoop();
@@ -121,7 +121,9 @@ public class TorpedoTraceRun {
 						continue;
 
 					System.out.printf(
-							"%d\t" + "%.1f\t%.1f\t%.1f\t%.1f\t%.1f\t%.0f\t" + "%.1f\t%.1f\t%.1f\t%.1f\t%.1f\t" + "%.1f\t%.1f\t%.1f\t" + "%.1f\t%.1f\t%.1f\t%.1f\t%.1f\t" + "%.1f\t%.1f\t%.1f\t%.1f\t%.1f\t" + "%.1f\t" + "%s\t%b%n",
+							"%d\t" + "%.1f\t%.1f\t%.1f\t%.1f\t%.1f\t%.0f\t" + "%.1f\t%.1f\t%.1f\t%.1f\t%.1f\t"
+									+ "%.1f\t%.1f\t%.1f\t" + "%.1f\t%.1f\t%.1f\t%.1f\t%.1f\t"
+									+ "%.1f\t%.1f\t%.1f\t%.1f\t%.1f\t" + "%.1f\t" + "%s\t%b%n",
 							tick, tp.x(), tp.y(), tp.z(), Math.toDegrees(t.pose().heading()), t.speed(),
 							t.fuelRemaining(), t.diagEstX(), t.diagEstY(), t.diagEstZ(),
 							Double.isNaN(t.diagEstHeading()) ? Double.NaN : Math.toDegrees(t.diagEstHeading()),

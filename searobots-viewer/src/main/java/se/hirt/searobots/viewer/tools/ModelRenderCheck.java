@@ -44,11 +44,13 @@ import com.jme3.scene.Spatial;
 import com.jme3.system.AppSettings;
 
 /**
- * Renders a vehicle OBJ the way SubmarineScene3D does (same rotation, back-face culling off, lit by a directional
- * light) from a few camera angles, saves screenshots, then exits. Lets you check a model under real jME lighting
- * without launching the full viewer; needs a display and an OpenGL context (a window opens briefly).
+ * Renders a vehicle OBJ the way SubmarineScene3D does (same rotation, back-face culling off, lit by
+ * a directional light) from a few camera angles, saves screenshots, then exits. Lets you check a
+ * model under real jME lighting without launching the full viewer; needs a display and an OpenGL
+ * context (a window opens briefly).
  * <p>
- * Usage: {@code ModelRenderCheck <out-dir> [model path]}, default model {@code models/surface-ship.obj}, e.g.
+ * Usage: {@code ModelRenderCheck <out-dir> [model path]}, default model
+ * {@code models/surface-ship.obj}, e.g.
  * {@code mvn -q dependency:build-classpath -Dmdep.outputFile=cp.txt} then
  * {@code java -cp "target/classes;$(cat cp.txt)" se.hirt.searobots.viewer.tools.ModelRenderCheck out/}.
  * Regenerate the ship itself with {@link ShipModelGenerator}.
@@ -59,13 +61,12 @@ public final class ModelRenderCheck extends SimpleApplication {
 	int frame;
 	Node ship;
 	ScreenshotAppState shots;
-	final Vector3f[] camPos = {
-			new Vector3f(140, 45, 190),   // starboard bow, above
+	final Vector3f[] camPos = {new Vector3f(140, 45, 190), // starboard bow, above
 			new Vector3f(-160, 25, -120), // port quarter, low
-			new Vector3f(0, 40, -220),    // dead astern (propeller and rudder)
-			new Vector3f(10, 260, 10),    // top down
-			new Vector3f(-45, 12, 125),   // port bow, close and low
-			new Vector3f(0, 4, 150),      // dead ahead at the waterline
+			new Vector3f(0, 40, -220), // dead astern (propeller and rudder)
+			new Vector3f(10, 260, 10), // top down
+			new Vector3f(-45, 12, 125), // port bow, close and low
+			new Vector3f(0, 4, 150), // dead ahead at the waterline
 	};
 
 	public static void main(String[] args) {
@@ -124,7 +125,7 @@ public final class ModelRenderCheck extends SimpleApplication {
 
 	@Override
 	public void simpleUpdate(float tpf) {
-		int view = frame / 6;             // six frames per view: settle, then capture on the third
+		int view = frame / 6; // six frames per view: settle, then capture on the third
 		if (view >= camPos.length) {
 			stop();
 			return;

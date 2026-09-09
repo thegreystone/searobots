@@ -100,10 +100,10 @@ public final class PerlinNoise {
 
 	private static double grad(int hash, double x, double y) {
 		return switch (hash & 3) {
-			case 0 -> x + y;
-			case 1 -> -x + y;
-			case 2 -> x - y;
-			default -> -x - y;
+		case 0 -> x + y;
+		case 1 -> -x + y;
+		case 2 -> x - y;
+		default -> -x - y;
 		};
 	}
 }

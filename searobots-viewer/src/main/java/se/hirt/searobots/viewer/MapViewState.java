@@ -46,8 +46,8 @@ import java.awt.image.DataBufferInt;
 import java.nio.ByteBuffer;
 
 /**
- * AppState that renders the 2D tactical map as a fullscreen textured quad overlaid on the 3D scene. Toggled with M key,
- * with a cross-fade transition.
+ * AppState that renders the 2D tactical map as a fullscreen textured quad overlaid on the 3D scene.
+ * Toggled with M key, with a cross-fade transition.
  */
 final class MapViewState extends BaseAppState {
 
@@ -59,7 +59,7 @@ final class MapViewState extends BaseAppState {
 	private Texture2D mapTexture;
 
 	// Fade state
-	private float fadeProgress = 0f;  // 0 = invisible, 1 = fully opaque
+	private float fadeProgress = 0f; // 0 = invisible, 1 = fully opaque
 	private boolean fadingIn = false;
 	private boolean fadingOut = false;
 	private boolean mapVisible = false;
@@ -219,8 +219,8 @@ final class MapViewState extends BaseAppState {
 			for (int x = 0; x < w; x++) {
 				int argb = pixels[srcRow + x];
 				buf.put((byte) ((argb >> 16) & 0xFF)); // R
-				buf.put((byte) ((argb >> 8) & 0xFF));  // G
-				buf.put((byte) (argb & 0xFF));          // B
+				buf.put((byte) ((argb >> 8) & 0xFF)); // G
+				buf.put((byte) (argb & 0xFF)); // B
 				buf.put((byte) ((argb >> 24) & 0xFF)); // A
 			}
 		}

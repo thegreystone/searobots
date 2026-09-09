@@ -40,7 +40,9 @@ public final class SimulationLoop implements SimClock {
 	private static final Color[] SUB_COLORS = {new Color(60, 220, 120), new Color(220, 80, 80), new Color(80, 140, 255),
 			new Color(255, 180, 40), new Color(200, 80, 220), new Color(80, 220, 220)};
 
-	public enum State {CREATED, INITIALIZING, RUNNING, PAUSED, STOPPED}
+	public enum State {
+		CREATED, INITIALIZING, RUNNING, PAUSED, STOPPED
+	}
 
 	// Per-tick torpedo terminal-approach trace. Enable with -Dtorp.trace=true.
 	// Logs the continuously-computed intercept/estimate point vs. the true target
@@ -61,8 +63,8 @@ public final class SimulationLoop implements SimClock {
 	private final TorpedoPhysics torpedoPhysics = new TorpedoPhysics();
 
 	public void run(
-			GeneratedWorld world, List<SubmarineController> controllers, List<VehicleConfig> vehicleConfigs,
-			SimulationListener listener) {
+		GeneratedWorld world, List<SubmarineController> controllers, List<VehicleConfig> vehicleConfigs,
+		SimulationListener listener) {
 		run(world, controllers, vehicleConfigs, null, listener);
 	}
 
@@ -70,12 +72,13 @@ public final class SimulationLoop implements SimClock {
 	 * Run the simulation with optional per-entity headings.
 	 *
 	 * @param headings
-	 * 		optional list of initial headings in radians, or null to use the default (face toward center). Individual
-	 * 		entries may be Double.NaN to use the default for that entity.
+	 *            optional list of initial headings in radians, or null to use the default (face
+	 *            toward center). Individual entries may be Double.NaN to use the default for that
+	 *            entity.
 	 */
 	public void run(
-			GeneratedWorld world, List<SubmarineController> controllers, List<VehicleConfig> vehicleConfigs,
-			List<Double> headings, SimulationListener listener) {
+		GeneratedWorld world, List<SubmarineController> controllers, List<VehicleConfig> vehicleConfigs,
+		List<Double> headings, SimulationListener listener) {
 		Objects.requireNonNull(vehicleConfigs, "vehicleConfigs must not be null");
 		state = State.INITIALIZING;
 		var config = world.config();
@@ -454,11 +457,11 @@ public final class SimulationLoop implements SimClock {
 	}
 
 	/**
-	 * True once a multi-submarine match can no longer change outcome: at most one submarine is still alive and no
-	 * torpedo is still running. Any live torpedo counts, not only those of dead submarines: the blast damage in
-	 * {@link #handleDetonation} has no owner exemption and the proximity fuse only spares the launcher for its first
-	 * five seconds, so a lone survivor can still be sunk by its own weapon. Solo runs (navigation scenarios) never end
-	 * early.
+	 * True once a multi-submarine match can no longer change outcome: at most one submarine is
+	 * still alive and no torpedo is still running. Any live torpedo counts, not only those of dead
+	 * submarines: the blast damage in {@link #handleDetonation} has no owner exemption and the
+	 * proximity fuse only spares the launcher for its first five seconds, so a lone survivor can
+	 * still be sunk by its own weapon. Solo runs (navigation scenarios) never end early.
 	 */
 	static boolean matchDecided(List<SubmarineEntity> entities, List<TorpedoEntity> torpedoes) {
 		if (entities.size() < 2)
@@ -514,8 +517,8 @@ public final class SimulationLoop implements SimClock {
 		double intJump = Double.NaN;
 		double[] prev = lastInt.get(torp.id());
 		if (prev != null && !Double.isNaN(intX)) {
-			intJump = Math.sqrt(
-					(intX - prev[0]) * (intX - prev[0]) + (intY - prev[1]) * (intY - prev[1]) + (intZ - prev[2]) * (intZ - prev[2]));
+			intJump = Math.sqrt((intX - prev[0]) * (intX - prev[0]) + (intY - prev[1]) * (intY - prev[1])
+					+ (intZ - prev[2]) * (intZ - prev[2]));
 		}
 		if (!Double.isNaN(intX))
 			lastInt.put(torp.id(), new double[] {intX, intY, intZ});
@@ -523,8 +526,8 @@ public final class SimulationLoop implements SimClock {
 		// Estimate error: how far the published target estimate is from truth.
 		double estErr = Double.NaN;
 		if (!Double.isNaN(estX)) {
-			estErr = Math.sqrt(
-					(estX - target.x()) * (estX - target.x()) + (estY - target.y()) * (estY - target.y()) + (estZ - target.z()) * (estZ - target.z()));
+			estErr = Math.sqrt((estX - target.x()) * (estX - target.x()) + (estY - target.y()) * (estY - target.y())
+					+ (estZ - target.z()) * (estZ - target.z()));
 		}
 
 		// Heading error from torpedo heading to the intercept bearing.
@@ -535,7 +538,8 @@ public final class SimulationLoop implements SimClock {
 		}
 
 		System.out.printf(
-				"[TT] tick=%d id=%d phase=%-8s spd=%.1f rTrue=%.0f hdgErrInt=%s intJump=%s estErr=%s " + "pos=(%.0f,%.0f,%.0f) est=(%.0f,%.0f,%.0f) int=(%.0f,%.0f,%.0f) tgt=(%.0f,%.0f,%.0f)%n",
+				"[TT] tick=%d id=%d phase=%-8s spd=%.1f rTrue=%.0f hdgErrInt=%s intJump=%s estErr=%s "
+						+ "pos=(%.0f,%.0f,%.0f) est=(%.0f,%.0f,%.0f) int=(%.0f,%.0f,%.0f) tgt=(%.0f,%.0f,%.0f)%n",
 				tick, torp.id(), torp.diagPhase(), torp.speed(), bestRange, fmt(hdgErr), fmt(intJump), fmt(estErr),
 				torp.x(), torp.y(), torp.z(), estX, estY, estZ, intX, intY, intZ, target.x(), target.y(), target.z());
 	}
@@ -558,8 +562,7 @@ public final class SimulationLoop implements SimClock {
 	private static final double EXPLOSION_IMPULSE = 15.0; // m/s velocity change at zero range (before mass division)
 
 	private static void handleDetonation(
-			TorpedoEntity torp, List<SubmarineEntity> subs, MatchConfig config,
-			boolean submarineHit) {
+		TorpedoEntity torp, List<SubmarineEntity> subs, MatchConfig config, boolean submarineHit) {
 		torp.detonate();
 		torp.setExplosionProcessed();
 		double blastRadius = config.blastRadius();
@@ -655,8 +658,7 @@ public final class SimulationLoop implements SimClock {
 				double dist = posA.distanceTo(posB);
 
 				// Collision line: from A to B
-				Vec3 line = (dist > 0.01) ? posB.subtract(posA).normalize()
-						: new Vec3(1, 0, 0); // degenerate: pick arbitrary
+				Vec3 line = (dist > 0.01) ? posB.subtract(posA).normalize() : new Vec3(1, 0, 0); // degenerate: pick arbitrary
 
 				Vec3 velA = a.velocity().linear();
 				Vec3 velB = b.velocity().linear();
@@ -687,8 +689,9 @@ public final class SimulationLoop implements SimClock {
 	}
 
 	/**
-	 * Check whether two oriented ellipsoids overlap by testing sample points (center, bow, stern) of each sub against
-	 * the other's ellipsoid. No Minkowski expansion needed: direct point-in-ellipsoid checks.
+	 * Check whether two oriented ellipsoids overlap by testing sample points (center, bow, stern)
+	 * of each sub against the other's ellipsoid. No Minkowski expansion needed: direct
+	 * point-in-ellipsoid checks.
 	 */
 	static boolean ellipsoidsOverlap(SubmarineEntity a, SubmarineEntity b) {
 		// Sample 3 points on each sub: bow tip, center, stern tip
@@ -721,11 +724,11 @@ public final class SimulationLoop implements SimClock {
 		double cy = sub.y() + fwdY * HullGeometry.AFT_OFFSET;
 		double cz = sub.z() + fwdZ * HullGeometry.AFT_OFFSET;
 
-		return new double[][] {{cx, cy, cz},// center
+		return new double[][] {{cx, cy, cz}, // center
 				{cx + fwdX * HullGeometry.SEMI_LENGTH, cy + fwdY * HullGeometry.SEMI_LENGTH,
-						cz + fwdZ * HullGeometry.SEMI_LENGTH},  // bow
+						cz + fwdZ * HullGeometry.SEMI_LENGTH}, // bow
 				{cx - fwdX * HullGeometry.SEMI_LENGTH, cy - fwdY * HullGeometry.SEMI_LENGTH,
-						cz - fwdZ * HullGeometry.SEMI_LENGTH},  // stern
+						cz - fwdZ * HullGeometry.SEMI_LENGTH}, // stern
 		};
 	}
 
@@ -751,7 +754,9 @@ public final class SimulationLoop implements SimClock {
 		double localRight = dx * rightX + dy * rightY + dz * rightZ;
 		double localUp = dx * upX + dy * upY + dz * upZ;
 
-		double norm = (localFwd * localFwd) / (HullGeometry.SEMI_LENGTH * HullGeometry.SEMI_LENGTH) + (localRight * localRight) / (HullGeometry.SEMI_BEAM * HullGeometry.SEMI_BEAM) + (localUp * localUp) / (HullGeometry.SEMI_HEIGHT * HullGeometry.SEMI_HEIGHT);
+		double norm = (localFwd * localFwd) / (HullGeometry.SEMI_LENGTH * HullGeometry.SEMI_LENGTH)
+				+ (localRight * localRight) / (HullGeometry.SEMI_BEAM * HullGeometry.SEMI_BEAM)
+				+ (localUp * localUp) / (HullGeometry.SEMI_HEIGHT * HullGeometry.SEMI_HEIGHT);
 		return norm <= 1.0;
 	}
 

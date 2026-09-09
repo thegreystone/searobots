@@ -31,20 +31,26 @@ package se.hirt.searobots.engine;
 /**
  * The playback control surface shared by a live {@link SimulationLoop} and a
  * {@link se.hirt.searobots.engine.replay.ReplayPlayer}. Because a recorded match replays through a
- * {@link SimulationListener} exactly like a live one, the viewer can drive either with the same pause / step / speed
- * controls simply by holding a {@code SimClock} instead of a concrete loop.
+ * {@link SimulationListener} exactly like a live one, the viewer can drive either with the same
+ * pause / step / speed controls simply by holding a {@code SimClock} instead of a concrete loop.
  * <p>
- * The {@link SimulationLoop.State} enum is reused as the shared state type so existing viewer code that switches on it
- * needs no changes.
+ * The {@link SimulationLoop.State} enum is reused as the shared state type so existing viewer code
+ * that switches on it needs no changes.
  */
 public interface SimClock {
 
-	/** Pause or unpause advancement. A paused clock emits no further frames until unpaused or stepped. */
+	/**
+	 * Pause or unpause advancement. A paused clock emits no further frames until unpaused or
+	 * stepped.
+	 */
 	void setPaused(boolean paused);
 
 	boolean isPaused();
 
-	/** Wall-clock speed multiplier: {@code 1.0} is real time, higher is faster; very large means "as fast as possible". */
+	/**
+	 * Wall-clock speed multiplier: {@code 1.0} is real time, higher is faster; very large means "as
+	 * fast as possible".
+	 */
 	void setSpeedMultiplier(double multiplier);
 
 	double getSpeedMultiplier();
@@ -52,7 +58,10 @@ public interface SimClock {
 	/** While paused, advance exactly one frame. */
 	void stepOnce();
 
-	/** Stop for good; the clock transitions to {@link SimulationLoop.State#STOPPED} and cannot be restarted. */
+	/**
+	 * Stop for good; the clock transitions to {@link SimulationLoop.State#STOPPED} and cannot be
+	 * restarted.
+	 */
 	void stop();
 
 	SimulationLoop.State getState();

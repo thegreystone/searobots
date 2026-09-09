@@ -29,8 +29,8 @@
 package se.hirt.searobots.engine;
 
 /**
- * Hull collision geometry: ellipsoid parameters and distance calculations shared between the simulation loop, physics,
- * and tests.
+ * Hull collision geometry: ellipsoid parameters and distance calculations shared between the
+ * simulation loop, physics, and tests.
  */
 public final class HullGeometry {
 
@@ -38,36 +38,35 @@ public final class HullGeometry {
 	}
 
 	// Submarine hull ellipsoid (collision + fuse check)
-	public static final double SEMI_LENGTH = 38.0;   // bow-to-stern half-length
-	public static final double SEMI_BEAM = 5.5;      // port-to-starboard half-width
-	public static final double SEMI_HEIGHT = 4.5;    // keel-to-deck half-height
-	public static final double AFT_OFFSET = -2.0;    // center shifted slightly aft
+	public static final double SEMI_LENGTH = 38.0; // bow-to-stern half-length
+	public static final double SEMI_BEAM = 5.5; // port-to-starboard half-width
+	public static final double SEMI_HEIGHT = 4.5; // keel-to-deck half-height
+	public static final double AFT_OFFSET = -2.0; // center shifted slightly aft
 
 	/**
-	 * Distance from a point (px, py, pz) to the nearest point on a submarine's hull ellipsoid. Returns 0 if the point
-	 * is inside the ellipsoid.
+	 * Distance from a point (px, py, pz) to the nearest point on a submarine's hull ellipsoid.
+	 * Returns 0 if the point is inside the ellipsoid.
 	 *
 	 * @param px
-	 * 		point x (e.g. torpedo position)
+	 *            point x (e.g. torpedo position)
 	 * @param py
-	 * 		point y
+	 *            point y
 	 * @param pz
-	 * 		point z
+	 *            point z
 	 * @param subX
-	 * 		sub center x
+	 *            sub center x
 	 * @param subY
-	 * 		sub center y
+	 *            sub center y
 	 * @param subZ
-	 * 		sub center z
+	 *            sub center z
 	 * @param subHeading
-	 * 		sub heading in radians
+	 *            sub heading in radians
 	 * @param subPitch
-	 * 		sub pitch in radians
+	 *            sub pitch in radians
 	 * @return distance to hull surface, or 0 if inside
 	 */
 	public static double distanceToHull(
-			double px, double py, double pz, double subX, double subY, double subZ,
-			double subHeading, double subPitch) {
+		double px, double py, double pz, double subX, double subY, double subZ, double subHeading, double subPitch) {
 		double sinH = Math.sin(subHeading), cosH = Math.cos(subHeading);
 		double sinP = Math.sin(subPitch), cosP = Math.cos(subPitch);
 		double fwdX = sinH * cosP, fwdY = cosH * cosP, fwdZ = sinP;
@@ -110,25 +109,26 @@ public final class HullGeometry {
 	}
 
 	/**
-	 * Distance from a torpedo's BOW (nose tip) to a submarine's hull surface. The bow is the forward-most point of the
-	 * torpedo cylinder, which is the closest part of the torpedo to the target during approach.
+	 * Distance from a torpedo's BOW (nose tip) to a submarine's hull surface. The bow is the
+	 * forward-most point of the torpedo cylinder, which is the closest part of the torpedo to the
+	 * target during approach.
 	 *
 	 * @param torpX
-	 * 		torpedo center x
+	 *            torpedo center x
 	 * @param torpY
-	 * 		torpedo center y
+	 *            torpedo center y
 	 * @param torpZ
-	 * 		torpedo center z
+	 *            torpedo center z
 	 * @param torpHeading
-	 * 		torpedo heading (radians)
+	 *            torpedo heading (radians)
 	 * @param torpPitch
-	 * 		torpedo pitch (radians)
+	 *            torpedo pitch (radians)
 	 * @param torpHalfLength
-	 * 		torpedo half-length (from VehicleConfig.hullHalfLength)
+	 *            torpedo half-length (from VehicleConfig.hullHalfLength)
 	 */
 	public static double bowDistanceToHull(
-			double torpX, double torpY, double torpZ, double torpHeading, double torpPitch, double torpHalfLength,
-			double subX, double subY, double subZ, double subHeading, double subPitch) {
+		double torpX, double torpY, double torpZ, double torpHeading, double torpPitch, double torpHalfLength,
+		double subX, double subY, double subZ, double subHeading, double subPitch) {
 		// Torpedo bow = center + forward * halfLength
 		double cosP = Math.cos(torpPitch), sinP = Math.sin(torpPitch);
 		double bowX = torpX + Math.sin(torpHeading) * cosP * torpHalfLength;

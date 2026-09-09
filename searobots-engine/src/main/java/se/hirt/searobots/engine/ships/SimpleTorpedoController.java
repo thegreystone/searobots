@@ -31,8 +31,8 @@ package se.hirt.searobots.engine.ships;
 import se.hirt.searobots.api.*;
 
 /**
- * Torpedo controller that uses consecutive active pings to estimate target position and velocity, then steers to an
- * intercept point.
+ * Torpedo controller that uses consecutive active pings to estimate target position and velocity,
+ * then steers to an intercept point.
  */
 public class SimpleTorpedoController implements TorpedoController {
 

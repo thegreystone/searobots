@@ -38,15 +38,15 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Verifies that ClaudeAttackSub follows mandatory objectives in order without replanning, and reaches both waypoints
- * sequentially.
+ * Verifies that ClaudeAttackSub follows mandatory objectives in order without replanning, and
+ * reaches both waypoints sequentially.
  */
 class ClaudeObjectiveTest {
 
 	private static final int TICKS_PER_SECOND = 50;
 
 	record ObjectiveResult(long seed, int objectivesHit, double closestToObj1, double closestToObj2, long obj1HitTick,
-	                       long obj2HitTick, boolean reachedInOrder, boolean alive, List<double[]> positionLog) {
+			long obj2HitTick, boolean reachedInOrder, boolean alive, List<double[]> positionLog) {
 	}
 
 	private ObjectiveResult runObjectiveTest(long seed, int durationSeconds) {
@@ -74,8 +74,9 @@ class ClaudeObjectiveTest {
 		// Inject objectives BEFORE first tick (same as CompetitionRunner fix)
 		double depth1 = Math.max(-300, terrain.elevationAt(objectives.x1(), objectives.y1()) + 90);
 		double depth2 = Math.max(-300, terrain.elevationAt(objectives.x2(), objectives.y2()) + 90);
-		controller.setObjectives(List.of(new StrategicWaypoint(objectives.x1(), objectives.y1(), depth1, Purpose.PATROL,
-						NoisePolicy.NORMAL, MovementPattern.DIRECT, 300, -1),
+		controller.setObjectives(List.of(
+				new StrategicWaypoint(objectives.x1(), objectives.y1(), depth1, Purpose.PATROL, NoisePolicy.NORMAL,
+						MovementPattern.DIRECT, 300, -1),
 				new StrategicWaypoint(objectives.x2(), objectives.y2(), depth2, Purpose.PATROL, NoisePolicy.NORMAL,
 						MovementPattern.DIRECT, 300, -1)));
 
@@ -89,9 +90,8 @@ class ClaudeObjectiveTest {
 		int durationTicks = durationSeconds * TICKS_PER_SECOND;
 		for (int t = 0; t < durationTicks; t++) {
 			var pose = new Pose(new Vec3(entity.x(), entity.y(), entity.z()), entity.heading(), entity.pitch(), 0);
-			var vel = new Velocity(
-					new Vec3(entity.speed() * Math.sin(entity.heading()), entity.speed() * Math.cos(entity.heading()),
-							entity.verticalSpeed()), Vec3.ZERO);
+			var vel = new Velocity(new Vec3(entity.speed() * Math.sin(entity.heading()),
+					entity.speed() * Math.cos(entity.heading()), entity.verticalSpeed()), Vec3.ZERO);
 			var state = new SubmarineState(pose, vel, entity.hp(), 0);
 			var env = new EnvironmentSnapshot(terrain, List.of(), world.currentField());
 			var input = new TestHelpers.TestInput(t, 1.0 / TICKS_PER_SECOND, state, env, List.of(), List.of(), 0);
@@ -153,7 +153,8 @@ class ClaudeObjectiveTest {
 			if (ok)
 				passed++;
 			System.out.printf(
-					"  Seed %5d: %d/2 obj, closest1=%.0fm closest2=%.0fm, " + "wp1@t=%d wp2@t=%d, order=%s, alive=%s  %s%n",
+					"  Seed %5d: %d/2 obj, closest1=%.0fm closest2=%.0fm, "
+							+ "wp1@t=%d wp2@t=%d, order=%s, alive=%s  %s%n",
 					seed, r.objectivesHit, r.closestToObj1, r.closestToObj2, r.obj1HitTick, r.obj2HitTick,
 					r.reachedInOrder ? "OK" : "WRONG", r.alive ? "yes" : "no", ok ? "PASS" : "FAIL");
 		}
@@ -189,8 +190,9 @@ class ClaudeObjectiveTest {
 
 		double depth1 = Math.max(-300, terrain.elevationAt(objectives.x1(), objectives.y1()) + 90);
 		double depth2 = Math.max(-300, terrain.elevationAt(objectives.x2(), objectives.y2()) + 90);
-		controller.setObjectives(List.of(new StrategicWaypoint(objectives.x1(), objectives.y1(), depth1, Purpose.PATROL,
-						NoisePolicy.NORMAL, MovementPattern.DIRECT, 300, -1),
+		controller.setObjectives(List.of(
+				new StrategicWaypoint(objectives.x1(), objectives.y1(), depth1, Purpose.PATROL, NoisePolicy.NORMAL,
+						MovementPattern.DIRECT, 300, -1),
 				new StrategicWaypoint(objectives.x2(), objectives.y2(), depth2, Purpose.PATROL, NoisePolicy.NORMAL,
 						MovementPattern.DIRECT, 300, -1)));
 
@@ -200,9 +202,8 @@ class ClaudeObjectiveTest {
 
 		for (int t = 0; t < durationTicks; t++) {
 			var pose = new Pose(new Vec3(entity.x(), entity.y(), entity.z()), entity.heading(), entity.pitch(), 0);
-			var vel = new Velocity(
-					new Vec3(entity.speed() * Math.sin(entity.heading()), entity.speed() * Math.cos(entity.heading()),
-							entity.verticalSpeed()), Vec3.ZERO);
+			var vel = new Velocity(new Vec3(entity.speed() * Math.sin(entity.heading()),
+					entity.speed() * Math.cos(entity.heading()), entity.verticalSpeed()), Vec3.ZERO);
 			var state = new SubmarineState(pose, vel, entity.hp(), 0);
 			var env = new EnvironmentSnapshot(terrain, List.of(), world.currentField());
 			var input = new TestHelpers.TestInput(t, 1.0 / TICKS_PER_SECOND, state, env, List.of(), List.of(), 0);

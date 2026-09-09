@@ -40,10 +40,11 @@ import se.hirt.searobots.engine.ships.codex.CodexAttackSub;
 import java.util.*;
 
 /**
- * Fine-grained endgame trace of overshooting Claude torpedoes, to study whether the continuously-calculated impact
- * point is doing its job. For each torpedo, every tick inside 800m of the TRUE target it records the geometry, then
- * prints the window around closest point of approach (CPA) for the torpedoes that overshoot (CPA in 30..200m).
- * Columns:
+ * Fine-grained endgame trace of overshooting Claude torpedoes, to study whether the
+ * continuously-calculated impact point is doing its job. For each torpedo, every tick inside 800m
+ * of the TRUE target it records the geometry, then prints the window around closest point of
+ * approach (CPA) for the torpedoes that overshoot (CPA in 30..200m). Columns:
+ *
  * <pre>
  *   t       tick
  *   ph      guidance phase (TRA/ACQ/TER)
@@ -57,8 +58,10 @@ import java.util.*;
  *   missStr rTrue*sin(hdgErr): perpendicular miss if it flies straight (m)
  *   losRate d(los)/dt (deg/s): crossing rate the guidance must null
  * </pre>
- * A growing missStr / saturating losRate near CPA means the geometry outran the torpedo's turn rate (control limit). A
- * large intErr means the impact-point prediction itself was bad (lead/prediction limit).
+ *
+ * A growing missStr / saturating losRate near CPA means the geometry outran the torpedo's turn rate
+ * (control limit). A large intErr means the impact-point prediction itself was bad (lead/prediction
+ * limit).
  */
 @EnabledIfSystemProperty(named = "searobots.diag", matches = "true")
 class ClaudeTorpedoOvershootTrace {
@@ -69,7 +72,7 @@ class ClaudeTorpedoOvershootTrace {
 	private static final double ENDGAME_RANGE = 800.0;
 
 	private record Sample(long t, String phase, double spd, double rTrue, double rEst, double estErr, double intErr,
-	                      double losDeg, double hdgErrDeg, double missStraight, double losRateDeg) {
+			double losDeg, double hdgErrDeg, double missStraight, double losRateDeg) {
 	}
 
 	private static final class Torp {
@@ -176,10 +179,10 @@ class ClaudeTorpedoOvershootTrace {
 					double intErr = Math.hypot(torp.diagIntX() - ex, torp.diagIntY() - ey);
 					double rEst = Math.hypot(px - torp.diagEstX(), py - torp.diagEstY());
 					String ph = switch (torp.diagPhase() == null ? "" : torp.diagPhase()) {
-						case "TRANSIT" -> "TRA";
-						case "ACQUISITION" -> "ACQ";
-						case "TERMINAL" -> "TER";
-						default -> "?";
+					case "TRANSIT" -> "TRA";
+					case "ACQUISITION" -> "ACQ";
+					case "TERMINAL" -> "TER";
+					default -> "?";
 					};
 					t.samples.add(new Sample(tick, ph, torp.speed(), rTrue, rEst, estErr, intErr, Math.toDegrees(los),
 							Math.toDegrees(hdgErr), rTrue * Math.sin(hdgErr), losRateDeg));

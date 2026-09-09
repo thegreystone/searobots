@@ -35,8 +35,8 @@ import se.hirt.searobots.api.VehicleConfig;
 import java.awt.*;
 
 /**
- * Measures steady-state turn radius at 1 m/s increments from 1 to 15 m/s, at optimal rudder (~0.35) and at full rudder
- * (1.0). Results feed into the autopilot's turn rate table.
+ * Measures steady-state turn radius at 1 m/s increments from 1 to 15 m/s, at optimal rudder (~0.35)
+ * and at full rudder (1.0). Results feed into the autopilot's turn rate table.
  */
 class TurnRadiusTableTest {
 

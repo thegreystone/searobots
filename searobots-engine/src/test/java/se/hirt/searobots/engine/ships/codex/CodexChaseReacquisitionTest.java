@@ -55,9 +55,8 @@ class CodexChaseReacquisitionTest {
 		TestHelpers.CapturedOutput finalOutput = null;
 		for (long tick = 1; tick <= 560; tick++) {
 			var output = new TestHelpers.CapturedOutput();
-			controller.onTick(
-					new TestHelpers.TestInput(tick, DT, self, environment(world), List.of(passiveContact(0.0)),
-							List.of(), tick == 560 ? 0 : 250), output);
+			controller.onTick(new TestHelpers.TestInput(tick, DT, self, environment(world),
+					List.of(passiveContact(0.0)), List.of(), tick == 560 ? 0 : 250), output);
 			finalOutput = output;
 		}
 
@@ -77,9 +76,8 @@ class CodexChaseReacquisitionTest {
 		TestHelpers.CapturedOutput finalOutput = null;
 		for (long tick = 0; tick <= 600; tick++) {
 			var output = new TestHelpers.CapturedOutput();
-			controller.onTick(
-					new TestHelpers.TestInput(tick, DT, self, environment(world), List.of(passiveContact(0.0, 0.34)),
-							List.of(), tick == 600 ? 0 : 250), output);
+			controller.onTick(new TestHelpers.TestInput(tick, DT, self, environment(world),
+					List.of(passiveContact(0.0, 0.34)), List.of(), tick == 600 ? 0 : 250), output);
 			finalOutput = output;
 		}
 

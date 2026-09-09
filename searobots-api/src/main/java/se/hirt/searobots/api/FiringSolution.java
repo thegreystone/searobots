@@ -31,19 +31,20 @@ package se.hirt.searobots.api;
 /**
  * A submarine's declaration that it has a viable torpedo firing solution on a target. Published via
  * {@link SubmarineOutput#publishFiringSolution} for viewer visualization and match recording.
- * <p>The controller decides when it has a solution based on its own
- * criteria (range, uncertainty, environment, target geometry, etc.). Different controllers may use different criteria.
+ * <p>
+ * The controller decides when it has a solution based on its own criteria (range, uncertainty,
+ * environment, target geometry, etc.). Different controllers may use different criteria.
  *
  * @param targetX
- * 		estimated target world X coordinate (meters)
+ *            estimated target world X coordinate (meters)
  * @param targetY
- * 		estimated target world Y coordinate (meters)
+ *            estimated target world Y coordinate (meters)
  * @param targetHeading
- * 		estimated target heading in radians [0, 2pi), or NaN if unknown
+ *            estimated target heading in radians [0, 2pi), or NaN if unknown
  * @param targetSpeed
- * 		estimated target speed in m/s, or -1 if unknown
+ *            estimated target speed in m/s, or -1 if unknown
  * @param quality
- * 		solution quality 0.0 (marginal) to 1.0 (excellent)
+ *            solution quality 0.0 (marginal) to 1.0 (excellent)
  */
 public record FiringSolution(double targetX, double targetY, double targetHeading, double targetSpeed, double quality) {
 	public FiringSolution {

@@ -49,20 +49,23 @@ import java.util.concurrent.TimeUnit;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Validates the decoder against the real match committed at {@code replays/headless-d.srl} (seed 13, Codex vs Claude,
- * 14,221 frames, format v2, ends in a torpedo kill).
+ * Validates the decoder against the real match committed at {@code replays/headless-d.srl} (seed
+ * 13, Codex vs Claude, 14,221 frames, format v2, ends in a torpedo kill).
  * <p>
- * {@link ReplayRoundTripTest} writes and reads with the <em>same</em> build, so it can never notice the codec drifting
- * away from files that already exist on disk. This test pins decoding to a fixed on-disk artifact: if a change breaks
- * reading of previously recorded replays, it fails here first. The expected values below were extracted independently
- * from the raw tab-separated file (awk over the {@code T}/{@code s}/{@code f}/{@code p} lines), not via the Java
- * decoder, so decoder and file cannot be wrong in the same way.
+ * {@link ReplayRoundTripTest} writes and reads with the <em>same</em> build, so it can never notice
+ * the codec drifting away from files that already exist on disk. This test pins decoding to a fixed
+ * on-disk artifact: if a change breaks reading of previously recorded replays, it fails here first.
+ * The expected values below were extracted independently from the raw tab-separated file (awk over
+ * the {@code T}/{@code s}/{@code f}/{@code p} lines), not via the Java decoder, so decoder and file
+ * cannot be wrong in the same way.
  * <p>
  * If the sample file is ever removed from the repository, the tests are skipped rather than failed.
  */
 class SampleReplayTest {
 
-	/** Repo-root relative location; resolved from the module dir (surefire) or the repo root (IDE). */
+	/**
+	 * Repo-root relative location; resolved from the module dir (surefire) or the repo root (IDE).
+	 */
 	private static Path sample;
 
 	@BeforeAll

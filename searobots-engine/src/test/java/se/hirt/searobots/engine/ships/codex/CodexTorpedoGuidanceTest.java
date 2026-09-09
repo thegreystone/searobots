@@ -47,25 +47,23 @@ class CodexTorpedoGuidanceTest {
 	void closeRangeActiveFixCommandsDeepDive() {
 		var controller = new CodexTorpedoController();
 		var world = GeneratedWorld.deepFlat();
-		controller.onLaunch(
-				new TorpedoLaunchContext(MatchConfig.withDefaults(0L), world.terrain(), new Vec3(0.0, -600.0, -120.0),
-						0.0, 0.0, "0,1200,-120,0,0"));
+		controller.onLaunch(new TorpedoLaunchContext(MatchConfig.withDefaults(0L), world.terrain(),
+				new Vec3(0.0, -600.0, -120.0), 0.0, 0.0, "0,1200,-120,0,0"));
 
-		controller.onTick(
-				new FixedInput(0L, new Pose(new Vec3(0.0, 0.0, -120.0), 0.0, 0.0, 0.0), Velocity.ZERO, 25.0, 120.0,
-						List.of(), List.of(), 0), new CapturingOutput());
+		controller.onTick(new FixedInput(0L, new Pose(new Vec3(0.0, 0.0, -120.0), 0.0, 0.0, 0.0), Velocity.ZERO, 25.0,
+				120.0, List.of(), List.of(), 0), new CapturingOutput());
 
 		var output = new CapturingOutput();
-		controller.onTick(
-				new FixedInput(600L, new Pose(new Vec3(0.0, 0.0, -120.0), 0.0, 0.0, 0.0), Velocity.ZERO, 25.0, 120.0,
-						List.of(), List.of(activeContact(0.0, 240.0, -280.0)), 0), output);
+		controller.onTick(new FixedInput(600L, new Pose(new Vec3(0.0, 0.0, -120.0), 0.0, 0.0, 0.0), Velocity.ZERO, 25.0,
+				120.0, List.of(), List.of(activeContact(0.0, 240.0, -280.0)), 0), output);
 
 		assertTrue(output.publishedTargetZ < -220.0,
 				"A close deep active fix should move the target depth deep, got " + output.publishedTargetZ);
 		assertTrue(output.sternPlanes < -0.8,
 				"A close deep active fix should command a strong dive, got " + output.sternPlanes);
 		assertTrue(output.throttle <= 0.55,
-				"A close deep active fix with a large vertical intercept error should slow down, got " + output.throttle);
+				"A close deep active fix with a large vertical intercept error should slow down, got "
+						+ output.throttle);
 	}
 
 	@Test
@@ -100,30 +98,26 @@ class CodexTorpedoGuidanceTest {
 	void classifiedSubmarineActiveReturnBeatsClassifiedTorpedo() {
 		var controller = new CodexTorpedoController();
 		var world = GeneratedWorld.deepFlat();
-		controller.onLaunch(
-				new TorpedoLaunchContext(MatchConfig.withDefaults(0L), world.terrain(), new Vec3(0.0, -600.0, -120.0),
-						0.0, 0.0, "0;1500;-120;0;0"));
+		controller.onLaunch(new TorpedoLaunchContext(MatchConfig.withDefaults(0L), world.terrain(),
+				new Vec3(0.0, -600.0, -120.0), 0.0, 0.0, "0;1500;-120;0;0"));
 
-		controller.onTick(
-				new FixedInput(0L, new Pose(new Vec3(0.0, -600.0, -120.0), 0.0, 0.0, 0.0), Velocity.ZERO, 25.0, 120.0,
-						List.of(), List.of(), 0), new CapturingOutput());
+		controller.onTick(new FixedInput(0L, new Pose(new Vec3(0.0, -600.0, -120.0), 0.0, 0.0, 0.0), Velocity.ZERO,
+				25.0, 120.0, List.of(), List.of(), 0), new CapturingOutput());
 
 		var output = new CapturingOutput();
-		controller.onTick(
-				new FixedInput(400L, new Pose(new Vec3(0.0, 100.0, -120.0), 0.0, 0.0, 0.0), Velocity.ZERO, 25.0, 120.0,
-						List.of(),
-						List.of(activeContact(Math.toRadians(9.0), 520.0, -120.0, SonarContact.Classification.TORPEDO,
-										25.0, 24.0),
-								activeContact(0.0, 920.0, -140.0, SonarContact.Classification.SUBMARINE, 8.0, 18.0)),
-						0), output);
+		controller.onTick(new FixedInput(400L, new Pose(new Vec3(0.0, 100.0, -120.0), 0.0, 0.0, 0.0), Velocity.ZERO,
+				25.0, 120.0, List.of(),
+				List.of(activeContact(Math.toRadians(9.0), 520.0, -120.0, SonarContact.Classification.TORPEDO, 25.0,
+						24.0), activeContact(0.0, 920.0, -140.0, SonarContact.Classification.SUBMARINE, 8.0, 18.0)),
+				0), output);
 
 		assertTrue(Math.abs(output.publishedTargetX) < 80.0 && output.publishedTargetY > 900.0,
-				"The torpedo should keep the submarine as target, got (" + output.publishedTargetX + ", " + output.publishedTargetY + ")");
+				"The torpedo should keep the submarine as target, got (" + output.publishedTargetX + ", "
+						+ output.publishedTargetY + ")");
 	}
 
 	private TerminalOutcome runTerminalApproach(
-			Vec3 target, double missionDepth, double activeStartRange, int maxTicks,
-			boolean gateActiveByRange) {
+		Vec3 target, double missionDepth, double activeStartRange, int maxTicks, boolean gateActiveByRange) {
 		var world = GeneratedWorld.deepFlat();
 		var controller = new CodexTorpedoController();
 		var torpedo = new TorpedoEntity(1, 0, VehicleConfig.torpedo(), controller, new Vec3(0.0, 0.0, -100.0), 0.0, 0.0,
@@ -147,9 +141,8 @@ class CodexTorpedoGuidanceTest {
 			double horizontalRange = Math.hypot(dx, dy);
 			double slantRange = Math.sqrt(dx * dx + dy * dy + dz * dz);
 			boolean activeAvailable = !gateActiveByRange || horizontalRange <= activeStartRange;
-			List<SonarContact> activeReturns =
-					activeAvailable ? List.of(activeContact(bearingTo(pos, target), slantRange, target.z()))
-							: List.of();
+			List<SonarContact> activeReturns = activeAvailable
+					? List.of(activeContact(bearingTo(pos, target), slantRange, target.z())) : List.of();
 
 			var input = new FixedInput(tick, torpedo.pose(), torpedo.velocity(), torpedo.speed(),
 					torpedo.fuelRemaining(), List.of(), activeReturns, 0);
@@ -180,8 +173,8 @@ class CodexTorpedoGuidanceTest {
 	}
 
 	private static SonarContact activeContact(
-			double bearing, double range, double depth,
-			SonarContact.Classification classification, double estimatedSpeed, double signalExcess) {
+		double bearing, double range, double depth, SonarContact.Classification classification, double estimatedSpeed,
+		double signalExcess) {
 		return new SonarContact(bearing, signalExcess, range, true, estimatedSpeed, Math.toRadians(0.3),
 				Math.max(2.0, range * 0.02), 220.0, 0.95, Double.NaN, depth, classification);
 	}
@@ -192,7 +185,7 @@ class CodexTorpedoGuidanceTest {
 	}
 
 	private record TerminalOutcome(double bestDistance, double bestDepthGap, double depthAt1200m, double depthAt300m,
-	                               double finalDepth) {
+			double finalDepth) {
 		@Override
 		public String toString() {
 			return String.format(Locale.US,
@@ -202,8 +195,8 @@ class CodexTorpedoGuidanceTest {
 	}
 
 	private record FixedInput(long tick, Pose self, Velocity velocity, double speed, double fuelRemaining,
-	                          List<SonarContact> sonarContacts, List<SonarContact> activeSonarReturns,
-	                          int activeSonarCooldownTicks) implements TorpedoInput {
+			List<SonarContact> sonarContacts, List<SonarContact> activeSonarReturns,
+			int activeSonarCooldownTicks) implements TorpedoInput {
 		@Override
 		public double deltaTimeSeconds() {
 			return DT;

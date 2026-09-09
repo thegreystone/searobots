@@ -42,8 +42,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static se.hirt.searobots.api.VehicleConfig.submarine;
 
 /**
- * Diagnostic tests for passive sonar tracking at close range, with special attention to detection from behind the
- * target (baffles geometry) and the hunter's ability to maintain contact during a stealth approach.
+ * Diagnostic tests for passive sonar tracking at close range, with special attention to detection
+ * from behind the target (baffles geometry) and the hunter's ability to maintain contact during a
+ * stealth approach.
  */
 class PassiveSonarTrackingTest {
 
@@ -159,8 +160,8 @@ class PassiveSonarTrackingTest {
 		// below threshold.
 		// SE = SL - TL - (NL + baffle_penalty)
 		//    = 96 - 10*log10(500) - (60 + 20) = 96 - 27 - 80 = -11 dB
-		assertTrue(passiveContacts.isEmpty(),
-				"Target in listener's baffles (stern) should NOT be detected at 500m. " + "Contacts: " + passiveContacts.size());
+		assertTrue(passiveContacts.isEmpty(), "Target in listener's baffles (stern) should NOT be detected at 500m. "
+				+ "Contacts: " + passiveContacts.size());
 
 		System.out.println("[Test 2] Baffles block detection from behind:");
 		System.out.println("  Target SL: " + targetSL + " dB, range: 500m, in baffles");
@@ -199,8 +200,8 @@ class PassiveSonarTrackingTest {
 		// Verify SE decreases with range where detected
 		System.out.println("[Test 3] Passive tracking degradation with range:");
 		for (int i = 0; i < ranges.length; i++) {
-			System.out.println("  Range " + (int) ranges[i] + "m: detected=" + detected[i] + ", SE=" + (detected[i]
-					? String.format("%.1f dB", seValues[i]) : "N/A"));
+			System.out.println("  Range " + (int) ranges[i] + "m: detected=" + detected[i] + ", SE="
+					+ (detected[i] ? String.format("%.1f dB", seValues[i]) : "N/A"));
 		}
 
 		// At 500m the target should definitely be detected
@@ -209,8 +210,8 @@ class PassiveSonarTrackingTest {
 		// SE should monotonically decrease at each detected range
 		for (int i = 1; i < ranges.length; i++) {
 			if (detected[i] && detected[i - 1]) {
-				assertTrue(seValues[i] < seValues[i - 1],
-						"SE at " + (int) ranges[i] + "m (" + seValues[i] + ") should be less than at " + (int) ranges[i - 1] + "m (" + seValues[i - 1] + ")");
+				assertTrue(seValues[i] < seValues[i - 1], "SE at " + (int) ranges[i] + "m (" + seValues[i]
+						+ ") should be less than at " + (int) ranges[i - 1] + "m (" + seValues[i - 1] + ")");
 			}
 		}
 
@@ -221,9 +222,8 @@ class PassiveSonarTrackingTest {
 		// So 1000m should be detected, 2000m probably not.
 		assertTrue(detected[1], "Target should still be detected at 1000m");
 
-		System.out.println(
-				"  Approximate max passive detection range for SL=" + targetSL + " dB target: " + (detected[2]
-						? "> 2000m" : detected[1] ? "1000-2000m" : "< 1000m"));
+		System.out.println("  Approximate max passive detection range for SL=" + targetSL + " dB target: "
+				+ (detected[2] ? "> 2000m" : detected[1] ? "1000-2000m" : "< 1000m"));
 	}
 
 	// ====================================================================
@@ -257,8 +257,8 @@ class PassiveSonarTrackingTest {
 		var listener = new SimulationListener() {
 			@Override
 			public void onTick(
-					long tick, List<SubmarineSnapshot> submarines,
-					List<se.hirt.searobots.engine.TorpedoSnapshot> torpedoes) {
+				long tick, List<SubmarineSnapshot> submarines,
+				List<se.hirt.searobots.engine.TorpedoSnapshot> torpedoes) {
 				ticked[0] = true;
 				if (tick % 100 == 0 && submarines.size() >= 2) {
 					var hunter = submarines.get(0);
@@ -290,9 +290,8 @@ class PassiveSonarTrackingTest {
 			}
 		};
 
-		var thread = new Thread(
-				() -> sim.run(world, controllers, List.of(VehicleConfig.submarine(), VehicleConfig.surfaceShip()),
-						listener));
+		var thread = new Thread(() -> sim.run(world, controllers,
+				List.of(VehicleConfig.submarine(), VehicleConfig.surfaceShip()), listener));
 		thread.start();
 		try {
 			thread.join(30_000);
@@ -354,8 +353,8 @@ class PassiveSonarTrackingTest {
 		var listener = new SimulationListener() {
 			@Override
 			public void onTick(
-					long tick, List<SubmarineSnapshot> submarines,
-					List<se.hirt.searobots.engine.TorpedoSnapshot> torpedoes) {
+				long tick, List<SubmarineSnapshot> submarines,
+				List<se.hirt.searobots.engine.TorpedoSnapshot> torpedoes) {
 				ticked[0] = true;
 				if (tick % 100 == 0 && submarines.size() >= 2) {
 					var hunter = submarines.get(0);
@@ -386,9 +385,8 @@ class PassiveSonarTrackingTest {
 			}
 		};
 
-		var thread = new Thread(
-				() -> sim.run(world, controllers, List.of(VehicleConfig.submarine(), VehicleConfig.surfaceShip()),
-						listener));
+		var thread = new Thread(() -> sim.run(world, controllers,
+				List.of(VehicleConfig.submarine(), VehicleConfig.surfaceShip()), listener));
 		thread.start();
 		try {
 			thread.join(30_000);
@@ -534,8 +532,8 @@ class PassiveSonarTrackingTest {
 		var listener = new SimulationListener() {
 			@Override
 			public void onTick(
-					long tick, List<SubmarineSnapshot> submarines,
-					List<se.hirt.searobots.engine.TorpedoSnapshot> torpedoes) {
+				long tick, List<SubmarineSnapshot> submarines,
+				List<se.hirt.searobots.engine.TorpedoSnapshot> torpedoes) {
 				ticked[0] = true;
 				if (tick % 100 == 0 && submarines.size() >= 2) {
 					var hunter = submarines.get(0);
@@ -550,9 +548,8 @@ class PassiveSonarTrackingTest {
 					boolean hasPing = hunter.pingRequested();
 					boolean hasEstimates = !hunter.contactEstimates().isEmpty();
 
-					stateLog.add(
-							String.format("t=%d dist=%.0fm status=%s ping=%s contact=%s", tick, dist, status, hasPing,
-									hasEstimates));
+					stateLog.add(String.format("t=%d dist=%.0fm status=%s ping=%s contact=%s", tick, dist, status,
+							hasPing, hasEstimates));
 
 					if (hasEstimates) {
 						for (var est : hunter.contactEstimates()) {
@@ -574,9 +571,8 @@ class PassiveSonarTrackingTest {
 			}
 		};
 
-		var thread = new Thread(
-				() -> sim.run(world, controllers, List.of(VehicleConfig.submarine(), VehicleConfig.surfaceShip()),
-						listener));
+		var thread = new Thread(() -> sim.run(world, controllers,
+				List.of(VehicleConfig.submarine(), VehicleConfig.surfaceShip()), listener));
 		thread.start();
 		try {
 			thread.join(60_000); // longer timeout for 10000 ticks
@@ -613,9 +609,8 @@ class PassiveSonarTrackingTest {
 			// At patrol speed ~6 m/s over 200s, it could close ~1200m in theory,
 			// but the drone moves too, so actual closing depends on geometry.
 			// Just verify the hunter moved closer than the initial 5000m.
-			assertTrue(finalDist < initialDist,
-					"Hunter should close distance over time. Initial: " + String.format("%.0f",
-							initialDist) + "m, Final: " + String.format("%.0f", finalDist) + "m");
+			assertTrue(finalDist < initialDist, "Hunter should close distance over time. Initial: "
+					+ String.format("%.0f", initialDist) + "m, Final: " + String.format("%.0f", finalDist) + "m");
 		}
 	}
 }

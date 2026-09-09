@@ -35,8 +35,8 @@ import java.util.List;
 import java.util.Random;
 
 /**
- * Procedurally generates an underwater world from a {@link MatchConfig}. Deterministic: the same config always produces
- * the same world.
+ * Procedurally generates an underwater world from a {@link MatchConfig}. Deterministic: the same
+ * config always produces the same world.
  */
 public final class WorldGenerator {
 
@@ -131,9 +131,9 @@ public final class WorldGenerator {
 
 		if (roll < 0.40) {
 			// Temperate open ocean: main thermocline 80-160m, sometimes a seasonal layer above
-			double mainDepth = -(80 + rng.nextDouble() * 80);   // -80 to -160m
-			double mainThickness = 40 + rng.nextDouble() * 40;  // 40-80m band
-			double gradient = 4.0 + rng.nextDouble() * 4.0;     // 4-8C drop
+			double mainDepth = -(80 + rng.nextDouble() * 80); // -80 to -160m
+			double mainThickness = 40 + rng.nextDouble() * 40; // 40-80m band
+			double gradient = 4.0 + rng.nextDouble() * 4.0; // 4-8C drop
 			layers.add(new ThermalLayer(mainDepth, mainThickness, surfaceTemp, surfaceTemp - gradient));
 			// 40% chance of a weak seasonal layer above
 			if (rng.nextDouble() < 0.4) {
@@ -146,7 +146,7 @@ public final class WorldGenerator {
 			// Tropical: strong layer 100-220m, pronounced stratification
 			double mainDepth = -(100 + rng.nextDouble() * 120);
 			double mainThickness = 50 + rng.nextDouble() * 50; // 50-100m band
-			double gradient = 6.0 + rng.nextDouble() * 6.0;    // 6-12C drop
+			double gradient = 6.0 + rng.nextDouble() * 6.0; // 6-12C drop
 			layers.add(new ThermalLayer(mainDepth, mainThickness, surfaceTemp, surfaceTemp - gradient));
 		} else if (roll < 0.85) {
 			// Coastal/summer: shallow seasonal thermocline 30-70m + deeper permanent layer
@@ -257,9 +257,9 @@ public final class WorldGenerator {
 	}
 
 	/**
-	 * Finds the safest heading from (x, y) by scanning 36 directions. Returns the heading where the minimum floor depth
-	 * over {@link #SAFE_HEADING_DISTANCE} is deepest, or {@code NaN} if no direction keeps the floor below
-	 * {@link #SAFE_HEADING_MIN_FLOOR}.
+	 * Finds the safest heading from (x, y) by scanning 36 directions. Returns the heading where the
+	 * minimum floor depth over {@link #SAFE_HEADING_DISTANCE} is deepest, or {@code NaN} if no
+	 * direction keeps the floor below {@link #SAFE_HEADING_MIN_FLOOR}.
 	 */
 	public static double findSafeHeading(TerrainMap terrain, double x, double y) {
 		double bestHeading = Double.NaN;

@@ -248,8 +248,8 @@ class SonarModelTest {
 		double weakStdDev = SonarModel.bearingStdDev(6);
 		double strongStdDev = SonarModel.bearingStdDev(30);
 
-		assertTrue(strongStdDev < weakStdDev, "Strong SE should have smaller bearing error: weak=" + Math.toDegrees(
-				weakStdDev) + " strong=" + Math.toDegrees(strongStdDev));
+		assertTrue(strongStdDev < weakStdDev, "Strong SE should have smaller bearing error: weak="
+				+ Math.toDegrees(weakStdDev) + " strong=" + Math.toDegrees(strongStdDev));
 
 		assertTrue(weakStdDev > Math.toRadians(3),
 				"Weak SE should have >3 deg error, got " + Math.toDegrees(weakStdDev));
@@ -444,8 +444,8 @@ class SonarModelTest {
 	}
 
 	/**
-	 * Continental shelf: shallow (-50m) for y > 0, drops steeply to -400m for y < -200. Cliff face is a 200m linear
-	 * transition between y=-200 and y=0.
+	 * Continental shelf: shallow (-50m) for y > 0, drops steeply to -400m for y < -200. Cliff face
+	 * is a 200m linear transition between y=-200 and y=0.
 	 */
 	private static TerrainMap shelfCliffTerrain() {
 		int size = 401;
@@ -654,8 +654,8 @@ class SonarModelTest {
 		double shortOcclusion = SonarModel.terrainOcclusionDb(new Vec3(0, -250, -300), new Vec3(0, 50, -80), terrain);
 		double longOcclusion = SonarModel.terrainOcclusionDb(new Vec3(0, -500, -300), new Vec3(0, 500, -80), terrain);
 
-		assertTrue(longOcclusion > shortOcclusion,
-				"Longer path through shelf should produce more occlusion: short=" + shortOcclusion + " long=" + longOcclusion);
+		assertTrue(longOcclusion > shortOcclusion, "Longer path through shelf should produce more occlusion: short="
+				+ shortOcclusion + " long=" + longOcclusion);
 		assertTrue(shortOcclusion > 5,
 				"Even short cliff crossing should produce meaningful occlusion, got " + shortOcclusion);
 	}

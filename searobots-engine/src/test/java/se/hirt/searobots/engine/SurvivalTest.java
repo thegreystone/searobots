@@ -37,8 +37,8 @@ import se.hirt.searobots.engine.ships.SubmarineDrone;
 import java.util.List;
 
 /**
- * Tests that any submarine controller survives terrain across multiple seeds. Extend and provide your controller via
- * {@link #createController()}.
+ * Tests that any submarine controller survives terrain across multiple seeds. Extend and provide
+ * your controller via {@link #createController()}.
  */
 public abstract class SurvivalTest extends AbstractControllerTest {
 
@@ -66,8 +66,8 @@ public abstract class SurvivalTest extends AbstractControllerTest {
 			var listener = new SimulationListener() {
 				@Override
 				public void onTick(
-						long tick, List<SubmarineSnapshot> submarines,
-						List<se.hirt.searobots.engine.TorpedoSnapshot> torpedoes) {
+					long tick, List<SubmarineSnapshot> submarines,
+					List<se.hirt.searobots.engine.TorpedoSnapshot> torpedoes) {
 					if (submarines.size() < 2)
 						return;
 					var s0 = submarines.get(0);

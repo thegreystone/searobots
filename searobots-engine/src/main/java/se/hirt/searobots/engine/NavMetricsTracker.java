@@ -33,8 +33,9 @@ import se.hirt.searobots.api.Waypoint;
 import java.util.List;
 
 /**
- * Tracks navigation metrics from simulation ticks. Implements SimulationListener so it can be attached to any
- * SimulationLoop. After the sim ends, call {@link #getMetrics()} to retrieve the computed metrics.
+ * Tracks navigation metrics from simulation ticks. Implements SimulationListener so it can be
+ * attached to any SimulationLoop. After the sim ends, call {@link #getMetrics()} to retrieve the
+ * computed metrics.
  */
 public final class NavMetricsTracker implements SimulationListener {
 
@@ -83,8 +84,7 @@ public final class NavMetricsTracker implements SimulationListener {
 
 	@Override
 	public void onTick(
-			long tick, List<SubmarineSnapshot> submarines,
-			List<se.hirt.searobots.engine.TorpedoSnapshot> torpedoes) {
+		long tick, List<SubmarineSnapshot> submarines, List<se.hirt.searobots.engine.TorpedoSnapshot> torpedoes) {
 		if (finished || submarines.size() <= subIndex)
 			return;
 		var snap = submarines.get(subIndex);
@@ -158,8 +158,8 @@ public final class NavMetricsTracker implements SimulationListener {
 			normalTicks++;
 		} else {
 			String key = status.contains(" f:") ? status.substring(0, status.indexOf(" f:")) : status;
-			if (!key.contains("EMERGENCY") && !key.contains("AVOIDING") && !key.contains("PULL UP") && !key.contains(
-					"SHALLOW") && !key.contains("THREE-PT") && !key.contains("DANGER")) {
+			if (!key.contains("EMERGENCY") && !key.contains("AVOIDING") && !key.contains("PULL UP")
+					&& !key.contains("SHALLOW") && !key.contains("THREE-PT") && !key.contains("DANGER")) {
 				normalTicks++;
 			}
 		}

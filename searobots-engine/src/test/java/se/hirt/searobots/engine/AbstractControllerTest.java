@@ -31,8 +31,9 @@ package se.hirt.searobots.engine;
 import se.hirt.searobots.api.SubmarineController;
 
 /**
- * Base class for tests that should run with any SubmarineController implementation. Subclasses provide the controller
- * factory; the test methods exercise general submarine behavior (survival, navigation, terrain avoidance).
+ * Base class for tests that should run with any SubmarineController implementation. Subclasses
+ * provide the controller factory; the test methods exercise general submarine behavior (survival,
+ * navigation, terrain avoidance).
  */
 public abstract class AbstractControllerTest {
 

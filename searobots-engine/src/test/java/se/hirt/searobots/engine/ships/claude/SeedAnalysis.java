@@ -91,8 +91,8 @@ class SeedAnalysis {
 		var listener = new SimulationListener() {
 			@Override
 			public void onTick(
-					long tick, List<SubmarineSnapshot> submarines,
-					List<se.hirt.searobots.engine.TorpedoSnapshot> torpedoes) {
+				long tick, List<SubmarineSnapshot> submarines,
+				List<se.hirt.searobots.engine.TorpedoSnapshot> torpedoes) {
 				if (submarines.isEmpty())
 					return;
 				var s = submarines.get(0);
@@ -120,7 +120,8 @@ class SeedAnalysis {
 					double wpDist = Math.sqrt(Math.pow(activeX - pos.x(), 2) + Math.pow(activeY - pos.y(), 2));
 
 					log.add(String.format(
-							"t=%5d pos=(%.0f,%.0f,%.0f) floor=%.0f gap=%.0f hdg=%.1f spd=%.1f " + "thr=%.2f rud=%.2f hp=%d status=%s " + "wp[%d]=(%.0f,%.0f,%.0f) wpDist=%.0f",
+							"t=%5d pos=(%.0f,%.0f,%.0f) floor=%.0f gap=%.0f hdg=%.1f spd=%.1f "
+									+ "thr=%.2f rud=%.2f hp=%d status=%s " + "wp[%d]=(%.0f,%.0f,%.0f) wpDist=%.0f",
 							tick, pos.x(), pos.y(), pos.z(), floor, gap, Math.toDegrees(s.pose().heading()), s.speed(),
 							s.throttle(), s.rudder(), s.hp(), s.status(), activeIdx, activeX, activeY, activeZ,
 							wpDist));

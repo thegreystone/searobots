@@ -40,8 +40,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static se.hirt.searobots.api.VehicleConfig.submarine;
 
 /**
- * Tests that any submarine controller can safely navigate generated terrain without collisions or getting stuck. Extend
- * and provide your controller.
+ * Tests that any submarine controller can safely navigate generated terrain without collisions or
+ * getting stuck. Extend and provide your controller.
  */
 public abstract class WorldNavigationTest extends AbstractControllerTest {
 
@@ -72,8 +72,8 @@ public abstract class WorldNavigationTest extends AbstractControllerTest {
 		var listener = new SimulationListener() {
 			@Override
 			public void onTick(
-					long tick, List<SubmarineSnapshot> submarines,
-					List<se.hirt.searobots.engine.TorpedoSnapshot> torpedoes) {
+				long tick, List<SubmarineSnapshot> submarines,
+				List<se.hirt.searobots.engine.TorpedoSnapshot> torpedoes) {
 				if (submarines.size() < 2)
 					return;
 				for (int i = 0; i < 2; i++) {

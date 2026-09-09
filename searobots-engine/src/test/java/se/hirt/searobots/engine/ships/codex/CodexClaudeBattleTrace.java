@@ -99,7 +99,8 @@ public final class CodexClaudeBattleTrace {
 									claude.contactEstimates().getFirst().confidence(),
 									claude.contactEstimates().getFirst().uncertaintyRadius());
 					System.out.printf(Locale.US,
-							"t=%5d rng=%5.0f codex[hp=%d spd=%.1f thr=%.2f ping=%s torps=%d fs=%s %s %s] " + "claude[hp=%d spd=%.1f thr=%.2f ping=%s fs=%s %s %s]%n",
+							"t=%5d rng=%5.0f codex[hp=%d spd=%.1f thr=%.2f ping=%s torps=%d fs=%s %s %s] "
+									+ "claude[hp=%d spd=%.1f thr=%.2f ping=%s fs=%s %s %s]%n",
 							tick, range, codex.hp(), codex.speed(), codex.throttle(), codex.pingRequested(),
 							codex.torpedoesRemaining(), codex.firingSolution() != null, codexTrack, codex.status(),
 							claude.hp(), claude.speed(), claude.throttle(), claude.pingRequested(),

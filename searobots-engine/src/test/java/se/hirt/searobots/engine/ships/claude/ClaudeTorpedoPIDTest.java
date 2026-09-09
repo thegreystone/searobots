@@ -39,8 +39,8 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Tests the Claude torpedo PID depth controller and targeting across various scenarios: stationary targets, moving
- * subs, surface ships, different depths and angles.
+ * Tests the Claude torpedo PID depth controller and targeting across various scenarios: stationary
+ * targets, moving subs, surface ships, different depths and angles.
  */
 public class ClaudeTorpedoPIDTest {
 
@@ -48,7 +48,7 @@ public class ClaudeTorpedoPIDTest {
 	private static final GeneratedWorld WORLD = GeneratedWorld.deepFlat();
 
 	record RunResult(double minDist, double minDepth, double maxDepth, double maxPitchDeg, int oscillations,
-	                 boolean hit, int ticks) {
+			boolean hit, int ticks) {
 	}
 
 	private RunResult fireTorpedo(double launchZ, double targetDist, double targetZ, double launchHeading) {
@@ -207,9 +207,8 @@ public class ClaudeTorpedoPIDTest {
 		double[][] cases = {{-150, 1500, -100}, {-120, 1000, -80}, {-300, 1500, -200}, {-100, 1500, -100},};
 		for (var c : cases) {
 			var r = fireTorpedo(c[0], c[1], c[2], 0);
-			assertTrue(r.maxDepth < -10,
-					String.format("Torpedo from %.0fm targeting %.0fm should not breach, got %.0fm", c[0], c[2],
-							r.maxDepth));
+			assertTrue(r.maxDepth < -10, String
+					.format("Torpedo from %.0fm targeting %.0fm should not breach, got %.0fm", c[0], c[2], r.maxDepth));
 		}
 	}
 
