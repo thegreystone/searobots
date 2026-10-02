@@ -40,12 +40,12 @@ import java.util.Locale;
 import java.util.Map;
 
 /**
- * Generates parts of {@code models/submarine-hybrid.obj}. For now it retrofits a pump-jet propulsor
- * onto the existing hull: it reads the OBJ, replaces the {@code Propeller} and
- * {@code PropellerMount} groups with generated geometry, tucks the tail spike that used to stick
- * out behind the old propeller inside the new hub, closes a sliver hole along the top of the hull's
- * tail cone, and recomputes normals for the groups it touched. Running it again on its own output
- * gives the same result. The plan is to grow this into a generator for the whole submarine.
+ * Generates parts of {@code models/submarine-hybrid.obj}. For now it retrofits a new tail and a
+ * pump-jet propulsor onto the existing hull: it reads the OBJ, replaces the hull aft of
+ * {@link #TAIL_CUT_Y} with a smooth tail cone that runs into the spinner, replaces the
+ * {@code Propeller} and {@code PropellerMount} groups with generated geometry, and recomputes
+ * normals for the groups it touched. Running it again on its own output gives the same result. The
+ * plan is to grow this into a generator for the whole submarine.
  * <p>
  * Model conventions as in the viewer: X across, Y fore-aft with the stern at +Y, Z up, metres. The
  * propeller shaft runs along Y through x = 0, z = {@link #AXIS_Z}; the viewer spins the
@@ -68,8 +68,10 @@ public final class SubmarineModelGenerator {
 
 	private static final double AXIS_Z = 0.11;
 	private static final double CREASE_DEG = 50;
-	// Tail: hull vertices aft of TAIL_START are pulled forward so the tip ends at TAIL_END, inside the hub cap
-	private static final double TAIL_START = 38.0, TAIL_END = 38.35;
+	// Tail: the hull aft of TAIL_CUT_Y is regenerated. Its radius follows a cubic that leaves the cut with
+	// the old hull's own taper and reaches TAIL_JOIN_R at TAIL_JOIN_Y with slope TAIL_JOIN_SLOPE (metres
+	// of radius per metre), where the spinner (a hair wider) takes over
+	private static final double TAIL_CUT_Y = 20.0, TAIL_JOIN_Y = 37.0, TAIL_JOIN_R = 0.46, TAIL_JOIN_SLOPE = -0.06;
 	// Duct: aerofoil chord along Y, mean radius narrowing towards the exit (a mild nozzle)
 	private static final double DUCT_Y0 = 36.7, DUCT_Y1 = 38.5, DUCT_R_LE = 2.08, DUCT_R_TE = 1.98;
 	private static final double DUCT_THICKNESS = 0.133; // fraction of the chord (NACA 4-digit)
@@ -81,9 +83,9 @@ public final class SubmarineModelGenerator {
 	private static final int BLADES = 7;
 	private static final double ROTOR_Y = 37.55, BLADE_ROOT_R = 0.38, BLADE_TIP_R = 1.86, PITCH = 2.6;
 	private static final double SKEW = 0.55, RAKE = 0.12; // tip skew (radians) and aft rake (metres)
-	// Hub profile (y, radius), front to back, just covering the hull's tail cone; the tail cone
-	// tapers from the last point to a tip at HUB_TIP_Y as r = R (1 - s^HUB_TAPER)
-	private static final double[][] HUB = {{37.0, 0.37}, {37.12, 0.42}, {37.25, 0.46}, {37.85, 0.46}};
+	// Hub profile (y, radius), front to back: it starts where the hull's tail ends, 5 mm wider so the
+	// seam is hidden, and tapers from the last point to a tip at HUB_TIP_Y as r = R (1 - s^HUB_TAPER)
+	private static final double[][] HUB = {{TAIL_JOIN_Y, TAIL_JOIN_R + 0.005}, {37.85, TAIL_JOIN_R + 0.005}};
 	private static final double HUB_TIP_Y = 39.1, HUB_TAPER = 1.8;
 
 	private final List<double[]> verts = new ArrayList<>();
@@ -113,9 +115,8 @@ public final class SubmarineModelGenerator {
 		}
 		var gen = new SubmarineModelGenerator();
 		gen.read(Path.of(args[0]));
-		gen.tuckTail();
-		gen.closeTriangularHoles(gen.groups.get("Body"));
-		Group rotor = gen.replace("Propeller", "Metal_Chrome");
+		gen.rebuildTail(gen.groups.get("Body"));
+		Group rotor = gen.replace("Propeller", "rubber"); // dark matte, like the fins, for a stealthier look
 		Group mount = gen.replace("PropellerMount", "Metal_Black_Plain");
 		gen.buildDuct(mount);
 		gen.buildStators(mount);
@@ -220,67 +221,203 @@ public final class SubmarineModelGenerator {
 	// ── Hull tail ────────────────────────────────────────────────────────────
 
 	/**
-	 * Pulls the hull vertices aft of {@link #TAIL_START} forward so the tail ends inside the hub
-	 * cap.
+	 * Replaces the hull aft of {@link #TAIL_CUT_Y} with a smooth tail cone. The original tail is a
+	 * fan of long, partly twisted sliver triangles that shade as streaks, and it narrowed below the
+	 * spinner's radius so the hub bulged out of it. The hull is clipped at the plane, splitting the
+	 * triangles that cross it so the cut edge stays watertight. The new tail starts from that edge
+	 * with the hull's own taper (measured 3 m further forward), turns round over its first third
+	 * and narrows to {@link #TAIL_JOIN_R} where it meets the spinner, then ends just inside the
+	 * hub. The rudder roots reach almost to the shaft, so they stay buried. On the generator's own
+	 * output the clip removes exactly the previous tail, so reruns are stable.
 	 */
-	private void tuckTail() {
-		double maxY = TAIL_START;
-		List<Integer> tail = new ArrayList<>();
-		for (Corner[] face : groups.get("Body").faces)
-			for (Corner c : face) {
-				double y = verts.get(c.v - 1)[1];
-				if (y > TAIL_START && !tail.contains(c.v)) {
-					tail.add(c.v);
-					maxY = Math.max(maxY, y);
-				}
-			}
-		if (maxY <= TAIL_END)
-			return;
-		double k = (TAIL_END - TAIL_START) / (maxY - TAIL_START);
-		for (int i : tail) {
-			double[] p = verts.get(i - 1);
-			p[1] = TAIL_START + (p[1] - TAIL_START) * k;
+	private void rebuildTail(Group body) {
+		double ahead = meanRadiusAt(body, TAIL_CUT_Y - 3);
+		List<Integer> edge = clipAft(body, TAIL_CUT_Y);
+		int n0 = edge.size();
+		double[] ang0 = new double[n0], rad0 = new double[n0];
+		double r0 = 0;
+		for (int i = 0; i < n0; i++) {
+			double[] p = verts.get(edge.get(i) - 1);
+			ang0[i] = Math.atan2(p[2] - AXIS_Z, p[0]);
+			rad0[i] = Math.hypot(p[0], p[2] - AXIS_Z);
+			r0 += rad0[i] / n0;
 		}
-		System.out.printf(Locale.ROOT, "tail: %d vertices pulled from y <= %.2f to y <= %.2f%n", tail.size(), maxY,
-				TAIL_END);
+		double length = TAIL_JOIN_Y - TAIL_CUT_Y, startSlope = (r0 - ahead) / 3;
+		int around = 40, rings = 20;
+		double[] angB = new double[around];
+		for (int j = 0; j < around; j++)
+			angB[j] = -Math.PI + 2 * Math.PI * j / around;
+		int[][] ring = new int[rings + 1][around];
+		for (int k = 1; k <= rings; k++) {
+			double s = (double) k / rings, y = TAIL_CUT_Y + length * s;
+			// Cubic Hermite: value and slope at the cut, value and slope at the join
+			double s2 = s * s, s3 = s2 * s;
+			double r = (2 * s3 - 3 * s2 + 1) * r0 + (s3 - 2 * s2 + s) * length * startSlope
+					+ (-2 * s3 + 3 * s2) * TAIL_JOIN_R + (s3 - s2) * length * TAIL_JOIN_SLOPE;
+			double w = smoothstep(Math.min(1, s / 0.35)); // 0 = the cut's own outline, 1 = round
+			for (int j = 0; j < around; j++) {
+				double shape = (1 - w) * interpolateAround(ang0, rad0, angB[j]) / r0 + w;
+				ring[k][j] = vertex(onAxis(r * shape, angB[j], y));
+			}
+		}
+		int first = body.faces.size();
+		// Zip the irregular cut edge to the first round ring, walking both by angle
+		int p = 0, q = 0;
+		while (p < n0 || q < around) {
+			double nextA = p < n0 ? (p + 1 < n0 ? ang0[p + 1] : ang0[0] + 2 * Math.PI) : Double.MAX_VALUE;
+			double nextB = q < around ? (q + 1 < around ? angB[q + 1] : angB[0] + 2 * Math.PI) : Double.MAX_VALUE;
+			int a = edge.get(p % n0), b = ring[1][q % around];
+			if (nextB <= nextA) {
+				triAboutAxis(body, a, b, ring[1][(q + 1) % around]);
+				q++;
+			} else {
+				triAboutAxis(body, a, b, edge.get((p + 1) % n0));
+				p++;
+			}
+		}
+		for (int k = 1; k < rings; k++)
+			for (int j = 0; j < around; j++) {
+				int j1 = (j + 1) % around;
+				triAboutAxis(body, ring[k][j], ring[k][j1], ring[k + 1][j1]);
+				triAboutAxis(body, ring[k][j], ring[k + 1][j1], ring[k + 1][j]);
+			}
+		// A short step inside the hub, closed with a flat cap nobody sees
+		int[] inner = new int[around];
+		double yIn = TAIL_JOIN_Y + 0.15;
+		for (int j = 0; j < around; j++)
+			inner[j] = vertex(onAxis(TAIL_JOIN_R - 0.02, angB[j], yIn));
+		int centre = vertex(onAxis(0, 0, yIn));
+		for (int j = 0; j < around; j++) {
+			int j1 = (j + 1) % around;
+			triAboutAxis(body, ring[rings][j], ring[rings][j1], inner[j1]);
+			triAboutAxis(body, ring[rings][j], inner[j1], inner[j]);
+			tri(body, inner[j], inner[j1], centre, onAxis(0, 0, yIn - 1));
+		}
+		// The hull's other faces carry texture coordinates; give the tail one too so the group is uniform
+		uvs.add(new double[] {0, 0});
+		int uv = uvs.size();
+		for (int i = first; i < body.faces.size(); i++) {
+			Corner[] f = body.faces.get(i);
+			for (int k = 0; k < f.length; k++)
+				f[k] = new Corner(f[k].v, uv, f[k].n);
+		}
+		System.out.printf(Locale.ROOT,
+				"tail: cut at y=%.1f (%d edge vertices, mean radius %.2f, taper %.3f), %d faces to y=%.2f%n",
+				TAIL_CUT_Y, n0, r0, startSlope, body.faces.size() - first, TAIL_JOIN_Y);
 	}
 
 	/**
-	 * Closes three-edge holes in a group: the original hull has a long sliver open along the top of
-	 * the tail cone. Each hole gets one triangle, wound against its border so it faces the same way
-	 * as its neighbours, reusing texture coordinates its vertices already have.
+	 * Clips the group to y <= {@code yc}. Faces entirely aft are dropped, faces crossing the plane
+	 * are cut, sharing the new vertex on each cut edge with the neighbouring face. Returns the
+	 * vertices on the cut edge, sorted by angle about the shaft.
 	 */
-	private void closeTriangularHoles(Group g) {
-		Map<Long, Boolean> directed = new HashMap<>();
-		Map<Integer, Integer> uvOf = new HashMap<>();
-		for (Corner[] f : g.faces)
-			for (int k = 0; k < f.length; k++) {
-				directed.put(edgeKey(f[k].v, f[(k + 1) % f.length].v), true);
-				if (f[k].t > 0)
-					uvOf.putIfAbsent(f[k].v, f[k].t);
+	private List<Integer> clipAft(Group g, double yc) {
+		Map<String, Corner> cuts = new HashMap<>();
+		List<Corner[]> kept = new ArrayList<>();
+		for (Corner[] f : g.faces) {
+			double[] d = new double[3];
+			boolean front = false, aft = false;
+			for (int k = 0; k < 3; k++) {
+				d[k] = verts.get(f[k].v - 1)[1] - yc;
+				if (Math.abs(d[k]) < 1e-6)
+					d[k] = 0;
+				front |= d[k] < 0;
+				aft |= d[k] > 0;
 			}
-		Map<Integer, List<Integer>> border = new HashMap<>(); // a -> b for edges a->b without a b->a twin
-		for (long key : directed.keySet()) {
-			int a = (int) (key >> 32), b = (int) key;
-			if (!directed.containsKey(edgeKey(b, a)))
-				border.computeIfAbsent(a, k -> new ArrayList<>()).add(b);
+			if (!aft) {
+				kept.add(f);
+				continue;
+			}
+			if (!front)
+				continue;
+			List<Corner> poly = new ArrayList<>();
+			for (int k = 0; k < 3; k++) {
+				Corner a = f[k], b = f[(k + 1) % 3];
+				double da = d[k], db = d[(k + 1) % 3];
+				if (da <= 0)
+					poly.add(a);
+				if (da * db < 0)
+					poly.add(cutEdge(a, b, da / (da - db), cuts));
+			}
+			for (int k = 1; k + 1 < poly.size(); k++)
+				kept.add(new Corner[] {poly.get(0), poly.get(k), poly.get(k + 1)});
 		}
-		int closed = 0;
-		for (var e : new ArrayList<>(border.entrySet()))
-			for (int b : e.getValue())
-				for (int c : border.getOrDefault(b, List.of()))
-					if (border.getOrDefault(c, List.of()).contains(e.getKey()) && e.getKey() < b && e.getKey() < c) {
-						int a = e.getKey();
-						g.faces.add(new Corner[] {new Corner(a, uvOf.getOrDefault(a, 0), 0),
-								new Corner(c, uvOf.getOrDefault(c, 0), 0), new Corner(b, uvOf.getOrDefault(b, 0), 0)});
-						closed++;
-					}
-		if (closed > 0)
-			System.out.printf(Locale.ROOT, "%s: closed %d triangular hole(s)%n", g.name, closed);
+		g.faces.clear();
+		g.faces.addAll(kept);
+		List<Integer> edge = new ArrayList<>();
+		for (Corner[] f : kept)
+			for (Corner c : f)
+				if (Math.abs(verts.get(c.v - 1)[1] - yc) < 1e-6 && !edge.contains(c.v))
+					edge.add(c.v);
+		edge.sort((a, b) -> Double.compare(angleAbout(a), angleAbout(b)));
+		return edge;
 	}
 
-	private static long edgeKey(int a, int b) {
-		return ((long) a << 32) | (b & 0xffffffffL);
+	/**
+	 * Mean distance from the shaft of the points where the group's edges cross the plane at
+	 * {@code y}.
+	 */
+	private double meanRadiusAt(Group g, double y) {
+		double sum = 0;
+		int n = 0;
+		for (Corner[] f : g.faces)
+			for (int k = 0; k < f.length; k++) {
+				double[] a = verts.get(f[k].v - 1), b = verts.get(f[(k + 1) % f.length].v - 1);
+				if ((a[1] - y) * (b[1] - y) >= 0)
+					continue;
+				double t = (y - a[1]) / (b[1] - a[1]);
+				sum += Math.hypot(a[0] + (b[0] - a[0]) * t, a[2] + (b[2] - a[2]) * t - AXIS_Z);
+				n++;
+			}
+		return sum / n;
+	}
+
+	/** The point a fraction {@code t} along edge a-b, created once per edge and shared. */
+	private Corner cutEdge(Corner a, Corner b, double t, Map<String, Corner> cuts) {
+		String key = Math.min(a.v, b.v) + "-" + Math.max(a.v, b.v);
+		Corner c = cuts.get(key);
+		if (c == null) {
+			double[] p = verts.get(a.v - 1), q = verts.get(b.v - 1);
+			int v = vertex(new double[] {p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t, p[2] + (q[2] - p[2]) * t});
+			int uv = 0;
+			if (a.t > 0 && b.t > 0) {
+				double[] ua = uvs.get(a.t - 1), ub = uvs.get(b.t - 1);
+				uvs.add(new double[] {ua[0] + (ub[0] - ua[0]) * t, ua[1] + (ub[1] - ua[1]) * t});
+				uv = uvs.size();
+			}
+			c = new Corner(v, uv, 0);
+			cuts.put(key, c);
+		}
+		return c;
+	}
+
+	private double angleAbout(int v) {
+		double[] p = verts.get(v - 1);
+		return Math.atan2(p[2] - AXIS_Z, p[0]);
+	}
+
+	/**
+	 * Linear interpolation of {@code values} at angle {@code a}, around a sorted list of angles.
+	 */
+	private static double interpolateAround(double[] angles, double[] values, double a) {
+		int n = angles.length;
+		for (int i = 0; i < n; i++) {
+			double a0 = angles[i], a1 = i + 1 < n ? angles[i + 1] : angles[0] + 2 * Math.PI;
+			double x = a < a0 ? a + 2 * Math.PI : a;
+			if (x >= a0 && x <= a1)
+				return values[i] + (values[(i + 1) % n] - values[i]) * (x - a0) / (a1 - a0);
+		}
+		return values[0];
+	}
+
+	private static double smoothstep(double x) {
+		return x * x * (3 - 2 * x);
+	}
+
+	/** Triangle on a surface around the shaft, wound to face away from it. */
+	private void triAboutAxis(Group g, int a, int b, int c) {
+		double y = (verts.get(a - 1)[1] + verts.get(b - 1)[1] + verts.get(c - 1)[1]) / 3;
+		tri(g, a, b, c, onAxis(0, 0, y));
 	}
 
 	// ── Propulsor ────────────────────────────────────────────────────────────
@@ -453,9 +590,17 @@ public final class SubmarineModelGenerator {
 
 	// ── Mesh helpers ─────────────────────────────────────────────────────────
 
+	/**
+	 * Adds a vertex, rounded to the precision the OBJ is written with so that geometry derived from
+	 * it comes out the same when the generator reads its own output.
+	 */
 	private int vertex(double[] p) {
-		verts.add(p.clone());
+		verts.add(new double[] {round6(p[0]), round6(p[1]), round6(p[2])});
 		return verts.size();
+	}
+
+	private static double round6(double x) {
+		return Math.round(x * 1e6) / 1e6;
 	}
 
 	/**

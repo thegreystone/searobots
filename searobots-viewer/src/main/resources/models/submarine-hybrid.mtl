@@ -1,27 +1,30 @@
 # Hybrid submarine materials
 #
+# Hull, sail, duct and stators: near-black satin, with enough specular to show the shape
 newmtl Metal_Black_Plain
-Ka  0.1 0.1 0.1
-Kd  0.4 0.4 0.4
-Ks  0.9 0.9 0.9
+Ka  0.07 0.07 0.07
+Kd  0.07 0.07 0.07
+Ks  0.4 0.4 0.4
 d  1.0
-Ns  14.1
+Ns  30.0
 illum 2
 #
+# Rotor and spinner: light polished metal
 newmtl Metal_Chrome
 Ka  0.4 0.4 0.4
-Kd  0.4 0.4 0.4
+Kd  0.6 0.6 0.6
 Ks  0.9 0.9 0.9
 d  1.0
-Ns  15.0
+Ns  60.0
 illum 2
 #
+# Rudders and bow planes: dark matte grey
 newmtl rubber
 Ka  0.1 0.1 0.1
-Kd  0.4 0.4 0.4
-Ks  0.9 0.9 0.9
+Kd  0.13 0.13 0.13
+Ks  0.15 0.15 0.15
 d  1.0
-Ns  14.1
+Ns  10.0
 illum 2
 #
 # EOF
