@@ -89,19 +89,24 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 	// Control-surface group names: the submarine has upper/lower rudders, the ship a single one
 	private static final String[] RUDDER_GROUPS = {"rudderu", "rudderl", "Rudder"};
 	private Spatial terrainGeometry;
-    private com.jme3.terrain.geomipmap.TerrainQuad terrainQuad;
+	private com.jme3.terrain.geomipmap.TerrainQuad terrainQuad;
 	private Spatial sky;
 	private Geometry sunBillboard;
 	private volatile GeneratedWorld pendingWorld;
-    // Auto-screenshot: enabled with -Dscreenshots=true
-    private static final boolean AUTO_SCREENSHOTS = Boolean.getBoolean("screenshots");
-    private ScreenshotAppState screenshotState;
-    private int screenshotCountdown = -1;
-    private int screenshotsTaken = 0;
-    private int screenshotCount = 9;
-    private boolean screenshotTacticalMode = false;
-    // Island orbit camera state (peak finding, transitions, orbit center)
-    private IslandOrbitState islandOrbitState;
+	// Auto-screenshot: enabled with -Dscreenshots=true
+	private static final boolean AUTO_SCREENSHOTS = Boolean.getBoolean("screenshots");
+	// Frame-rate tracking: enabled with -Dfps=true (shows the counter, lifts the 60 fps cap, logs every 5 s)
+	private static final boolean TRACK_FPS = Boolean.getBoolean("fps");
+	private double fpsWindowSeconds;
+	private int fpsWindowFrames;
+	private float fpsWorstFrameSeconds;
+	private ScreenshotAppState screenshotState;
+	private int screenshotCountdown = -1;
+	private int screenshotsTaken = 0;
+	private int screenshotCount = 9;
+	private boolean screenshotTacticalMode = false;
+	// Island orbit camera state (peak finding, transitions, orbit center)
+	private IslandOrbitState islandOrbitState;
 
 	// Vehicle tracking
 	private final Map<Integer, Node> subNodes = new HashMap<>();
@@ -284,8 +289,8 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 		settings.setHeight(1080);
 		settings.setTitle(replayPath != null ? "SeaRobots [replay: " + new java.io.File(replayPath).getName() + "]"
 				: "SeaRobots [seed: " + Long.toHexString(seed) + "]");
-		settings.setFrameRate(60);
-		settings.setVSync(true);
+		settings.setFrameRate(TRACK_FPS ? -1 : 60);
+		settings.setVSync(!TRACK_FPS);
 		settings.setResizable(true);
 		loadIcons(settings);
 		app.setSettings(settings);
@@ -317,7 +322,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 	public void simpleInitApp() {
 		System.out.println("simpleInitApp: PHASE 1 - submarine model only");
 		setDisplayStatView(false);
-		setDisplayFps(false);
+		setDisplayFps(TRACK_FPS);
 		flyCam.setEnabled(false);
 		viewPort.setBackgroundColor(new ColorRGBA(0.02f, 0.04f, 0.12f, 1f));
 		setupInput();
@@ -372,8 +377,8 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 		waterFilter.setWaveScale(0.003f);
 		waterFilter.setMaxAmplitude(1.5f);
 		waterFilter.setWaterColor(new ColorRGBA(0.0f, 0.18f, 0.60f, 1f));
-        waterFilter.setDeepWaterColor(new ColorRGBA(0.0f, 0.09f, 0.42f, 1f));
-        waterFilter.setWaterTransparency(0.11f);
+		waterFilter.setDeepWaterColor(new ColorRGBA(0.0f, 0.09f, 0.42f, 1f));
+		waterFilter.setWaterTransparency(0.11f);
 		waterFilter.setColorExtinction(new Vector3f(10f, 30f, 60f));
 		waterFilter.setSunScale(3f);
 		waterFilter.setLightDirection(sun.getDirection());
@@ -626,12 +631,12 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 		cam.setLocation(new Vector3f(0, 15, 60));
 		cam.lookAt(Vector3f.ZERO, Vector3f.UNIT_Y);
 
-        // Auto-screenshot: attach only when enabled via -Dscreenshots=true
-        if (AUTO_SCREENSHOTS) {
-            screenshotState = new ScreenshotAppState("", "SeaRobots");
-            stateManager.attach(screenshotState);
-            System.out.println("Auto-screenshot mode enabled");
-        }
+		// Auto-screenshot: attach only when enabled via -Dscreenshots=true
+		if (AUTO_SCREENSHOTS) {
+			screenshotState = new ScreenshotAppState("", "SeaRobots");
+			stateManager.attach(screenshotState);
+			System.out.println("Auto-screenshot mode enabled");
+		}
 
 		System.out.println("simpleInitApp: PHASE 1 DONE");
 
@@ -1317,6 +1322,19 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 	@Override
 	public void simpleUpdate(float tpf) {
 		frameCount++;
+		if (TRACK_FPS) {
+			fpsWindowSeconds += tpf;
+			fpsWindowFrames++;
+			fpsWorstFrameSeconds = Math.max(fpsWorstFrameSeconds, tpf);
+			if (fpsWindowSeconds >= 5.0) {
+				System.out.printf("[FPS] avg %.1f  worst frame %.0f ms  (%s, cam %s)%n",
+						fpsWindowFrames / fpsWindowSeconds, fpsWorstFrameSeconds * 1000,
+						cam.getLocation().y > 0 ? "above water" : "underwater", cameraMode);
+				fpsWindowSeconds = 0;
+				fpsWindowFrames = 0;
+				fpsWorstFrameSeconds = 0;
+			}
+		}
 		if (frameCount <= 3 || frameCount % 500 == 0) {
 			System.out.println("simpleUpdate frame #" + frameCount);
 		}
@@ -1327,90 +1345,92 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 				pendingWorld = null;
 				attachTerrain(w);
 			}
-            // Auto-screenshot camera tour (only when -Dscreenshots=true)
-            if (AUTO_SCREENSHOTS && screenshotCountdown > 0 && screenshotsTaken < screenshotCount) {
-                screenshotCountdown--;
-                if (screenshotCountdown == 0) {
-                    // Restore water/fog after tactical top-down shot
-                    if (screenshotTacticalMode) {
-                        screenshotTacticalMode = false;
-                    }
-                    screenshotState.takeScreenshot();
-                    screenshotsTaken++;
-                    System.out.println("Auto-screenshot " + screenshotsTaken + "/" + screenshotCount + " saved");
-                    if (screenshotsTaken < screenshotCount) {
-                        int delay = 20;
-                        // Island orbit shots after the standard camera tour
-                        var islandPeaks = islandOrbitState != null ? islandOrbitState.getIslandPeaks() : java.util.List.<Vector3f>of();
-                        if (screenshotsTaken >= 9 && !islandPeaks.isEmpty()) {
-                            int islandShot = screenshotsTaken - 9;
-                            int islandIdx = islandShot / 2;
-                            boolean closeUp = (islandShot % 2) == 1;
-                            if (islandIdx < islandPeaks.size()) {
-                                var peak = islandPeaks.get(islandIdx);
-                                orbitCenter.set(peak.x, peak.y * 0.4f, peak.z);
-                                if (closeUp) {
-                                    orbitElevation = 0.2f;
-                                    orbitDistance = 150f;
-                                    orbitAzimuth += 1.5f;
-                                } else {
-                                    orbitElevation = 0.5f;
-                                    orbitDistance = 400f;
-                                    orbitAzimuth += 0.8f;
-                                }
-                                delay = 25;
-                                System.out.printf("Island %d/%d %s (elev=%.0f)%n",
-                                        islandIdx + 1, islandPeaks.size(),
-                                        closeUp ? "close-up" : "overview", peak.y);
-                            }
-                        } else switch (screenshotsTaken) {
-                            case 1 -> { // Coastline from sea level
-                                orbitElevation = 0.05f;
-                                orbitDistance = 300f;
-                                orbitAzimuth = 0.8f;
-                            }
-                            case 2 -> { // Island from above, close
-                                orbitElevation = 0.7f;
-                                orbitDistance = 800f;
-                                orbitAzimuth = 1.5f;
-                            }
-                            case 3 -> { // Beach/sand detail
-                                orbitElevation = 0.2f;
-                                orbitDistance = 200f;
-                                orbitAzimuth = 2.2f;
-                            }
-                            case 4 -> { // Wide view showing multiple islands
-                                orbitElevation = 0.5f;
-                                orbitDistance = 4000f;
-                                orbitAzimuth = 3.0f;
-                            }
-                            case 5 -> { // Underwater looking at seabed
-                                orbitElevation = -0.2f;
-                                orbitDistance = 250f;
-                                orbitAzimuth = 4.0f;
-                            }
-                            case 6 -> { // Cliff face close-up
-                                orbitElevation = 0.1f;
-                                orbitDistance = 150f;
-                                orbitAzimuth = 5.0f;
-                            }
-                            case 7 -> { // Tactical top-down: water/fog off to see terrain
-                                orbitElevation = 1.5f;
-                                orbitDistance = 8000f;
-                                orbitAzimuth = 0f;
-                                screenshotTacticalMode = true;
-                                System.out.println("Tactical mode ON for next screenshot");
-                            }
-                            case 8 -> { // 2D tactical map overlay
-                                var ms = stateManager.getState(NativeMapState.class);
-                                if (ms != null) ms.toggle();
-                                delay = 40; // extra frames for cross-fade
-                            }
-                        }
-                        screenshotCountdown = delay;
-                    }
-                }
-            }
+			// Auto-screenshot camera tour (only when -Dscreenshots=true)
+			if (AUTO_SCREENSHOTS && screenshotCountdown > 0 && screenshotsTaken < screenshotCount) {
+				screenshotCountdown--;
+				if (screenshotCountdown == 0) {
+					// Restore water/fog after tactical top-down shot
+					if (screenshotTacticalMode) {
+						screenshotTacticalMode = false;
+					}
+					screenshotState.takeScreenshot();
+					screenshotsTaken++;
+					System.out.println("Auto-screenshot " + screenshotsTaken + "/" + screenshotCount + " saved");
+					if (screenshotsTaken < screenshotCount) {
+						int delay = 20;
+						// Island orbit shots after the standard camera tour
+						var islandPeaks = islandOrbitState != null ? islandOrbitState.getIslandPeaks()
+								: java.util.List.<Vector3f> of();
+						if (screenshotsTaken >= 9 && !islandPeaks.isEmpty()) {
+							int islandShot = screenshotsTaken - 9;
+							int islandIdx = islandShot / 2;
+							boolean closeUp = (islandShot % 2) == 1;
+							if (islandIdx < islandPeaks.size()) {
+								var peak = islandPeaks.get(islandIdx);
+								orbitCenter.set(peak.x, peak.y * 0.4f, peak.z);
+								if (closeUp) {
+									orbitElevation = 0.2f;
+									orbitDistance = 150f;
+									orbitAzimuth += 1.5f;
+								} else {
+									orbitElevation = 0.5f;
+									orbitDistance = 400f;
+									orbitAzimuth += 0.8f;
+								}
+								delay = 25;
+								System.out.printf("Island %d/%d %s (elev=%.0f)%n", islandIdx + 1, islandPeaks.size(),
+										closeUp ? "close-up" : "overview", peak.y);
+							}
+						} else
+							switch (screenshotsTaken) {
+							case 1 -> { // Coastline from sea level
+								orbitElevation = 0.05f;
+								orbitDistance = 300f;
+								orbitAzimuth = 0.8f;
+							}
+							case 2 -> { // Island from above, close
+								orbitElevation = 0.7f;
+								orbitDistance = 800f;
+								orbitAzimuth = 1.5f;
+							}
+							case 3 -> { // Beach/sand detail
+								orbitElevation = 0.2f;
+								orbitDistance = 200f;
+								orbitAzimuth = 2.2f;
+							}
+							case 4 -> { // Wide view showing multiple islands
+								orbitElevation = 0.5f;
+								orbitDistance = 4000f;
+								orbitAzimuth = 3.0f;
+							}
+							case 5 -> { // Underwater looking at seabed
+								orbitElevation = -0.2f;
+								orbitDistance = 250f;
+								orbitAzimuth = 4.0f;
+							}
+							case 6 -> { // Cliff face close-up
+								orbitElevation = 0.1f;
+								orbitDistance = 150f;
+								orbitAzimuth = 5.0f;
+							}
+							case 7 -> { // Tactical top-down: water/fog off to see terrain
+								orbitElevation = 1.5f;
+								orbitDistance = 8000f;
+								orbitAzimuth = 0f;
+								screenshotTacticalMode = true;
+								System.out.println("Tactical mode ON for next screenshot");
+							}
+							case 8 -> { // 2D tactical map overlay
+								var ms = stateManager.getState(NativeMapState.class);
+								if (ms != null)
+									ms.toggle();
+								delay = 40; // extra frames for cross-fade
+							}
+							}
+						screenshotCountdown = delay;
+					}
+				}
+			}
 
 			updateVehicles();
 			updateCamera(tpf);
@@ -1557,18 +1577,18 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 	}
 
 	private void attachTerrain(GeneratedWorld world) {
-        System.out.println("attachTerrain: building TerrainQuad...");
+		System.out.println("attachTerrain: building TerrainQuad...");
 
 		// Remove previous terrain
 		if (terrainGeometry != null) {
 			terrainGeometry.removeFromParent();
 			terrainGeometry = null;
-            terrainQuad = null;
+			terrainQuad = null;
 		}
 
 		TerrainMap terrain = world.terrain();
-        terrainQuad = TerrainQuadBuilder.build(terrain, assetManager, cam);
-        terrainGeometry = terrainQuad;
+		terrainQuad = TerrainQuadBuilder.build(terrain, assetManager, cam);
+		terrainGeometry = terrainQuad;
 		rootNode.attachChild(terrainGeometry);
 
 		// Read start time from config
@@ -1605,37 +1625,35 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 		orbitAzimuth = FastMath.QUARTER_PI;
 		orbitElevation = 0.4f;
 
-        // Scatter trees on vegetated terrain
-        Node trees = TreeScatter.create(terrain,
-                terrainQuad,
-                assetManager, world.config().worldSeed());
-        rootNode.attachChild(trees);
+		// Scatter trees on vegetated terrain
+		Node trees = TreeScatter.create(terrain, terrainQuad, assetManager, world.config().worldSeed());
+		rootNode.attachChild(trees);
 
 		System.out.println("attachTerrain: done, worldWidth=" + worldW);
 
-        // Find island peaks for island orbit cam and screenshot tour
-        islandOrbitState = new IslandOrbitState();
-        islandOrbitState.initFromTerrain(world.terrain());
-        if (AUTO_SCREENSHOTS) {
-            // Start with overview of first island
-            var peaks = islandOrbitState.getIslandPeaks();
-            if (!peaks.isEmpty()) {
-                var peak = peaks.getFirst();
-                orbitCenter.set(peak.x, peak.y * 0.3f, peak.z);
-                System.out.printf("Found %d islands. First peak at (%.0f, %.0f, %.0f)%n",
-                        peaks.size(), peak.x, peak.y, peak.z);
-                    }
-            // Add island orbit shots: 2 per island (overview + close-up)
-            screenshotCount = 9 + islandOrbitState.getIslandCount() * 2;
-            orbitElevation = 1.0f;
-            orbitDistance = 3000f;
-            orbitAzimuth = 0.3f;
-            screenshotCountdown = 30;
-            screenshotsTaken = 0;
-        }
+		// Find island peaks for island orbit cam and screenshot tour
+		islandOrbitState = new IslandOrbitState();
+		islandOrbitState.initFromTerrain(world.terrain());
+		if (AUTO_SCREENSHOTS) {
+			// Start with overview of first island
+			var peaks = islandOrbitState.getIslandPeaks();
+			if (!peaks.isEmpty()) {
+				var peak = peaks.getFirst();
+				orbitCenter.set(peak.x, peak.y * 0.3f, peak.z);
+				System.out.printf("Found %d islands. First peak at (%.0f, %.0f, %.0f)%n", peaks.size(), peak.x, peak.y,
+						peak.z);
+			}
+			// Add island orbit shots: 2 per island (overview + close-up)
+			screenshotCount = 9 + islandOrbitState.getIslandCount() * 2;
+			orbitElevation = 1.0f;
+			orbitDistance = 3000f;
+			orbitAzimuth = 0.3f;
+			screenshotCountdown = 30;
+			screenshotsTaken = 0;
+		}
 	}
 
-    // Island peak finding is now in IslandOrbitState
+	// Island peak finding is now in IslandOrbitState
 
 	// ---- atmosphere ----
 
@@ -2798,50 +2816,50 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 			}
 		}
 
-        // Update orbit center tracking (skip for island orbit - stays on island peak)
-        if (cameraMode == CameraMode.ISLAND_ORBIT && islandOrbitState != null) {
-            float newAzimuth = islandOrbitState.update(tpf, orbitAzimuth);
-            if (!Float.isNaN(newAzimuth)) {
-                orbitAzimuth = newAzimuth;
-                }
-            orbitCenter.set(islandOrbitState.getOrbitCenter());
-            if (islandOrbitState.transitionJustEnded()) {
-                orbitDistance = islandOrbitState.getOrbitDistance();
-                orbitElevation = islandOrbitState.getOrbitElevation();
-            }
-        } else {
-		// Check both sub nodes and torpedo nodes
-		Node selected = subNodes.get(selectedSubId);
-		if (selected == null)
-			selected = torpedoNodes.get(selectedSubId);
-		if (selected != null) {
-			Vector3f targetPos = selected.getLocalTranslation();
-			if (transitionTimer > 0) {
-				transitionTimer -= tpf;
-				Vector3f toTarget = targetPos.subtract(orbitCenter);
-				float targetAzimuth = FastMath.atan2(toTarget.x, toTarget.z);
-				float angleDiff = targetAzimuth - orbitAzimuth;
-				while (angleDiff > FastMath.PI)
-					angleDiff -= FastMath.TWO_PI;
-				while (angleDiff < -FastMath.PI)
-					angleDiff += FastMath.TWO_PI;
-				orbitAzimuth += angleDiff * Math.min(1f, tpf * 5f);
-			} else {
-				boolean isTorpedo = torpedoNodes.containsKey(selectedSubId);
-				if (isTorpedo) {
-					// Torpedoes are small and fast: snap orbit center directly
-					orbitCenter.set(targetPos);
+		// Update orbit center tracking (skip for island orbit - stays on island peak)
+		if (cameraMode == CameraMode.ISLAND_ORBIT && islandOrbitState != null) {
+			float newAzimuth = islandOrbitState.update(tpf, orbitAzimuth);
+			if (!Float.isNaN(newAzimuth)) {
+				orbitAzimuth = newAzimuth;
+			}
+			orbitCenter.set(islandOrbitState.getOrbitCenter());
+			if (islandOrbitState.transitionJustEnded()) {
+				orbitDistance = islandOrbitState.getOrbitDistance();
+				orbitElevation = islandOrbitState.getOrbitElevation();
+			}
+		} else {
+			// Check both sub nodes and torpedo nodes
+			Node selected = subNodes.get(selectedSubId);
+			if (selected == null)
+				selected = torpedoNodes.get(selectedSubId);
+			if (selected != null) {
+				Vector3f targetPos = selected.getLocalTranslation();
+				if (transitionTimer > 0) {
+					transitionTimer -= tpf;
+					Vector3f toTarget = targetPos.subtract(orbitCenter);
+					float targetAzimuth = FastMath.atan2(toTarget.x, toTarget.z);
+					float angleDiff = targetAzimuth - orbitAzimuth;
+					while (angleDiff > FastMath.PI)
+						angleDiff -= FastMath.TWO_PI;
+					while (angleDiff < -FastMath.PI)
+						angleDiff += FastMath.TWO_PI;
+					orbitAzimuth += angleDiff * Math.min(1f, tpf * 5f);
 				} else {
-					float dist = orbitCenter.distance(targetPos);
-					float speed = dist > 100f ? 3f : 5f;
-					float factor = Math.min(1f, tpf * speed);
-					if (dist > 10f)
-						factor = Math.max(factor, 0.05f);
-					orbitCenter.interpolateLocal(targetPos, factor);
+					boolean isTorpedo = torpedoNodes.containsKey(selectedSubId);
+					if (isTorpedo) {
+						// Torpedoes are small and fast: snap orbit center directly
+						orbitCenter.set(targetPos);
+					} else {
+						float dist = orbitCenter.distance(targetPos);
+						float speed = dist > 100f ? 3f : 5f;
+						float factor = Math.min(1f, tpf * speed);
+						if (dist > 10f)
+							factor = Math.max(factor, 0.05f);
+						orbitCenter.interpolateLocal(targetPos, factor);
+					}
 				}
 			}
-		}
-        } // end if not ISLAND_ORBIT
+		} // end if not ISLAND_ORBIT
 	}
 
 	// ---- camera system ----
@@ -2858,7 +2876,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 		// Tab to cycle between submarines
 		inputManager.addMapping("CycleSub", new KeyTrigger(KeyInput.KEY_TAB));
 		inputManager.addListener((ActionListener) (name, isPressed, tpf) -> {
-            if (isPressed && !dialogOpen) {
+			if (isPressed && !dialogOpen) {
 				// In Director mode, Tab exits to Orbit on the current entity
 				if (cameraMode == CameraMode.DIRECTOR) {
 					cameraMode = CameraMode.ORBIT;
@@ -2869,13 +2887,14 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 					System.out.println("Camera: Orbit (exited Director)");
 					return;
 				}
-                // In Island Orbit mode, Tab starts a smooth fly-over to the next island
-                if (cameraMode == CameraMode.ISLAND_ORBIT && islandOrbitState != null
-                        && islandOrbitState.getIslandCount() > 0) {
-                    islandOrbitState.cycleToNextIsland(orbitCenter);
-                    return;
-                }
-                if (latestSnapshots.isEmpty()) return;
+				// In Island Orbit mode, Tab starts a smooth fly-over to the next island
+				if (cameraMode == CameraMode.ISLAND_ORBIT && islandOrbitState != null
+						&& islandOrbitState.getIslandCount() > 0) {
+					islandOrbitState.cycleToNextIsland(orbitCenter);
+					return;
+				}
+				if (latestSnapshots.isEmpty())
+					return;
 				// Merge sub + torpedo IDs for cycling
 				var subIds = latestSnapshots.stream().mapToInt(SubmarineSnapshot::id).boxed().toList();
 				var torpIds = latestTorpedoSnapshots.stream().filter(TorpedoSnapshot::alive)
@@ -2933,13 +2952,13 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 				if (cameraMode == CameraMode.FLY_BY) {
 					pickFlyByStation();
 				}
-                if (cameraMode == CameraMode.ISLAND_ORBIT && islandOrbitState != null) {
-                    float[] params = islandOrbitState.activate(orbitCenter);
-                    if (params != null) {
-                        orbitDistance = params[0];
-                        orbitElevation = params[1];
-                    }
-                }
+				if (cameraMode == CameraMode.ISLAND_ORBIT && islandOrbitState != null) {
+					float[] params = islandOrbitState.activate(orbitCenter);
+					if (params != null) {
+						orbitDistance = params[0];
+						orbitElevation = params[1];
+					}
+				}
 				// Restore water/fog when leaving director mode
 				if (cameraMode != CameraMode.DIRECTOR) {
 					if (waterFilter != null)
@@ -3120,7 +3139,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 		case PERISCOPE -> computePeriscopeCamera(outPos, outLookAt);
 		case FREE_LOOK -> computeFreeLookCamera(outPos, outLookAt, tpf);
 		case FLY_BY -> computeFlyByCamera(outPos, outLookAt, tpf);
-            case ISLAND_ORBIT -> computeOrbitCamera(outPos, outLookAt); // same orbit math
+		case ISLAND_ORBIT -> computeOrbitCamera(outPos, outLookAt); // same orbit math
 		case DIRECTOR -> {
 			if (cinematicDirector == null) {
 				cinematicDirector = new CinematicDirector(() -> latestSnapshots, () -> latestTorpedoSnapshots, subNodes,

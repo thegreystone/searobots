@@ -67,9 +67,9 @@ public final class WorldGenerator {
 		double baseFreq = 1.0 / 1600.0;
 
 		double minZ = config.maxSeaFloorZ();
-        // Use the original noise range so island frequency stays the same.
-        // Peaks are no longer clamped but the noise distribution is unchanged.
-        double range = 150.0 - minZ;
+		// Use the original noise range so island frequency stays the same.
+		// Peaks are no longer clamped but the noise distribution is unchanged.
+		double range = 150.0 - minZ;
 		double mid = minZ + range * 0.6;
 
 		for (int row = 0; row < gridSize; row++) {
@@ -106,7 +106,7 @@ public final class WorldGenerator {
 					elevation -= trench * trench * 1200;
 				}
 
-                elevation = Math.max(minZ, elevation);
+				elevation = Math.max(minZ, elevation);
 				elevations[row * gridSize + col] = elevation;
 			}
 		}
