@@ -429,7 +429,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 		try {
 			Spatial hull = assetManager.loadModel("models/submarine-hybrid.obj");
 			generateSmoothNormals(hull);
-			generateTangents(hull);
+			SubmarineModelSupport.prepare(assetManager, hull);
 			disableBackFaceCulling(hull);
 			modelNode.attachChild(hull);
 			// Set up pivot nodes for control surfaces (hinge at hull attachment)
@@ -3329,18 +3329,6 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 			for (Spatial child : node.getChildren())
 				generateSmoothNormals(child);
 		}
-	}
-
-	/**
-	 * Gives every mesh whose material has a normal map (the submarine's anechoic tiles) the
-	 * tangents the lighting shader needs to use it.
-	 */
-	private static void generateTangents(Spatial spatial) {
-		spatial.depthFirstTraversal(s -> {
-			if (s instanceof Geometry geom && geom.getMaterial() != null
-					&& geom.getMaterial().getTextureParam("NormalMap") != null)
-				com.jme3.util.mikktspace.MikktspaceTangentGenerator.generate(geom);
-		});
 	}
 
 	/**

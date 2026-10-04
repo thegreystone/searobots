@@ -170,10 +170,14 @@ public final class SubmarineModelGenerator {
 			{HUB[1][0], HUB[1][1] + 0.003, 0.05, 0.02}, // where the spinner's cone starts behind the rotor
 			{DUCT_Y0 + 0.03, DUCT_R_LE, 0.035, 0.04}}; // the duct's leading edge
 
-	/** A material: grey levels, shininess, and optionally a diffuse texture and a normal map. */
-	private record Mat(double kd, double ka, double ks, double ns, String comment, String map, String bump) {
+	/**
+	 * A material: grey levels, shininess, and optionally a diffuse texture, a normal map and a
+	 * specular map.
+	 */
+	private record Mat(double kd, double ka, double ks, double ns, String comment, String map, String bump,
+			String specular) {
 		Mat(double kd, double ka, double ks, double ns, String comment) {
-			this(kd, ka, ks, ns, comment, null, null);
+			this(kd, ka, ks, ns, comment, null, null, null);
 		}
 	}
 
@@ -185,13 +189,19 @@ public final class SubmarineModelGenerator {
 	private static final double NOSE_CAP_R = 1.0, KEEL_STRIP = Math.toRadians(7.5);
 	private static final int TILES_PER_TEXTURE = 16, TILE_PX = 64;
 	private static final String TILES_MAP = "submarine-tiles.png", TILES_NORMALS = "submarine-tiles-normal.png";
+	private static final String TILES_SHEEN = "submarine-tiles-spec.png";
+	// Weathering light map, spread over the hull by the viewer (SubmarineModelSupport, which has the same extents):
+	// metres of hull along the texture's width and round the hull along its height
+	private static final String WEATHERING = "submarine-weathering.png";
+	private static final double WEATHERING_ALONG = 80, WEATHERING_AROUND = 40;
 
 	private static final Map<String, Mat> MATERIALS = new LinkedHashMap<>();
 
 	static {
-		MATERIALS.put("Hull_Tiles", new Mat(0.09, 0.08, 0.4, 30,
-				"Hull and sail: near-black anechoic tiles; the normal map breaks the highlights up at the seams",
-				TILES_MAP, TILES_NORMALS));
+		MATERIALS.put("Hull_Tiles", new Mat(0.11, 0.10, 0.55, 30,
+				"Hull and sail: near-black anechoic tiles; the normal map breaks the highlights up at the seams, the "
+						+ "specular map varies the sheen from tile to tile, and the viewer adds large-scale weathering",
+				TILES_MAP, TILES_NORMALS, TILES_SHEEN));
 		MATERIALS.put("Hull_Plain", new Mat(0.083, 0.075, 0.4, 30,
 				"Untiled hull (sonar dome round the window, keel strip): the tiles' average grey, without the grid"));
 		MATERIALS.put("Metal_Black_Plain", new Mat(0.07, 0.07, 0.4, 30,
@@ -281,6 +291,8 @@ public final class SubmarineModelGenerator {
 			gen.creaseNormals(g);
 		ImageIO.write(tileTexture(), "png", out.resolve(TILES_MAP).toFile());
 		ImageIO.write(tileNormals(), "png", out.resolve(TILES_NORMALS).toFile());
+		ImageIO.write(tileSheen(), "png", out.resolve(TILES_SHEEN).toFile());
+		ImageIO.write(weatheringTexture(), "png", out.resolve(WEATHERING).toFile());
 		gen.write(out.resolve("submarine-hybrid.obj"), out.resolve("submarine-hybrid.mtl"));
 		hinges.forEach(SubmarineModelGenerator::printHinge);
 	}
@@ -314,6 +326,8 @@ public final class SubmarineModelGenerator {
 					m.print("map_Kd " + c.map() + "\n");
 				if (c.bump() != null)
 					m.print("map_Bump " + c.bump() + "\n");
+				if (c.specular() != null)
+					m.print("map_Ks " + c.specular() + "\n");
 				m.print("#\n");
 			}
 			m.print("# EOF\n");
@@ -523,6 +537,116 @@ public final class SubmarineModelGenerator {
 				img.setRGB(x, y, (c << 16) | (c << 8) | c);
 			}
 		return img;
+	}
+
+	/**
+	 * The tiles' specular map: how much each tile shines. Tiles weather unevenly, so some are
+	 * glossier than others and a few are worn matte; the grout is matte. The material's specular
+	 * colour multiplies it.
+	 */
+	static BufferedImage tileSheen() {
+		int size = TILES_PER_TEXTURE * TILE_PX;
+		Random r = new Random(14);
+		double[] sheen = new double[TILES_PER_TEXTURE * TILES_PER_TEXTURE];
+		for (int i = 0; i < sheen.length; i++)
+			sheen[i] = r.nextDouble() < 0.08 ? 0.5 + 0.1 * r.nextDouble() : 0.75 + 0.25 * r.nextDouble();
+		double[] height = tileHeights();
+		var img = new BufferedImage(size, size, BufferedImage.TYPE_INT_RGB);
+		float[] grain = valueNoise(size, size, 4, 15); // smooth, so the PNG stays small
+		for (int y = 0; y < size; y++)
+			for (int x = 0; x < size; x++) {
+				double h = height[y * size + x];
+				int tile = (y / TILE_PX) * TILES_PER_TEXTURE + x / TILE_PX;
+				double v = h == 0 ? 0.15
+						: sheen[tile] * (0.7 + 0.3 * Math.min(1, h / 3)) * (0.92 + 0.16 * grain[y * size + x]);
+				int c = (int) Math.round(255 * Math.max(0, Math.min(1, v)));
+				img.setRGB(x, y, (c << 16) | (c << 8) | c);
+			}
+		return img;
+	}
+
+	/**
+	 * Large-scale weathering over the whole hull, as a light map that darkens colour and sheen
+	 * alike. The viewer spreads it over the hull with a second set of texture coordinates, so
+	 * unlike the tiles it does not repeat: {@link #WEATHERING_ALONG} metres of hull along its
+	 * width, {@link #WEATHERING_AROUND} metres round the hull along its height, with the top
+	 * centreline across the middle. Broad blotches, finer mottling, a salt-faded deck, patches of
+	 * newer tiles and faint streaks running down the sides. It averages about 0.82; the tiles'
+	 * colours are raised to make up for that.
+	 */
+	static BufferedImage weatheringTexture() {
+		int w = 1024, h = 512;
+		double pxPerM = w / WEATHERING_ALONG;
+		float[] broad = valueNoise(w, h, 80, 21), mid = valueNoise(w, h, 20, 22), fine = valueNoise(w, h, 4, 23);
+		double[] v = new double[w * h];
+		for (int y = 0; y < h; y++) {
+			double around = (y - h / 2.0) / pxPerM; // metres round the hull from the top centreline
+			double deck = Math.exp(-Math.pow(around / 3.0, 2));
+			for (int x = 0; x < w; x++) {
+				int i = y * w + x;
+				v[i] = 0.82 + 0.10 * (broad[i] - 0.5) + 0.05 * (mid[i] - 0.5) + 0.02 * (fine[i] - 0.5) + 0.06 * deck;
+			}
+		}
+		Random r = new Random(24);
+		// Patches of newer, darker tiles, on the tile grid
+		for (int p = 0; p < 40; p++) {
+			double along0 = TILE * Math.floor((8 + 66 * r.nextDouble()) / TILE);
+			double around0 = TILE * Math.floor((r.nextDouble() - 0.5) * 24 / TILE);
+			double along1 = along0 + TILE * (2 + r.nextInt(5)), around1 = around0 + TILE * (1 + r.nextInt(4));
+			double dark = 0.9 + 0.05 * r.nextDouble();
+			for (int y = (int) Math.round(h / 2.0 + around0 * pxPerM); y < Math.round(h / 2.0 + around1 * pxPerM); y++)
+				for (int x = (int) Math.round(along0 * pxPerM); x < Math.round(along1 * pxPerM); x++)
+					if (x >= 0 && x < w && y >= 0 && y < h)
+						v[y * w + x] *= dark;
+		}
+		// Streaks running down the sides from below the deck (aft of the sail's part of the map, where they would
+		// run sideways)
+		for (int s = 0; s < 90; s++) {
+			double along = 8 + 66 * r.nextDouble();
+			int side = r.nextBoolean() ? 1 : -1;
+			double start = 2 + 3 * r.nextDouble(), length = 1 + 4 * r.nextDouble();
+			int width = 1 + r.nextInt(3);
+			double amount = (r.nextDouble() < 0.6 ? -0.07 : 0.05) * (0.5 + 0.5 * r.nextDouble());
+			int x0 = (int) Math.round(along * pxPerM);
+			for (int t = 0; t < length * pxPerM; t++) {
+				int y = (int) Math.round(h / 2.0 + side * (start * pxPerM + t));
+				double fade = 1 - t / (length * pxPerM);
+				for (int dx = 0; dx < width; dx++)
+					if (y >= 0 && y < h && x0 + dx < w)
+						v[y * w + x0 + dx] += amount * fade;
+			}
+		}
+		var img = new BufferedImage(w, h, BufferedImage.TYPE_INT_RGB);
+		for (int y = 0; y < h; y++)
+			for (int x = 0; x < w; x++) {
+				int c = (int) Math.round(255 * Math.max(0, Math.min(1, v[y * w + x])));
+				img.setRGB(x, y, (c << 16) | (c << 8) | c);
+			}
+		return img;
+	}
+
+	/** Smooth value noise in [0, 1] on a coarse lattice, bilinearly interpolated. */
+	private static float[] valueNoise(int w, int h, int cell, long seed) {
+		Random r = new Random(seed);
+		int gw = w / cell + 2, gh = h / cell + 2;
+		float[] lattice = new float[gw * gh];
+		for (int i = 0; i < lattice.length; i++)
+			lattice[i] = r.nextFloat();
+		float[] out = new float[w * h];
+		for (int y = 0; y < h; y++) {
+			int gy = y / cell;
+			float fy = (float) (y % cell) / cell;
+			fy = fy * fy * (3 - 2 * fy);
+			for (int x = 0; x < w; x++) {
+				int gx = x / cell;
+				float fx = (float) (x % cell) / cell;
+				fx = fx * fx * (3 - 2 * fx);
+				float a = lattice[gy * gw + gx], b = lattice[gy * gw + gx + 1];
+				float c = lattice[(gy + 1) * gw + gx], d = lattice[(gy + 1) * gw + gx + 1];
+				out[y * w + x] = (a * (1 - fx) + b * fx) * (1 - fy) + (c * (1 - fx) + d * fx) * fy;
+			}
+		}
+		return out;
 	}
 
 	/**
