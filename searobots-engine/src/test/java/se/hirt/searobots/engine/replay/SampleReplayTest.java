@@ -87,6 +87,9 @@ class SampleReplayTest {
 		assertEquals(2, h.submarines().size());
 		assertEquals("Codex Sub", h.submarines().get(0).name());
 		assertEquals("Claude Sub", h.submarines().get(1).name());
+		// Recorded before the short-name column existed: taken from the names
+		assertEquals("CO", h.submarines().get(0).shortName());
+		assertEquals("CL", h.submarines().get(1).shortName());
 	}
 
 	@Test

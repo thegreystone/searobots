@@ -144,6 +144,9 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 	// at this fraction of it so they stay discreet, with this much of it again as glow for the bloom filter. They
 	// go out when the submarine dies.
 	private static final float TEAM_LIGHT_LEVEL = 0.85f, TEAM_LIGHT_GLOW = 1.0f;
+	// Torpedoes carry a band of light in the team colour, lit like the team lights, between these stations along the
+	// torpedo model's body (nose at -11.6, cylindrical from -10 to 4): mid-body
+	private static final float[] TORPEDO_RING = {-3.6f, -2.4f};
 	private final java.util.Set<Integer> teamLightsOut = new java.util.HashSet<>();
 	private float appTime = 0; // running time for animations
 	private static final float EXPLOSION_DURATION = 3.5f; // seconds
@@ -2201,6 +2204,8 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 				subNode = (Node) template.deepClone();
 				subNode.setName("sub-" + snap.id());
 				setTeamLights(subNode, snap.color(), true);
+				SubmarineDecals.paint(assetManager, subNode, SubmarineDecals.code(snap.shortName(), snap.id()),
+						snap.name());
 				subNodes.put(snap.id(), subNode);
 				rootNode.attachChild(subNode);
 				// Snap to position on first appearance
@@ -2455,6 +2460,9 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 			if (torpNode == null) {
 				torpNode = (Node) torpedoModelNode.deepClone();
 				torpNode.setName("torpedo-" + ts.id());
+				if (!torpNode.getChildren().isEmpty() && torpNode.getChild(0) instanceof Node torpHull)
+					TorpedoRing.attach(assetManager, torpHull, ts.color(), TORPEDO_RING[0], TORPEDO_RING[1],
+							TEAM_LIGHT_LEVEL, TEAM_LIGHT_GLOW);
 				torpedoNodes.put(ts.id(), torpNode);
 				rootNode.attachChild(torpNode);
 				torpNode.setLocalTranslation(targetPos);

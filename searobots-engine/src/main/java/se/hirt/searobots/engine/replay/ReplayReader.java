@@ -128,6 +128,7 @@ public final class ReplayReader {
 				} else if (ReplayFormat.TAG_SUBDEF.equals(tag)) {
 					Schema s = schemaFor(ReplayFormat.TAG_SUBDEF, ReplayCodec.SUBDEF_COLS);
 					subs.add(new ReplayHeader.SubDef(s.i(f, "id", 0), s.s(f, "name"),
+							SubmarineSnapshot.toShortName(s.s(f, "shortName"), s.s(f, "name")),
 							s.i(f, "colorArgb", Color.GRAY.getRGB()), s.d(f, "spawnX", 0), s.d(f, "spawnY", 0),
 							s.d(f, "spawnZ", 0), s.b(f, "surface")));
 				} else if (ReplayFormat.TAG_TICK.equals(tag) || ReplayFormat.TAG_END.equals(tag)) {
@@ -237,6 +238,7 @@ public final class ReplayReader {
 		p.id = s.i(f, "id", 0);
 		ReplayHeader.SubDef def = subDefsById.get(p.id);
 		p.name = def != null ? def.name() : "sub" + p.id;
+		p.shortName = def != null ? def.shortName() : SubmarineSnapshot.toShortName(null, p.name);
 		p.color = new Color(def != null ? def.colorRgb() : Color.GRAY.getRGB(), true);
 		p.surfaceLocked = def != null && def.surfaceLocked();
 		p.pose = new Pose(new Vec3(s.d(f, "x", 0), s.d(f, "y", 0), s.d(f, "z", 0)), s.d(f, "heading", 0),
@@ -320,6 +322,7 @@ public final class ReplayReader {
 	private static final class PartialSub {
 		int id;
 		String name;
+		String shortName;
 		Pose pose;
 		Velocity velocity;
 		double speed;
@@ -340,7 +343,7 @@ public final class ReplayReader {
 		final List<Waypoint> waypoints = new ArrayList<>();
 
 		SubmarineSnapshot build() {
-			return new SubmarineSnapshot(id, name, pose, velocity, speed, color, forfeited, hp, noiseLevel,
+			return new SubmarineSnapshot(id, name, shortName, pose, velocity, speed, color, forfeited, hp, noiseLevel,
 					sourceLevelDb, throttle, rudder, sternPlanes, status, pingRequested, torpedoesRemaining,
 					List.copyOf(contacts), List.copyOf(waypoints), List.of(), firingSolution, surfaceLocked);
 		}

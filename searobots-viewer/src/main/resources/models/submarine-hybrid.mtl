@@ -96,6 +96,24 @@ d  1.0
 Ns  1.0
 illum 2
 #
+# Sail code (two letters and a number): the viewer paints the submarine's own code over this
+newmtl Decal_Code
+Ka  0.25 0.25 0.25
+Kd  0.30 0.30 0.30
+Ks  0.05 0.05 0.05
+d  1.0
+Ns  4.0
+illum 2
+#
+# Name along the upper flanks: the viewer paints the submarine's own name over this
+newmtl Decal_Name
+Ka  0.25 0.25 0.25
+Kd  0.30 0.30 0.30
+Ks  0.05 0.05 0.05
+d  1.0
+Ns  4.0
+illum 2
+#
 # Inside of the torpedo tubes: no light comes back
 newmtl Void
 Ka  0.00 0.00 0.00

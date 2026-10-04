@@ -63,9 +63,9 @@ final class SimConfigState extends BaseAppState {
 	}
 
 	private static final List<ShipOption> SHIP_OPTIONS = List.of(new ShipOption("(empty)", null, null),
-			new ShipOption("Codex Sub", CodexAttackSub::new, VehicleConfig.submarine()),
-			new ShipOption("Claude Sub", ClaudeAttackSub::new, VehicleConfig.submarine()),
-			new ShipOption("Default Sub", DefaultAttackSub::new, VehicleConfig.submarine()),
+			new ShipOption("Codex", CodexAttackSub::new, VehicleConfig.submarine()),
+			new ShipOption("Claude", ClaudeAttackSub::new, VehicleConfig.submarine()),
+			new ShipOption("Default", DefaultAttackSub::new, VehicleConfig.submarine()),
 			new ShipOption("Sub Drone", SubmarineDrone::new, VehicleConfig.submarine()),
 			new ShipOption("Ship Drone (surface)", TargetDrone::new, VehicleConfig.surfaceShip()));
 
@@ -73,8 +73,8 @@ final class SimConfigState extends BaseAppState {
 	private static final String[] SPEED_OPTIONS = {"1x", "2x", "4x", "8x", "16x"};
 
 	// Persistent selections (survive dialog close/reopen)
-	// Defaults: Claude Sub vs Codex Sub. Overridable from the command line for
-	// development, e.g. -Dsearobots.ship1="Ship Drone" -Dsearobots.ship2="Claude Sub"
+	// Defaults: Claude vs Codex. Overridable from the command line for
+	// development, e.g. -Dsearobots.ship1="Ship Drone" -Dsearobots.ship2="Claude"
 	// (case-insensitive substring of the display name, or a numeric index).
 	static int selectedShip1Index = shipIndexFromProperty("searobots.ship1", 2);
 	static int selectedShip2Index = shipIndexFromProperty("searobots.ship2", 1);

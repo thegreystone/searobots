@@ -126,6 +126,13 @@ public final class SubmarineModelGenerator {
 	private static final double TEAM_LIGHT_THETA = Math.toRadians(23);
 	private static final double[] TEAM_LIGHT_HALF = {0.9, 0.06};
 	private static final double TEAM_LIGHT_FRAME = 0.025;
+	// Decals, painted by the viewer: the code on both sides of the sail, on a patch {from y, to y} by {from z, to z}, and the
+	// name along both upper flanks, on a patch {from y, to y} centred HULL_NAME_THETA above the widest point and
+	// HULL_NAME_HALF_HEIGHT metres either side of it, both DECAL_LIFT off the surface. The viewer's textures have the
+	// patches' proportions (3:1 and 16:1).
+	private static final double[] SAIL_CODE_Y = {-16.0, -13.15}, SAIL_CODE_Z = {4.6, 5.55};
+	private static final double[] HULL_NAME_Y = {-9.0, 7.0};
+	private static final double HULL_NAME_THETA = Math.toRadians(45), HULL_NAME_HALF_HEIGHT = 0.5, DECAL_LIFT = 0.02;
 
 	// Bow planes (starboard side; the port plane is mirrored): leading and trailing edge at the root and tip
 	private static final double PLANE_ROOT_X = 3.6, PLANE_TIP_X = 5.88, PLANE_Z = -0.1, PLANE_CAP = 0.12;
@@ -227,6 +234,10 @@ public final class SubmarineModelGenerator {
 				"Sonar window and flank arrays: glossy black, so they read as a different surface"));
 		MATERIALS.put("glow_team", new Mat(0.6, 0.6, 0.0, 1,
 				"Team lights: the viewer replaces this with a glowing material in the submarine's team colour"));
+		MATERIALS.put("Decal_Code", new Mat(0.3, 0.25, 0.05, 4,
+				"Sail code (two letters and a number): the viewer paints the submarine's own code over this"));
+		MATERIALS.put("Decal_Name", new Mat(0.3, 0.25, 0.05, 4,
+				"Name along the upper flanks: the viewer paints the submarine's own name over this"));
 		MATERIALS.put("Void", new Mat(0.01, 0.0, 0.0, 1, "Inside of the torpedo tubes: no light comes back"));
 	}
 
@@ -237,6 +248,8 @@ public final class SubmarineModelGenerator {
 	// outline for that
 	private boolean leaveTopOpen;
 	private int[] lastTopOutline;
+	// Texture coordinates of the decal patches' vertices, 0 to 1 across each patch in the direction the text reads
+	private final Map<Integer, double[]> decalUv = new HashMap<>();
 	// Vertices of the rings round the torpedo tube openings (open edges of the hull once cut)
 
 	/** A face corner: 1-based vertex and normal indices (0 = not assigned yet). */
@@ -264,10 +277,10 @@ public final class SubmarineModelGenerator {
 	 * unrolled likewise (arc length round its section from the leading edge, and height), with its
 	 * flat top seen from above; projected along whichever axis a face most nearly faces; or, for
 	 * the fins, which all stand out from the hull's axis, position along the hull and distance from
-	 * the axis.
+	 * the axis; or, for the decals, given with each vertex (0 to 1 across the patch).
 	 */
 	private enum UvMap {
-		NONE, HULL, SAIL, BOX, RADIAL
+		NONE, HULL, SAIL, BOX, RADIAL, DECAL
 	}
 
 	public static void main(String[] args) throws IOException {
@@ -291,6 +304,8 @@ public final class SubmarineModelGenerator {
 		gen.splitUntiled(gen.group("Body", "Hull_Tiles"), gen.group("HullPlain", "Hull_Plain"));
 		gen.buildSensors(gen.group("Sensors", "Sensor_Window"), gen.group("SensorFrames", "Metal_Gunmetal"));
 		gen.buildTeamLights(gen.group("TeamLights", "glow_team"), gen.group("SensorFrames", "Metal_Gunmetal"));
+		gen.buildSailCode(gen.group("SailCode", "Decal_Code"));
+		gen.buildHullName(gen.group("HullName", "Decal_Name"));
 		Group fins = gen.group("Fins", "Stealth_Coating");
 		gen.buildPlane(gen.group("elevatorr", "Stealth_Coating"), -1);
 		gen.buildPlane(gen.group("elevatorl", "Stealth_Coating"), 1);
@@ -414,6 +429,11 @@ public final class SubmarineModelGenerator {
 		for (int k = 0; k < face.length; k++)
 			p[k] = verts.get(face[k].v - 1);
 		double[] normal = cross(sub(p[1], p[0]), sub(p[2], p[0]));
+		if (map == UvMap.DECAL) {
+			for (int k = 0; k < face.length; k++)
+				uv[k] = decalUv.get(face[k].v).clone();
+			return uv;
+		}
 		if (map == UvMap.SAIL && Math.abs(normal[2]) < 0.7 * Math.sqrt(dot(normal, normal))) {
 			for (int k = 0; k < face.length; k++)
 				uv[k] = new double[] {aroundSail(p[k]), p[k][2]};
@@ -1552,6 +1572,75 @@ public final class SubmarineModelGenerator {
 			}
 	}
 
+	// ── Decals ───────────────────────────────────────────────────────────────
+
+	/**
+	 * Patches on both sides of the sail for the submarine's code, following the sail's surface
+	 * DECAL_LIFT out from it. Texture coordinates run 0 to 1 across each patch, along the hull the
+	 * way the text reads from that side (towards the stern on the port side, towards the bow on the
+	 * starboard side) and upwards; the viewer paints the text.
+	 */
+	private void buildSailCode(Group g) {
+		g.uv = UvMap.DECAL;
+		int along = 16, up = 6;
+		for (int side : new int[] {1, -1}) { // model +X is to port
+			int[][] grid = new int[along + 1][up + 1];
+			for (int i = 0; i <= along; i++)
+				for (int j = 0; j <= up; j++) {
+					double u = (double) i / along, v = (double) j / up;
+					double y = side > 0 ? lerp(SAIL_CODE_Y[0], SAIL_CODE_Y[1], u)
+							: lerp(SAIL_CODE_Y[1], SAIL_CODE_Y[0], u);
+					double z = lerp(SAIL_CODE_Z[0], SAIL_CODE_Z[1], v);
+					double[] edges = edgeAt(SAIL_BASE, SAIL_TOP, SAIL_BASE_Z, SAIL_TOP_Z, z);
+					double c = edges[1] - edges[0];
+					double x = side * (sailHalf((y - edges[0]) / c, c) + DECAL_LIFT);
+					grid[i][j] = vertex(new double[] {x, y, z});
+					decalUv.put(grid[i][j], new double[] {u, v});
+				}
+			decalGrid(g, grid, (i, j) -> {
+				double[] p = verts.get(grid[i][j] - 1);
+				return new double[] {0, p[1], p[2]};
+			});
+		}
+	}
+
+	/**
+	 * Patches along the upper flanks for the submarine's name, HULL_NAME_HALF_HEIGHT either side of
+	 * HULL_NAME_THETA, standing DECAL_LIFT off the hull. Texture coordinates as for
+	 * {@link #buildSailCode}.
+	 */
+	private void buildHullName(Group g) {
+		g.uv = UvMap.DECAL;
+		int along = 64, up = 4;
+		for (int side : new int[] {1, -1}) {
+			int[][] grid = new int[along + 1][up + 1];
+			for (int i = 0; i <= along; i++) {
+				double u = (double) i / along;
+				double y = side > 0 ? lerp(HULL_NAME_Y[0], HULL_NAME_Y[1], u) : lerp(HULL_NAME_Y[1], HULL_NAME_Y[0], u);
+				double w = hullHalfWidth(y), h = hullHalfHeight(y), t = HULL_NAME_THETA;
+				// Metres round the section per radian, so the letters keep their height as the hull narrows
+				double spread = HULL_NAME_HALF_HEIGHT / Math.hypot(w * Math.sin(t), h * Math.cos(t));
+				for (int j = 0; j <= up; j++) {
+					double v = (double) j / up, theta = t + (2 * v - 1) * spread;
+					double a = side > 0 ? theta : Math.PI - theta;
+					double[] p = {w * Math.cos(a), y, AXIS_Z + h * Math.sin(a)};
+					grid[i][j] = vertex(add(p, scale(hullNormal(p), DECAL_LIFT)));
+					decalUv.put(grid[i][j], new double[] {u, v});
+				}
+			}
+			decalGrid(g, grid, (i, j) -> onAxis(0, 0, verts.get(grid[i][j] - 1)[1]));
+		}
+	}
+
+	/**
+	 * Faces of a decal patch from its grid of vertices, turned away from the given inside points.
+	 */
+	private void decalGrid(Group g, int[][] grid, java.util.function.BiFunction<Integer, Integer, double[]> inside) {
+		for (int i = 0; i + 1 < grid.length; i++)
+			for (int j = 0; j + 1 < grid[i].length; j++)
+				quad(g, grid[i][j], grid[i + 1][j], grid[i + 1][j + 1], grid[i][j + 1], inside.apply(i, j));
+	}
+
 	// ── Torpedo tubes ────────────────────────────────────────────────────────
 
 	/**
@@ -2315,6 +2404,10 @@ public final class SubmarineModelGenerator {
 
 	private static double smoothstep(double x) {
 		return x * x * (3 - 2 * x);
+	}
+
+	private static double lerp(double a, double b, double t) {
+		return a + (b - a) * t;
 	}
 
 	private static double[] lerp(double[] a, double[] b, double t) {
