@@ -316,6 +316,92 @@ public final class TorpedoEntity {
 		this.launchTick = tick;
 	}
 
+	// ── Torpedo tube ───────────────────────────────────────────────
+
+	private SubmarineEntity tubeOwner; // non-null while the torpedo is still in its tube
+	private TorpedoTubes.Tube tube;
+	private double tubeForward, tubeClearForward;
+	private int tubeHoldTicks;
+	private String missionData = "";
+
+	/**
+	 * Loads the torpedo into {@code tube} of {@code owner}, nose just behind the muzzle door, and
+	 * places it there. It stays in the tube until {@link #advanceInTube} reports it clear.
+	 */
+	public void loadIntoTube(SubmarineEntity owner, TorpedoTubes.Tube tube, double dt, String missionData) {
+		double half = vehicleConfig.hullHalfLength();
+		this.tubeOwner = owner;
+		this.tube = tube;
+		this.tubeForward = tube.muzzleForward() - half - TorpedoTubes.NOSE_GAP;
+		this.tubeClearForward = tube.muzzleForward() + half + TorpedoTubes.CLEARANCE;
+		this.tubeHoldTicks = (int) Math.round(TorpedoTubes.DOOR_SECONDS / dt);
+		this.missionData = missionData;
+		placeInTube(0);
+	}
+
+	public boolean inTube() {
+		return tubeOwner != null;
+	}
+
+	/** The submarine whose tube the torpedo is in, or null once it has left. */
+	public SubmarineEntity tubeOwner() {
+		return tubeOwner;
+	}
+
+	/**
+	 * Mission data from the launch command, handed to the controller when the torpedo leaves the
+	 * tube.
+	 */
+	public String missionData() {
+		return missionData;
+	}
+
+	/**
+	 * One tick in the tube: waits for the door, then slides out at the ejection speed, always
+	 * placed in the owner's current frame so it follows every manoeuvre. Returns true once its tail
+	 * has cleared the muzzle.
+	 */
+	public boolean advanceInTube(double dt) {
+		double slide = 0;
+		if (tubeHoldTicks > 0) {
+			tubeHoldTicks--;
+		} else {
+			slide = TorpedoTubes.EJECTION_SPEED;
+			tubeForward += slide * dt;
+		}
+		placeInTube(slide);
+		return tubeForward >= tubeClearForward;
+	}
+
+	/** Releases the torpedo from its tube: from now on its own controller and physics move it. */
+	public void leaveTube() {
+		speed = Math.max(tubeOwner.speed(), 0) + TorpedoTubes.EJECTION_SPEED;
+		tubeOwner = null;
+	}
+
+	/**
+	 * Puts the torpedo in its tube in the owner's current frame, moving with it plus {@code slide}
+	 * along the tube.
+	 */
+	private void placeInTube(double slide) {
+		var o = tubeOwner;
+		double sinH = Math.sin(o.heading()), cosH = Math.cos(o.heading());
+		double sinP = Math.sin(o.pitch()), cosP = Math.cos(o.pitch());
+		// Same frame as the launch geometry: forward along the bow, right to starboard, up across both
+		double fx = sinH * cosP, fy = cosH * cosP, fz = sinP;
+		double rx = cosH, ry = -sinH;
+		double ux = -sinH * sinP, uy = -cosH * sinP, uz = cosP;
+		x = o.x() + fx * tubeForward + rx * tube.right() + ux * tube.up();
+		y = o.y() + fy * tubeForward + ry * tube.right() + uy * tube.up();
+		z = o.z() + fz * tubeForward + uz * tube.up(); // right has no vertical component
+		heading = o.heading();
+		pitch = o.pitch();
+		speed = Math.max(o.speed(), 0) + slide;
+		verticalSpeed = 0;
+		yawRate = 0;
+		pitchRate = 0;
+	}
+
 	// ── Controller interface ───────────────────────────────────────
 
 	/**

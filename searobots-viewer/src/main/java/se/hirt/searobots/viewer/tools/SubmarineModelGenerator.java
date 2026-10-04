@@ -28,7 +28,9 @@
  */
 package se.hirt.searobots.viewer.tools;
 
+import java.awt.image.BufferedImage;
 import java.io.IOException;
+import java.io.PrintWriter;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -38,40 +40,115 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Random;
+
+import javax.imageio.ImageIO;
 
 /**
- * Generates parts of {@code models/submarine-hybrid.obj}. For now it retrofits a new tail and a
- * pump-jet propulsor onto the existing hull: it reads the OBJ, replaces the hull aft of
- * {@link #TAIL_CUT_Y} with a smooth tail cone that runs into the spinner, replaces the
- * {@code Propeller} and {@code PropellerMount} groups with generated geometry, and recomputes
- * normals for the groups it touched. Running it again on its own output gives the same result. The
- * plan is to grow this into a generator for the whole submarine.
+ * Generates {@code models/submarine-hybrid.obj} and {@code submarine-hybrid.mtl}: the 75 m attack
+ * submarine. Pure Java, no dependencies.
  * <p>
- * Model conventions as in the viewer: X across, Y fore-aft with the stern at +Y, Z up, metres. The
- * propeller shaft runs along Y through x = 0, z = {@link #AXIS_Z}; the viewer spins the
- * {@code Propeller} group about that axis (SUB_PROP_LOCAL in SubmarineScene3D), so the rotor and
- * hub must be symmetric about it.
+ * Model conventions as in the viewer: X across, Y fore-aft with the bow at -Y and the stern at +Y,
+ * Z up, metres. The shaft runs along Y through x = 0, z = {@link #AXIS_Z}, which is also the
+ * centreline of the hull's sections. The viewer animates named groups about fixed pivots
+ * (SubmarineScene3D): {@code Propeller} spins about the shaft, the four X-tail flaps
+ * ({@code tailflap_pu/su/sl/pl}) turn about the hinge lines this generator prints, and
+ * {@code elevatorl}/{@code elevatorr} (starboard/port bow planes) tilt about an athwartships axis
+ * through (+-4.3, -10, 0). The parts are built around those pivots, so the viewer needs no changes.
  * <ul>
- * <li>{@code Propeller} (rotating): seven skewed, raked blades with rounded tips on a slim hub that
- * tapers to a point just behind the duct exit.</li>
- * <li>{@code PropellerMount} (fixed): a duct with an aerofoil section that narrows towards the
- * exit, and five stator vanes ahead of the rotor that hold it to the hull. The vanes avoid the
- * rudder planes at the top and bottom, and the duct stays clear of the crescent rudders.</li>
+ * <li>{@code Body}: elliptical sections on a superellipse forebody, a parallel midbody and an
+ * afterbody that narrows into the spinner without a step.</li>
+ * <li>{@code Tower}: the sail, an aerofoil section with a raked leading edge and a rounded
+ * top.</li>
+ * <li>Bow planes and rudders: aerofoil fins with rounded tips; their roots are buried deep enough
+ * to stay inside the hull through their full travel.</li>
+ * <li>{@code Propeller} (rotating) and {@code PropellerMount} (fixed): a pump-jet with seven skewed
+ * blades on a slim tapered spinner, inside a duct held by five stator vanes.</li>
  * </ul>
  * Normals are area weighted and split at {@link #CREASE_DEG}, so curved surfaces are smooth and
  * real edges stay crisp.
  * <p>
- * Usage: {@code SubmarineModelGenerator <in.obj> <out.obj>}, for example
- * {@code java -cp target/classes se.hirt.searobots.viewer.tools.SubmarineModelGenerator src/main/resources/models/submarine-hybrid.obj src/main/resources/models/submarine-hybrid.obj}.
+ * Usage: {@code SubmarineModelGenerator <out-dir>}, for example
+ * {@code java -cp target/classes se.hirt.searobots.viewer.tools.SubmarineModelGenerator src/main/resources/models}.
  */
 public final class SubmarineModelGenerator {
 
 	private static final double AXIS_Z = 0.11;
 	private static final double CREASE_DEG = 50;
-	// Tail: the hull aft of TAIL_CUT_Y is regenerated. Its radius follows a cubic that leaves the cut with
-	// the old hull's own taper and reaches TAIL_JOIN_R at TAIL_JOIN_Y with slope TAIL_JOIN_SLOPE (metres
-	// of radius per metre), where the spinner (a hair wider) takes over
-	private static final double TAIL_CUT_Y = 20.0, TAIL_JOIN_Y = 37.0, TAIL_JOIN_R = 0.46, TAIL_JOIN_SLOPE = -0.06;
+
+	// Hull: superellipse forebody from the nose to the widest point, parallel midbody, then an afterbody
+	// r = R + (W - R) (1 - s^a)^b that meets the spinner (radius TAIL_JOIN_R) with zero slope
+	private static final double NOSE_Y = -34.15, MID_Y0 = -14.0, MID_Y1 = -8.0, HULL_HALF_WIDTH = 4.47;
+	private static final double FORE_EXPONENT = 2.5, AFT_A = 1.6, AFT_B = 1.15;
+	private static final double TAIL_JOIN_Y = 37.0, TAIL_JOIN_R = 0.46;
+	// Sections are ellipses this much taller than wide; they turn round towards the tail to meet the spinner
+	private static final double HEIGHT_RATIO = 0.83, ROUND_FROM_Y = 12.0, ROUND_BY_Y = 28.0;
+
+	// Sail: leading and trailing edge at the hull top (z = SAIL_BASE_Z) and at SAIL_TOP_Z, where a small rounded
+	// edge of radius SAIL_EDGE turns into a flat top (room for the bridge, hatches and masts)
+	private static final double SAIL_BASE_Z = 3.82, SAIL_TOP_Z = 6.26, SAIL_EDGE = 0.12, SAIL_HALF_WIDTH = 0.85;
+	private static final double[] SAIL_BASE = {-18.5, -10.84}, SAIL_TOP = {-16.21, -11.98};
+	private static final int SAIL_CHORD_STEPS = 14; // outline points per side; the cockpit is built on them
+	// Bridge cockpit: a well sunk WELL_DEPTH into the sail top, WELL_WALL in from the deck edge, from WELL_FROM to
+	// WELL_TO of the deck's length (chord fractions); its walls are the windscreen. The hatch (coaming ring + lid,
+	// 0.66 m clear opening) sits on its floor; the masts stand behind it.
+	private static final double WELL_FROM = 0.03, WELL_TO = 0.5, WELL_WALL = 0.12, WELL_DEPTH = 0.5;
+	private static final double HATCH_AT = 0.3, HATCH_R_IN = 0.33, HATCH_R_OUT = 0.40;
+
+	// Hull fittings on the top centreline: escape hatches (station y, lid radius) and the weapons-loading hatch
+	// (station y, half-width, half-length); retractable mooring bollards in pairs (station y, offset from the
+	// centreline); the towed-array fairing along the starboard flank (from y, to y, radius, angle round the hull
+	// from +X; model +X is to port, so 195 degrees is starboard, a little below the widest point)
+	private static final double[][] ESCAPE_HATCHES = {{-26.0, 0.42}, {6.0, 0.42}};
+	private static final double[] LOADING_HATCH = {-22.5, 0.45, 1.2};
+	private static final double[][] BOLLARDS = {{-29.0, 0.9}, {11.0, 0.9}};
+	private static final double[] TOWED_ARRAY = {-4.0, 26.0, 0.14, Math.toRadians(195)};
+
+	// Torpedo tubes, in the frame the engine uses (TorpedoTubes): {right, up} in metres from the submarine's
+	// position, right being starboard. Model +X is to port, so a tube sits at model x = -right, z = up. The tubes run
+	// parallel to the hull's axis and open where they meet the hull; each muzzle has a shutter door (TubeDoor1..4, in
+	// this order) that opens by turning about the hull's centreline. All tubes sit below the widest point, so turning
+	// a door towards it slides it under the skin (the hull's section is wider than tall). The engine's table must match.
+	private static final double[][] TUBES = {{-1.7, -0.6}, {1.7, -0.6}, {-1.25, -1.45}, {1.25, -1.45}};
+	private static final double TUBE_R = 0.3, DOOR_DEPTH = 0.03, DOOR_OVERLAP = 0.08; // shutter: under the skin, overlapping the hole
+	private static final double CUT_MARGIN = 0.05; // hull triangles this close to a tube's circle are cut away
+
+	// Sensors: the bow sonar window (radius seen head on, clear of the torpedo tubes) and the flank arrays, panels
+	// on both sides (from y, to y) centred FLANK_ARRAY_THETA above the widest point, clear of the bow planes below
+	// and the towed-array fairing. Each sits in a gunmetal frame SENSOR_FRAME wider all round.
+	private static final double SONAR_WINDOW_R = 0.5, SENSOR_FRAME = 0.06;
+	private static final double[][] FLANK_ARRAYS = {{-27.0, -19.5}, {-6.0, 3.0}, {8.0, 17.0}};
+	private static final double FLANK_ARRAY_THETA = Math.toRadians(10), FLANK_ARRAY_HALF_HEIGHT = 0.4;
+	// Team lights: one long light on each flank fore and aft (centred over the fore and aft flank arrays), TEAM_LIGHT_THETA above the
+	// widest point (a little above the flank arrays); half-length and half-height of each light, and the width of
+	// its frame
+	private static final double[] TEAM_LIGHT_Y = {-23.25, 12.5};
+	private static final double TEAM_LIGHT_THETA = Math.toRadians(23);
+	private static final double[] TEAM_LIGHT_HALF = {0.9, 0.06};
+	private static final double TEAM_LIGHT_FRAME = 0.025;
+
+	// Bow planes (starboard side; the port plane is mirrored): leading and trailing edge at the root and tip
+	private static final double PLANE_ROOT_X = 3.6, PLANE_TIP_X = 5.88, PLANE_Z = -0.1, PLANE_CAP = 0.12;
+	private static final double[] PLANE_ROOT = {-16.7, -9.36}, PLANE_TIP = {-13.37, -7.42};
+	private static final double PLANE_THICKNESS = 0.05;
+
+	// X-tail fins (all four alike): radius from the shaft and leading/trailing edge at root and tip. The fixed fin
+	// runs to RUDDER_HINGE of the chord; the flap behind it swings about the hinge line. The trailing edge passes
+	// ahead of the duct's leading edge wherever it is inside the duct's radius.
+	private static final double RUDDER_ROOT_R = 0.25, RUDDER_TIP_R = 2.6, RUDDER_EDGE = 0.08, RUDDER_THICKNESS = 0.14;
+	private static final double[] RUDDER_ROOT = {31.6, 34.9}, RUDDER_TIP = {34.41, 36.56};
+	private static final double RUDDER_HINGE = 0.6, HINGE_GAP = 0.04;
+	// Flap group names (port/starboard, upper/lower) and the angle each fin stands out at round the hull's axis (from
+	// +X, port, towards +Z, up). The viewer drives each flap with a mix of the rudder and stern-plane commands.
+	private static final Map<String, Double> X_TAIL = new LinkedHashMap<>();
+
+	static {
+		X_TAIL.put("tailflap_pu", Math.PI / 4);
+		X_TAIL.put("tailflap_su", 3 * Math.PI / 4);
+		X_TAIL.put("tailflap_sl", -3 * Math.PI / 4);
+		X_TAIL.put("tailflap_pl", -Math.PI / 4);
+	}
+
 	// Duct: aerofoil chord along Y, mean radius narrowing towards the exit (a mild nozzle)
 	private static final double DUCT_Y0 = 36.7, DUCT_Y1 = 38.5, DUCT_R_LE = 2.08, DUCT_R_TE = 1.98;
 	private static final double DUCT_THICKNESS = 0.133; // fraction of the chord (NACA 4-digit)
@@ -83,341 +160,740 @@ public final class SubmarineModelGenerator {
 	private static final int BLADES = 7;
 	private static final double ROTOR_Y = 37.55, BLADE_ROOT_R = 0.38, BLADE_TIP_R = 1.86, PITCH = 2.6;
 	private static final double SKEW = 0.55, RAKE = 0.12; // tip skew (radians) and aft rake (metres)
-	// Hub profile (y, radius), front to back: it starts where the hull's tail ends, 5 mm wider so the
-	// seam is hidden, and tapers from the last point to a tip at HUB_TIP_Y as r = R (1 - s^HUB_TAPER)
+	// Hub profile (y, radius), front to back: it starts where the hull ends, 5 mm wider so the seam is
+	// hidden, and tapers from the last point to a tip at HUB_TIP_Y as r = R (1 - s^HUB_TAPER)
 	private static final double[][] HUB = {{TAIL_JOIN_Y, TAIL_JOIN_R + 0.005}, {37.85, TAIL_JOIN_R + 0.005}};
 	private static final double HUB_TIP_Y = 39.1, HUB_TAPER = 1.8;
+	// Polished accent rings about the shaft: {station y, radius of the ring's centre line, half-width along y,
+	// half-thickness radially}. Round about the shaft, so the one on the spinning hub can stay in a static group.
+	private static final double[][] ACCENT_RINGS = {{TAIL_JOIN_Y, TAIL_JOIN_R + 0.008, 0.06, 0.025}, // hull/spinner seam
+			{HUB[1][0], HUB[1][1] + 0.003, 0.05, 0.02}, // where the spinner's cone starts behind the rotor
+			{DUCT_Y0 + 0.03, DUCT_R_LE, 0.035, 0.04}}; // the duct's leading edge
+
+	/** A material: grey levels, shininess, and optionally a diffuse texture and a normal map. */
+	private record Mat(double kd, double ka, double ks, double ns, String comment, String map, String bump) {
+		Mat(double kd, double ka, double ks, double ns, String comment) {
+			this(kd, ka, ks, ns, comment, null, null);
+		}
+	}
+
+	// Anechoic tiles: TILE metres square, TILES_PER_TEXTURE of them along each side of one repeat of the texture
+	private static final double TILE = 0.5;
+	// Untiled parts of the hull: a cap round the sonar window out to where the hull's half-width reaches NOSE_CAP_R
+	// (the tiles would bunch up towards the nose), and a strip along the keel KEEL_STRIP either side of it (where
+	// the tiles' rows meet round the hull, and where the boat sits on docking blocks)
+	private static final double NOSE_CAP_R = 1.0, KEEL_STRIP = Math.toRadians(7.5);
+	private static final int TILES_PER_TEXTURE = 16, TILE_PX = 64;
+	private static final String TILES_MAP = "submarine-tiles.png", TILES_NORMALS = "submarine-tiles-normal.png";
+
+	private static final Map<String, Mat> MATERIALS = new LinkedHashMap<>();
+
+	static {
+		MATERIALS.put("Hull_Tiles", new Mat(0.09, 0.08, 0.4, 30,
+				"Hull and sail: near-black anechoic tiles; the normal map breaks the highlights up at the seams",
+				TILES_MAP, TILES_NORMALS));
+		MATERIALS.put("Hull_Plain", new Mat(0.083, 0.075, 0.4, 30,
+				"Untiled hull (sonar dome round the window, keel strip): the tiles' average grey, without the grid"));
+		MATERIALS.put("Metal_Black_Plain", new Mat(0.07, 0.07, 0.4, 30,
+				"Duct, stators and fittings: near-black satin, with enough specular to show the shape"));
+		MATERIALS.put("Metal_Chrome", new Mat(0.6, 0.4, 0.9, 60, "Light polished metal for accents"));
+		MATERIALS.put("Metal_Gunmetal",
+				new Mat(0.24, 0.18, 0.5, 40, "Hatches: mid-grey satin metal, between hull and accents"));
+		MATERIALS.put("rubber", new Mat(0.13, 0.1, 0.15, 10, "Rudders, bow planes and rotor: dark matte grey"));
+		MATERIALS.put("Sensor_Window", new Mat(0.03, 0.03, 0.7, 90,
+				"Sonar window and flank arrays: glossy black, so they read as a different surface"));
+		MATERIALS.put("glow_team", new Mat(0.6, 0.6, 0.0, 1,
+				"Team lights: the viewer replaces this with a glowing material in the submarine's team colour"));
+		MATERIALS.put("Void", new Mat(0.01, 0.0, 0.0, 1, "Inside of the torpedo tubes: no light comes back"));
+	}
 
 	private final List<double[]> verts = new ArrayList<>();
-	private final List<double[]> uvs = new ArrayList<>();
 	private final List<double[]> normals = new ArrayList<>();
 	private final LinkedHashMap<String, Group> groups = new LinkedHashMap<>();
-	private final List<String> header = new ArrayList<>();
+	// fin() leaves a flat top open when asked (the sail closes its own around the cockpit) and records the top
+	// outline for that
+	private boolean leaveTopOpen;
+	private int[] lastTopOutline;
+	// Vertices of the rings round the torpedo tube openings (open edges of the hull once cut)
 
-	/** A face corner: 1-based vertex, uv and normal indices (0 = absent). */
-	private record Corner(int v, int t, int n) {
+	/** A face corner: 1-based vertex and normal indices (0 = not assigned yet). */
+	private record Corner(int v, int n) {
 	}
 
 	private static final class Group {
 		final String name;
-		String material;
+		final String material;
 		final List<Corner[]> faces = new ArrayList<>();
+		/** How the group's texture coordinates are made (none for untextured materials). */
+		UvMap uv = UvMap.NONE;
+		/** Vertices that take the hull's own normal instead of one averaged from the faces. */
+		final java.util.Set<Integer> onHull = new java.util.HashSet<>();
 
-		Group(String name) {
+		Group(String name, String material) {
 			this.name = name;
-		}
-	}
-
-	public static void main(String[] args) throws IOException {
-		if (args.length < 2) {
-			System.err.println("Usage: SubmarineModelGenerator <in.obj> <out.obj>");
-			System.exit(2);
-		}
-		var gen = new SubmarineModelGenerator();
-		gen.read(Path.of(args[0]));
-		gen.rebuildTail(gen.groups.get("Body"));
-		Group rotor = gen.replace("Propeller", "rubber"); // dark matte, like the fins, for a stealthier look
-		Group mount = gen.replace("PropellerMount", "Metal_Black_Plain");
-		gen.buildDuct(mount);
-		gen.buildStators(mount);
-		gen.buildRotor(rotor);
-		gen.buildHub(rotor);
-		for (String g : List.of("Body", "Propeller", "PropellerMount"))
-			gen.creaseNormals(gen.groups.get(g));
-		gen.write(Path.of(args[1]));
-	}
-
-	// ── OBJ in and out ───────────────────────────────────────────────────────
-
-	private void read(Path in) throws IOException {
-		Group current = null;
-		for (String line : Files.readAllLines(in)) {
-			String[] t = line.trim().split("\\s+");
-			switch (t[0]) {
-			case "v" -> verts.add(new double[] {num(t[1]), num(t[2]), num(t[3])});
-			case "vt" -> uvs.add(new double[] {num(t[1]), num(t[2])});
-			case "vn" -> normals.add(new double[] {num(t[1]), num(t[2]), num(t[3])});
-			case "g" -> current = groups.computeIfAbsent(t[1], Group::new);
-			case "usemtl" -> current.material = t[1];
-			case "f" -> {
-				Corner[] f = new Corner[t.length - 1];
-				for (int i = 0; i < f.length; i++) {
-					String[] p = t[i + 1].split("/", -1);
-					f[i] = new Corner(Integer.parseInt(p[0]),
-							p.length > 1 && !p[1].isEmpty() ? Integer.parseInt(p[1]) : 0,
-							p.length > 2 && !p[2].isEmpty() ? Integer.parseInt(p[2]) : 0);
-				}
-				current.faces.add(f);
-			}
-			default -> {
-				if (current == null && !line.isBlank() && !line.startsWith("# EOF"))
-					header.add(line);
-			}
-			}
+			this.material = material;
 		}
 	}
 
 	/**
-	 * Writes all groups in their original order, keeping only the vertices, uvs and normals in use.
+	 * Texture coordinates, in repeats of the tile texture: none; the hull unrolled (arc length
+	 * round its section, and along its length), so that every tile is the same size; the sail
+	 * unrolled likewise (arc length round its section from the leading edge, and height), with its
+	 * flat top seen from above; or projected along whichever axis a face most nearly faces.
 	 */
-	private void write(Path out) throws IOException {
-		int[] vMap = new int[verts.size() + 1], tMap = new int[uvs.size() + 1], nMap = new int[normals.size() + 1];
-		StringBuilder v = new StringBuilder(), vt = new StringBuilder(), vn = new StringBuilder(),
+	private enum UvMap {
+		NONE, HULL, SAIL, BOX
+	}
+
+	public static void main(String[] args) throws IOException {
+		if (args.length != 1) {
+			System.err.println("Usage: SubmarineModelGenerator <out-dir>");
+			System.exit(2);
+		}
+		Path out = Path.of(args[0]);
+		Files.createDirectories(out);
+		var gen = new SubmarineModelGenerator();
+		gen.buildHull(gen.group("Body", "Hull_Tiles"));
+		Group mount = gen.group("PropellerMount", "Metal_Black_Plain");
+		gen.buildDuct(mount);
+		gen.buildStators(mount);
+		gen.buildAccents(gen.group("Accents", "Metal_Chrome"));
+		gen.buildSail(gen.group("Tower", "Hull_Tiles"));
+		gen.buildSailFittings(gen.group("SailFittings", "Metal_Black_Plain"), gen.group("Accents", "Metal_Chrome"),
+				gen.group("BridgeHatch", "Metal_Gunmetal"));
+		gen.buildHullFittings(gen.group("HullFittings", "Metal_Black_Plain"), gen.group("Hatches", "Metal_Gunmetal"));
+		gen.buildTorpedoTubes(gen.group("Body", "Hull_Tiles"), gen.group("TubeBores", "Void"));
+		gen.splitUntiled(gen.group("Body", "Hull_Tiles"), gen.group("HullPlain", "Hull_Plain"));
+		gen.buildSensors(gen.group("Sensors", "Sensor_Window"), gen.group("SensorFrames", "Metal_Gunmetal"));
+		gen.buildTeamLights(gen.group("TeamLights", "glow_team"), gen.group("SensorFrames", "Metal_Gunmetal"));
+		Group fins = gen.group("Fins", "rubber");
+		gen.buildPlane(gen.group("elevatorr", "rubber"), -1);
+		gen.buildPlane(gen.group("elevatorl", "rubber"), 1);
+		Group rotor = gen.group("Propeller", "rubber"); // dark matte, like the fins, for a stealthier look
+		gen.buildRotor(rotor);
+		gen.buildHub(rotor);
+		Map<String, double[][]> hinges = new LinkedHashMap<>();
+		for (var fin : X_TAIL.entrySet())
+			hinges.put(fin.getKey(), gen.buildTailFin(fins, gen.group(fin.getKey(), "rubber"), fin.getValue()));
+		gen.groups.get("Body").uv = UvMap.HULL;
+		gen.groups.get("Tower").uv = UvMap.SAIL;
+		for (Group g : gen.groups.values())
+			gen.creaseNormals(g);
+		ImageIO.write(tileTexture(), "png", out.resolve(TILES_MAP).toFile());
+		ImageIO.write(tileNormals(), "png", out.resolve(TILES_NORMALS).toFile());
+		gen.write(out.resolve("submarine-hybrid.obj"), out.resolve("submarine-hybrid.mtl"));
+		hinges.forEach(SubmarineModelGenerator::printHinge);
+	}
+
+	/**
+	 * Prints a tail flap's hinge for SubmarineScene3D: a point on the hinge line and the line's
+	 * direction from root to tip.
+	 */
+	private static void printHinge(String name, double[][] line) {
+		double[] axis = unit(sub(line[1], line[0]));
+		System.out.printf(Locale.ROOT, "%s hinge: point (%.3f, %.3f, %.3f), axis (%.4f, %.4f, %.4f)%n", name,
+				line[0][0], line[0][1], line[0][2], axis[0], axis[1], axis[2]);
+	}
+
+	private Group group(String name, String material) {
+		return groups.computeIfAbsent(name, n -> new Group(n, material));
+	}
+
+	// ── Output ───────────────────────────────────────────────────────────────
+
+	private void write(Path objPath, Path mtlPath) throws IOException {
+		try (PrintWriter m = new PrintWriter(Files.newBufferedWriter(mtlPath, StandardCharsets.US_ASCII))) {
+			m.print("# Submarine materials. Generated by SubmarineModelGenerator.\n#\n");
+			for (var e : MATERIALS.entrySet()) {
+				Mat c = e.getValue();
+				m.printf(Locale.ROOT, "# %s\nnewmtl %s\nKa  %.2f %.2f %.2f\nKd  %.2f %.2f %.2f\nKs  %.2f %.2f %.2f\n",
+						c.comment(), e.getKey(), c.ka(), c.ka(), c.ka(), c.kd(), c.kd(), c.kd(), c.ks(), c.ks(),
+						c.ks());
+				m.printf(Locale.ROOT, "d  1.0\nNs  %.1f\nillum 2\n", c.ns());
+				if (c.map() != null)
+					m.print("map_Kd " + c.map() + "\n");
+				if (c.bump() != null)
+					m.print("map_Bump " + c.bump() + "\n");
+				m.print("#\n");
+			}
+			m.print("# EOF\n");
+		}
+		int[] vMap = new int[verts.size() + 1], nMap = new int[normals.size() + 1];
+		StringBuilder v = new StringBuilder(), vn = new StringBuilder(), vt = new StringBuilder(),
 				f = new StringBuilder();
-		int[] counts = new int[4];
+		Map<String, Integer> vtIndex = new HashMap<>();
+		int[] counts = new int[3];
 		for (Group g : groups.values()) {
-			f.append("g ").append(g.name).append('\n');
-			if (g.material != null)
-				f.append("usemtl ").append(g.material).append('\n');
+			f.append("g ").append(g.name).append('\n').append("usemtl ").append(g.material).append('\n');
 			for (Corner[] face : g.faces) {
-				counts[3]++;
+				counts[2]++;
 				f.append('f');
-				for (Corner c : face) {
+				double[][] uvs = g.uv == UvMap.NONE ? null : faceUvs(g.uv, face);
+				for (int k = 0; k < face.length; k++) {
+					Corner c = face[k];
 					if (vMap[c.v] == 0) {
 						double[] p = verts.get(c.v - 1);
 						v.append(String.format(Locale.ROOT, "v %.6f %.6f %.6f\n", p[0], p[1], p[2]));
 						vMap[c.v] = ++counts[0];
 					}
-					f.append(' ').append(vMap[c.v]);
-					if (c.t == 0 && c.n == 0)
-						continue;
-					f.append('/');
-					if (c.t > 0) {
-						if (tMap[c.t] == 0) {
-							double[] p = uvs.get(c.t - 1);
-							vt.append(String.format(Locale.ROOT, "vt %.6f %.6f\n", p[0], p[1]));
-							tMap[c.t] = ++counts[1];
-						}
-						f.append(tMap[c.t]);
+					if (nMap[c.n] == 0) {
+						double[] p = normals.get(c.n - 1);
+						vn.append(String.format(Locale.ROOT, "vn %.6f %.6f %.6f\n", p[0], p[1], p[2]));
+						nMap[c.n] = ++counts[1];
 					}
-					if (c.n > 0) {
-						if (nMap[c.n] == 0) {
-							double[] p = normals.get(c.n - 1);
-							vn.append(String.format(Locale.ROOT, "vn %.6f %.6f %.6f\n", p[0], p[1], p[2]));
-							nMap[c.n] = ++counts[2];
+					f.append(' ').append(vMap[c.v]).append('/');
+					if (uvs != null) {
+						String key = String.format(Locale.ROOT, "%.5f %.5f", uvs[k][0], uvs[k][1]);
+						Integer t = vtIndex.get(key);
+						if (t == null) {
+							t = vtIndex.size() + 1;
+							vtIndex.put(key, t);
+							vt.append("vt ").append(key).append('\n');
 						}
-						f.append('/').append(nMap[c.n]);
+						f.append(t);
 					}
+					f.append('/').append(nMap[c.n]);
 				}
 				f.append('\n');
 			}
 		}
 		StringBuilder sb = new StringBuilder();
-		header.forEach(h -> sb.append(h).append('\n'));
+		sb.append(
+				"# Submarine: 75 m attack submarine. Generated by se.hirt.searobots.viewer.tools.SubmarineModelGenerator.\n");
+		sb.append("# Units: metres. X across, Y aft (bow at -Y), Z up.\n");
+		sb.append("mtllib ").append(mtlPath.getFileName()).append("\n#\n");
 		sb.append(v).append(vt).append(vn).append(f).append("# EOF\n");
-		Files.writeString(out, sb, StandardCharsets.US_ASCII);
-		System.out.printf(Locale.ROOT, "vertices=%d uvs=%d normals=%d faces=%d -> %s%n", counts[0], counts[1],
-				counts[2], counts[3], out);
+		Files.writeString(objPath, sb, StandardCharsets.US_ASCII);
+		System.out.printf(Locale.ROOT, "vertices=%d normals=%d uvs=%d faces=%d -> %s%n", counts[0], counts[1],
+				vtIndex.size(), counts[2], objPath);
 	}
 
-	/** Empties (or creates) a group in place so it keeps its position in the file. */
-	private Group replace(String name, String material) {
-		Group g = groups.computeIfAbsent(name, Group::new);
-		g.faces.clear();
-		g.material = material;
-		return g;
-	}
+	// ── Texture coordinates and the tile textures ────────────────────────────
 
-	// ── Hull tail ────────────────────────────────────────────────────────────
+	/** Texture coordinates of a face's corners, in repeats of the tile texture. */
+	private double[][] faceUvs(UvMap map, Corner[] face) {
+		double[][] uv = new double[face.length][];
+		double[][] p = new double[face.length][];
+		for (int k = 0; k < face.length; k++)
+			p[k] = verts.get(face[k].v - 1);
+		double[] normal = cross(sub(p[1], p[0]), sub(p[2], p[0]));
+		if (map == UvMap.SAIL && Math.abs(normal[2]) < 0.7 * Math.sqrt(dot(normal, normal))) {
+			for (int k = 0; k < face.length; k++)
+				uv[k] = new double[] {aroundSail(p[k]), p[k][2]};
+		} else if (map == UvMap.SAIL) {
+			for (int k = 0; k < face.length; k++)
+				uv[k] = new double[] {p[k][0], p[k][1]};
+		} else if (map == UvMap.BOX) {
+			double[] n = cross(sub(p[1], p[0]), sub(p[2], p[0]));
+			double ax = Math.abs(n[0]), ay = Math.abs(n[1]), az = Math.abs(n[2]);
+			for (int k = 0; k < face.length; k++)
+				uv[k] = ax >= ay && ax >= az ? new double[] {p[k][1], p[k][2]}
+						: az >= ay ? new double[] {p[k][0], p[k][1]} : new double[] {p[k][0], p[k][2]};
+		} else {
+			double lo = Double.MAX_VALUE, hi = -Double.MAX_VALUE;
+			for (int k = 0; k < face.length; k++) {
+				uv[k] = new double[] {aroundHull(p[k]), alongHull(p[k][1])};
+				lo = Math.min(lo, uv[k][0]);
+				hi = Math.max(hi, uv[k][0]);
+			}
+			// The unrolled hull's seam runs along the keel: a face across it takes its corners to the port side
+			if (hi - lo > Math.PI)
+				for (int k = 0; k < face.length; k++)
+					if (uv[k][0] < 0)
+						uv[k][0] += arcRound(p[k][1], 2 * Math.PI);
+		}
+		double repeat = TILE * TILES_PER_TEXTURE;
+		for (double[] t : uv) {
+			t[0] /= repeat;
+			t[1] /= repeat;
+		}
+		return uv;
+	}
 
 	/**
-	 * Replaces the hull aft of {@link #TAIL_CUT_Y} with a smooth tail cone. The original tail is a
-	 * fan of long, partly twisted sliver triangles that shade as streaks, and it narrowed below the
-	 * spinner's radius so the hub bulged out of it. The hull is clipped at the plane, splitting the
-	 * triangles that cross it so the cut edge stays watertight. The new tail starts from that edge
-	 * with the hull's own taper (measured 3 m further forward), turns round over its first third
-	 * and narrows to {@link #TAIL_JOIN_R} where it meets the spinner, then ends just inside the
-	 * hub. The rudder roots reach almost to the shaft, so they stay buried. On the generator's own
-	 * output the clip removes exactly the previous tail, so reruns are stable.
+	 * Arc length round the sail's section at the height of {@code p}, from the leading edge to
+	 * {@code p}, positive to port.
 	 */
-	private void rebuildTail(Group body) {
-		double ahead = meanRadiusAt(body, TAIL_CUT_Y - 3);
-		List<Integer> edge = clipAft(body, TAIL_CUT_Y);
-		int n0 = edge.size();
-		double[] ang0 = new double[n0], rad0 = new double[n0];
-		double r0 = 0;
-		for (int i = 0; i < n0; i++) {
-			double[] p = verts.get(edge.get(i) - 1);
-			ang0[i] = Math.atan2(p[2] - AXIS_Z, p[0]);
-			rad0[i] = Math.hypot(p[0], p[2] - AXIS_Z);
-			r0 += rad0[i] / n0;
+	private static double aroundSail(double[] p) {
+		double[] edges = edgeAt(SAIL_BASE, SAIL_TOP, SAIL_BASE_Z, SAIL_TOP_Z, Math.min(p[2], SAIL_TOP_Z));
+		double c = edges[1] - edges[0], to = Math.max(0, Math.min(1, (p[1] - edges[0]) / c));
+		int n = 48;
+		double arc = 0, prev = sailHalf(0, c);
+		for (int i = 1; i <= n; i++) {
+			double si = to * i / n, half = sailHalf(si, c);
+			arc += Math.hypot(c * to / n, half - prev);
+			prev = half;
 		}
-		double length = TAIL_JOIN_Y - TAIL_CUT_Y, startSlope = (r0 - ahead) / 3;
-		int around = 40, rings = 20;
-		double[] angB = new double[around];
-		for (int j = 0; j < around; j++)
-			angB[j] = -Math.PI + 2 * Math.PI * j / around;
-		int[][] ring = new int[rings + 1][around];
-		for (int k = 1; k <= rings; k++) {
-			double s = (double) k / rings, y = TAIL_CUT_Y + length * s;
-			// Cubic Hermite: value and slope at the cut, value and slope at the join
-			double s2 = s * s, s3 = s2 * s;
-			double r = (2 * s3 - 3 * s2 + 1) * r0 + (s3 - 2 * s2 + s) * length * startSlope
-					+ (-2 * s3 + 3 * s2) * TAIL_JOIN_R + (s3 - s2) * length * TAIL_JOIN_SLOPE;
-			double w = smoothstep(Math.min(1, s / 0.35)); // 0 = the cut's own outline, 1 = round
+		return Math.signum(p[0]) * arc;
+	}
+
+	/**
+	 * Arc length round the hull's section from the top of it to {@code p}, positive to port; the
+	 * seam is at the keel.
+	 */
+	private static double aroundHull(double[] p) {
+		double w = hullHalfWidth(p[1]), h = hullHalfHeight(p[1]);
+		if (w < 1e-9)
+			return 0;
+		return arcRound(p[1], Math.atan2(p[0] / w, (p[2] - AXIS_Z) / h));
+	}
+
+	/**
+	 * Arc length along the hull's elliptical section at station y, from the top round to the
+	 * parametric angle {@code t} (x = w sin t, z = h cos t).
+	 */
+	private static double arcRound(double y, double t) {
+		double w = hullHalfWidth(y), h = hullHalfHeight(y);
+		int n = 64;
+		double sum = 0;
+		for (int i = 0; i < n; i++) {
+			double tau = t * (i + 0.5) / n;
+			sum += Math.hypot(w * Math.cos(tau), h * Math.sin(tau));
+		}
+		return sum * t / n;
+	}
+
+	private static double[] meridian;
+
+	/**
+	 * Distance along the hull's surface from the nose to station y (on the mean of its half-width
+	 * and half-height), so tiles keep their size where the hull curves in at the ends.
+	 */
+	private static double alongHull(double y) {
+		double step = 0.01;
+		if (meridian == null) {
+			int n = (int) Math.ceil((TAIL_JOIN_Y - NOSE_Y) / step) + 2;
+			meridian = new double[n];
+			for (int i = 1; i < n; i++) {
+				double y0 = NOSE_Y + (i - 1) * step, y1 = y0 + step;
+				double r0 = (hullHalfWidth(y0) + hullHalfHeight(y0)) / 2,
+						r1 = (hullHalfWidth(y1) + hullHalfHeight(y1)) / 2;
+				meridian[i] = meridian[i - 1] + Math.hypot(step, r1 - r0);
+			}
+		}
+		double x = Math.max(0, Math.min(meridian.length - 1.001, (y - NOSE_Y) / step));
+		int i = (int) x;
+		return meridian[i] + (meridian[i + 1] - meridian[i]) * (x - i);
+	}
+
+	/**
+	 * Height of the tile surface at each texel: grout between the tiles, a bevel, then a face
+	 * tilted very slightly, differently for each tile.
+	 */
+	private static double[] tileHeights() {
+		Random r = new Random(12);
+		int size = TILES_PER_TEXTURE * TILE_PX;
+		double[] tiltU = new double[TILES_PER_TEXTURE * TILES_PER_TEXTURE], tiltV = new double[tiltU.length];
+		for (int i = 0; i < tiltU.length; i++) {
+			tiltU[i] = (r.nextDouble() - 0.5) * 2.5;
+			tiltV[i] = (r.nextDouble() - 0.5) * 2.5;
+		}
+		double[] height = new double[size * size];
+		for (int y = 0; y < size; y++)
+			for (int x = 0; x < size; x++) {
+				int lx = x % TILE_PX, ly = y % TILE_PX, tile = (y / TILE_PX) * TILES_PER_TEXTURE + x / TILE_PX;
+				double d = Math.min(Math.min(lx, ly), Math.min(TILE_PX - 1 - lx, TILE_PX - 1 - ly));
+				double face = 3 + tiltU[tile] * (lx - TILE_PX / 2.0) / TILE_PX
+						+ tiltV[tile] * (ly - TILE_PX / 2.0) / TILE_PX;
+				height[y * size + x] = d < 1 ? 0 : face * smoothstep(Math.min(1, (d - 1) / 3));
+			}
+		return height;
+	}
+
+	/**
+	 * The tiles' diffuse texture: a grey level per tile with a slight grain, a few replacement
+	 * tiles from a different batch, and dark grout. The material's colour multiplies it.
+	 */
+	static BufferedImage tileTexture() {
+		int size = TILES_PER_TEXTURE * TILE_PX;
+		Random r = new Random(11);
+		double[] tone = new double[TILES_PER_TEXTURE * TILES_PER_TEXTURE];
+		for (int i = 0; i < tone.length; i++)
+			tone[i] = r.nextDouble() < 0.04 ? 0.84 + 0.04 * r.nextDouble() : 0.92 + 0.08 * (r.nextDouble() - 0.5);
+		double[] height = tileHeights();
+		var img = new BufferedImage(size, size, BufferedImage.TYPE_INT_RGB);
+		Random grain = new Random(13);
+		for (int y = 0; y < size; y++)
+			for (int x = 0; x < size; x++) {
+				double h = height[y * size + x];
+				int tile = (y / TILE_PX) * TILES_PER_TEXTURE + x / TILE_PX;
+				double lum = h == 0 ? 0.74
+						: tone[tile] * (0.95 + 0.05 * Math.min(1, h / 3)) + 0.02 * (grain.nextDouble() - 0.5);
+				int c = (int) Math.round(255 * Math.max(0, Math.min(1, lum)));
+				img.setRGB(x, y, (c << 16) | (c << 8) | c);
+			}
+		return img;
+	}
+
+	/**
+	 * The tiles' normal map (tangent space, green along +v): the bevels round each tile and the
+	 * tilt of its face, so highlights break up into the tile grid under grazing light.
+	 */
+	static BufferedImage tileNormals() {
+		int size = TILES_PER_TEXTURE * TILE_PX;
+		double[] height = tileHeights();
+		var img = new BufferedImage(size, size, BufferedImage.TYPE_INT_RGB);
+		double strength = 0.35;
+		for (int y = 0; y < size; y++)
+			for (int x = 0; x < size; x++) {
+				double dx = height[y * size + (x + 1) % size] - height[y * size + (x + size - 1) % size];
+				double dy = height[((y + 1) % size) * size + x] - height[((y + size - 1) % size) * size + x];
+				// Image rows run down while v runs up (jME flips images on load)
+				double[] n = unit(new double[] {-dx * strength / 2, dy * strength / 2, 1});
+				int red = (int) Math.round(255 * (n[0] * 0.5 + 0.5));
+				int green = (int) Math.round(255 * (n[1] * 0.5 + 0.5));
+				int blue = (int) Math.round(255 * (n[2] * 0.5 + 0.5));
+				img.setRGB(x, y, (red << 16) | (green << 8) | blue);
+			}
+		return img;
+	}
+
+	// ── Hull ─────────────────────────────────────────────────────────────────
+
+	/** Half-width of the hull at station {@code y}. */
+	static double hullHalfWidth(double y) {
+		if (y <= NOSE_Y)
+			return 0;
+		if (y < MID_Y0) {
+			double u = 1 - (y - NOSE_Y) / (MID_Y0 - NOSE_Y);
+			return HULL_HALF_WIDTH * Math.pow(1 - Math.pow(u, FORE_EXPONENT), 1 / FORE_EXPONENT);
+		}
+		if (y <= MID_Y1)
+			return HULL_HALF_WIDTH;
+		double s = Math.min(1, (y - MID_Y1) / (TAIL_JOIN_Y - MID_Y1));
+		return TAIL_JOIN_R + (HULL_HALF_WIDTH - TAIL_JOIN_R) * Math.pow(1 - Math.pow(s, AFT_A), AFT_B);
+	}
+
+	/** Half-height of the hull at station {@code y}. */
+	static double hullHalfHeight(double y) {
+		double round = smoothstep(Math.max(0, Math.min(1, (y - ROUND_FROM_Y) / (ROUND_BY_Y - ROUND_FROM_Y))));
+		return hullHalfWidth(y) * (HEIGHT_RATIO + (1 - HEIGHT_RATIO) * round);
+	}
+
+	/** Top of the hull at station {@code y} (on the centreline). */
+	static double hullTop(double y) {
+		return AXIS_Z + hullHalfHeight(y);
+	}
+
+	/**
+	 * The hull: rings of elliptical sections, dense where the curvature is high, closed with a
+	 * single vertex at the nose and with a short step inside the spinner at the tail.
+	 */
+	private void buildHull(Group g) {
+		int around = 48;
+		List<Double> stations = new ArrayList<>();
+		int nose = 24;
+		for (int k = 1; k <= nose; k++) // bunched up at the nose
+			stations.add(NOSE_Y + (MID_Y0 - NOSE_Y) * (1 - Math.cos(Math.PI / 2 * k / nose)));
+		for (double y = MID_Y0 + 2; y < MID_Y1; y += 2)
+			stations.add(y);
+		int aft = 36;
+		for (int k = 0; k <= aft; k++)
+			stations.add(MID_Y1 + (TAIL_JOIN_Y - MID_Y1) * k / aft);
+		int[][] ring = new int[stations.size()][around];
+		for (int k = 0; k < stations.size(); k++) {
+			double y = stations.get(k), w = hullHalfWidth(y), h = hullHalfHeight(y);
 			for (int j = 0; j < around; j++) {
-				double shape = (1 - w) * interpolateAround(ang0, rad0, angB[j]) / r0 + w;
-				ring[k][j] = vertex(onAxis(r * shape, angB[j], y));
+				double a = 2 * Math.PI * j / around;
+				ring[k][j] = vertex(new double[] {w * Math.cos(a), y, AXIS_Z + h * Math.sin(a)});
 			}
 		}
-		int first = body.faces.size();
-		// Zip the irregular cut edge to the first round ring, walking both by angle
-		int p = 0, q = 0;
-		while (p < n0 || q < around) {
-			double nextA = p < n0 ? (p + 1 < n0 ? ang0[p + 1] : ang0[0] + 2 * Math.PI) : Double.MAX_VALUE;
-			double nextB = q < around ? (q + 1 < around ? angB[q + 1] : angB[0] + 2 * Math.PI) : Double.MAX_VALUE;
-			int a = edge.get(p % n0), b = ring[1][q % around];
-			if (nextB <= nextA) {
-				triAboutAxis(body, a, b, ring[1][(q + 1) % around]);
-				q++;
-			} else {
-				triAboutAxis(body, a, b, edge.get((p + 1) % n0));
-				p++;
-			}
-		}
-		for (int k = 1; k < rings; k++)
+		int noseTip = vertex(new double[] {0, NOSE_Y, AXIS_Z});
+		for (int j = 0; j < around; j++)
+			triAboutAxis(g, noseTip, ring[0][j], ring[0][(j + 1) % around]);
+		for (int k = 0; k + 1 < stations.size(); k++)
 			for (int j = 0; j < around; j++) {
 				int j1 = (j + 1) % around;
-				triAboutAxis(body, ring[k][j], ring[k][j1], ring[k + 1][j1]);
-				triAboutAxis(body, ring[k][j], ring[k + 1][j1], ring[k + 1][j]);
+				triAboutAxis(g, ring[k][j], ring[k][j1], ring[k + 1][j1]);
+				triAboutAxis(g, ring[k][j], ring[k + 1][j1], ring[k + 1][j]);
 			}
 		// A short step inside the hub, closed with a flat cap nobody sees
-		int[] inner = new int[around];
+		int[] last = ring[stations.size() - 1], inner = new int[around];
 		double yIn = TAIL_JOIN_Y + 0.15;
 		for (int j = 0; j < around; j++)
-			inner[j] = vertex(onAxis(TAIL_JOIN_R - 0.02, angB[j], yIn));
+			inner[j] = vertex(onAxis(TAIL_JOIN_R - 0.02, 2 * Math.PI * j / around, yIn));
 		int centre = vertex(onAxis(0, 0, yIn));
 		for (int j = 0; j < around; j++) {
 			int j1 = (j + 1) % around;
-			triAboutAxis(body, ring[rings][j], ring[rings][j1], inner[j1]);
-			triAboutAxis(body, ring[rings][j], inner[j1], inner[j]);
-			tri(body, inner[j], inner[j1], centre, onAxis(0, 0, yIn - 1));
+			triAboutAxis(g, last[j], last[j1], inner[j1]);
+			triAboutAxis(g, last[j], inner[j1], inner[j]);
+			tri(g, inner[j], inner[j1], centre, onAxis(0, 0, yIn - 1));
 		}
-		// The hull's other faces carry texture coordinates; give the tail one too so the group is uniform
-		uvs.add(new double[] {0, 0});
-		int uv = uvs.size();
-		for (int i = first; i < body.faces.size(); i++) {
-			Corner[] f = body.faces.get(i);
-			for (int k = 0; k < f.length; k++)
-				f[k] = new Corner(f[k].v, uv, f[k].n);
-		}
-		System.out.printf(Locale.ROOT,
-				"tail: cut at y=%.1f (%d edge vertices, mean radius %.2f, taper %.3f), %d faces to y=%.2f%n",
-				TAIL_CUT_Y, n0, r0, startSlope, body.faces.size() - first, TAIL_JOIN_Y);
 	}
 
 	/**
-	 * Clips the group to y <= {@code yc}. Faces entirely aft are dropped, faces crossing the plane
-	 * are cut, sharing the new vertex on each cut edge with the neighbouring face. Returns the
-	 * vertices on the cut edge, sorted by angle about the shaft.
+	 * Moves the hull's untiled parts from {@code body} to {@code plain}: the cap round the sonar
+	 * window and the strip along the keel. Both follow the hull's rings and lines, so their edges
+	 * are clean; the vertices the two groups share take the hull's own normal in both, so the
+	 * shading runs on across the edge.
 	 */
-	private List<Integer> clipAft(Group g, double yc) {
-		Map<String, Corner> cuts = new HashMap<>();
-		List<Corner[]> kept = new ArrayList<>();
-		for (Corner[] f : g.faces) {
-			double[] d = new double[3];
-			boolean front = false, aft = false;
-			for (int k = 0; k < 3; k++) {
-				d[k] = verts.get(f[k].v - 1)[1] - yc;
-				if (Math.abs(d[k]) < 1e-6)
-					d[k] = 0;
-				front |= d[k] < 0;
-				aft |= d[k] > 0;
+	private void splitUntiled(Group body, Group plain) {
+		double capY = NOSE_Y;
+		while (hullHalfWidth(capY) < NOSE_CAP_R)
+			capY += 0.001;
+		for (var it = body.faces.iterator(); it.hasNext();) {
+			Corner[] f = it.next();
+			double[] c = new double[3];
+			for (Corner corner : f)
+				c = add(c, scale(verts.get(corner.v - 1), 1.0 / f.length));
+			double w = hullHalfWidth(c[1]), h = hullHalfHeight(c[1]);
+			// Angle round the section as the rings are built: 0 to port, a quarter turn up; the keel is at -90 degrees
+			double angle = Math.atan2((c[2] - AXIS_Z) / h, c[0] / w);
+			if (c[1] < capY || Math.abs(angle + Math.PI / 2) < KEEL_STRIP) {
+				plain.faces.add(f);
+				it.remove();
 			}
-			if (!aft) {
-				kept.add(f);
-				continue;
-			}
-			if (!front)
-				continue;
-			List<Corner> poly = new ArrayList<>();
-			for (int k = 0; k < 3; k++) {
-				Corner a = f[k], b = f[(k + 1) % 3];
-				double da = d[k], db = d[(k + 1) % 3];
-				if (da <= 0)
-					poly.add(a);
-				if (da * db < 0)
-					poly.add(cutEdge(a, b, da / (da - db), cuts));
-			}
-			for (int k = 1; k + 1 < poly.size(); k++)
-				kept.add(new Corner[] {poly.get(0), poly.get(k), poly.get(k + 1)});
 		}
-		g.faces.clear();
-		g.faces.addAll(kept);
-		List<Integer> edge = new ArrayList<>();
-		for (Corner[] f : kept)
-			for (Corner c : f)
-				if (Math.abs(verts.get(c.v - 1)[1] - yc) < 1e-6 && !edge.contains(c.v))
-					edge.add(c.v);
-		edge.sort((a, b) -> Double.compare(angleAbout(a), angleAbout(b)));
-		return edge;
+		java.util.Set<Integer> inBody = new java.util.HashSet<>();
+		for (Corner[] f : body.faces)
+			for (Corner corner : f)
+				inBody.add(corner.v);
+		for (Corner[] f : plain.faces)
+			for (Corner corner : f)
+				if (inBody.contains(corner.v)) {
+					body.onHull.add(corner.v);
+					plain.onHull.add(corner.v);
+				}
+	}
+
+	// ── Sail, planes and rudders ─────────────────────────────────────────────
+
+	/**
+	 * The sail: from below the hull top to SAIL_TOP_Z, leading edge raked back, with a flat top
+	 * (around the bridge cockpit) behind a small rounded edge.
+	 */
+	private void buildSail(Group g) {
+		double rootZ = SAIL_BASE_Z - 0.8; // buried in the hull
+		double[] le = edgeAt(SAIL_BASE, SAIL_TOP, SAIL_BASE_Z, SAIL_TOP_Z, rootZ);
+		leaveTopOpen = true; // the top is closed around the bridge cockpit instead
+		fin(g, new double[] {0, le[0], rootZ}, new double[] {0, le[1], rootZ},
+				new double[] {0, SAIL_TOP[0], SAIL_TOP_Z}, new double[] {0, SAIL_TOP[1], SAIL_TOP_Z},
+				new double[] {1, 0, 0}, new double[] {0, 0, 1}, SubmarineModelGenerator::sailHalf, SAIL_EDGE, true,
+				Part.WHOLE, 0, 10, SAIL_CHORD_STEPS);
+		leaveTopOpen = false;
+		buildCockpit(g, lastTopOutline, SAIL_CHORD_STEPS);
 	}
 
 	/**
-	 * Mean distance from the shaft of the points where the group's edges cross the plane at
-	 * {@code y}.
+	 * Leading and trailing edge at {@code z}, on the straight lines through the edges at z0 and z1.
 	 */
-	private double meanRadiusAt(Group g, double y) {
-		double sum = 0;
-		int n = 0;
-		for (Corner[] f : g.faces)
-			for (int k = 0; k < f.length; k++) {
-				double[] a = verts.get(f[k].v - 1), b = verts.get(f[(k + 1) % f.length].v - 1);
-				if ((a[1] - y) * (b[1] - y) >= 0)
-					continue;
-				double t = (y - a[1]) / (b[1] - a[1]);
-				sum += Math.hypot(a[0] + (b[0] - a[0]) * t, a[2] + (b[2] - a[2]) * t - AXIS_Z);
-				n++;
-			}
-		return sum / n;
+	private static double[] edgeAt(double[] at0, double[] at1, double z0, double z1, double z) {
+		double t = (z - z0) / (z1 - z0);
+		return new double[] {at0[0] + (at1[0] - at0[0]) * t, at0[1] + (at1[1] - at0[1]) * t};
 	}
 
-	/** The point a fraction {@code t} along edge a-b, created once per edge and shared. */
-	private Corner cutEdge(Corner a, Corner b, double t, Map<String, Corner> cuts) {
-		String key = Math.min(a.v, b.v) + "-" + Math.max(a.v, b.v);
-		Corner c = cuts.get(key);
-		if (c == null) {
-			double[] p = verts.get(a.v - 1), q = verts.get(b.v - 1);
-			int v = vertex(new double[] {p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t, p[2] + (q[2] - p[2]) * t});
-			int uv = 0;
-			if (a.t > 0 && b.t > 0) {
-				double[] ua = uvs.get(a.t - 1), ub = uvs.get(b.t - 1);
-				uvs.add(new double[] {ua[0] + (ub[0] - ua[0]) * t, ua[1] + (ub[1] - ua[1]) * t});
-				uv = uvs.size();
-			}
-			c = new Corner(v, uv, 0);
-			cuts.put(key, c);
-		}
-		return c;
-	}
-
-	private double angleAbout(int v) {
-		double[] p = verts.get(v - 1);
-		return Math.atan2(p[2] - AXIS_Z, p[0]);
+	/** A bow plane on the starboard ({@code side} = 1) or port ({@code side} = -1) side. */
+	private void buildPlane(Group g, int side) {
+		fin(g, new double[] {side * PLANE_ROOT_X, PLANE_ROOT[0], PLANE_Z},
+				new double[] {side * PLANE_ROOT_X, PLANE_ROOT[1], PLANE_Z},
+				new double[] {side * PLANE_TIP_X, PLANE_TIP[0], PLANE_Z},
+				new double[] {side * PLANE_TIP_X, PLANE_TIP[1], PLANE_Z}, new double[] {0, 0, 1},
+				new double[] {side, 0, 0}, naca(PLANE_THICKNESS), PLANE_CAP, false, Part.WHOLE, 0, 6, 12);
 	}
 
 	/**
-	 * Linear interpolation of {@code values} at angle {@code a}, around a sorted list of angles.
+	 * A tail fin standing out from the hull's axis at {@code angle} round it (from +X, port,
+	 * towards +Z, up): the fixed fin into {@code fixed}, the flap behind its hinge into
+	 * {@code flap}. Returns the flap's hinge line, root first.
 	 */
-	private static double interpolateAround(double[] angles, double[] values, double a) {
-		int n = angles.length;
-		for (int i = 0; i < n; i++) {
-			double a0 = angles[i], a1 = i + 1 < n ? angles[i + 1] : angles[0] + 2 * Math.PI;
-			double x = a < a0 ? a + 2 * Math.PI : a;
-			if (x >= a0 && x <= a1)
-				return values[i] + (values[(i + 1) % n] - values[i]) * (x - a0) / (a1 - a0);
+	private double[][] buildTailFin(Group fixed, Group flap, double angle) {
+		double[] span = {Math.cos(angle), 0, Math.sin(angle)}, thick = {Math.sin(angle), 0, -Math.cos(angle)};
+		double[] rootLE = add(new double[] {0, RUDDER_ROOT[0], AXIS_Z}, scale(span, RUDDER_ROOT_R));
+		double[] rootTE = add(new double[] {0, RUDDER_ROOT[1], AXIS_Z}, scale(span, RUDDER_ROOT_R));
+		double[] tipLE = add(new double[] {0, RUDDER_TIP[0], AXIS_Z}, scale(span, RUDDER_TIP_R));
+		double[] tipTE = add(new double[] {0, RUDDER_TIP[1], AXIS_Z}, scale(span, RUDDER_TIP_R));
+		fin(fixed, rootLE, rootTE, tipLE, tipTE, thick, span, naca(RUDDER_THICKNESS), RUDDER_EDGE, true, Part.FRONT,
+				RUDDER_HINGE, 8, 10);
+		return fin(flap, rootLE, rootTE, tipLE, tipTE, thick, span, naca(RUDDER_THICKNESS), RUDDER_EDGE, true,
+				Part.FLAP, RUDDER_HINGE, 8, 8);
+	}
+
+	/**
+	 * Which part of a fin section to build: all of it, the fixed part ahead of a hinge, or the
+	 * hinged part.
+	 */
+	private enum Part {
+		WHOLE, FRONT, FLAP
+	}
+
+	/**
+	 * A fin's symmetric cross-section: the half-thickness at chord fraction {@code s} of a chord
+	 * {@code c}.
+	 */
+	private interface Section {
+		double half(double s, double c);
+	}
+
+	/** NACA 4-digit section, {@code thickness} of the chord. */
+	private static Section naca(double thickness) {
+		return (s, c) -> nacaHalf(s, thickness) * c;
+	}
+
+	/**
+	 * The sail's section: a constant {@link #SAIL_HALF_WIDTH} whatever the chord (slab sides, like
+	 * a real sail), with an elliptical front over the first 20% of the chord and a smooth taper
+	 * over the last 40%.
+	 */
+	private static double sailHalf(double s, double c) {
+		if (s < 0.2)
+			return SAIL_HALF_WIDTH * Math.sqrt(Math.max(0, 1 - Math.pow((0.2 - s) / 0.2, 2)));
+		if (s <= 0.6)
+			return SAIL_HALF_WIDTH;
+		return SAIL_HALF_WIDTH * (1 - smoothstep(Math.min(1, (s - 0.6) / 0.4)));
+	}
+
+	/**
+	 * A tapered fin with a symmetric {@code section}: straight leading and trailing edges from the
+	 * root chord to the tip chord, then a cap of height {@code cap} along {@code spanDir}. The cap
+	 * either rounds the section off to a line or, with {@code flatTop}, rounds just the edge with
+	 * radius {@code cap} and closes the top with a flat face. The root is left open; it is meant to
+	 * be buried in the hull.
+	 * <p>
+	 * {@code part} cuts the section at chord fraction {@code hinge}: FRONT keeps the part ahead of
+	 * it, ending in a flat face, and FLAP the part behind it, with a rounded leading edge centred
+	 * on the hinge line so it can swing in place; a gap of {@link #HINGE_GAP} separates the two.
+	 * Only flat-topped fins can be cut. Returns the hinge line as {root point, tip point} for FLAP,
+	 * null otherwise.
+	 */
+	private double[][] fin(
+		Group g, double[] rootLE, double[] rootTE, double[] tipLE, double[] tipTE, double[] thickDir, double[] spanDir,
+		Section section, double cap, boolean flatTop, Part part, double hinge, int spanSteps, int chordSteps) {
+		int capSteps = 6, levels = spanSteps + capSteps;
+		int[][] loop = new int[levels + 1][];
+		double[] tipChord = sub(tipTE, tipLE);
+		double tipC = Math.sqrt(dot(tipChord, tipChord));
+		if (flatTop) {
+			// A rounded edge thicker than the section would turn the flat top inside out: keep it below half of
+			// the part's greatest half-thickness at the tip
+			double from = part == Part.FLAP ? flapNoseCentre(tipC, section, hinge) / tipC : 0;
+			double to = part == Part.FRONT ? hinge : 1, thickest = 0;
+			for (int i = 0; i <= 50; i++)
+				thickest = Math.max(thickest, section.half(from + (to - from) * i / 50, tipC));
+			cap = Math.min(cap, 0.45 * thickest);
 		}
-		return values[0];
+		double[][] hingeLine = new double[2][];
+		int midUpper = 0;
+		for (int k = 0; k <= levels; k++) {
+			double[] le, te;
+			double c, scale = 1, inset = 0;
+			if (k <= spanSteps) {
+				double u = (double) k / spanSteps;
+				le = lerp(rootLE, tipLE, u);
+				te = lerp(rootTE, tipTE, u);
+				double[] chord = sub(te, le);
+				c = Math.sqrt(dot(chord, chord));
+			} else {
+				double phi = Math.PI / 2 * (k - spanSteps) / capSteps;
+				double lift = cap * Math.sin(phi);
+				le = add(tipLE, scale(spanDir, lift));
+				te = add(tipTE, scale(spanDir, lift));
+				c = tipC;
+				if (flatTop)
+					inset = cap * (1 - Math.cos(phi)); // quarter-round edge: the outline moves in as it rises
+				else
+					scale = Math.cos(phi);
+			}
+			double[] chordDir = unit(sub(te, le));
+			List<double[]> outline = new ArrayList<>();
+			midUpper = sectionOutline(outline, part, c, section, hinge, scale, inset, chordSteps);
+			boolean ridge = !flatTop && k == levels; // zero thickness: the two sides share one line of vertices
+			Map<String, Integer> shared = new HashMap<>();
+			int[] l = new int[outline.size()];
+			for (int i = 0; i < outline.size(); i++) {
+				double[] p = add(add(le, scale(chordDir, outline.get(i)[0])), scale(thickDir, outline.get(i)[1]));
+				l[i] = ridge ? shared.computeIfAbsent(String.format(Locale.ROOT, "%.6f %.6f %.6f", p[0], p[1], p[2]),
+						key -> vertex(p)) : vertex(p);
+			}
+			loop[k] = l;
+			if (part == Part.FLAP && (k == 0 || k == spanSteps))
+				hingeLine[k == 0 ? 0 : 1] = add(le, scale(chordDir, flapNoseCentre(c, section, hinge)));
+		}
+		lastTopOutline = loop[levels];
+		if (flatTop && !leaveTopOpen) {
+			// Close the top: the outline is convex, so a fan from its centre covers it
+			int[] top = loop[levels];
+			double[] centre = new double[3];
+			for (int v : top)
+				centre = add(centre, scale(verts.get(v - 1), 1.0 / top.length));
+			int hub = vertex(centre);
+			double[] below = sub(centre, spanDir);
+			for (int j = 0; j < top.length; j++)
+				tri(g, hub, top[j], top[(j + 1) % top.length], below);
+		}
+		// Every section loop runs the same way round, so the winding follows from the grid order. Near the thin
+		// edges and in the cap no inside point is reliable; the sign comes from a well-shaped face on the upper
+		// side at mid-span and mid-chord, whose outward normal must point along thickDir.
+		int m = loop[0].length, km = spanSteps / 2;
+		double[] p0 = verts.get(loop[km][midUpper] - 1), p1 = verts.get(loop[km][midUpper + 1] - 1),
+				p2 = verts.get(loop[km + 1][midUpper + 1] - 1);
+		boolean forward = dot(cross(sub(p1, p0), sub(p2, p0)), thickDir) > 0;
+		for (int k = 0; k < levels; k++)
+			for (int j = 0; j < m; j++) {
+				int a = loop[k][j], b = loop[k][(j + 1) % m], c = loop[k + 1][(j + 1) % m], d = loop[k + 1][j];
+				if (forward)
+					quad(g, a, b, c, d, null);
+				else
+					quad(g, d, c, b, a, null);
+			}
+		return part == Part.FLAP ? hingeLine : null;
 	}
 
-	private static double smoothstep(double x) {
-		return x * x * (3 - 2 * x);
+	/**
+	 * Where along the chord the centre of a flap's rounded leading edge (and so its hinge) lies.
+	 */
+	private static double flapNoseCentre(double c, Section section, double hinge) {
+		return hinge * c + HINGE_GAP / 2 + section.half(hinge, c);
 	}
 
-	/** Triangle on a surface around the shaft, wound to face away from it. */
-	private void triAboutAxis(Group g, int a, int b, int c) {
-		double y = (verts.get(a - 1)[1] + verts.get(b - 1)[1] + verts.get(c - 1)[1]) / 3;
-		tri(g, a, b, c, onAxis(0, 0, y));
+	/**
+	 * Fills {@code out} with one section outline in metres ({x along the chord from the leading
+	 * edge, y across it}), going round the upper side first. {@code inset} shrinks it for a rounded
+	 * flat-top edge. Returns the index of a point in the middle of the upper side.
+	 */
+	private static int sectionOutline(
+		List<double[]> out, Part part, double c, Section section, double hinge, double scale, double inset, int steps) {
+		double x0 = 0, x1 = c; // extent of the aerofoil surfaces
+		int mid;
+		if (part == Part.FLAP) {
+			// Rounded nose: a half circle centred on the hinge line, then the aerofoil from there to the TE
+			double xc = flapNoseCentre(c, section, hinge);
+			double r = Math.max(0.005, section.half(xc / c, c) * scale - inset); // meets the surface behind it
+			int arc = 6;
+			for (int i = 0; i <= arc; i++) {
+				double phi = -Math.PI / 2 + Math.PI * i / arc;
+				out.add(new double[] {xc - r * Math.cos(phi), r * Math.sin(phi)});
+			}
+			x0 = xc;
+			mid = arc + steps / 2;
+		} else {
+			mid = steps / 2;
+		}
+		if (part == Part.FRONT)
+			x1 = hinge * c - HINGE_GAP / 2;
+		// Upper side from x0 to x1 (bunched up at both ends), then the lower side back
+		boolean closedTE = part != Part.FRONT;
+		int first = part == Part.FLAP ? 1 : 0; // the flap's nose arc already ends at x0
+		for (int j = first; j <= steps; j++) {
+			double x = x0 + (x1 - x0) * 0.5 * (1 - Math.cos(Math.PI * j / steps));
+			boolean edge = (j == 0 && part != Part.FLAP) || (j == steps && closedTE);
+			out.add(new double[] {insetX(x, x0, x1, inset, part),
+					edge ? 0 : halfThickness(x / c, section, c, scale, inset)});
+		}
+		int last = part == Part.FRONT ? steps : steps - 1; // the FRONT part's flat end has both corners
+		for (int j = last; j >= 1; j--) { // x0 itself is covered by the LE point or the nose arc
+			double x = x0 + (x1 - x0) * 0.5 * (1 - Math.cos(Math.PI * j / steps));
+			out.add(new double[] {insetX(x, x0, x1, inset, part), -halfThickness(x / c, section, c, scale, inset)});
+		}
+		return mid;
+	}
+
+	/**
+	 * Pulls x in from the free ends of the surfaces by {@code inset} (the flap's nose keeps its own
+	 * radius).
+	 */
+	private static double insetX(double x, double x0, double x1, double inset, Part part) {
+		double lo = part == Part.FLAP ? x0 : x0 + inset, hi = x1 - inset;
+		return lo + (x - x0) * (hi - lo) / (x1 - x0);
 	}
 
 	// ── Propulsor ────────────────────────────────────────────────────────────
@@ -428,6 +904,15 @@ public final class SubmarineModelGenerator {
 	 */
 	private static double[] onAxis(double r, double a, double y) {
 		return new double[] {r * Math.cos(a), y, AXIS_Z + r * Math.sin(a)};
+	}
+
+	/**
+	 * Fin section half-thickness. Inside a flat top's rounded edge ({@code inset} > 0) it never
+	 * quite reaches zero, so the two sides stay apart and the surface stays closed.
+	 */
+	private static double halfThickness(double s, Section section, double c, double scale, double inset) {
+		double h = section.half(s, c) * scale;
+		return inset > 0 ? Math.max(0.005, h - inset) : h;
 	}
 
 	/** NACA 4-digit half thickness at chord fraction {@code s}, closed trailing edge. */
@@ -588,12 +1073,883 @@ public final class SubmarineModelGenerator {
 		}
 	}
 
-	// ── Mesh helpers ─────────────────────────────────────────────────────────
+	// ── Hull fittings ────────────────────────────────────────────────────────
+
+	/** Height of the hull surface above (x, y), on its upper half. */
+	private static double hullSurfaceZ(double x, double y) {
+		double w = hullHalfWidth(y);
+		return AXIS_Z + hullHalfHeight(y) * Math.sqrt(Math.max(0, 1 - (x / w) * (x / w)));
+	}
 
 	/**
-	 * Adds a vertex, rounded to the precision the OBJ is written with so that geometry derived from
-	 * it comes out the same when the generator reads its own output.
+	 * Hatches, bollards and the towed-array fairing. Hatches are a gunmetal lid on a slightly
+	 * larger black rim, both following the curve of the hull a few centimetres above it.
 	 */
+	private void buildHullFittings(Group black, Group metal) {
+		for (double[] h : ESCAPE_HATCHES) {
+			conformalPatch(black, circle(0, h[0], h[1] + 0.07, 40), 0.03);
+			conformalPatch(metal, circle(0, h[0], h[1], 40), 0.06);
+		}
+		double[] lh = LOADING_HATCH;
+		conformalPatch(black, roundedRect(0, lh[0], lh[1] + 0.07, lh[2] + 0.07, 0.25, 8), 0.03);
+		conformalPatch(metal, roundedRect(0, lh[0], lh[1], lh[2], 0.2, 8), 0.055);
+		for (double[] b : BOLLARDS)
+			for (int side : new int[] {-1, 1})
+				conformalPatch(metal, roundedRect(side * b[1], b[0], 0.12, 0.25, 0.08, 4), 0.04);
+		towedArrayFairing(black);
+	}
+
+	private static List<double[]> circle(double cx, double cy, double r, int n) {
+		List<double[]> out = new ArrayList<>();
+		for (int i = 0; i < n; i++) {
+			double a = 2 * Math.PI * i / n;
+			out.add(new double[] {cx + r * Math.cos(a), cy + r * Math.sin(a)});
+		}
+		return out;
+	}
+
+	/**
+	 * A rectangle with rounded corners, {x, y} points going round counter-clockwise seen from
+	 * above.
+	 */
+	private static List<double[]> roundedRect(double cx, double cy, double hx, double hy, double r, int perCorner) {
+		List<double[]> out = new ArrayList<>();
+		double[][] corners = {{hx - r, hy - r}, {-(hx - r), hy - r}, {-(hx - r), -(hy - r)}, {hx - r, -(hy - r)}};
+		for (int c = 0; c < 4; c++)
+			for (int i = 0; i <= perCorner; i++) {
+				double a = Math.PI / 2 * (c + (double) i / perCorner);
+				out.add(new double[] {cx + corners[c][0] + r * Math.cos(a), cy + corners[c][1] + r * Math.sin(a)});
+			}
+		return out;
+	}
+
+	/**
+	 * A slab on the upper hull with the given outline (convex, {x, y} points): its top follows the
+	 * hull {@code raise} above it and its sides run 0.1 m into the hull, where they are left open.
+	 */
+	private void conformalPatch(Group g, List<double[]> outline, double raise) {
+		int n = outline.size();
+		int[] top = new int[n], bottom = new int[n];
+		double cx = 0, cy = 0;
+		for (int i = 0; i < n; i++) {
+			double[] p = outline.get(i);
+			top[i] = vertex(new double[] {p[0], p[1], hullSurfaceZ(p[0], p[1]) + raise});
+			bottom[i] = vertex(new double[] {p[0], p[1], hullSurfaceZ(p[0], p[1]) - 0.1});
+			cx += p[0] / n;
+			cy += p[1] / n;
+		}
+		double[] inside = {cx, cy, hullSurfaceZ(cx, cy) - 0.05};
+		int hub = vertex(new double[] {cx, cy, hullSurfaceZ(cx, cy) + raise});
+		for (int i = 0; i < n; i++) {
+			int j = (i + 1) % n;
+			tri(g, hub, top[i], top[j], inside);
+			quad(g, top[i], top[j], bottom[j], bottom[i], inside);
+		}
+	}
+
+	/**
+	 * The towed-array fairing: a tube half sunk into the starboard flank, following the hull at a
+	 * fixed angle below its widest point, tapering to points at both ends.
+	 */
+	private void towedArrayFairing(Group g) {
+		double y0 = TOWED_ARRAY[0], y1 = TOWED_ARRAY[1], radius = TOWED_ARRAY[2], theta = TOWED_ARRAY[3];
+		int along = 60, around = 12;
+		double taper = 1.5;
+		int[][] ring = new int[along + 1][around];
+		int[] tips = new int[2];
+		for (int k = 0; k <= along; k++) {
+			double y = y0 + (y1 - y0) * k / along;
+			double w = hullHalfWidth(y), h = hullHalfHeight(y);
+			double[] surface = {w * Math.cos(theta), y, AXIS_Z + h * Math.sin(theta)};
+			double[] normal = unit(new double[] {Math.cos(theta) / w, 0, Math.sin(theta) / h});
+			double[] across = unit(cross(normal, new double[] {0, 1, 0}));
+			double ends = Math.min(Math.min(y - y0, y1 - y) / taper, 1);
+			double r = radius * Math.sqrt(Math.max(0, ends * (2 - ends))); // rounded taper to a point
+			double[] centre = add(surface, scale(normal, 0.3 * radius)); // a little over half proud of the hull
+			if (k == 0 || k == along) {
+				tips[k == 0 ? 0 : 1] = vertex(centre);
+				continue;
+			}
+			for (int j = 0; j < around; j++) {
+				double phi = 2 * Math.PI * j / around;
+				ring[k][j] = vertex(
+						add(centre, add(scale(normal, r * Math.cos(phi)), scale(across, r * Math.sin(phi)))));
+			}
+		}
+		for (int k = 1; k < along; k++) {
+			double y = y0 + (y1 - y0) * k / along;
+			double[] inside = {hullHalfWidth(y) * Math.cos(theta), y, AXIS_Z + hullHalfHeight(y) * Math.sin(theta)};
+			for (int j = 0; j < around; j++) {
+				int j1 = (j + 1) % around;
+				if (k + 1 < along)
+					quad(g, ring[k][j], ring[k][j1], ring[k + 1][j1], ring[k + 1][j], inside);
+				else
+					tri(g, ring[k][j], ring[k][j1], tips[1], inside);
+				if (k == 1)
+					tri(g, tips[0], ring[k][j1], ring[k][j], inside);
+			}
+		}
+	}
+
+	// ── Sensors ──────────────────────────────────────────────────────────────
+
+	/**
+	 * The bow sonar window, a disc over the nose seen head on, and the flank arrays, long panels
+	 * along both sides. Both lie a centimetre proud of the hull, each in a gunmetal frame a little
+	 * larger and lower.
+	 */
+	private void buildSensors(Group windows, Group frames) {
+		hullSkinPatch(frames, 0, AXIS_Z, SONAR_WINDOW_R + SENSOR_FRAME, 0.006, 40, 5);
+		hullSkinPatch(windows, 0, AXIS_Z, SONAR_WINDOW_R, 0.012, 40, 5);
+		for (double[] panel : FLANK_ARRAYS)
+			for (double theta : new double[] {FLANK_ARRAY_THETA, Math.PI - FLANK_ARRAY_THETA}) {
+				hullStrip(frames, theta, panel[0] - SENSOR_FRAME, panel[1] + SENSOR_FRAME,
+						FLANK_ARRAY_HALF_HEIGHT + SENSOR_FRAME, FLANK_ARRAY_HALF_HEIGHT + SENSOR_FRAME, 0.006, 24, 4);
+				hullStrip(windows, theta, panel[0], panel[1], FLANK_ARRAY_HALF_HEIGHT, FLANK_ARRAY_HALF_HEIGHT, 0.012,
+						24, 4);
+			}
+	}
+
+	/**
+	 * Point on the hull at angle {@code theta} round its section (from +X, towards +Z) at station
+	 * y.
+	 */
+	private static double[] hullAt(double theta, double y) {
+		return new double[] {hullHalfWidth(y) * Math.cos(theta), y, AXIS_Z + hullHalfHeight(y) * Math.sin(theta)};
+	}
+
+	/**
+	 * A strip on the hull centred on the line at angle {@code theta} round it, from station y0 to
+	 * y1, {@code half} wide either side of that line (measured round the hull), its ends rounded
+	 * with radius {@code round} (up to {@code half}, which makes them semicircles). Its top is
+	 * {@code raise} proud of the hull, its sides run 0.1 m into it. {@code along} and
+	 * {@code across} set how finely it follows the hull.
+	 */
+	private void hullStrip(
+		Group g, double theta, double y0, double y1, double half, double round, double raise, int along, int across) {
+		int[][] top = new int[along + 1][across + 1], skirt = new int[along + 1][across + 1];
+		double[][] inside = new double[along + 1][];
+		for (int k = 0; k <= along; k++) {
+			double y = y0 + (y1 - y0) * (1 - Math.cos(Math.PI * k / along)) / 2; // dense at the rounded ends
+			double end = Math.max(0, round - Math.min(y - y0, y1 - y)) / round;
+			double h = half - round + round * Math.sqrt(Math.max(0, 1 - end * end));
+			// Angle per metre round the hull here
+			double w = hullHalfWidth(y), hh = hullHalfHeight(y);
+			double perMetre = 1 / Math.hypot(w * Math.sin(theta), hh * Math.cos(theta));
+			double[] centre = hullAt(theta, y);
+			inside[k] = add(centre, scale(hullNormal(centre), -0.05));
+			for (int j = 0; j <= across; j++) {
+				double[] q = hullAt(theta + (2.0 * j / across - 1) * h * perMetre, y);
+				double[] n = hullNormal(q);
+				top[k][j] = vertex(add(q, scale(n, raise)));
+				if (j == 0 || j == across || k == 0 || k == along)
+					skirt[k][j] = vertex(add(q, scale(n, -0.1)));
+			}
+		}
+		for (int k = 0; k < along; k++) {
+			for (int j = 0; j < across; j++)
+				quad(g, top[k][j], top[k][j + 1], top[k + 1][j + 1], top[k + 1][j], inside[k]);
+			quad(g, top[k][0], top[k + 1][0], skirt[k + 1][0], skirt[k][0], inside[k]);
+			quad(g, top[k][across], top[k + 1][across], skirt[k + 1][across], skirt[k][across], inside[k]);
+		}
+		// Square-ish ends have width: close them too (rounded ones end in a point, and these faces drop out)
+		for (int k : new int[] {0, along})
+			for (int j = 0; j < across; j++)
+				quad(g, top[k][j], top[k][j + 1], skirt[k][j + 1], skirt[k][j], inside[k == 0 ? 1 : along - 1]);
+	}
+
+	/**
+	 * The team lights: a long, narrow rectangular light on each flank fore and aft, above the flank
+	 * arrays, flush with the hull, each in a gunmetal frame. The viewer lights them in the
+	 * submarine's team colour.
+	 */
+	private void buildTeamLights(Group lights, Group frames) {
+		for (double y : TEAM_LIGHT_Y)
+			for (double theta : new double[] {TEAM_LIGHT_THETA, Math.PI - TEAM_LIGHT_THETA}) {
+				hullStrip(frames, theta, y - TEAM_LIGHT_HALF[0] - TEAM_LIGHT_FRAME,
+						y + TEAM_LIGHT_HALF[0] + TEAM_LIGHT_FRAME, TEAM_LIGHT_HALF[1] + TEAM_LIGHT_FRAME, 0.03, 0.006,
+						12, 1);
+				hullStrip(lights, theta, y - TEAM_LIGHT_HALF[0], y + TEAM_LIGHT_HALF[0], TEAM_LIGHT_HALF[1], 0.015,
+						0.012, 12, 1);
+			}
+	}
+
+	// ── Torpedo tubes ────────────────────────────────────────────────────────
+
+	/**
+	 * Station y where the line parallel to the hull's axis through (x, z) leaves the hull at the
+	 * bow.
+	 */
+	private static double bowExitY(double x, double z) {
+		double lo = NOSE_Y, hi = MID_Y0; // outside at the nose, inside at the widest point
+		for (int i = 0; i < 60; i++) {
+			double mid = (lo + hi) / 2;
+			double w = hullHalfWidth(mid), h = hullHalfHeight(mid);
+			double f = (x / w) * (x / w) + ((z - AXIS_Z) / h) * ((z - AXIS_Z) / h);
+			if (f > 1)
+				lo = mid;
+			else
+				hi = mid;
+		}
+		return (lo + hi) / 2;
+	}
+
+	/**
+	 * Outward unit normal of the hull at a point on it (from the gradient of its implicit form).
+	 */
+	private static double[] hullNormal(double[] p) {
+		double e = 1e-4;
+		double[] grad = new double[3];
+		for (int k = 0; k < 3; k++) {
+			double[] a = p.clone(), b = p.clone();
+			a[k] += e;
+			b[k] -= e;
+			grad[k] = (hullImplicit(a) - hullImplicit(b)) / (2 * e);
+		}
+		return unit(grad);
+	}
+
+	/** Below 1 inside the hull, above 1 outside. */
+	private static double hullImplicit(double[] p) {
+		double w = hullHalfWidth(p[1]), h = hullHalfHeight(p[1]);
+		return (p[0] / w) * (p[0] / w) + ((p[2] - AXIS_Z) / h) * ((p[2] - AXIS_Z) / h);
+	}
+
+	/**
+	 * The torpedo tubes. Each tube gets a real opening in the hull: the hull's triangles near the
+	 * muzzle are cut away and the ragged edge left behind is stitched to a smooth ring where the
+	 * tube meets the hull. Behind the opening a dark bore runs back into the hull, and a shutter
+	 * sits {@link #DOOR_DEPTH} inside the skin, seen through the opening when closed. The shutter
+	 * opens by turning about the hull's centreline: since the hull is wider than tall and the tubes
+	 * sit below its widest point, turning it that way slides it further under the skin. The
+	 * generator finds the turn that clears the opening and prints it with the muzzle positions for
+	 * the engine and the viewer.
+	 */
+	private void buildTorpedoTubes(Group body, Group bores) {
+		cutOpenings(body);
+		int[][] muzzles = stitchOpenings(body);
+		for (int t = 0; t < TUBES.length; t++) {
+			double x0 = -TUBES[t][0], z0 = TUBES[t][1];
+			int[] muzzle = muzzles[t];
+			buildBore(bores, muzzle, x0, z0);
+			Group door = group("TubeDoor" + (t + 1), "Metal_Black_Plain");
+			int firstFace = door.faces.size();
+			hullSkinPatch(door, x0, z0, TUBE_R + DOOR_OVERLAP, -DOOR_DEPTH);
+			// The shutter must turn far enough that none of it is left under its own opening, nor parked behind another
+			List<double[]> plate = new ArrayList<>();
+			for (int f = firstFace; f < door.faces.size(); f++)
+				for (Corner c : door.faces.get(f))
+					plate.add(verts.get(c.v - 1));
+			double open = Double.NaN;
+			for (int step = 1; step <= 120 && Double.isNaN(open); step++)
+				for (double sign : new double[] {1, -1}) {
+					double angle = sign * Math.toRadians(0.5 * step);
+					boolean clear = true;
+					for (double[] p : plate) {
+						double[] q = rotateAboutAxis(p, angle);
+						if (underAnyOpening(q) || depthBelowHull(q) < DOOR_DEPTH * 0.9) {
+							clear = false;
+							break;
+						}
+					}
+					if (clear) {
+						open = angle;
+						break;
+					}
+				}
+			if (Double.isNaN(open))
+				throw new IllegalStateException("TubeDoor" + (t + 1) + " cannot clear its opening");
+			System.out.printf(Locale.ROOT,
+					"TubeDoor%d: tube right %.2f up %.2f, muzzle at forward %.3f (opening %.1f times as long as wide); opens by %.4f rad about the centreline%n",
+					t + 1, TUBES[t][0], TUBES[t][1], -bowExitY(x0, z0), elongation(muzzle), open);
+		}
+	}
+
+	/**
+	 * Removes every hull triangle that comes within {@link #CUT_MARGIN} of a tube's circle (seen
+	 * along the hull's axis), for all tubes at once, so each opening is cut before any is stitched.
+	 * Where cuts meet at a single vertex, the triangles round it go too, so every cut leaves a
+	 * clean loop of edges.
+	 */
+	private void cutOpenings(Group body) {
+		body.faces.removeIf(f -> {
+			for (double[] tube : TUBES)
+				for (int k = 0; k < 3; k++) {
+					double[] a = verts.get(f[k].v - 1), b = verts.get(f[(k + 1) % 3].v - 1);
+					if (a[1] < MID_Y0 && segmentDistance(a, b, -tube[0], tube[1]) < TUBE_R + CUT_MARGIN)
+						return true;
+				}
+			return false;
+		});
+		while (true) {
+			java.util.Set<Long> directed = new java.util.HashSet<>();
+			for (Corner[] f : body.faces)
+				for (int k = 0; k < 3; k++)
+					directed.add(edgeKey(f[k].v, f[(k + 1) % 3].v));
+			Map<Integer, Integer> outgoing = new HashMap<>();
+			for (long key : directed)
+				if (!directed.contains(edgeKey((int) key, (int) (key >> 32))))
+					outgoing.merge((int) (key >> 32), 1, Integer::sum);
+			java.util.Set<Integer> pinched = new java.util.HashSet<>();
+			outgoing.forEach((v, n) -> {
+				if (n > 1)
+					pinched.add(v);
+			});
+			if (pinched.isEmpty())
+				return;
+			body.faces.removeIf(f -> pinched.contains(f[0].v) || pinched.contains(f[1].v) || pinched.contains(f[2].v));
+		}
+	}
+
+	/**
+	 * Closes the cuts: each ragged edge left by {@link #cutOpenings} is joined to smooth rings of
+	 * new vertices on the hull at the radius of the tubes inside it. Cuts that ran into each other
+	 * leave one edge round several tubes; that is triangulated with a hole per tube. Returns the
+	 * ring of each tube.
+	 */
+	private int[][] stitchOpenings(Group body) {
+		// The edges of the cuts: directed edges without a twin (the hull is otherwise closed)
+		java.util.Set<Long> directed = new java.util.HashSet<>();
+		for (Corner[] f : body.faces)
+			for (int k = 0; k < 3; k++)
+				directed.add(edgeKey(f[k].v, f[(k + 1) % 3].v));
+		Map<Integer, Integer> next = new HashMap<>();
+		for (long key : directed) {
+			int a = (int) (key >> 32), b = (int) key;
+			if (!directed.contains(edgeKey(b, a)) && next.put(a, b) != null)
+				throw new IllegalStateException("the edge of a tube cut touches itself at vertex " + a);
+		}
+		int[][] rings = new int[TUBES.length][];
+		while (!next.isEmpty()) {
+			List<Integer> edge = new ArrayList<>();
+			int start = next.keySet().iterator().next();
+			Integer v = start;
+			do {
+				edge.add(v);
+				v = next.remove(v);
+				if (v == null)
+					throw new IllegalStateException("the edge of a tube cut is not closed");
+			} while (v != start);
+			// Smooth rings on the hull at the radius of each tube inside this edge
+			List<List<Integer>> holes = new ArrayList<>();
+			for (int t = 0; t < TUBES.length; t++) {
+				double x0 = -TUBES[t][0], z0 = TUBES[t][1];
+				if (!encloses(edge, x0, z0))
+					continue;
+				int n = 32;
+				rings[t] = new int[n];
+				List<Integer> hole = new ArrayList<>();
+				for (int i = 0; i < n; i++) {
+					double phi = 2 * Math.PI * i / n;
+					double x = x0 + TUBE_R * Math.cos(phi), z = z0 + TUBE_R * Math.sin(phi);
+					rings[t][i] = vertex(new double[] {x, bowExitY(x, z), z});
+					hole.add(rings[t][i]);
+				}
+				holes.add(hole);
+			}
+			if (holes.isEmpty())
+				throw new IllegalStateException("a tube cut has no tube inside it");
+			// On the hull unrolled round its axis the gap between edge and rings is a flat polygon with holes
+			for (int[] tri : triangulateWithHoles(edge, holes))
+				triOnHull(body, tri[0], tri[1], tri[2]);
+			// Its slivers would average to streaky normals: the hull's own are known exactly
+			body.onHull.addAll(edge);
+			for (List<Integer> hole : holes)
+				body.onHull.addAll(hole);
+		}
+		for (int t = 0; t < TUBES.length; t++)
+			if (rings[t] == null)
+				throw new IllegalStateException("no cut round tube " + (t + 1));
+		return rings;
+	}
+
+	/** True if (x, z) lies inside {@code loop}, seen along the hull's axis. */
+	private boolean encloses(List<Integer> loop, double x, double z) {
+		boolean inside = false;
+		for (int i = 0, j = loop.size() - 1; i < loop.size(); j = i++) {
+			double[] a = verts.get(loop.get(i) - 1), b = verts.get(loop.get(j) - 1);
+			if ((a[2] > z) != (b[2] > z) && x < a[0] + (z - a[2]) * (b[0] - a[0]) / (b[2] - a[2]))
+				inside = !inside;
+		}
+		return inside;
+	}
+
+	/**
+	 * The tube's bore: a dark cylinder from the opening's ring back into the hull, facing inwards,
+	 * closed at the far end.
+	 */
+	private void buildBore(Group g, int[] ring, double x0, double z0) {
+		double back = bowExitY(x0, z0) + 3.0;
+		int n = ring.length;
+		int[] deep = new int[n];
+		for (int i = 0; i < n; i++) {
+			double[] p = verts.get(ring[i] - 1);
+			deep[i] = vertex(new double[] {p[0], back, p[2]});
+		}
+		for (int i = 0; i < n; i++) {
+			int j = (i + 1) % n;
+			double[] a = verts.get(ring[i] - 1), b = verts.get(ring[j] - 1);
+			double mx = (a[0] + b[0]) / 2, mz = (a[2] + b[2]) / 2, my = (a[1] + b[1] + 2 * back) / 4;
+			// Seen from inside the tube: "inside" for the winding test is outside the cylinder
+			double[] beyond = {x0 + (mx - x0) * 2, my, z0 + (mz - z0) * 2};
+			quad(g, ring[i], ring[j], deep[j], deep[i], beyond);
+		}
+		int end = vertex(new double[] {x0, back, z0});
+		for (int i = 0; i < n; i++)
+			tri(g, end, deep[i], deep[(i + 1) % n], new double[] {x0, back + 1, z0});
+	}
+
+	/**
+	 * True if {@code p} lies within a few centimetres of any tube's opening, seen along the hull's
+	 * axis.
+	 */
+	private static boolean underAnyOpening(double[] p) {
+		for (double[] tube : TUBES)
+			if (Math.hypot(p[0] + tube[0], p[2] - tube[1]) < TUBE_R + 0.03)
+				return true;
+		return false;
+	}
+
+	/**
+	 * How much longer than the tube's diameter an opening is, measured along the hull's surface.
+	 */
+	private double elongation(int[] ring) {
+		double longest = 0;
+		for (int a : ring)
+			for (int b : ring)
+				longest = Math.max(longest, distance(a, b));
+		return longest / (2 * TUBE_R);
+	}
+
+	private double distance(int a, int b) {
+		double[] d = sub(verts.get(a - 1), verts.get(b - 1));
+		return Math.sqrt(dot(d, d));
+	}
+
+	/** Shortest distance, seen along the hull's axis, from (x0, z0) to the segment a-b. */
+	private static double segmentDistance(double[] a, double[] b, double x0, double z0) {
+		double ax = a[0] - x0, az = a[2] - z0, dx = b[0] - a[0], dz = b[2] - a[2];
+		double len2 = dx * dx + dz * dz;
+		double t = len2 > 0 ? Math.max(0, Math.min(1, -(ax * dx + az * dz) / len2)) : 0;
+		return Math.hypot(ax + t * dx, az + t * dz);
+	}
+
+	/**
+	 * Triangulates the region between {@code outer} and {@code holes} (vertex loops), working on
+	 * the hull unrolled round its axis: each hole is joined to the polygon by a bridge (the hole
+	 * furthest along u first), then ears are clipped off the resulting simple polygon. Works
+	 * whatever the shape of the ragged outer edge.
+	 */
+	private List<int[]> triangulateWithHoles(List<Integer> outer, List<List<Integer>> holes) {
+		List<Integer> poly = new ArrayList<>(outer);
+		if (signedArea(poly) < 0)
+			java.util.Collections.reverse(poly); // outer counter-clockwise
+		List<List<Integer>> pending = new ArrayList<>();
+		for (List<Integer> hole : holes) {
+			List<Integer> h = new ArrayList<>(hole);
+			if (signedArea(h) > 0)
+				java.util.Collections.reverse(h); // holes clockwise
+			pending.add(h);
+		}
+		pending.sort(java.util.Comparator.comparingDouble(h -> -maxU(h)));
+		for (int done = 0; done < pending.size(); done++) {
+			List<Integer> h = pending.get(done);
+			// Bridge: the hole vertex furthest along u to the closest polygon vertex that can see it
+			int hi = 0;
+			for (int i = 1; i < h.size(); i++)
+				if (uv(h.get(i))[0] > uv(h.get(hi))[0])
+					hi = i;
+			double[] hp = uv(h.get(hi));
+			int oi = -1;
+			double best = Double.MAX_VALUE;
+			for (int i = 0; i < poly.size(); i++) {
+				double[] op = uv(poly.get(i));
+				double d = Math.hypot(op[0] - hp[0], op[1] - hp[1]);
+				if (d >= best || crossesAny(hp, op, poly))
+					continue;
+				boolean blocked = false;
+				for (int k = done; k < pending.size() && !blocked; k++)
+					blocked = crossesAny(hp, op, pending.get(k));
+				if (!blocked) {
+					best = d;
+					oi = i;
+				}
+			}
+			if (oi < 0)
+				throw new IllegalStateException("no bridge into a tube opening");
+			List<Integer> joined = new ArrayList<>(poly.subList(0, oi + 1));
+			for (int k = 0; k <= h.size(); k++)
+				joined.add(h.get((hi + k) % h.size()));
+			joined.addAll(poly.subList(oi, poly.size()));
+			poly = joined;
+		}
+		// Ear clipping
+		List<int[]> tris = new ArrayList<>();
+		int guard = 0;
+		while (poly.size() > 3 && guard++ < 100000) {
+			boolean clipped = false;
+			for (int i = 0; i < poly.size() && !clipped; i++) {
+				int a = poly.get((i + poly.size() - 1) % poly.size()), b = poly.get(i),
+						c = poly.get((i + 1) % poly.size());
+				double[] pa = uv(a), pb = uv(b), pc = uv(c);
+				if (cross2(pa, pb, pc) <= 1e-12)
+					continue; // reflex or flat
+				boolean empty = true;
+				for (int w : poly) {
+					if (w == a || w == b || w == c)
+						continue;
+					if (inTriangle(uv(w), pa, pb, pc)) {
+						empty = false;
+						break;
+					}
+				}
+				if (empty) {
+					tris.add(new int[] {a, b, c});
+					poly.remove(i);
+					clipped = true;
+				}
+			}
+			if (!clipped)
+				throw new IllegalStateException("could not triangulate round a tube opening");
+		}
+		tris.add(new int[] {poly.get(0), poly.get(1), poly.get(2)});
+		return tris;
+	}
+
+	/** Furthest a loop reaches along u on the unrolled hull. */
+	private double maxU(List<Integer> loop) {
+		double u = -Double.MAX_VALUE;
+		for (int v : loop)
+			u = Math.max(u, uv(v)[0]);
+		return u;
+	}
+
+	/**
+	 * Position on the hull unrolled round its axis: u the angle from straight down (at the radius
+	 * of the tubes), v along the hull. Unlike a projection along the axis, this stays one-to-one
+	 * where the hull runs nearly parallel to its axis.
+	 */
+	private double[] uv(int v) {
+		double[] p = verts.get(v - 1);
+		return new double[] {2 * Math.atan2(p[0], AXIS_Z - p[2]), p[1]};
+	}
+
+	private double signedArea(List<Integer> loop) {
+		double a = 0;
+		for (int i = 0; i < loop.size(); i++) {
+			double[] p = uv(loop.get(i)), q = uv(loop.get((i + 1) % loop.size()));
+			a += p[0] * q[1] - q[0] * p[1];
+		}
+		return a / 2;
+	}
+
+	private static double cross2(double[] a, double[] b, double[] c) {
+		return (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+	}
+
+	private static boolean inTriangle(double[] p, double[] a, double[] b, double[] c) {
+		return cross2(a, b, p) >= -1e-12 && cross2(b, c, p) >= -1e-12 && cross2(c, a, p) >= -1e-12;
+	}
+
+	/**
+	 * True if segment p-q properly crosses an edge of {@code loop} (edges sharing an end point
+	 * don't count).
+	 */
+	private boolean crossesAny(double[] p, double[] q, List<Integer> loop) {
+		for (int i = 0; i < loop.size(); i++) {
+			double[] a = uv(loop.get(i)), b = uv(loop.get((i + 1) % loop.size()));
+			if (same(a, p) || same(a, q) || same(b, p) || same(b, q))
+				continue;
+			double d1 = cross2(p, q, a), d2 = cross2(p, q, b), d3 = cross2(a, b, p), d4 = cross2(a, b, q);
+			if (d1 * d2 < 0 && d3 * d4 < 0)
+				return true;
+		}
+		return false;
+	}
+
+	private static boolean same(double[] a, double[] b) {
+		return Math.abs(a[0] - b[0]) < 1e-12 && Math.abs(a[1] - b[1]) < 1e-12;
+	}
+
+	private static long edgeKey(int a, int b) {
+		return ((long) a << 32) | (b & 0xffffffffL);
+	}
+
+	/**
+	 * Point {@code p} turned by {@code angle} about the hull's centreline (along +y through z =
+	 * AXIS_Z).
+	 */
+	private static double[] rotateAboutAxis(double[] p, double angle) {
+		double c = Math.cos(angle), s = Math.sin(angle), dz = p[2] - AXIS_Z;
+		return new double[] {p[0] * c + dz * s, p[1], AXIS_Z - p[0] * s + dz * c};
+	}
+
+	/**
+	 * How far {@code p} lies inside the hull surface, measured from the centreline (negative
+	 * outside).
+	 */
+	private static double depthBelowHull(double[] p) {
+		double w = hullHalfWidth(p[1]), h = hullHalfHeight(p[1]);
+		double dz = p[2] - AXIS_Z, a = Math.atan2(dz, p[0]);
+		double surface = 1 / Math.sqrt(Math.pow(Math.cos(a) / w, 2) + Math.pow(Math.sin(a) / h, 2));
+		return surface - Math.hypot(p[0], dz);
+	}
+
+	/**
+	 * A slab on the hull over the patch a tube of radius {@code r} along the axis through (x0, z0)
+	 * cuts out at the bow: its top is {@code raise} proud of the hull along the surface normal, its
+	 * sides run 0.1 m into the hull. The top is built in concentric rings so that it follows the
+	 * bow's curvature instead of cutting under it. Returns the outline of its top.
+	 */
+	private double[][] hullSkinPatch(Group g, double x0, double z0, double r, double raise) {
+		return hullSkinPatch(g, x0, z0, r, raise, 28, 5);
+	}
+
+	private double[][] hullSkinPatch(Group g, double x0, double z0, double r, double raise, int n, int rings) {
+		int[][] top = new int[rings + 1][n];
+		int[] bottom = new int[n];
+		double[][] rimTop = new double[n][];
+		// The centre's normal is the mean of the first ring's: at the very tip of the nose the hull's own is undefined
+		double[] cn = new double[3];
+		for (int k = 1; k <= rings; k++)
+			for (int i = 0; i < n; i++) {
+				double phi = 2 * Math.PI * i / n, rr = r * k / rings;
+				double x = x0 + rr * Math.cos(phi), z = z0 + rr * Math.sin(phi);
+				double[] p = {x, bowExitY(x, z), z};
+				double[] nrm = hullNormal(p);
+				if (k == 1)
+					cn = add(cn, nrm);
+				double[] q = add(p, scale(nrm, raise));
+				top[k][i] = vertex(q);
+				if (k == rings) {
+					rimTop[i] = q;
+					bottom[i] = vertex(add(p, scale(nrm, -0.1)));
+				}
+			}
+		double[] c = {x0, bowExitY(x0, z0), z0};
+		cn = unit(cn);
+		int hub = vertex(add(c, scale(cn, raise)));
+		double[] inside = add(c, scale(cn, -0.05));
+		for (int i = 0; i < n; i++) {
+			int j = (i + 1) % n;
+			tri(g, hub, top[1][i], top[1][j], inside);
+			for (int k = 1; k < rings; k++)
+				quad(g, top[k][i], top[k][j], top[k + 1][j], top[k + 1][i], inside);
+			quad(g, top[rings][i], top[rings][j], bottom[j], bottom[i], inside);
+		}
+		return rimTop;
+	}
+
+	// ── Sail fittings ────────────────────────────────────────────────────────
+
+	/** Height of the sail's flat top. */
+	private static double sailDeckZ() {
+		return SAIL_TOP_Z + SAIL_EDGE;
+	}
+
+	/**
+	 * The sail's flat top at chord fraction {@code s}: {station y, half-width of the deck there}.
+	 */
+	private static double[] sailDeck(double s) {
+		double c = SAIL_TOP[1] - SAIL_TOP[0];
+		return new double[] {SAIL_TOP[0] + SAIL_EDGE + s * (c - 2 * SAIL_EDGE),
+				Math.max(0.005, sailHalf(s, c) - SAIL_EDGE)};
+	}
+
+	/**
+	 * Fittings on the sail top: the bridge cockpit, a well sunk {@link #WELL_DEPTH} into the front
+	 * of the top whose own walls are the windscreen, with the bridge hatch on its floor (a polished
+	 * coaming ring and a lid in its own group, so it can open later); behind it a periscope
+	 * fairing, a radio mast fairing and a raised sensor mast with a radome.
+	 */
+	private void buildSailFittings(Group fittings, Group accents, Group hatch) {
+		double deck = sailDeckZ(), floor = deck - WELL_DEPTH;
+		double hy = sailDeck(HATCH_AT)[0];
+		annulusZ(accents, 0, hy, floor - 0.02, floor + 0.07, HATCH_R_IN, HATCH_R_OUT, 40);
+		cylinderZ(hatch, 0, hy, floor + 0.07, floor + 0.105, HATCH_R_IN + 0.02, 40);
+		// Masts: two streamlined fairings over retracted masts and one raised sensor mast, all behind the well
+		mastFairing(fittings, sailDeck(0.62)[0], 0.75, 0.6, deck + 0.35);
+		mastFairing(fittings, sailDeck(0.76)[0], 0.5, 0.5, deck + 0.5);
+		double my = sailDeck(0.87)[0];
+		cylinderZ(fittings, 0, my, deck - 0.05, deck + 1.3, 0.055, 16);
+		cylinderZ(fittings, 0, my, deck + 1.25, deck + 1.5, 0.11, 20);
+	}
+
+	/**
+	 * Closes the sail's open top around the bridge cockpit. {@code top} is the top outline as the
+	 * fin builder made it: {@code steps + 1} points along the starboard side from the leading to
+	 * the trailing edge at chord fractions s_j = (1 - cos(pi j / steps)) / 2, then the port side
+	 * back. The well's rim uses the same fractions, {@link #WELL_WALL} in from the edge, from the
+	 * first one at or after {@link #WELL_FROM} to the last one at or before {@link #WELL_TO}, so
+	 * the deck splits into quad strips along both sides plus a convex cap in front of the well and
+	 * one behind it. Then the well's walls (facing in) and its floor.
+	 */
+	private void buildCockpit(Group g, int[] top, int steps) {
+		double deck = sailDeckZ(), floor = deck - WELL_DEPTH;
+		int from = 0, to = steps;
+		while (chordStep(from, steps) < WELL_FROM)
+			from++;
+		while (chordStep(to, steps) > WELL_TO)
+			to--;
+		// Rim points per side: index 0 = starboard, 1 = port
+		int span = to - from + 1;
+		int[][] rimUp = new int[2][span], rimDown = new int[2][span];
+		for (int k = 0; k < span; k++) {
+			double[] d = sailDeck(chordStep(from + k, steps));
+			for (int side = 0; side < 2; side++) {
+				double x = (side == 0 ? 1 : -1) * (d[1] - WELL_WALL);
+				rimUp[side][k] = vertex(new double[] {x, d[0], deck});
+				rimDown[side][k] = vertex(new double[] {x, d[0], floor});
+			}
+		}
+		double[] below = {0, sailDeck(0.5)[0], deck - 1};
+		// Side strips between the deck edge and the rim
+		for (int k = 0; k + 1 < span; k++) {
+			int j = from + k;
+			quad(g, top[j], top[j + 1], rimUp[0][k + 1], rimUp[0][k], below);
+			quad(g, top[portIndex(j, steps)], top[portIndex(j + 1, steps)], rimUp[1][k + 1], rimUp[1][k], below);
+		}
+		// Caps in front of and behind the well: convex, so fans from their centres
+		List<Integer> frontCap = new ArrayList<>(), backCap = new ArrayList<>();
+		frontCap.add(rimUp[1][0]);
+		for (int j = from; j >= 1; j--)
+			frontCap.add(top[portIndex(j, steps)]);
+		for (int j = 0; j <= from; j++)
+			frontCap.add(top[j]);
+		frontCap.add(rimUp[0][0]);
+		backCap.add(rimUp[0][span - 1]);
+		for (int j = to; j <= steps; j++)
+			backCap.add(top[j]);
+		for (int j = steps - 1; j >= to; j--)
+			backCap.add(top[portIndex(j, steps)]);
+		backCap.add(rimUp[1][span - 1]);
+		fan(g, frontCap, below);
+		fan(g, backCap, below);
+		// Walls, facing into the well, round the rim: port side front to back, across, starboard back to front
+		List<int[]> wall = new ArrayList<>(); // {up, down}
+		for (int k = 0; k < span; k++)
+			wall.add(new int[] {rimUp[1][k], rimDown[1][k]});
+		for (int k = span - 1; k >= 0; k--)
+			wall.add(new int[] {rimUp[0][k], rimDown[0][k]});
+		double[] wellCentre = {0, (sailDeck(chordStep(from, steps))[0] + sailDeck(chordStep(to, steps))[0]) / 2, 0};
+		List<Integer> floorLoop = new ArrayList<>();
+		for (int i = 0; i < wall.size(); i++) {
+			int[] a = wall.get(i), b = wall.get((i + 1) % wall.size());
+			double[] pa = verts.get(a[0] - 1), pb = verts.get(b[0] - 1);
+			double mx = (pa[0] + pb[0]) / 2, my = (pa[1] + pb[1]) / 2;
+			double[] solid = {mx + (mx - wellCentre[0]) * 0.5, my + (my - wellCentre[1]) * 0.5, (deck + floor) / 2};
+			quad(g, a[0], b[0], b[1], a[1], solid);
+			floorLoop.add(a[1]);
+		}
+		fan(g, floorLoop, new double[] {0, wellCentre[1], floor - 1});
+	}
+
+	/** Chord fraction of outline point {@code j}. */
+	private static double chordStep(int j, int steps) {
+		return 0.5 * (1 - Math.cos(Math.PI * j / steps));
+	}
+
+	/**
+	 * Index in a fin's top outline of the port-side point at step {@code j} (0 and steps are on the
+	 * centreline).
+	 */
+	private static int portIndex(int j, int steps) {
+		return j == 0 ? 0 : 2 * steps - j;
+	}
+
+	/**
+	 * Closes a convex loop of vertices with a fan from its centre, facing away from {@code inside}.
+	 */
+	private void fan(Group g, List<Integer> loop, double[] inside) {
+		double[] c = new double[3];
+		for (int v : loop)
+			c = add(c, scale(verts.get(v - 1), 1.0 / loop.size()));
+		int hub = vertex(c);
+		for (int i = 0; i < loop.size(); i++)
+			tri(g, hub, loop.get(i), loop.get((i + 1) % loop.size()), inside);
+	}
+
+	/**
+	 * A streamlined fairing on the sail top: chord {@code chord} centred at {@code y}, up to
+	 * {@code top}.
+	 */
+	private void mastFairing(Group g, double y, double chord, double thickness, double top) {
+		double base = sailDeckZ() - 0.15;
+		fin(g, new double[] {0, y - chord / 2, base}, new double[] {0, y + chord / 2, base},
+				new double[] {0, y - chord / 2, top - 0.05}, new double[] {0, y + chord / 2, top - 0.05},
+				new double[] {1, 0, 0}, new double[] {0, 0, 1}, naca(thickness), 0.05, true, Part.WHOLE, 0, 3, 10);
+	}
+
+	/** A closed vertical cylinder at (x, y) from z0 to z1. */
+	private void cylinderZ(Group g, double x, double y, double z0, double z1, double r, int n) {
+		int[] lo = new int[n], hi = new int[n];
+		for (int i = 0; i < n; i++) {
+			double a = 2 * Math.PI * i / n;
+			lo[i] = vertex(new double[] {x + r * Math.cos(a), y + r * Math.sin(a), z0});
+			hi[i] = vertex(new double[] {x + r * Math.cos(a), y + r * Math.sin(a), z1});
+		}
+		int bottom = vertex(new double[] {x, y, z0}), top = vertex(new double[] {x, y, z1});
+		double[] mid = {x, y, (z0 + z1) / 2};
+		for (int i = 0; i < n; i++) {
+			int i1 = (i + 1) % n;
+			quad(g, lo[i], lo[i1], hi[i1], hi[i], mid);
+			tri(g, top, hi[i], hi[i1], mid);
+			tri(g, bottom, lo[i1], lo[i], mid);
+		}
+	}
+
+	/**
+	 * A closed vertical ring (rectangular section) at (x, y) from z0 to z1 between rIn and rOut.
+	 */
+	private void annulusZ(Group g, double x, double y, double z0, double z1, double rIn, double rOut, int n) {
+		int[][] v = new int[n][4]; // outer bottom, outer top, inner top, inner bottom
+		for (int i = 0; i < n; i++) {
+			double a = 2 * Math.PI * i / n, ca = Math.cos(a), sa = Math.sin(a);
+			v[i][0] = vertex(new double[] {x + rOut * ca, y + rOut * sa, z0});
+			v[i][1] = vertex(new double[] {x + rOut * ca, y + rOut * sa, z1});
+			v[i][2] = vertex(new double[] {x + rIn * ca, y + rIn * sa, z1});
+			v[i][3] = vertex(new double[] {x + rIn * ca, y + rIn * sa, z0});
+		}
+		double rMid = (rIn + rOut) / 2, zMid = (z0 + z1) / 2;
+		for (int i = 0; i < n; i++) {
+			int i1 = (i + 1) % n;
+			double a = 2 * Math.PI * (i + 0.5) / n;
+			double[] inside = {x + rMid * Math.cos(a), y + rMid * Math.sin(a), zMid};
+			for (int k = 0; k < 4; k++)
+				quad(g, v[i][k], v[i1][k], v[i1][(k + 1) % 4], v[i][(k + 1) % 4], inside);
+		}
+	}
+
+	// ── Accents ──────────────────────────────────────────────────────────────
+
+	/** The accent rings: closed tubes with an elliptical section, centred on the shaft. */
+	private void buildAccents(Group g) {
+		int section = 8;
+		for (double[] spec : ACCENT_RINGS) {
+			double y = spec[0], r = spec[1], halfWidth = spec[2], halfThickness = spec[3];
+			int around = (int) Math.max(24, Math.min(64, Math.round(r * 28))); // segments scale with the ring's size
+			int[][] ring = new int[around][section];
+			for (int i = 0; i < around; i++) {
+				double a = 2 * Math.PI * i / around;
+				for (int j = 0; j < section; j++) {
+					double phi = 2 * Math.PI * j / section;
+					ring[i][j] = vertex(onAxis(r + halfThickness * Math.cos(phi), a, y + halfWidth * Math.sin(phi)));
+				}
+			}
+			for (int i = 0; i < around; i++) {
+				int i1 = (i + 1) % around;
+				double[] inside = onAxis(r, 2 * Math.PI * (i + 0.5) / around, y); // the tube's centre line
+				for (int j = 0; j < section; j++) {
+					int j1 = (j + 1) % section;
+					quad(g, ring[i][j], ring[i1][j], ring[i1][j1], ring[i][j1], inside);
+				}
+			}
+		}
+	}
+
+	// ── Mesh helpers ─────────────────────────────────────────────────────────
+
+	/** Adds a vertex, rounded to the precision the OBJ is written with. */
 	private int vertex(double[] p) {
 		verts.add(new double[] {round6(p[0]), round6(p[1]), round6(p[2])});
 		return verts.size();
@@ -618,12 +1974,27 @@ public final class SubmarineModelGenerator {
 			b = c;
 			c = t;
 		}
-		g.faces.add(new Corner[] {new Corner(a, 0, 0), new Corner(b, 0, 0), new Corner(c, 0, 0)});
+		g.faces.add(new Corner[] {new Corner(a, 0), new Corner(b, 0), new Corner(c, 0)});
 	}
 
 	private void quad(Group g, int a, int b, int c, int d, double[] inside) {
 		tri(g, a, b, c, inside);
 		tri(g, a, c, d, inside);
+	}
+
+	/**
+	 * Triangle on the hull from one counter-clockwise on the unrolled hull ({@link #uv}): that
+	 * winding faces into the hull, so it is turned round to face out. Degenerate slivers are kept,
+	 * since leaving them out would open the hull.
+	 */
+	private void triOnHull(Group g, int a, int b, int c) {
+		g.faces.add(new Corner[] {new Corner(a, 0), new Corner(c, 0), new Corner(b, 0)});
+	}
+
+	/** Triangle on a surface around the shaft, wound to face away from it. */
+	private void triAboutAxis(Group g, int a, int b, int c) {
+		double y = (verts.get(a - 1)[1] + verts.get(b - 1)[1] + verts.get(c - 1)[1]) / 3;
+		tri(g, a, b, c, onAxis(0, 0, y));
 	}
 
 	/**
@@ -640,7 +2011,7 @@ public final class SubmarineModelGenerator {
 	}
 
 	/**
-	 * Replaces the group's normals: each corner gets the area-weighted sum of the normals of the
+	 * Assigns the group's normals: each corner gets the area-weighted sum of the normals of the
 	 * faces around its vertex that lie within {@link #CREASE_DEG} of its own face.
 	 */
 	private void creaseNormals(Group g) {
@@ -664,7 +2035,7 @@ public final class SubmarineModelGenerator {
 					if (dot(own, unit(n)) >= cosCrease)
 						for (int a = 0; a < 3; a++)
 							sum[a] += n[a];
-				double[] n = unit(sum);
+				double[] n = g.onHull.contains(f[k].v) ? hullNormal(verts.get(f[k].v - 1)) : unit(sum);
 				String key = String.format(Locale.ROOT, "%.5f %.5f %.5f", n[0], n[1], n[2]);
 				Integer idx = shared.get(key);
 				if (idx == null) {
@@ -672,9 +2043,25 @@ public final class SubmarineModelGenerator {
 					idx = normals.size();
 					shared.put(key, idx);
 				}
-				f[k] = new Corner(f[k].v, f[k].t, idx);
+				f[k] = new Corner(f[k].v, idx);
 			}
 		}
+	}
+
+	private static double smoothstep(double x) {
+		return x * x * (3 - 2 * x);
+	}
+
+	private static double[] lerp(double[] a, double[] b, double t) {
+		return new double[] {a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t};
+	}
+
+	private static double[] add(double[] a, double[] b) {
+		return new double[] {a[0] + b[0], a[1] + b[1], a[2] + b[2]};
+	}
+
+	private static double[] scale(double[] a, double s) {
+		return new double[] {a[0] * s, a[1] * s, a[2] * s};
 	}
 
 	private static double[] sub(double[] a, double[] b) {
@@ -692,9 +2079,5 @@ public final class SubmarineModelGenerator {
 	private static double[] unit(double[] a) {
 		double len = Math.sqrt(dot(a, a));
 		return len > 0 ? new double[] {a[0] / len, a[1] / len, a[2] / len} : new double[] {0, 0, 1};
-	}
-
-	private static double num(String s) {
-		return Double.parseDouble(s);
 	}
 }
