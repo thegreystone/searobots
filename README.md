@@ -80,6 +80,10 @@ java -XstartOnFirstThread -jar searobots-viewer-<version>.jar
 java -jar searobots-viewer-<version>.jar
 ```
 
+To start on a specific seed, pass it in hex (as the viewer shows it in its title bar and the F2
+dialog), e.g. `java -jar searobots-viewer-<version>.jar 2c`. A `.srl` file instead replays a
+recorded match.
+
 **From source:**
 
 ```bash

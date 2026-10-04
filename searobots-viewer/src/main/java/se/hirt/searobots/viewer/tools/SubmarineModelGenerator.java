@@ -102,6 +102,9 @@ public final class SubmarineModelGenerator {
 	// (station y, half-width, half-length); retractable mooring bollards in pairs (station y, offset from the
 	// centreline); the towed-array fairing along the starboard flank (from y, to y, radius, angle round the hull
 	// from +X; model +X is to port, so 195 degrees is starboard, a little below the widest point)
+	// Payload module behind the sail: round hatches (stations along the centreline, lid radius) and the seam round each
+	private static final double[] PAYLOAD_HATCH_Y = {-7.2, -4.4, -1.6, 1.2};
+	private static final double PAYLOAD_HATCH_R = 1.15, PAYLOAD_SEAM = 0.11;
 	private static final double[][] ESCAPE_HATCHES = {{-26.0, 0.42}, {6.0, 0.42}};
 	private static final double[] LOADING_HATCH = {-22.5, 0.45, 1.2};
 	private static final double[][] BOLLARDS = {{-29.0, 0.9}, {11.0, 0.9}};
@@ -226,7 +229,7 @@ public final class SubmarineModelGenerator {
 	private static final Map<String, Mat> MATERIALS = new LinkedHashMap<>();
 
 	static {
-		MATERIALS.put("Hull_Tiles", new Mat(0.11, 0.10, 0.4, 20,
+		MATERIALS.put("Hull_Tiles", new Mat(0.11, 0.10, 0.3, 12,
 				"Hull and sail: near-black anechoic tiles; the normal map breaks the highlights up at the seams, the "
 						+ "specular map varies the sheen from tile to tile, and the viewer adds large-scale weathering",
 				TILES_MAP, TILES_NORMALS, TILES_SHEEN));
@@ -238,8 +241,8 @@ public final class SubmarineModelGenerator {
 		MATERIALS.put("Metal_Chrome", new Mat(0.6, 0.4, 0.9, 60, "Light polished metal for accents"));
 		MATERIALS.put("Metal_Satin", new Mat(0.25, 0.18, 0.7, 60,
 				"Rings round the shaft at the tail: satin metal, darker than the chrome so they do not draw the eye"));
-		MATERIALS.put("Metal_Gunmetal", new Mat(0.09, 0.06, 0.9, 80,
-				"Hatches and frames: dark polished gunmetal, mostly highlight and little diffuse grey"));
+		MATERIALS.put("Metal_Gunmetal", new Mat(0.14, 0.11, 0.45, 30,
+				"Hatches and frames: dark gunmetal, a little lighter than the hull, with a broad satin highlight"));
 		MATERIALS.put("rubber", new Mat(0.13, 0.1, 0.15, 10, "Rotor: dark matte grey"));
 		MATERIALS.put("Stealth_Coating", new Mat(0.05, 0.045, 0.18, 8,
 				"Fins, tail flaps, bow planes, duct and stators: near-black absorbent coating laid in panels, with a broad, soft "
@@ -260,6 +263,10 @@ public final class SubmarineModelGenerator {
 				new Mat(0.45, 0.35, 0.05, 4,
 						"Rescue rings round the escape hatches: light grey paint (blended like the draft marks)",
 						RESCUE_MAP, null, null));
+		MATERIALS.put("Hatch_Tiles",
+				new Mat(0.085, 0.078, 0.3, 12, "Payload hatch lids: tiled like the hull, from a slightly darker batch",
+						TILES_MAP, TILES_NORMALS, TILES_SHEEN));
+		MATERIALS.put("Seam", new Mat(0.015, 0.015, 0.03, 4, "Gaps round the payload hatches: matte near-black"));
 		MATERIALS.put("Void", new Mat(0.01, 0.0, 0.0, 1, "Inside of the torpedo tubes: no light comes back"));
 	}
 
@@ -329,6 +336,7 @@ public final class SubmarineModelGenerator {
 		gen.buildSailFittings(gen.group("SailFittings", "Metal_Black_Plain"), gen.group("Accents", "Metal_Chrome"),
 				gen.group("BridgeHatch", "Metal_Gunmetal"));
 		gen.buildHullFittings(gen.group("HullFittings", "Metal_Black_Plain"), gen.group("Hatches", "Metal_Gunmetal"));
+		gen.buildPayloadHatches(gen.group("PayloadHatches", "Hatch_Tiles"), gen.group("PayloadSeams", "Seam"));
 		gen.buildTorpedoTubes(gen.group("Body", "Hull_Tiles"), gen.group("TubeBores", "Void"));
 		gen.splitUntiled(gen.group("Body", "Hull_Tiles"), gen.group("HullPlain", "Hull_Plain"));
 		gen.buildSensors(gen.group("Sensors", "Sensor_Window"), gen.group("SensorFrames", "Metal_Gunmetal"));
@@ -349,6 +357,7 @@ public final class SubmarineModelGenerator {
 			hinges.put(fin.getKey(),
 					gen.buildTailFin(fins, gen.group(fin.getKey(), "Stealth_Coating"), fin.getValue()));
 		gen.groups.get("Body").uv = UvMap.HULL;
+		gen.groups.get("PayloadHatches").uv = UvMap.HULL;
 		gen.groups.get("HullPlain").uv = UvMap.HULL; // untextured, but weathered like the tiles (SubmarineModelSupport)
 		gen.groups.get("Tower").uv = UvMap.SAIL;
 		for (Group g : gen.groups.values())
@@ -635,7 +644,7 @@ public final class SubmarineModelGenerator {
 		Random r = new Random(11);
 		double[] tone = new double[TILES_PER_TEXTURE * TILES_PER_TEXTURE];
 		for (int i = 0; i < tone.length; i++)
-			tone[i] = r.nextDouble() < 0.04 ? 0.84 + 0.04 * r.nextDouble() : 0.92 + 0.08 * (r.nextDouble() - 0.5);
+			tone[i] = r.nextDouble() < 0.04 ? 0.86 + 0.03 * r.nextDouble() : 0.92 + 0.035 * (r.nextDouble() - 0.5);
 		double[] height = tileHeights();
 		var img = new BufferedImage(size, size, BufferedImage.TYPE_INT_RGB);
 		Random grain = new Random(13);
@@ -643,7 +652,7 @@ public final class SubmarineModelGenerator {
 			for (int x = 0; x < size; x++) {
 				double h = height[y * size + x];
 				int tile = (y / TILE_PX) * TILES_PER_TEXTURE + x / TILE_PX;
-				double lum = h == 0 ? 0.74
+				double lum = h == 0 ? 0.84
 						: tone[tile] * (0.95 + 0.05 * Math.min(1, h / 3)) + 0.02 * (grain.nextDouble() - 0.5);
 				int c = (int) Math.round(255 * Math.max(0, Math.min(1, lum)));
 				img.setRGB(x, y, (c << 16) | (c << 8) | c);
@@ -949,7 +958,7 @@ public final class SubmarineModelGenerator {
 	 * tilt of its face, so highlights break up into the tile grid under grazing light.
 	 */
 	static BufferedImage tileNormals() {
-		return normalMap(tileHeights(), TILES_PER_TEXTURE * TILE_PX, 0.35);
+		return normalMap(tileHeights(), TILES_PER_TEXTURE * TILE_PX, 0.22);
 	}
 
 	// ── Hull ─────────────────────────────────────────────────────────────────
@@ -1677,6 +1686,50 @@ public final class SubmarineModelGenerator {
 			int j = (i + 1) % n;
 			tri(g, hub, top[i], top[j], inside);
 			quad(g, top[i], top[j], bottom[j], bottom[i], inside);
+		}
+	}
+
+	/**
+	 * As {@link #conformalPatch}, but its top follows the hull across the whole outline, in
+	 * {@code rings} rings from the centre out (a large patch over a curved hull would otherwise
+	 * sink into it).
+	 */
+	private void conformalPatchFine(Group g, List<double[]> outline, double raise, int rings) {
+		int n = outline.size();
+		double cx = 0, cy = 0;
+		for (double[] p : outline) {
+			cx += p[0] / n;
+			cy += p[1] / n;
+		}
+		int[][] ring = new int[rings + 1][n];
+		int[] bottom = new int[n];
+		for (int k = 1; k <= rings; k++)
+			for (int i = 0; i < n; i++) {
+				double t = (double) k / rings, x = cx + (outline.get(i)[0] - cx) * t,
+						y = cy + (outline.get(i)[1] - cy) * t;
+				ring[k][i] = vertex(new double[] {x, y, hullSurfaceZ(x, y) + raise});
+				if (k == rings)
+					bottom[i] = vertex(new double[] {x, y, hullSurfaceZ(x, y) - 0.1});
+			}
+		double[] inside = {cx, cy, hullSurfaceZ(cx, cy) - 0.05};
+		int hub = vertex(new double[] {cx, cy, hullSurfaceZ(cx, cy) + raise});
+		for (int i = 0; i < n; i++) {
+			int j = (i + 1) % n;
+			tri(g, hub, ring[1][i], ring[1][j], inside);
+			for (int k = 1; k < rings; k++)
+				quad(g, ring[k][i], ring[k][j], ring[k + 1][j], ring[k + 1][i], inside);
+			quad(g, ring[rings][i], ring[rings][j], bottom[j], bottom[i], inside);
+		}
+	}
+
+	/**
+	 * The payload module behind the sail: large round tiled lids in a line along the centreline,
+	 * each standing a little proud of the hull in a dark seam PAYLOAD_SEAM wider all round.
+	 */
+	private void buildPayloadHatches(Group lids, Group seams) {
+		for (double y : PAYLOAD_HATCH_Y) {
+			conformalPatchFine(seams, circle(0, y, PAYLOAD_HATCH_R + PAYLOAD_SEAM, 40), 0.02, 3);
+			conformalPatchFine(lids, circle(0, y, PAYLOAD_HATCH_R, 40), 0.06, 3);
 		}
 	}
 

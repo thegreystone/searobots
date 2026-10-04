@@ -245,15 +245,9 @@ final class SimConfigState extends BaseAppState {
 			String text = seedField.getText().trim();
 			if (!text.isEmpty()) {
 				try {
-					long seed = Long.parseUnsignedLong(text, 16);
-					onSeedChanged.accept(seed);
+					onSeedChanged.accept(parseSeed(text));
 				} catch (NumberFormatException e) {
-					try {
-						long seed = Long.parseLong(text);
-						onSeedChanged.accept(seed);
-					} catch (NumberFormatException e2) {
-						System.out.println("Invalid seed: " + text);
-					}
+					System.out.println("Invalid seed: " + text);
 				}
 			}
 		}
@@ -261,6 +255,21 @@ final class SimConfigState extends BaseAppState {
 		close();
 		if (onConfirm != null)
 			onConfirm.run();
+	}
+
+	/**
+	 * A seed as typed by the user: hexadecimal, as the viewer shows seeds (title bar, this dialog),
+	 * or failing that a signed decimal number.
+	 *
+	 * @throws NumberFormatException
+	 *             if the text is neither
+	 */
+	static long parseSeed(String text) {
+		try {
+			return Long.parseUnsignedLong(text.trim(), 16);
+		} catch (NumberFormatException e) {
+			return Long.parseLong(text.trim());
+		}
 	}
 
 	private void close() {

@@ -4,9 +4,9 @@
 newmtl Hull_Tiles
 Ka  0.10 0.10 0.10
 Kd  0.11 0.11 0.11
-Ks  0.40 0.40 0.40
+Ks  0.30 0.30 0.30
 d  1.0
-Ns  20.0
+Ns  12.0
 illum 2
 map_Kd submarine-tiles.png
 map_Bump submarine-tiles-normal.png
@@ -48,13 +48,13 @@ d  1.0
 Ns  60.0
 illum 2
 #
-# Hatches and frames: dark polished gunmetal, mostly highlight and little diffuse grey
+# Hatches and frames: dark gunmetal, a little lighter than the hull, with a broad satin highlight
 newmtl Metal_Gunmetal
-Ka  0.06 0.06 0.06
-Kd  0.09 0.09 0.09
-Ks  0.90 0.90 0.90
+Ka  0.11 0.11 0.11
+Kd  0.14 0.14 0.14
+Ks  0.45 0.45 0.45
 d  1.0
-Ns  80.0
+Ns  30.0
 illum 2
 #
 # Rotor: dark matte grey
@@ -133,6 +133,27 @@ d  1.0
 Ns  4.0
 illum 2
 map_Kd submarine-rescue.png
+#
+# Payload hatch lids: tiled like the hull, from a slightly darker batch
+newmtl Hatch_Tiles
+Ka  0.08 0.08 0.08
+Kd  0.09 0.09 0.09
+Ks  0.30 0.30 0.30
+d  1.0
+Ns  12.0
+illum 2
+map_Kd submarine-tiles.png
+map_Bump submarine-tiles-normal.png
+map_Ks submarine-tiles-spec.png
+#
+# Gaps round the payload hatches: matte near-black
+newmtl Seam
+Ka  0.02 0.02 0.02
+Kd  0.02 0.02 0.02
+Ks  0.03 0.03 0.03
+d  1.0
+Ns  4.0
+illum 2
 #
 # Inside of the torpedo tubes: no light comes back
 newmtl Void

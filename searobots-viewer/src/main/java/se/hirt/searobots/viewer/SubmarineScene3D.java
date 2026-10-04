@@ -285,7 +285,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 	 */
 	public static void main(String[] args) {
 		// A .srl path launches straight into replay of that recorded match; otherwise the
-		// first arg (if any) is a seed for a fresh match.
+		// first arg (if any) is a seed for a fresh match, in hex as the viewer shows it.
 		String replayPath = (args.length > 0 && args[0].toLowerCase().endsWith(".srl")) ? args[0] : null;
 		long seed;
 		if (replayPath != null) {
@@ -297,7 +297,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 				return;
 			}
 		} else {
-			seed = args.length > 0 ? Long.parseLong(args[0])
+			seed = args.length > 0 ? SimConfigState.parseSeed(args[0])
 					: java.util.concurrent.ThreadLocalRandom.current().nextLong();
 		}
 
@@ -498,7 +498,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 				}
 			});
 			torpedoModelNode.attachChild(torpHull);
-			System.out.println("Loaded torpedo.obj (scale 0.07)");
+			System.out.println("Loaded torpedo.obj (scale 0.19)");
 		} catch (Exception e) {
 			// Fallback: small yellow elongated sphere
 			var cyl = new com.jme3.scene.shape.Sphere(8, 8, 1f);
@@ -2473,10 +2473,14 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 				torpNode.setLocalTranslation(currentPos.interpolateLocal(targetPos, lerpFactor));
 				turnToward(torpNode, targetRot, lerpFactor);
 			}
-			// Spin torpedo propeller proportional to speed
-			Spatial torpProp = findChild(torpNode, "g_Propeller_Plane");
-			if (torpProp != null && ts.speed() > 1) {
-				torpProp.rotate(0, tpf * (float) ts.speed() * 0.4f, 0);
+			// Spin the torpedo's contra-rotating propellers in proportion to speed, the aft one the other way
+			if (ts.speed() > 1) {
+				float spin = tpf * (float) ts.speed() * 0.4f;
+				Spatial torpProp = findChild(torpNode, "Propeller"), torpPropAft = findChild(torpNode, "PropellerAft");
+				if (torpProp != null)
+					torpProp.rotate(0, spin, 0);
+				if (torpPropAft != null)
+					torpPropAft.rotate(0, -spin, 0);
 			}
 
 			// Torpedo wake bubbles (much more than sub: torpedo is loud and fast)

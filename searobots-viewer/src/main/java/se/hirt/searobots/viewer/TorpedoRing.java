@@ -40,13 +40,14 @@ import com.jme3.util.BufferUtils;
 
 /**
  * A band of light round a torpedo's body in its submarine's team colour, so a torpedo shows whose
- * it is. Built in the coordinates of the torpedo model (models/torpedo.obj), whose body is a
- * 16-sided cylinder of radius {@link #BODY_R} along +Y from the nose (y = -11.6) to the stern (y =
- * 14.7); the band follows the same 16 sides, standing a little proud of them.
+ * it is. Built in the coordinates of the torpedo model (models/torpedo.obj, from
+ * TorpedoModelGenerator), whose body is a cylinder of radius {@link #BODY_R} along +Y from the nose
+ * (y = -11.6) to the stern (y = 14.75), in 40 sides; the band follows them, standing a little
+ * proud.
  */
 public final class TorpedoRing {
-	private static final int SIDES = 16;
-	private static final float BODY_R = 1.41421f, PHASE = 3.5f * FastMath.DEG_TO_RAD, PROUD = 1.03f;
+	private static final int SIDES = 40;
+	private static final float BODY_R = 1.41421f, PHASE = 0, PROUD = 1.03f;
 
 	private TorpedoRing() {
 	}
