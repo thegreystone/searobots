@@ -93,13 +93,13 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 	}
 
 	private static final List<TailFlap> TAIL_FLAPS = List.of(
-			new TailFlap("tailflap_pu", new Vector3f(0.177f, 33.775f, 0.287f), new Vector3f(0.5318f, 0.6590f, 0.5318f)),
-			new TailFlap("tailflap_su", new Vector3f(-0.177f, 33.775f, 0.287f),
-					new Vector3f(-0.5318f, 0.6590f, 0.5318f)),
-			new TailFlap("tailflap_sl", new Vector3f(-0.177f, 33.775f, -0.067f),
-					new Vector3f(-0.5318f, 0.6590f, -0.5318f)),
-			new TailFlap("tailflap_pl", new Vector3f(0.177f, 33.775f, -0.067f),
-					new Vector3f(0.5318f, 0.6590f, -0.5318f)));
+			new TailFlap("tailflap_pu", new Vector3f(0.177f, 33.559f, 0.287f), new Vector3f(0.6678f, 0.3289f, 0.6678f)),
+			new TailFlap("tailflap_su", new Vector3f(-0.177f, 33.559f, 0.287f),
+					new Vector3f(-0.6678f, 0.3289f, 0.6678f)),
+			new TailFlap("tailflap_sl", new Vector3f(-0.177f, 33.559f, -0.067f),
+					new Vector3f(-0.6678f, 0.3289f, -0.6678f)),
+			new TailFlap("tailflap_pl", new Vector3f(0.177f, 33.559f, -0.067f),
+					new Vector3f(0.6678f, 0.3289f, -0.6678f)));
 	// Full rudder and full stern planes swing a flap this far (radians); mixed, a flap goes no further than the limit
 	private static final float RUDDER_THROW = 0.4f, PLANES_THROW = 0.3f, FLAP_LIMIT = 0.5f;
 	// Torpedo tube doors (TubeDoor1..4: port upper, starboard upper, port lower, starboard lower) are shutters that

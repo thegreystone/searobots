@@ -39,6 +39,15 @@ d  1.0
 Ns  60.0
 illum 2
 #
+# Rings round the shaft at the tail: satin metal, darker than the chrome so they do not draw the eye
+newmtl Metal_Satin
+Ka  0.18 0.18 0.18
+Kd  0.25 0.25 0.25
+Ks  0.70 0.70 0.70
+d  1.0
+Ns  60.0
+illum 2
+#
 # Hatches and frames: dark polished gunmetal, mostly highlight and little diffuse grey
 newmtl Metal_Gunmetal
 Ka  0.06 0.06 0.06

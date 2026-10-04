@@ -79,8 +79,8 @@ public final class SubmarineModelGenerator {
 	// Hull: superellipse forebody from the nose to the widest point, parallel midbody, then an afterbody
 	// r = R + (W - R) (1 - s^a)^b that meets the spinner (radius TAIL_JOIN_R) with zero slope
 	private static final double NOSE_Y = -34.15, MID_Y0 = -14.0, MID_Y1 = -8.0, HULL_HALF_WIDTH = 4.47;
-	private static final double FORE_EXPONENT = 2.5, AFT_A = 1.6, AFT_B = 1.15;
-	private static final double TAIL_JOIN_Y = 37.0, TAIL_JOIN_R = 0.46;
+	private static final double FORE_EXPONENT = 2.5, AFT_A = 2.4, AFT_B = 1.05;
+	private static final double TAIL_JOIN_Y = 37.0, TAIL_JOIN_R = 0.75;
 	// Sections are ellipses this much taller than wide; they turn round towards the tail to meet the spinner
 	private static final double HEIGHT_RATIO = 0.83, ROUND_FROM_Y = 12.0, ROUND_BY_Y = 28.0;
 
@@ -135,8 +135,8 @@ public final class SubmarineModelGenerator {
 	// X-tail fins (all four alike): radius from the shaft and leading/trailing edge at root and tip. The fixed fin
 	// runs to RUDDER_HINGE of the chord; the flap behind it swings about the hinge line. The trailing edge passes
 	// ahead of the duct's leading edge wherever it is inside the duct's radius.
-	private static final double RUDDER_ROOT_R = 0.25, RUDDER_TIP_R = 2.6, RUDDER_EDGE = 0.08, RUDDER_THICKNESS = 0.14;
-	private static final double[] RUDDER_ROOT = {31.6, 34.9}, RUDDER_TIP = {34.41, 36.56};
+	private static final double RUDDER_ROOT_R = 0.25, RUDDER_TIP_R = 4.0, RUDDER_EDGE = 0.08, RUDDER_THICKNESS = 0.14;
+	private static final double[] RUDDER_ROOT = {30.6, 35.1}, RUDDER_TIP = {33.8, 35.4};
 	private static final double RUDDER_HINGE = 0.6, HINGE_GAP = 0.04;
 	// Flap group names (port/starboard, upper/lower) and the angle each fin stands out at round the hull's axis (from
 	// +X, port, towards +Z, up). The viewer drives each flap with a mix of the rudder and stern-plane commands.
@@ -150,25 +150,27 @@ public final class SubmarineModelGenerator {
 	}
 
 	// Duct: aerofoil chord along Y, mean radius narrowing towards the exit (a mild nozzle)
-	private static final double DUCT_Y0 = 36.7, DUCT_Y1 = 38.5, DUCT_R_LE = 2.08, DUCT_R_TE = 1.98;
+	private static final double DUCT_Y0 = 35.4, DUCT_Y1 = 38.3, DUCT_R_LE = 2.12, DUCT_R_TE = 2.0;
 	private static final double DUCT_THICKNESS = 0.133; // fraction of the chord (NACA 4-digit)
 	// Stator vanes just inside the duct entry and ahead of the (rotating) hub, rotated off the rudder
-	// planes (90 and 270 degrees)
-	private static final int STATORS = 5;
-	private static final double STATOR_Y0 = 36.74, STATOR_Y1 = 36.98, STATOR_ANGLE0 = 36;
+	// planes (90 and 270 degrees): aerofoil sections STATOR_THICKNESS of the chord, turned STATOR_TWIST
+	// against the rotor swirl
+	private static final int STATORS = 9;
+	private static final double STATOR_Y0 = 35.8, STATOR_Y1 = 36.5, STATOR_ANGLE0 = 20;
+	private static final double STATOR_THICKNESS = 0.12, STATOR_TWIST = Math.toRadians(8);
 	// Rotor
 	private static final int BLADES = 7;
-	private static final double ROTOR_Y = 37.55, BLADE_ROOT_R = 0.38, BLADE_TIP_R = 1.86, PITCH = 2.6;
+	private static final double ROTOR_Y = 37.55, BLADE_ROOT_R = 0.72, BLADE_TIP_R = 1.86, PITCH = 2.6;
 	private static final double SKEW = 0.55, RAKE = 0.12; // tip skew (radians) and aft rake (metres)
 	// Hub profile (y, radius), front to back: it starts where the hull ends, 5 mm wider so the seam is
 	// hidden, and tapers from the last point to a tip at HUB_TIP_Y as r = R (1 - s^HUB_TAPER)
 	private static final double[][] HUB = {{TAIL_JOIN_Y, TAIL_JOIN_R + 0.005}, {37.85, TAIL_JOIN_R + 0.005}};
-	private static final double HUB_TIP_Y = 39.1, HUB_TAPER = 1.8;
-	// Polished accent rings about the shaft: {station y, radius of the ring's centre line, half-width along y,
+	// The tip is rounded off with a sphere where the cone has narrowed to HUB_TIP_ROUND
+	private static final double HUB_TIP_Y = 39.0, HUB_TAPER = 1.8, HUB_TIP_ROUND = 0.1;
+	// Satin metal rings about the shaft: {station y, radius of the ring's centre line, half-width along y,
 	// half-thickness radially}. Round about the shaft, so the one on the spinning hub can stay in a static group.
 	private static final double[][] ACCENT_RINGS = {{TAIL_JOIN_Y, TAIL_JOIN_R + 0.008, 0.06, 0.025}, // hull/spinner seam
-			{HUB[1][0], HUB[1][1] + 0.003, 0.05, 0.02}, // where the spinner's cone starts behind the rotor
-			{DUCT_Y0 + 0.03, DUCT_R_LE, 0.035, 0.04}}; // the duct's leading edge
+			{HUB[1][0] - 0.06, HUB[1][1] + 0.003, 0.05, 0.02}}; // just ahead of where the spinner's cone starts
 
 	/**
 	 * A material: grey levels, shininess, and optionally a diffuse texture, a normal map and a
@@ -212,6 +214,8 @@ public final class SubmarineModelGenerator {
 		MATERIALS.put("Metal_Black_Plain",
 				new Mat(0.07, 0.07, 0.4, 30, "Fittings: near-black satin, with enough specular to show the shape"));
 		MATERIALS.put("Metal_Chrome", new Mat(0.6, 0.4, 0.9, 60, "Light polished metal for accents"));
+		MATERIALS.put("Metal_Satin", new Mat(0.25, 0.18, 0.7, 60,
+				"Rings round the shaft at the tail: satin metal, darker than the chrome so they do not draw the eye"));
 		MATERIALS.put("Metal_Gunmetal", new Mat(0.09, 0.06, 0.9, 80,
 				"Hatches and frames: dark polished gunmetal, mostly highlight and little diffuse grey"));
 		MATERIALS.put("rubber", new Mat(0.13, 0.1, 0.15, 10, "Rotor: dark matte grey"));
@@ -278,7 +282,7 @@ public final class SubmarineModelGenerator {
 		Group mount = gen.group("PropellerMount", "Stealth_Coating");
 		gen.buildDuct(mount);
 		gen.buildStators(mount);
-		gen.buildAccents(gen.group("Accents", "Metal_Chrome"));
+		gen.buildAccents(gen.group("TailRings", "Metal_Satin"));
 		gen.buildSail(gen.group("Tower", "Hull_Tiles"));
 		gen.buildSailFittings(gen.group("SailFittings", "Metal_Black_Plain"), gen.group("Accents", "Metal_Chrome"),
 				gen.group("BridgeHatch", "Metal_Gunmetal"));
@@ -290,9 +294,10 @@ public final class SubmarineModelGenerator {
 		Group fins = gen.group("Fins", "Stealth_Coating");
 		gen.buildPlane(gen.group("elevatorr", "Stealth_Coating"), -1);
 		gen.buildPlane(gen.group("elevatorl", "Stealth_Coating"), 1);
-		Group rotor = gen.group("Propeller", "rubber"); // dark matte, like the fins, for a stealthier look
+		Group rotor = gen.group("Propeller", "rubber"); // dark matte, for a stealthier look
 		gen.buildRotor(rotor);
-		gen.buildHub(rotor);
+		// The spinner is round about the shaft, so it can stay in a static group, in the coating like the duct
+		gen.buildHub(gen.group("Spinner", "Stealth_Coating"));
 		Map<String, double[][]> hinges = new LinkedHashMap<>();
 		for (var fin : X_TAIL.entrySet())
 			hinges.put(fin.getKey(),
@@ -1169,7 +1174,7 @@ public final class SubmarineModelGenerator {
 	 * shaft.
 	 */
 	private void buildDuct(Group g) {
-		int chord = 12, around = 48;
+		int chord = 16, around = 96;
 		double c = DUCT_Y1 - DUCT_Y0;
 		List<double[]> profile = new ArrayList<>(); // {y, r}
 		for (int j = 0; j <= chord; j++) {
@@ -1205,23 +1210,49 @@ public final class SubmarineModelGenerator {
 	 * swirl.
 	 */
 	private void buildStators(Group g) {
-		double half = 0.035, twist = Math.toRadians(8);
+		int span = 6, chord = 10;
+		double c = STATOR_Y1 - STATOR_Y0, yc = (STATOR_Y0 + STATOR_Y1) / 2;
+		double cos = Math.cos(STATOR_TWIST), sin = Math.sin(STATOR_TWIST);
+		// Root buried in the hull, tip buried in the duct wall, so both ends stay open
+		double r0 = 0.25, r1 = Math.max(ductInnerR(STATOR_Y0), ductInnerR(STATOR_Y1)) + 0.03;
+		// Section outline {x along the chord from mid-chord, y across it}: upper side LE to TE, lower side back
+		List<double[]> outline = new ArrayList<>();
+		for (int j = 0; j <= chord; j++) {
+			double s = 0.5 * (1 - Math.cos(Math.PI * j / chord));
+			outline.add(new double[] {(s - 0.5) * c, j == 0 || j == chord ? 0 : nacaHalf(s, STATOR_THICKNESS) * c});
+		}
+		for (int j = chord - 1; j >= 1; j--) {
+			double s = 0.5 * (1 - Math.cos(Math.PI * j / chord));
+			outline.add(new double[] {(s - 0.5) * c, -nacaHalf(s, STATOR_THICKNESS) * c});
+		}
+		int m = outline.size();
 		for (int k = 0; k < STATORS; k++) {
 			double a = Math.toRadians(STATOR_ANGLE0) + 2 * Math.PI * k / STATORS;
-			// Root buried in the hull, tip buried in the duct wall
-			double r0 = 0.25, r1 = Math.max(ductInnerR(STATOR_Y0), ductInnerR(STATOR_Y1)) + 0.03;
-			double[][] c = new double[8][];
-			int idx = 0;
-			for (double r : new double[] {r0, r1}) {
-				for (double[] e : new double[][] {{STATOR_Y0, -1}, {STATOR_Y1, -1}, {STATOR_Y1, 1}, {STATOR_Y0, 1}}) {
-					// Chord along Y, turned by the twist about the radial direction; thickness tangential
-					double yc = (STATOR_Y0 + STATOR_Y1) / 2, dy = e[0] - yc;
-					double tang = dy * Math.sin(twist) + e[1] * half;
-					c[idx++] = onAxis(r, a + tang / r, yc + dy * Math.cos(twist));
-				}
+			int[][] loop = new int[span + 1][m];
+			for (int i = 0; i <= span; i++) {
+				double r = r0 + (r1 - r0) * i / span;
+				for (int j = 0; j < m; j++)
+					loop[i][j] = vertex(statorPoint(a, r, yc, outline.get(j)[0], outline.get(j)[1], cos, sin));
 			}
-			hexa(g, c);
+			for (int i = 0; i < span; i++)
+				for (int j = 0; j < m; j++) {
+					int j1 = (j + 1) % m;
+					// Inside: the chord line at this face's position along the chord
+					double x = (outline.get(j)[0] + outline.get(j1)[0]) / 2;
+					double[] inside = statorPoint(a, r0 + (r1 - r0) * (i + 0.5) / span, yc, x, 0, cos, sin);
+					quad(g, loop[i][j], loop[i][j1], loop[i + 1][j1], loop[i + 1][j], inside);
+				}
 		}
+	}
+
+	/**
+	 * A point on the stator vane at angle {@code a} round the shaft and radius {@code r}: {@code x}
+	 * along the chord from mid-chord (at station {@code yc}) and {@code t} across it, the chord
+	 * turned by the twist (cosine and sine given) about the radial direction.
+	 */
+	private static double[] statorPoint(double a, double r, double yc, double x, double t, double cos, double sin) {
+		double along = x * cos - t * sin, tang = x * sin + t * cos;
+		return onAxis(r, a + tang / r, yc + along);
 	}
 
 	/**
@@ -1279,21 +1310,35 @@ public final class SubmarineModelGenerator {
 	}
 
 	/**
-	 * Hub: a short cylinder that meets the hull at the front and tapers to a point behind the duct.
+	 * Hub: a short cylinder that meets the hull at the front and tapers to a rounded tip behind the
+	 * duct.
 	 */
 	private void buildHub(Group g) {
-		int around = 32, capSteps = 10;
+		int around = 96, coneSteps = 16, capSteps = 6;
 		List<double[]> profile = new ArrayList<>(List.of(HUB));
 		double[] last = HUB[HUB.length - 1];
+		// The cone, rings bunching up towards the tip, until it is thin enough for the rounded tip
+		for (int k = 1;; k++) {
+			double s = Math.sin(Math.PI / 2 * k / coneSteps);
+			double[] p = {last[0] + (HUB_TIP_Y - last[0]) * s, last[1] * (1 - Math.pow(s, HUB_TAPER))};
+			if (p[1] < HUB_TIP_ROUND)
+				break;
+			profile.add(p);
+		}
+		// The rounded tip: a sphere centred on the axis, tangent to the cone at its last ring
+		double[] end = profile.get(profile.size() - 1), before = profile.get(profile.size() - 2);
+		double slope = (before[1] - end[1]) / (end[0] - before[0]); // how fast the radius falls, per metre
+		double radius = end[1] * Math.sqrt(1 + slope * slope), centreY = end[0] - end[1] * slope;
+		double angle0 = Math.atan2(1, slope); // from the axis, at the last ring
 		for (int k = 1; k < capSteps; k++) {
-			double s = (double) k / capSteps;
-			profile.add(new double[] {last[0] + (HUB_TIP_Y - last[0]) * s, last[1] * (1 - Math.pow(s, HUB_TAPER))});
+			double a = angle0 * (1 - (double) k / capSteps);
+			profile.add(new double[] {centreY + radius * Math.cos(a), radius * Math.sin(a)});
 		}
 		int[][] ring = new int[profile.size()][around];
 		for (int j = 0; j < profile.size(); j++)
 			for (int i = 0; i < around; i++)
 				ring[j][i] = vertex(onAxis(profile.get(j)[1], 2 * Math.PI * i / around, profile.get(j)[0]));
-		int tip = vertex(onAxis(0, 0, HUB_TIP_Y));
+		int tip = vertex(onAxis(0, 0, centreY + radius));
 		for (int j = 0; j < profile.size(); j++) {
 			double[] inside = onAxis(0, 0, profile.get(j)[0]);
 			for (int i = 0; i < around; i++) {
@@ -2157,10 +2202,10 @@ public final class SubmarineModelGenerator {
 
 	/** The accent rings: closed tubes with an elliptical section, centred on the shaft. */
 	private void buildAccents(Group g) {
-		int section = 8;
+		int section = 12;
 		for (double[] spec : ACCENT_RINGS) {
 			double y = spec[0], r = spec[1], halfWidth = spec[2], halfThickness = spec[3];
-			int around = (int) Math.max(24, Math.min(64, Math.round(r * 28))); // segments scale with the ring's size
+			int around = (int) Math.max(48, Math.min(160, Math.round(r * 120))); // segments scale with the ring's size
 			int[][] ring = new int[around][section];
 			for (int i = 0; i < around; i++) {
 				double a = 2 * Math.PI * i / around;
@@ -2228,19 +2273,6 @@ public final class SubmarineModelGenerator {
 	private void triAboutAxis(Group g, int a, int b, int c) {
 		double y = (verts.get(a - 1)[1] + verts.get(b - 1)[1] + verts.get(c - 1)[1]) / 3;
 		tri(g, a, b, c, onAxis(0, 0, y));
-	}
-
-	/**
-	 * Hexahedron from eight corners: c[0..3] one end ring, c[4..7] the other, in the same order.
-	 */
-	private void hexa(Group g, double[][] c) {
-		double[] centre = new double[3];
-		for (double[] p : c)
-			for (int k = 0; k < 3; k++)
-				centre[k] += p[k] / 8;
-		int[][] faces = {{0, 1, 2, 3}, {4, 5, 6, 7}, {0, 1, 5, 4}, {1, 2, 6, 5}, {2, 3, 7, 6}, {3, 0, 4, 7}};
-		for (int[] f : faces)
-			quad(g, vertex(c[f[0]]), vertex(c[f[1]]), vertex(c[f[2]]), vertex(c[f[3]]), centre);
 	}
 
 	/**
