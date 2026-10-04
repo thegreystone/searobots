@@ -37,7 +37,9 @@ import java.util.Set;
 import com.jme3.asset.AssetManager;
 import com.jme3.material.MatParamTexture;
 import com.jme3.material.Material;
+import com.jme3.material.RenderState;
 import com.jme3.math.Vector3f;
+import com.jme3.renderer.queue.RenderQueue;
 import com.jme3.scene.Geometry;
 import com.jme3.scene.Mesh;
 import com.jme3.scene.Spatial;
@@ -64,6 +66,10 @@ public final class SubmarineModelSupport {
 	// environment, mixed into their highlights by a Fresnel term (bias, scale, power), so they read as metal from
 	// every angle instead of only near the mirror angle of a light
 	private static final Set<String> METAL_GROUPS = Set.of("Hatches", "BridgeHatch", "SensorFrames", "Accents");
+	// The untiled parts of the hull (nose cap, keel strip): weathered like the tiles, so they match them
+	private static final String PLAIN_HULL = "HullPlain";
+	// Model groups of painted markings (SubmarineModelGenerator)
+	private static final Set<String> MARKINGS = Set.of("DraftMarks", "RescueRings");
 	private static final Vector3f METAL_FRESNEL = new Vector3f(0.3f, 0.7f, 2.5f);
 	private static TextureCubeMap environment;
 
@@ -80,12 +86,20 @@ public final class SubmarineModelSupport {
 				MikktspaceTangentGenerator.generate(g);
 			MatParamTexture diffuse = m.getTextureParam("DiffuseMap");
 			if (diffuse != null && diffuse.getTextureValue().getKey() != null
-					&& diffuse.getTextureValue().getKey().getName().endsWith(TILES))
+					&& diffuse.getTextureValue().getKey().getName().endsWith(TILES) || PLAIN_HULL.equals(g.getName()))
 				addWeathering(assets, g);
 			if (METAL_GROUPS.contains(g.getName())
 					|| g.getParent() != null && METAL_GROUPS.contains(g.getParent().getName())) {
 				m.setTexture("EnvMap", environment());
 				m.setVector3("FresnelParams", METAL_FRESNEL);
+			}
+			// The fixed markings are paint with transparent surroundings: blended over the hull, just in front of it
+			if (MARKINGS.contains(g.getName())) {
+				RenderState state = m.getAdditionalRenderState();
+				state.setBlendMode(RenderState.BlendMode.Alpha);
+				state.setPolyOffset(-2, -2);
+				m.setFloat("AlphaDiscardThreshold", 0.02f);
+				g.setQueueBucket(RenderQueue.Bucket.Transparent);
 			}
 			// The decal patches stay hidden until SubmarineDecals paints them
 			if (SubmarineDecals.PATCHES.contains(g.getName()))

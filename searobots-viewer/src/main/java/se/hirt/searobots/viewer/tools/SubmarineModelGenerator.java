@@ -116,16 +116,17 @@ public final class SubmarineModelGenerator {
 	private static final double TUBE_R = 0.3, DOOR_DEPTH = 0.03, DOOR_OVERLAP = 0.08; // shutter: under the skin, overlapping the hole
 	private static final double CUT_MARGIN = 0.05; // hull triangles this close to a tube's circle are cut away
 
-	// Sensors: the flank arrays, panels on both sides (from y, to y) centred FLANK_ARRAY_THETA above the widest point, clear of the bow planes below
-	// and the towed-array fairing. Each sits in a gunmetal frame SENSOR_FRAME wider all round.
-	private static final double SENSOR_FRAME = 0.06;
-	private static final double[][] FLANK_ARRAYS = {{-27.0, -19.5}, {-6.0, 3.0}, {8.0, 17.0}};
-	private static final double FLANK_ARRAY_THETA = Math.toRadians(10), FLANK_ARRAY_HALF_HEIGHT = 0.4;
+	// Sensors: the flank arrays, large flat panels on both sides (from y, to y), FLANK_ARRAY_HALF_HEIGHT metres either side of
+	// FLANK_ARRAY_THETA above the widest point, with corners of radius FLANK_ARRAY_CORNER; clear of the bow planes and
+	// of the towed-array fairing below. Each sits in a fine gunmetal frame SENSOR_FRAME wider all round.
+	private static final double SENSOR_FRAME = 0.035, FLANK_ARRAY_CORNER = 0.15;
+	private static final double[][] FLANK_ARRAYS = {{-26.05, -20.45}, {-4.9, 1.9}, {9.1, 15.9}};
+	private static final double FLANK_ARRAY_THETA = Math.toRadians(10), FLANK_ARRAY_HALF_HEIGHT = 0.7;
 	// Team lights: one long light on each flank fore and aft (centred over the fore and aft flank arrays), TEAM_LIGHT_THETA above the
 	// widest point (a little above the flank arrays); half-length and half-height of each light, and the width of
 	// its frame
 	private static final double[] TEAM_LIGHT_Y = {-23.25, 12.5};
-	private static final double TEAM_LIGHT_THETA = Math.toRadians(23);
+	private static final double TEAM_LIGHT_THETA = Math.toRadians(27);
 	private static final double[] TEAM_LIGHT_HALF = {0.9, 0.06};
 	private static final double TEAM_LIGHT_FRAME = 0.025;
 	// Decals, painted by the viewer: the code on both sides of the sail, on a patch {from y, to y} by {from z, to z}, and the
@@ -135,6 +136,13 @@ public final class SubmarineModelGenerator {
 	private static final double[] SAIL_CODE_Y = {-16.0, -13.15}, SAIL_CODE_Z = {4.6, 5.55};
 	private static final double[] HULL_NAME_Y = {-9.0, 7.0};
 	private static final double HULL_NAME_THETA = Math.toRadians(45), HULL_NAME_HALF_HEIGHT = 0.5, DECAL_LIFT = 0.02;
+	// Fixed markings, painted into the generator's own textures: draft marks on both sides at these stations (bow and
+	// stern), a numeral every metre above the baseline (the keel at its deepest), on a strip DRAFT_WIDTH wide that
+	// reaches DRAFT_SPAN above the baseline; and a rescue ring painted round each escape hatch, on a square patch
+	// RESCUE_PATCH metres across
+	private static final double[] DRAFT_Y = {-27.5, 27.0};
+	private static final double DRAFT_WIDTH = 0.75, DRAFT_SPAN = 8, RESCUE_PATCH = 2.4;
+	private static final String DRAFT_MAP = "submarine-draft.png", RESCUE_MAP = "submarine-rescue.png";
 
 	// Bow planes (starboard side; the port plane is mirrored): leading and trailing edge at the root and tip
 	private static final double PLANE_ROOT_X = 3.6, PLANE_TIP_X = 5.88, PLANE_Z = -0.1, PLANE_CAP = 0.12;
@@ -218,12 +226,13 @@ public final class SubmarineModelGenerator {
 	private static final Map<String, Mat> MATERIALS = new LinkedHashMap<>();
 
 	static {
-		MATERIALS.put("Hull_Tiles", new Mat(0.11, 0.10, 0.55, 30,
+		MATERIALS.put("Hull_Tiles", new Mat(0.11, 0.10, 0.4, 20,
 				"Hull and sail: near-black anechoic tiles; the normal map breaks the highlights up at the seams, the "
 						+ "specular map varies the sheen from tile to tile, and the viewer adds large-scale weathering",
 				TILES_MAP, TILES_NORMALS, TILES_SHEEN));
-		MATERIALS.put("Hull_Plain", new Mat(0.083, 0.075, 0.4, 30,
-				"Untiled hull (bow sonar dome, keel strip): the tiles' average grey, without the grid"));
+		MATERIALS.put("Hull_Plain", new Mat(0.082, 0.075, 0.12, 10,
+				"Untiled hull (bow sonar dome, keel strip): a little darker than the tiles' average grey (their bevels darken them), without the grid, "
+						+ "with the broad, dull sheen of rubber; weathered like the tiles by the viewer"));
 		MATERIALS.put("Metal_Black_Plain",
 				new Mat(0.07, 0.07, 0.4, 30, "Fittings: near-black satin, with enough specular to show the shape"));
 		MATERIALS.put("Metal_Chrome", new Mat(0.6, 0.4, 0.9, 60, "Light polished metal for accents"));
@@ -232,18 +241,25 @@ public final class SubmarineModelGenerator {
 		MATERIALS.put("Metal_Gunmetal", new Mat(0.09, 0.06, 0.9, 80,
 				"Hatches and frames: dark polished gunmetal, mostly highlight and little diffuse grey"));
 		MATERIALS.put("rubber", new Mat(0.13, 0.1, 0.15, 10, "Rotor: dark matte grey"));
-		MATERIALS.put("Stealth_Coating", new Mat(0.05, 0.045, 0.3, 8,
+		MATERIALS.put("Stealth_Coating", new Mat(0.05, 0.045, 0.18, 8,
 				"Fins, tail flaps, bow planes, duct and stators: near-black absorbent coating laid in panels, with a broad, soft "
 						+ "satin sheen",
 				COATING_MAP, COATING_NORMALS, COATING_SHEEN));
-		MATERIALS.put("Sensor_Window",
-				new Mat(0.03, 0.03, 0.7, 90, "Flank arrays: glossy black, so they read as a different surface"));
+		MATERIALS.put("Sensor_Window", new Mat(0.04, 0.035, 0.2, 20,
+				"Flank arrays: a little darker and smoother than the tiles round them, with a soft sheen"));
 		MATERIALS.put("glow_team", new Mat(0.6, 0.6, 0.0, 1,
 				"Team lights: the viewer replaces this with a glowing material in the submarine's team colour"));
 		MATERIALS.put("Decal_Code", new Mat(0.3, 0.25, 0.05, 4,
 				"Sail code (two letters and a number): the viewer paints the submarine's own code over this"));
 		MATERIALS.put("Decal_Name", new Mat(0.3, 0.25, 0.05, 4,
 				"Name along the upper flanks: the viewer paints the submarine's own name over this"));
+		MATERIALS.put("Marking_Draft", new Mat(0.6, 0.45, 0.05, 4,
+				"Draft marks: white paint, a little weathered (the viewer blends the texture's transparent parts away)",
+				DRAFT_MAP, null, null));
+		MATERIALS.put("Marking_Rescue",
+				new Mat(0.45, 0.35, 0.05, 4,
+						"Rescue rings round the escape hatches: light grey paint (blended like the draft marks)",
+						RESCUE_MAP, null, null));
 		MATERIALS.put("Void", new Mat(0.01, 0.0, 0.0, 1, "Inside of the torpedo tubes: no light comes back"));
 	}
 
@@ -319,6 +335,8 @@ public final class SubmarineModelGenerator {
 		gen.buildTeamLights(gen.group("TeamLights", "glow_team"), gen.group("SensorFrames", "Metal_Gunmetal"));
 		gen.buildSailCode(gen.group("SailCode", "Decal_Code"));
 		gen.buildHullName(gen.group("HullName", "Decal_Name"));
+		gen.buildDraftMarks(gen.group("DraftMarks", "Marking_Draft"));
+		gen.buildRescueRings(gen.group("RescueRings", "Marking_Rescue"));
 		Group fins = gen.group("Fins", "Stealth_Coating");
 		gen.buildPlane(gen.group("elevatorr", "Stealth_Coating"), -1);
 		gen.buildPlane(gen.group("elevatorl", "Stealth_Coating"), 1);
@@ -331,6 +349,7 @@ public final class SubmarineModelGenerator {
 			hinges.put(fin.getKey(),
 					gen.buildTailFin(fins, gen.group(fin.getKey(), "Stealth_Coating"), fin.getValue()));
 		gen.groups.get("Body").uv = UvMap.HULL;
+		gen.groups.get("HullPlain").uv = UvMap.HULL; // untextured, but weathered like the tiles (SubmarineModelSupport)
 		gen.groups.get("Tower").uv = UvMap.SAIL;
 		for (Group g : gen.groups.values())
 			if (g.material.equals("Stealth_Coating"))
@@ -344,6 +363,8 @@ public final class SubmarineModelGenerator {
 		ImageIO.write(coatingNormals(), "png", out.resolve(COATING_NORMALS).toFile());
 		ImageIO.write(coatingSheen(), "png", out.resolve(COATING_SHEEN).toFile());
 		ImageIO.write(weatheringTexture(), "png", out.resolve(WEATHERING).toFile());
+		ImageIO.write(draftTexture(), "png", out.resolve(DRAFT_MAP).toFile());
+		ImageIO.write(rescueTexture(), "png", out.resolve(RESCUE_MAP).toFile());
 		gen.write(out.resolve("submarine-hybrid.obj"), out.resolve("submarine-hybrid.mtl"));
 		hinges.forEach(SubmarineModelGenerator::printHinge);
 	}
@@ -1706,16 +1727,17 @@ public final class SubmarineModelGenerator {
 	// ── Sensors ──────────────────────────────────────────────────────────────
 
 	/**
-	 * The flank arrays: long panels along both sides, a centimetre proud of the hull, each in a
-	 * gunmetal frame a little larger and lower. The bow array sits behind the nose cap, unseen.
+	 * The flank arrays: large flat panels along both sides, following the hull a centimetre proud
+	 * of it, each in a fine gunmetal frame a little larger and lower. The bow array sits behind the
+	 * nose cap, unseen.
 	 */
 	private void buildSensors(Group windows, Group frames) {
 		for (double[] panel : FLANK_ARRAYS)
 			for (double theta : new double[] {FLANK_ARRAY_THETA, Math.PI - FLANK_ARRAY_THETA}) {
 				hullStrip(frames, theta, panel[0] - SENSOR_FRAME, panel[1] + SENSOR_FRAME,
-						FLANK_ARRAY_HALF_HEIGHT + SENSOR_FRAME, FLANK_ARRAY_HALF_HEIGHT + SENSOR_FRAME, 0.006, 24, 4);
-				hullStrip(windows, theta, panel[0], panel[1], FLANK_ARRAY_HALF_HEIGHT, FLANK_ARRAY_HALF_HEIGHT, 0.012,
-						24, 4);
+						FLANK_ARRAY_HALF_HEIGHT + SENSOR_FRAME, FLANK_ARRAY_CORNER + SENSOR_FRAME, 0.006, 24, 6);
+				hullStrip(windows, theta, panel[0], panel[1], FLANK_ARRAY_HALF_HEIGHT, FLANK_ARRAY_CORNER, 0.012, 24,
+						6);
 			}
 	}
 
@@ -1850,6 +1872,140 @@ public final class SubmarineModelGenerator {
 		for (int i = 0; i + 1 < grid.length; i++)
 			for (int j = 0; j + 1 < grid[i].length; j++)
 				quad(g, grid[i][j], grid[i + 1][j], grid[i + 1][j + 1], grid[i][j + 1], inside.apply(i, j));
+	}
+
+	/** The hull's lowest point, its deepest keel: what the draft marks count from. */
+	private static double baseline() {
+		return AXIS_Z - HULL_HALF_WIDTH * HEIGHT_RATIO;
+	}
+
+	/**
+	 * Strips on both sides at the bow and the stern for the draft marks, following the hull from
+	 * near the keel up past the widest point. The texture runs DRAFT_SPAN metres up from the
+	 * baseline, so its numerals sit at their true heights; across, it reads like the sail code
+	 * (towards the stern on the port side).
+	 */
+	private void buildDraftMarks(Group g) {
+		g.uv = UvMap.DECAL;
+		int up = 32;
+		for (double yc : DRAFT_Y)
+			for (int side : new int[] {1, -1}) {
+				double h = hullHalfHeight(yc);
+				// From just below the lowest whole numeral to just above the highest (each is 0.3 m tall), so none is cut
+				double low = AXIS_Z - 0.97 * h - baseline(),
+						high = Math.min(DRAFT_SPAN, AXIS_Z + 0.75 * h - baseline());
+				double z0 = baseline() + Math.ceil(low + 0.05) - 0.05, z1 = baseline() + Math.floor(high - 0.35) + 0.35;
+				int[][] grid = new int[3][up + 1];
+				for (int i = 0; i <= 2; i++) {
+					double u = i / 2.0, y = yc + (side > 0 ? u - 0.5 : 0.5 - u) * DRAFT_WIDTH;
+					double wy = hullHalfWidth(y), hy = hullHalfHeight(y);
+					for (int j = 0; j <= up; j++) {
+						double z = lerp(z0, z1, (double) j / up), c = (z - AXIS_Z) / hy;
+						double[] p = {side * wy * Math.sqrt(Math.max(0, 1 - c * c)), y, z};
+						grid[i][j] = vertex(add(p, scale(hullNormal(p), DECAL_LIFT)));
+						decalUv.put(grid[i][j], new double[] {u, (z - baseline()) / DRAFT_SPAN});
+					}
+				}
+				decalGrid(g, grid, (i, j) -> onAxis(0, 0, verts.get(grid[i][j] - 1)[1]));
+			}
+	}
+
+	/**
+	 * Square patches on the deck centred on the escape hatches, for the rescue rings, following the
+	 * hull DECAL_LIFT above it (under the hatches' rims).
+	 */
+	private void buildRescueRings(Group g) {
+		g.uv = UvMap.DECAL;
+		int n = 10;
+		for (double[] hatch : ESCAPE_HATCHES) {
+			int[][] grid = new int[n + 1][n + 1];
+			for (int i = 0; i <= n; i++)
+				for (int j = 0; j <= n; j++) {
+					double u = (double) i / n, v = (double) j / n;
+					// Seen from above with the bow up, port (+X) is on the left
+					double x = (0.5 - u) * RESCUE_PATCH, y = hatch[0] + (0.5 - v) * RESCUE_PATCH;
+					double[] p = {x, y, hullSurfaceZ(x, y)};
+					grid[i][j] = vertex(add(p, scale(hullNormal(p), DECAL_LIFT)));
+					decalUv.put(grid[i][j], new double[] {u, v});
+				}
+			decalGrid(g, grid, (i, j) -> onAxis(0, 0, verts.get(grid[i][j] - 1)[1]));
+		}
+	}
+
+	/**
+	 * The draft marks: a numeral every metre above the baseline, its foot on the mark, as on a
+	 * ship; white on transparent (white in the transparent pixels too, so mipmaps have no dark
+	 * fringes). 128 pixels a metre each way.
+	 */
+	static BufferedImage draftTexture() {
+		int pxPerM = 128, w = (int) Math.round(DRAFT_WIDTH * pxPerM), h = (int) Math.round(DRAFT_SPAN * pxPerM);
+		var img = clearImage(w, h);
+		var g = paint(img);
+		g.setFont(new java.awt.Font(java.awt.Font.SANS_SERIF, java.awt.Font.BOLD, 1).deriveFont(0.3f * pxPerM / 0.72f));
+		var fm = g.getFontMetrics();
+		for (int metre = 1; metre < DRAFT_SPAN; metre++) {
+			String s = Integer.toString(metre);
+			int foot = h - metre * pxPerM; // image rows run down, v up
+			g.drawString(s, (w - fm.stringWidth(s)) / 2f, foot);
+			// Half-metre tick
+			int tick = foot + pxPerM / 2;
+			g.fillRect(w / 2 - pxPerM / 10, tick - 2, pxPerM / 5, 4);
+		}
+		g.dispose();
+		return img;
+	}
+
+	/**
+	 * A rescue ring round an escape hatch, seen from above with the bow at the top: a broad ring
+	 * with eight short ticks outside it, and RESCUE lettered fore and aft of the hatch, reading
+	 * from either side.
+	 */
+	static BufferedImage rescueTexture() {
+		int size = 512;
+		double pxPerM = size / RESCUE_PATCH;
+		var img = clearImage(size, size);
+		var g = paint(img);
+		double c = size / 2.0, r = 0.92 * pxPerM, band = 0.07 * pxPerM;
+		g.setStroke(new java.awt.BasicStroke((float) band));
+		g.draw(new java.awt.geom.Ellipse2D.Double(c - r, c - r, 2 * r, 2 * r));
+		g.setStroke(new java.awt.BasicStroke((float) (0.04 * pxPerM)));
+		for (int k = 0; k < 8; k++) {
+			double a = Math.PI / 4 * k + Math.PI / 8, r0 = r + band, r1 = r + band + 0.12 * pxPerM;
+			g.draw(new java.awt.geom.Line2D.Double(c + r0 * Math.cos(a), c + r0 * Math.sin(a), c + r1 * Math.cos(a),
+					c + r1 * Math.sin(a)));
+		}
+		g.setFont(
+				new java.awt.Font(java.awt.Font.SANS_SERIF, java.awt.Font.BOLD, 1).deriveFont((float) (0.16 * pxPerM)));
+		var fm = g.getFontMetrics();
+		String s = "RESCUE";
+		for (int k = 0; k < 2; k++) {
+			var t = g.getTransform();
+			g.rotate(Math.PI * k, c, c);
+			g.drawString(s, (float) (c - fm.stringWidth(s) / 2.0), (float) (c - 0.62 * pxPerM));
+			g.setTransform(t);
+		}
+		g.dispose();
+		return img;
+	}
+
+	/** A transparent image whose clear pixels are white, so mipmaps have no dark fringes. */
+	private static BufferedImage clearImage(int w, int h) {
+		var img = new BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB);
+		for (int y = 0; y < h; y++)
+			for (int x = 0; x < w; x++)
+				img.setRGB(x, y, 0x00FFFFFF);
+		return img;
+	}
+
+	/** Graphics for painting white over a clear image, antialiased. */
+	private static java.awt.Graphics2D paint(BufferedImage img) {
+		var g = img.createGraphics();
+		g.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING, java.awt.RenderingHints.VALUE_ANTIALIAS_ON);
+		g.setRenderingHint(java.awt.RenderingHints.KEY_TEXT_ANTIALIASING,
+				java.awt.RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+		g.setComposite(java.awt.AlphaComposite.Src);
+		g.setColor(java.awt.Color.WHITE);
+		return g;
 	}
 
 	// ── Torpedo tubes ────────────────────────────────────────────────────────

@@ -4,21 +4,21 @@
 newmtl Hull_Tiles
 Ka  0.10 0.10 0.10
 Kd  0.11 0.11 0.11
-Ks  0.55 0.55 0.55
+Ks  0.40 0.40 0.40
 d  1.0
-Ns  30.0
+Ns  20.0
 illum 2
 map_Kd submarine-tiles.png
 map_Bump submarine-tiles-normal.png
 map_Ks submarine-tiles-spec.png
 #
-# Untiled hull (bow sonar dome, keel strip): the tiles' average grey, without the grid
+# Untiled hull (bow sonar dome, keel strip): a little darker than the tiles' average grey (their bevels darken them), without the grid, with the broad, dull sheen of rubber; weathered like the tiles by the viewer
 newmtl Hull_Plain
 Ka  0.08 0.08 0.08
 Kd  0.08 0.08 0.08
-Ks  0.40 0.40 0.40
+Ks  0.12 0.12 0.12
 d  1.0
-Ns  30.0
+Ns  10.0
 illum 2
 #
 # Fittings: near-black satin, with enough specular to show the shape
@@ -70,7 +70,7 @@ illum 2
 newmtl Stealth_Coating
 Ka  0.05 0.05 0.05
 Kd  0.05 0.05 0.05
-Ks  0.30 0.30 0.30
+Ks  0.18 0.18 0.18
 d  1.0
 Ns  8.0
 illum 2
@@ -78,13 +78,13 @@ map_Kd submarine-coating.png
 map_Bump submarine-coating-normal.png
 map_Ks submarine-coating-spec.png
 #
-# Flank arrays: glossy black, so they read as a different surface
+# Flank arrays: a little darker and smoother than the tiles round them, with a soft sheen
 newmtl Sensor_Window
-Ka  0.03 0.03 0.03
-Kd  0.03 0.03 0.03
-Ks  0.70 0.70 0.70
+Ka  0.04 0.04 0.04
+Kd  0.04 0.04 0.04
+Ks  0.20 0.20 0.20
 d  1.0
-Ns  90.0
+Ns  20.0
 illum 2
 #
 # Team lights: the viewer replaces this with a glowing material in the submarine's team colour
@@ -113,6 +113,26 @@ Ks  0.05 0.05 0.05
 d  1.0
 Ns  4.0
 illum 2
+#
+# Draft marks: white paint, a little weathered (the viewer blends the texture's transparent parts away)
+newmtl Marking_Draft
+Ka  0.45 0.45 0.45
+Kd  0.60 0.60 0.60
+Ks  0.05 0.05 0.05
+d  1.0
+Ns  4.0
+illum 2
+map_Kd submarine-draft.png
+#
+# Rescue rings round the escape hatches: light grey paint (blended like the draft marks)
+newmtl Marking_Rescue
+Ka  0.35 0.35 0.35
+Kd  0.45 0.45 0.45
+Ks  0.05 0.05 0.05
+d  1.0
+Ns  4.0
+illum 2
+map_Kd submarine-rescue.png
 #
 # Inside of the torpedo tubes: no light comes back
 newmtl Void
