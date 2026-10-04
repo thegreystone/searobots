@@ -55,6 +55,8 @@ import com.jme3.texture.plugins.AWTLoader;
  */
 public final class SubmarineDecals {
 	private static final String SAIL_CODE = "SailCode", HULL_NAME = "HullName";
+	/** The model groups the markings are painted on. */
+	static final java.util.Set<String> PATCHES = java.util.Set.of(SAIL_CODE, HULL_NAME);
 	// Texture sizes, in the proportions of the model's patches
 	private static final int CODE_W = 768, CODE_H = 256, NAME_W = 4096, NAME_H = 256;
 	// Letters fill this much of the patch's height, and the text at most this much of its width
@@ -102,6 +104,7 @@ public final class SubmarineDecals {
 		m.setFloat("AlphaDiscardThreshold", 0.02f);
 		target.setMaterial(m);
 		target.setQueueBucket(RenderQueue.Bucket.Transparent);
+		target.setCullHint(Spatial.CullHint.Inherit);
 	}
 
 	/**

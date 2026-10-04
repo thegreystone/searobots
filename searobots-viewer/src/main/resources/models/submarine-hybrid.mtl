@@ -12,7 +12,7 @@ map_Kd submarine-tiles.png
 map_Bump submarine-tiles-normal.png
 map_Ks submarine-tiles-spec.png
 #
-# Untiled hull (sonar dome round the window, keel strip): the tiles' average grey, without the grid
+# Untiled hull (bow sonar dome, keel strip): the tiles' average grey, without the grid
 newmtl Hull_Plain
 Ka  0.08 0.08 0.08
 Kd  0.08 0.08 0.08
@@ -78,7 +78,7 @@ map_Kd submarine-coating.png
 map_Bump submarine-coating-normal.png
 map_Ks submarine-coating-spec.png
 #
-# Sonar window and flank arrays: glossy black, so they read as a different surface
+# Flank arrays: glossy black, so they read as a different surface
 newmtl Sensor_Window
 Ka  0.03 0.03 0.03
 Kd  0.03 0.03 0.03

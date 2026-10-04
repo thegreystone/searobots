@@ -87,6 +87,9 @@ public final class SubmarineModelSupport {
 				m.setTexture("EnvMap", environment());
 				m.setVector3("FresnelParams", METAL_FRESNEL);
 			}
+			// The decal patches stay hidden until SubmarineDecals paints them
+			if (SubmarineDecals.PATCHES.contains(g.getName()))
+				g.setCullHint(Spatial.CullHint.Always);
 		});
 	}
 

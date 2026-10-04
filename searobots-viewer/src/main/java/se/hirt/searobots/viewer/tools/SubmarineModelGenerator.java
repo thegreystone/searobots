@@ -88,6 +88,9 @@ public final class SubmarineModelGenerator {
 	// edge of radius SAIL_EDGE turns into a flat top (room for the bridge, hatches and masts)
 	private static final double SAIL_BASE_Z = 3.82, SAIL_TOP_Z = 6.26, SAIL_EDGE = 0.12, SAIL_HALF_WIDTH = 0.85;
 	private static final double[] SAIL_BASE = {-18.5, -10.84}, SAIL_TOP = {-16.21, -11.98};
+	// The sail's foot curves into the hull with a fillet of radius SAIL_FILLET_R, whose arc would be tangent to the hull
+	// SAIL_FILLET_DIP below it, so it meets the hull at an angle (about 38 degrees) instead of running flat into it
+	private static final double SAIL_FILLET_R = 1.2, SAIL_FILLET_DIP = 0.25;
 	private static final int SAIL_CHORD_STEPS = 14; // outline points per side; the cockpit is built on them
 	// Bridge cockpit: a well sunk WELL_DEPTH into the sail top, WELL_WALL in from the deck edge, from WELL_FROM to
 	// WELL_TO of the deck's length (chord fractions); its walls are the windscreen. The hatch (coaming ring + lid,
@@ -113,10 +116,9 @@ public final class SubmarineModelGenerator {
 	private static final double TUBE_R = 0.3, DOOR_DEPTH = 0.03, DOOR_OVERLAP = 0.08; // shutter: under the skin, overlapping the hole
 	private static final double CUT_MARGIN = 0.05; // hull triangles this close to a tube's circle are cut away
 
-	// Sensors: the bow sonar window (radius seen head on, clear of the torpedo tubes) and the flank arrays, panels
-	// on both sides (from y, to y) centred FLANK_ARRAY_THETA above the widest point, clear of the bow planes below
+	// Sensors: the flank arrays, panels on both sides (from y, to y) centred FLANK_ARRAY_THETA above the widest point, clear of the bow planes below
 	// and the towed-array fairing. Each sits in a gunmetal frame SENSOR_FRAME wider all round.
-	private static final double SONAR_WINDOW_R = 0.5, SENSOR_FRAME = 0.06;
+	private static final double SENSOR_FRAME = 0.06;
 	private static final double[][] FLANK_ARRAYS = {{-27.0, -19.5}, {-6.0, 3.0}, {8.0, 17.0}};
 	private static final double FLANK_ARRAY_THETA = Math.toRadians(10), FLANK_ARRAY_HALF_HEIGHT = 0.4;
 	// Team lights: one long light on each flank fore and aft (centred over the fore and aft flank arrays), TEAM_LIGHT_THETA above the
@@ -192,7 +194,7 @@ public final class SubmarineModelGenerator {
 
 	// Anechoic tiles: TILE metres square, TILES_PER_TEXTURE of them along each side of one repeat of the texture
 	private static final double TILE = 0.5;
-	// Untiled parts of the hull: a cap round the sonar window out to where the hull's half-width reaches NOSE_CAP_R
+	// Untiled parts of the hull: a cap over the bow sonar dome out to where the hull's half-width reaches NOSE_CAP_R
 	// (the tiles would bunch up towards the nose), and a strip along the keel KEEL_STRIP either side of it (where
 	// the tiles' rows meet round the hull, and where the boat sits on docking blocks)
 	private static final double NOSE_CAP_R = 1.0, KEEL_STRIP = Math.toRadians(7.5);
@@ -208,6 +210,10 @@ public final class SubmarineModelGenerator {
 	// metres of hull along the texture's width and round the hull along its height
 	private static final String WEATHERING = "submarine-weathering.png";
 	private static final double WEATHERING_ALONG = 80, WEATHERING_AROUND = 40;
+	// The sail's texture coordinates are shifted by whole repeats of the tile texture (so the tiles do not move) to keep
+	// it clear of the hull's part of the weathering map: its sides (height along the map) beyond the hull's tail, past
+	// 72.8 m, and its top (station along the map) over the hull's nose, where no contact shadow falls
+	private static final double SAIL_SIDES_SHIFT = 8, SAIL_TOP_SHIFT = 16;
 
 	private static final Map<String, Mat> MATERIALS = new LinkedHashMap<>();
 
@@ -217,7 +223,7 @@ public final class SubmarineModelGenerator {
 						+ "specular map varies the sheen from tile to tile, and the viewer adds large-scale weathering",
 				TILES_MAP, TILES_NORMALS, TILES_SHEEN));
 		MATERIALS.put("Hull_Plain", new Mat(0.083, 0.075, 0.4, 30,
-				"Untiled hull (sonar dome round the window, keel strip): the tiles' average grey, without the grid"));
+				"Untiled hull (bow sonar dome, keel strip): the tiles' average grey, without the grid"));
 		MATERIALS.put("Metal_Black_Plain",
 				new Mat(0.07, 0.07, 0.4, 30, "Fittings: near-black satin, with enough specular to show the shape"));
 		MATERIALS.put("Metal_Chrome", new Mat(0.6, 0.4, 0.9, 60, "Light polished metal for accents"));
@@ -230,8 +236,8 @@ public final class SubmarineModelGenerator {
 				"Fins, tail flaps, bow planes, duct and stators: near-black absorbent coating laid in panels, with a broad, soft "
 						+ "satin sheen",
 				COATING_MAP, COATING_NORMALS, COATING_SHEEN));
-		MATERIALS.put("Sensor_Window", new Mat(0.03, 0.03, 0.7, 90,
-				"Sonar window and flank arrays: glossy black, so they read as a different surface"));
+		MATERIALS.put("Sensor_Window",
+				new Mat(0.03, 0.03, 0.7, 90, "Flank arrays: glossy black, so they read as a different surface"));
 		MATERIALS.put("glow_team", new Mat(0.6, 0.6, 0.0, 1,
 				"Team lights: the viewer replaces this with a glowing material in the submarine's team colour"));
 		MATERIALS.put("Decal_Code", new Mat(0.3, 0.25, 0.05, 4,
@@ -247,7 +253,14 @@ public final class SubmarineModelGenerator {
 	// fin() leaves a flat top open when asked (the sail closes its own around the cockpit) and records the top
 	// outline for that
 	private boolean leaveTopOpen;
+	// fin() spaces its levels evenly along the span unless given this map from even spacing (0 to 1) to the levels' own
+	private java.util.function.DoubleUnaryOperator spanLevels;
 	private int[] lastTopOutline;
+	// ...and all its section loops, root first
+	private int[][] lastLoops;
+	// Where each vertex on the sail's sides is round its section: arc length from the leading edge along the port and the
+	// starboard side, and the station of the leading edge at its level
+	private final Map<Integer, double[]> sailArc = new HashMap<>();
 	// Texture coordinates of the decal patches' vertices, 0 to 1 across each patch in the direction the text reads
 	private final Map<Integer, double[]> decalUv = new HashMap<>();
 	// Vertices of the rings round the torpedo tube openings (open edges of the hull once cut)
@@ -434,12 +447,27 @@ public final class SubmarineModelGenerator {
 				uv[k] = decalUv.get(face[k].v).clone();
 			return uv;
 		}
-		if (map == UvMap.SAIL && Math.abs(normal[2]) < 0.7 * Math.sqrt(dot(normal, normal))) {
-			for (int k = 0; k < face.length; k++)
-				uv[k] = new double[] {aroundSail(p[k]), p[k][2]};
+		// Faces of the sail's sides (recorded by recordSailArcs, the fillet included however much it leans), or any other face of
+		// it that stands more upright than flat
+		boolean recorded = map == UvMap.SAIL;
+		for (Corner corner : face)
+			recorded &= sailArc.containsKey(corner.v);
+		if (map == UvMap.SAIL && (recorded || Math.abs(normal[2]) < 0.7 * Math.sqrt(dot(normal, normal)))) {
+			// Arc length round the section plus where the leading edge is at that height: on the flat sides that is
+			// about the station along the hull, so the columns of tiles stand upright under the raked leading edge.
+			// Each side runs its own way (the face's centre tells which), so the tiles are cut where the two sides
+			// meet at the edges, as on a real sail.
+			// The arc is measured along the sail as built (recordSailArcs), so it follows the fillet too.
+			double side = Math.signum(p[0][0] + p[1][0] + p[2][0]);
+			for (int k = 0; k < face.length; k++) {
+				double[] arc = recorded ? sailArc.get(face[k].v) : null;
+				double around = arc != null ? (side > 0 ? arc[0] : arc[1]) + arc[2] : aroundSail(p[k])
+						+ edgeAt(SAIL_BASE, SAIL_TOP, SAIL_BASE_Z, SAIL_TOP_Z, Math.min(p[k][2], SAIL_TOP_Z))[0];
+				uv[k] = new double[] {side * around, p[k][2] - SAIL_SIDES_SHIFT};
+			}
 		} else if (map == UvMap.SAIL) {
 			for (int k = 0; k < face.length; k++)
-				uv[k] = new double[] {p[k][0], p[k][1]};
+				uv[k] = new double[] {p[k][0], p[k][1] + SAIL_TOP_SHIFT};
 		} else if (map == UvMap.RADIAL) {
 			double[] c = scale(add(add(p[0], p[1]), p[2]), 1.0 / 3);
 			double[] out = unit(new double[] {c[0], 0, c[2] - AXIS_Z});
@@ -489,7 +517,7 @@ public final class SubmarineModelGenerator {
 
 	/**
 	 * Arc length round the sail's section at the height of {@code p}, from the leading edge to
-	 * {@code p}, positive to port.
+	 * {@code p}, on either side.
 	 */
 	private static double aroundSail(double[] p) {
 		double[] edges = edgeAt(SAIL_BASE, SAIL_TOP, SAIL_BASE_Z, SAIL_TOP_Z, Math.min(p[2], SAIL_TOP_Z));
@@ -501,7 +529,7 @@ public final class SubmarineModelGenerator {
 			arc += Math.hypot(c * to / n, half - prev);
 			prev = half;
 		}
-		return Math.signum(p[0]) * arc;
+		return arc;
 	}
 
 	/**
@@ -679,6 +707,7 @@ public final class SubmarineModelGenerator {
 						v[y * w + x0 + dx] += amount * fade;
 			}
 		}
+		contactShadows(v, w, h, pxPerM);
 		var img = new BufferedImage(w, h, BufferedImage.TYPE_INT_RGB);
 		for (int y = 0; y < h; y++)
 			for (int x = 0; x < w; x++) {
@@ -686,6 +715,102 @@ public final class SubmarineModelGenerator {
 				img.setRGB(x, y, (c << 16) | (c << 8) | c);
 			}
 		return img;
+	}
+
+	/**
+	 * Darkens the weathering map where parts meet the hull, as ambient occlusion would: round the
+	 * foot of the sail on the hull, up the foot of the sail itself, and along the roots of the bow
+	 * planes and the tail fins. Each texel of the hull's part of the map is taken back to its point
+	 * on the hull (station from the length along the hull, position round the section from the arc
+	 * length); the sail's band past the hull's tail is darkened by height above the hull. The hull
+	 * and all these parts are mirror images port and starboard, so the map's sign round the hull
+	 * does not matter.
+	 */
+	private static void contactShadows(double[] v, int w, int h, double pxPerM) {
+		double hullLength = alongHull(TAIL_JOIN_Y);
+		int samples = 256;
+		for (int col = 0; col < w; col++) {
+			double along = (col + 0.5) / pxPerM;
+			if (along > hullLength + 1) {
+				// The sail's sides: height along the map, shifted by SAIL_SIDES_SHIFT and wrapped round
+				double z = along - WEATHERING_ALONG + SAIL_SIDES_SHIFT;
+				double shade = 1 - 0.3 * Math.exp(-Math.max(0, z - hullTop(-14)) / 0.55);
+				for (int row = 0; row < h; row++)
+					v[row * w + col] *= shade;
+				continue;
+			}
+			// Station: invert the length along the hull
+			double lo = NOSE_Y, hi = TAIL_JOIN_Y;
+			for (int i = 0; i < 40; i++) {
+				double mid = (lo + hi) / 2;
+				if (alongHull(mid) < along)
+					lo = mid;
+				else
+					hi = mid;
+			}
+			double y = (lo + hi) / 2, hw = hullHalfWidth(y), hh = hullHalfHeight(y);
+			// Arc length round the section from the top, sampled to invert it
+			double[] arc = new double[samples + 1];
+			for (int i = 0; i <= samples; i++)
+				arc[i] = arcRound(y, Math.PI * i / samples);
+			for (int row = 0; row < h; row++) {
+				double around = Math.abs((row + 0.5) / pxPerM - h / 2.0 / pxPerM);
+				if (around > arc[samples])
+					continue;
+				int i = 0;
+				while (i < samples - 1 && arc[i + 1] < around)
+					i++;
+				double t = Math.PI * (i + (around - arc[i]) / Math.max(1e-9, arc[i + 1] - arc[i])) / samples;
+				double x = hw * Math.sin(t), z = AXIS_Z + hh * Math.cos(t);
+				v[row * w + col] *= (z > AXIS_Z ? sailShadow(x, y) : 1) * planeShadow(x, y, z) * finShadow(x, y, z);
+			}
+		}
+	}
+
+	/**
+	 * Shade on the hull round the foot of the sail (with its fillet), at (x, y) on the hull top.
+	 */
+	private static double sailShadow(double x, double y) {
+		double le = SAIL_BASE[0], te = SAIL_BASE[1], c = te - le, flare = filletOut(0);
+		if (y < le - flare - 3 || y > te + 3 || x > SAIL_HALF_WIDTH + flare + 3)
+			return 1;
+		// Distance to the foot's outline, from points along it
+		double d = Double.MAX_VALUE;
+		boolean inside = false;
+		for (int i = 0; i <= 200; i++) {
+			double s = i / 200.0;
+			double out = sailHalf(s, c) + flare * (1 - smoothstep(Math.max(0, Math.min(1, (s - 0.65) / 0.35))));
+			double ys = le + s * c - (i == 0 ? flare : 0);
+			d = Math.min(d, Math.hypot(x - out, y - ys));
+			if (Math.abs(y - (le + s * c)) < c / 400 && x < out)
+				inside = true;
+		}
+		return inside ? 1 - 0.3 : 1 - 0.3 * Math.exp(-d / 0.7);
+	}
+
+	/** Shade on the hull along the roots of the bow planes. */
+	private static double planeShadow(double x, double y, double z) {
+		if (Math.abs(z - PLANE_Z) > 2 || x < 2)
+			return 1;
+		double f = (x - PLANE_ROOT_X) / (PLANE_TIP_X - PLANE_ROOT_X);
+		double le = lerp(PLANE_ROOT[0], PLANE_TIP[0], f), te = lerp(PLANE_ROOT[1], PLANE_TIP[1], f), c = te - le;
+		double s = Math.max(0, Math.min(1, (y - le) / c));
+		double across = Math.max(0, Math.abs(z - PLANE_Z) - nacaHalf(s, PLANE_THICKNESS) * c);
+		double d = Math.hypot(across, Math.max(0, Math.max(le - y, y - te)));
+		return 1 - 0.28 * Math.exp(-d / 0.45);
+	}
+
+	/** Shade on the hull along the roots of the X-tail's fins (at 45 degrees above and below). */
+	private static double finShadow(double x, double y, double z) {
+		if (y < RUDDER_ROOT[0] - 3)
+			return 1;
+		double r = Math.hypot(x, z - AXIS_Z), phi = Math.atan2(z - AXIS_Z, x);
+		double f = (r - RUDDER_ROOT_R) / (RUDDER_TIP_R - RUDDER_ROOT_R);
+		double le = lerp(RUDDER_ROOT[0], RUDDER_TIP[0], f), te = lerp(RUDDER_ROOT[1], RUDDER_TIP[1], f), c = te - le;
+		double s = Math.max(0, Math.min(1, (y - le) / c));
+		double across = Math.max(0, r * (Math.abs(Math.abs(phi) - Math.PI / 4)) - nacaHalf(s, RUDDER_THICKNESS) * c);
+		double d = Math.hypot(across, Math.max(0, Math.max(le - y, y - te)));
+		return 1 - 0.28 * Math.exp(-d / 0.35);
 	}
 
 	// ── Stealth coating (fins, tail flaps, bow planes) ───────────────────────
@@ -880,10 +1005,10 @@ public final class SubmarineModelGenerator {
 	}
 
 	/**
-	 * Moves the hull's untiled parts from {@code body} to {@code plain}: the cap round the sonar
-	 * window and the strip along the keel. Both follow the hull's rings and lines, so their edges
-	 * are clean; the vertices the two groups share take the hull's own normal in both, so the
-	 * shading runs on across the edge.
+	 * Moves the hull's untiled parts from {@code body} to {@code plain}: the cap over the bow sonar
+	 * dome and the strip along the keel. Both follow the hull's rings and lines, so their edges are
+	 * clean; the vertices the two groups share take the hull's own normal in both, so the shading
+	 * runs on across the edge.
 	 */
 	private void splitUntiled(Group body, Group plain) {
 		double capY = NOSE_Y;
@@ -924,12 +1049,99 @@ public final class SubmarineModelGenerator {
 		double rootZ = SAIL_BASE_Z - 0.8; // buried in the hull
 		double[] le = edgeAt(SAIL_BASE, SAIL_TOP, SAIL_BASE_Z, SAIL_TOP_Z, rootZ);
 		leaveTopOpen = true; // the top is closed around the bridge cockpit instead
+		// Levels close together where the fillet curves into the hull, further apart above it
+		double[][] levels = {{0, rootZ}, {2.0 / 24, SAIL_BASE_Z - 0.17},
+				{16.0 / 24, SAIL_BASE_Z + SAIL_FILLET_R + 0.13}, {1, SAIL_TOP_Z}};
+		spanLevels = t -> {
+			int i = 0;
+			while (t > levels[i + 1][0])
+				i++;
+			double z = lerp(levels[i][1], levels[i + 1][1], (t - levels[i][0]) / (levels[i + 1][0] - levels[i][0]));
+			return (z - rootZ) / (SAIL_TOP_Z - rootZ);
+		};
 		fin(g, new double[] {0, le[0], rootZ}, new double[] {0, le[1], rootZ},
 				new double[] {0, SAIL_TOP[0], SAIL_TOP_Z}, new double[] {0, SAIL_TOP[1], SAIL_TOP_Z},
 				new double[] {1, 0, 0}, new double[] {0, 0, 1}, SubmarineModelGenerator::sailHalf, SAIL_EDGE, true,
-				Part.WHOLE, 0, 10, SAIL_CHORD_STEPS);
+				Part.WHOLE, 0, 24, SAIL_CHORD_STEPS);
+		spanLevels = null;
+		int[][] loops = lastLoops;
 		leaveTopOpen = false;
 		buildCockpit(g, lastTopOutline, SAIL_CHORD_STEPS);
+		filletSail(g);
+		recordSailArcs(loops);
+	}
+
+	/**
+	 * Records, for every vertex of the sail's section loops (as finally placed, fillet and all),
+	 * the arc length from the leading edge round each side and the leading edge's station at its
+	 * level, for the tiles' texture coordinates. Each loop starts at the leading edge and runs
+	 * along the port side first.
+	 */
+	private void recordSailArcs(int[][] loops) {
+		for (int[] loop : loops) {
+			int m = loop.length;
+			double[] cum = new double[m];
+			for (int i = 1; i < m; i++)
+				cum[i] = cum[i - 1] + distance(verts.get(loop[i - 1] - 1), verts.get(loop[i] - 1));
+			double perimeter = cum[m - 1] + distance(verts.get(loop[m - 1] - 1), verts.get(loop[0] - 1));
+			double le = verts.get(loop[0] - 1)[1];
+			for (int i = 0; i < m; i++)
+				sailArc.put(loop[i], new double[] {cum[i], i == 0 ? 0 : perimeter - cum[i], le});
+		}
+	}
+
+	private static double distance(double[] a, double[] b) {
+		return Math.sqrt(dot(sub(a, b), sub(a, b)));
+	}
+
+	/**
+	 * Flares the foot of the sail into the hull with a fillet of radius {@link #SAIL_FILLET_R}:
+	 * each point on the sail closer to the hull top than that moves out, level with itself and
+	 * square to the sail's surface, so the sides and leading edge curve smoothly into the hull. The
+	 * fillet fades out over the tapering trailing part, which is too thin for it.
+	 */
+	private void filletSail(Group g) {
+		java.util.Set<Integer> done = new java.util.HashSet<>();
+		for (Corner[] face : g.faces)
+			for (Corner corner : face) {
+				if (!done.add(corner.v))
+					continue;
+				double[] p = verts.get(corner.v - 1);
+				if (p[2] - hullTop(p[1]) >= SAIL_FILLET_R)
+					continue;
+				double[] edges = edgeAt(SAIL_BASE, SAIL_TOP, SAIL_BASE_Z, SAIL_TOP_Z, p[2]);
+				double c = edges[1] - edges[0], s = Math.max(0, Math.min(1, (p[1] - edges[0]) / c));
+				double fade = 1 - smoothstep(Math.max(0, Math.min(1, (s - 0.65) / 0.35)));
+				double nx, ny;
+				if (Math.abs(p[0]) < 1e-9) { // on the leading or trailing edge
+					nx = 0;
+					ny = s < 0.5 ? -1 : 1;
+				} else { // square to the section: the gradient of |x| - half(y)
+					double ds = 0.002, slope = (sailHalf(Math.min(1, s + ds), c) - sailHalf(Math.max(0, s - ds), c))
+							/ ((Math.min(1, s + ds) - Math.max(0, s - ds)) * c);
+					nx = Math.signum(p[0]);
+					ny = -slope;
+				}
+				double len = Math.hypot(nx, ny);
+				nx /= len;
+				ny /= len;
+				// Height above the hull right under where the point ends up (the hull falls away to the sides), so
+				// the fillet meets it flush; a few rounds settle it
+				double out = 0;
+				for (int i = 0; i < 4; i++)
+					out = filletOut(p[2] - hullSurfaceZ(p[0] + out * nx, p[1] + out * ny)) * fade;
+				p[0] += out * nx;
+				p[1] += out * ny;
+			}
+	}
+
+	/**
+	 * How far the fillet moves a point at height {@code h} above the hull: a quarter circle, its
+	 * bottom SAIL_FILLET_DIP below the hull.
+	 */
+	private static double filletOut(double height) {
+		double r = SAIL_FILLET_R, h = height + SAIL_FILLET_DIP;
+		return h <= 0 ? r : h >= r ? 0 : r - Math.sqrt(r * r - (r - h) * (r - h));
 	}
 
 	/**
@@ -1035,7 +1247,8 @@ public final class SubmarineModelGenerator {
 			double[] le, te;
 			double c, scale = 1, inset = 0;
 			if (k <= spanSteps) {
-				double u = (double) k / spanSteps;
+				double u = spanLevels != null ? spanLevels.applyAsDouble((double) k / spanSteps)
+						: (double) k / spanSteps;
 				le = lerp(rootLE, tipLE, u);
 				te = lerp(rootTE, tipTE, u);
 				double[] chord = sub(te, le);
@@ -1067,6 +1280,7 @@ public final class SubmarineModelGenerator {
 				hingeLine[k == 0 ? 0 : 1] = add(le, scale(chordDir, flapNoseCentre(c, section, hinge)));
 		}
 		lastTopOutline = loop[levels];
+		lastLoops = loop;
 		if (flatTop && !leaveTopOpen) {
 			// Close the top: the outline is convex, so a fan from its centre covers it
 			int[] top = loop[levels];
@@ -1492,13 +1706,10 @@ public final class SubmarineModelGenerator {
 	// ── Sensors ──────────────────────────────────────────────────────────────
 
 	/**
-	 * The bow sonar window, a disc over the nose seen head on, and the flank arrays, long panels
-	 * along both sides. Both lie a centimetre proud of the hull, each in a gunmetal frame a little
-	 * larger and lower.
+	 * The flank arrays: long panels along both sides, a centimetre proud of the hull, each in a
+	 * gunmetal frame a little larger and lower. The bow array sits behind the nose cap, unseen.
 	 */
 	private void buildSensors(Group windows, Group frames) {
-		hullSkinPatch(frames, 0, AXIS_Z, SONAR_WINDOW_R + SENSOR_FRAME, 0.006, 40, 5);
-		hullSkinPatch(windows, 0, AXIS_Z, SONAR_WINDOW_R, 0.012, 40, 5);
 		for (double[] panel : FLANK_ARRAYS)
 			for (double theta : new double[] {FLANK_ARRAY_THETA, Math.PI - FLANK_ARRAY_THETA}) {
 				hullStrip(frames, theta, panel[0] - SENSOR_FRAME, panel[1] + SENSOR_FRAME,
