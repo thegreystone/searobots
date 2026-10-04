@@ -190,6 +190,11 @@ public final class SubmarineModelGenerator {
 	private static final int TILES_PER_TEXTURE = 16, TILE_PX = 64;
 	private static final String TILES_MAP = "submarine-tiles.png", TILES_NORMALS = "submarine-tiles-normal.png";
 	private static final String TILES_SHEEN = "submarine-tiles-spec.png";
+	// Stealth coating on the fins: one repeat of its textures covers COATING_REPEAT metres, at COATING_PX pixels
+	private static final double COATING_REPEAT = 4, COATING_UNROLL_R = 2.0; // surfaces round the axis unroll at this radius
+	private static final int COATING_PX = 1024;
+	private static final String COATING_MAP = "submarine-coating.png", COATING_NORMALS = "submarine-coating-normal.png",
+			COATING_SHEEN = "submarine-coating-spec.png";
 	// Weathering light map, spread over the hull by the viewer (SubmarineModelSupport, which has the same extents):
 	// metres of hull along the texture's width and round the hull along its height
 	private static final String WEATHERING = "submarine-weathering.png";
@@ -204,12 +209,16 @@ public final class SubmarineModelGenerator {
 				TILES_MAP, TILES_NORMALS, TILES_SHEEN));
 		MATERIALS.put("Hull_Plain", new Mat(0.083, 0.075, 0.4, 30,
 				"Untiled hull (sonar dome round the window, keel strip): the tiles' average grey, without the grid"));
-		MATERIALS.put("Metal_Black_Plain", new Mat(0.07, 0.07, 0.4, 30,
-				"Duct, stators and fittings: near-black satin, with enough specular to show the shape"));
+		MATERIALS.put("Metal_Black_Plain",
+				new Mat(0.07, 0.07, 0.4, 30, "Fittings: near-black satin, with enough specular to show the shape"));
 		MATERIALS.put("Metal_Chrome", new Mat(0.6, 0.4, 0.9, 60, "Light polished metal for accents"));
-		MATERIALS.put("Metal_Gunmetal",
-				new Mat(0.24, 0.18, 0.5, 40, "Hatches: mid-grey satin metal, between hull and accents"));
-		MATERIALS.put("rubber", new Mat(0.13, 0.1, 0.15, 10, "Rudders, bow planes and rotor: dark matte grey"));
+		MATERIALS.put("Metal_Gunmetal", new Mat(0.09, 0.06, 0.9, 80,
+				"Hatches and frames: dark polished gunmetal, mostly highlight and little diffuse grey"));
+		MATERIALS.put("rubber", new Mat(0.13, 0.1, 0.15, 10, "Rotor: dark matte grey"));
+		MATERIALS.put("Stealth_Coating", new Mat(0.05, 0.045, 0.3, 8,
+				"Fins, tail flaps, bow planes, duct and stators: near-black absorbent coating laid in panels, with a broad, soft "
+						+ "satin sheen",
+				COATING_MAP, COATING_NORMALS, COATING_SHEEN));
 		MATERIALS.put("Sensor_Window", new Mat(0.03, 0.03, 0.7, 90,
 				"Sonar window and flank arrays: glossy black, so they read as a different surface"));
 		MATERIALS.put("glow_team", new Mat(0.6, 0.6, 0.0, 1,
@@ -249,10 +258,12 @@ public final class SubmarineModelGenerator {
 	 * Texture coordinates, in repeats of the tile texture: none; the hull unrolled (arc length
 	 * round its section, and along its length), so that every tile is the same size; the sail
 	 * unrolled likewise (arc length round its section from the leading edge, and height), with its
-	 * flat top seen from above; or projected along whichever axis a face most nearly faces.
+	 * flat top seen from above; projected along whichever axis a face most nearly faces; or, for
+	 * the fins, which all stand out from the hull's axis, position along the hull and distance from
+	 * the axis.
 	 */
 	private enum UvMap {
-		NONE, HULL, SAIL, BOX
+		NONE, HULL, SAIL, BOX, RADIAL
 	}
 
 	public static void main(String[] args) throws IOException {
@@ -264,7 +275,7 @@ public final class SubmarineModelGenerator {
 		Files.createDirectories(out);
 		var gen = new SubmarineModelGenerator();
 		gen.buildHull(gen.group("Body", "Hull_Tiles"));
-		Group mount = gen.group("PropellerMount", "Metal_Black_Plain");
+		Group mount = gen.group("PropellerMount", "Stealth_Coating");
 		gen.buildDuct(mount);
 		gen.buildStators(mount);
 		gen.buildAccents(gen.group("Accents", "Metal_Chrome"));
@@ -276,22 +287,29 @@ public final class SubmarineModelGenerator {
 		gen.splitUntiled(gen.group("Body", "Hull_Tiles"), gen.group("HullPlain", "Hull_Plain"));
 		gen.buildSensors(gen.group("Sensors", "Sensor_Window"), gen.group("SensorFrames", "Metal_Gunmetal"));
 		gen.buildTeamLights(gen.group("TeamLights", "glow_team"), gen.group("SensorFrames", "Metal_Gunmetal"));
-		Group fins = gen.group("Fins", "rubber");
-		gen.buildPlane(gen.group("elevatorr", "rubber"), -1);
-		gen.buildPlane(gen.group("elevatorl", "rubber"), 1);
+		Group fins = gen.group("Fins", "Stealth_Coating");
+		gen.buildPlane(gen.group("elevatorr", "Stealth_Coating"), -1);
+		gen.buildPlane(gen.group("elevatorl", "Stealth_Coating"), 1);
 		Group rotor = gen.group("Propeller", "rubber"); // dark matte, like the fins, for a stealthier look
 		gen.buildRotor(rotor);
 		gen.buildHub(rotor);
 		Map<String, double[][]> hinges = new LinkedHashMap<>();
 		for (var fin : X_TAIL.entrySet())
-			hinges.put(fin.getKey(), gen.buildTailFin(fins, gen.group(fin.getKey(), "rubber"), fin.getValue()));
+			hinges.put(fin.getKey(),
+					gen.buildTailFin(fins, gen.group(fin.getKey(), "Stealth_Coating"), fin.getValue()));
 		gen.groups.get("Body").uv = UvMap.HULL;
 		gen.groups.get("Tower").uv = UvMap.SAIL;
+		for (Group g : gen.groups.values())
+			if (g.material.equals("Stealth_Coating"))
+				g.uv = UvMap.RADIAL;
 		for (Group g : gen.groups.values())
 			gen.creaseNormals(g);
 		ImageIO.write(tileTexture(), "png", out.resolve(TILES_MAP).toFile());
 		ImageIO.write(tileNormals(), "png", out.resolve(TILES_NORMALS).toFile());
 		ImageIO.write(tileSheen(), "png", out.resolve(TILES_SHEEN).toFile());
+		ImageIO.write(coatingTexture(), "png", out.resolve(COATING_MAP).toFile());
+		ImageIO.write(coatingNormals(), "png", out.resolve(COATING_NORMALS).toFile());
+		ImageIO.write(coatingSheen(), "png", out.resolve(COATING_SHEEN).toFile());
 		ImageIO.write(weatheringTexture(), "png", out.resolve(WEATHERING).toFile());
 		gen.write(out.resolve("submarine-hybrid.obj"), out.resolve("submarine-hybrid.mtl"));
 		hinges.forEach(SubmarineModelGenerator::printHinge);
@@ -384,7 +402,7 @@ public final class SubmarineModelGenerator {
 
 	// ── Texture coordinates and the tile textures ────────────────────────────
 
-	/** Texture coordinates of a face's corners, in repeats of the tile texture. */
+	/** Texture coordinates of a face's corners, in repeats of the group's texture. */
 	private double[][] faceUvs(UvMap map, Corner[] face) {
 		double[][] uv = new double[face.length][];
 		double[][] p = new double[face.length][];
@@ -397,6 +415,26 @@ public final class SubmarineModelGenerator {
 		} else if (map == UvMap.SAIL) {
 			for (int k = 0; k < face.length; k++)
 				uv[k] = new double[] {p[k][0], p[k][1]};
+		} else if (map == UvMap.RADIAL) {
+			double[] c = scale(add(add(p[0], p[1]), p[2]), 1.0 / 3);
+			double[] out = unit(new double[] {c[0], 0, c[2] - AXIS_Z});
+			if (Math.abs(dot(normal, out)) > 0.7 * Math.sqrt(dot(normal, normal))) {
+				// Facing away from the axis (the duct, the fins' tips): unrolled round the axis instead
+				double lo = Double.MAX_VALUE, hi = -Double.MAX_VALUE;
+				for (int k = 0; k < face.length; k++) {
+					double angle = Math.atan2(p[k][2] - AXIS_Z, p[k][0]);
+					uv[k] = new double[] {p[k][1], angle};
+					lo = Math.min(lo, angle);
+					hi = Math.max(hi, angle);
+				}
+				for (int k = 0; k < face.length; k++) {
+					if (hi - lo > Math.PI && uv[k][1] < 0)
+						uv[k][1] += 2 * Math.PI;
+					uv[k][1] *= COATING_UNROLL_R;
+				}
+			} else
+				for (int k = 0; k < face.length; k++)
+					uv[k] = new double[] {p[k][1], Math.hypot(p[k][0], p[k][2] - AXIS_Z)};
 		} else if (map == UvMap.BOX) {
 			double[] n = cross(sub(p[1], p[0]), sub(p[2], p[0]));
 			double ax = Math.abs(n[0]), ay = Math.abs(n[1]), az = Math.abs(n[2]);
@@ -416,7 +454,7 @@ public final class SubmarineModelGenerator {
 					if (uv[k][0] < 0)
 						uv[k][0] += arcRound(p[k][1], 2 * Math.PI);
 		}
-		double repeat = TILE * TILES_PER_TEXTURE;
+		double repeat = map == UvMap.RADIAL ? COATING_REPEAT : TILE * TILES_PER_TEXTURE;
 		for (double[] t : uv) {
 			t[0] /= repeat;
 			t[1] /= repeat;
@@ -625,6 +663,92 @@ public final class SubmarineModelGenerator {
 		return img;
 	}
 
+	// ── Stealth coating (fins, tail flaps, bow planes) ───────────────────────
+
+	/**
+	 * Height of the coating's surface at each texel: panels laid in staggered rows, with shallow
+	 * grooves at the seams, and a fine orange-peel texture from spraying.
+	 */
+	private static double[] coatingHeights() {
+		int size = COATING_PX, panelU = size / 2, panelV = size / 4; // 2 m by 1 m panels in a 4 m repeat
+		float[] peel = valueNoise(size, size, 3, 31);
+		double[] height = new double[size * size];
+		for (int y = 0; y < size; y++) {
+			int row = y / panelV, ly = y % panelV;
+			for (int x = 0; x < size; x++) {
+				int lx = (x + (row % 2) * panelU / 2) % panelU;
+				double d = Math.min(Math.min(lx, panelU - 1 - lx), Math.min(ly, panelV - 1 - ly));
+				double groove = d < 1 ? 0 : smoothstep(Math.min(1, (d - 1) / 2));
+				height[y * size + x] = 0.8 * groove + 0.35 * peel[y * size + x];
+			}
+		}
+		return height;
+	}
+
+	/**
+	 * The coating's colour: slight mottling and grain, the seams a little darker. The material's
+	 * colour multiplies it.
+	 */
+	static BufferedImage coatingTexture() {
+		int size = COATING_PX;
+		float[] mottle = valueNoise(size, size, 96, 32), grain = valueNoise(size, size, 4, 33);
+		double[] height = coatingHeights();
+		var img = new BufferedImage(size, size, BufferedImage.TYPE_INT_RGB);
+		for (int y = 0; y < size; y++)
+			for (int x = 0; x < size; x++) {
+				int i = y * size + x;
+				double seam = height[i] < 0.4 ? 0.93 : 1;
+				double v = seam * (0.92 + 0.08 * (mottle[i] - 0.5) + 0.04 * (grain[i] - 0.5));
+				int c = (int) Math.round(255 * Math.max(0, Math.min(1, v)));
+				img.setRGB(x, y, (c << 16) | (c << 8) | c);
+			}
+		return img;
+	}
+
+	/** The coating's normal map (tangent space, green along +v), from its heights. */
+	static BufferedImage coatingNormals() {
+		return normalMap(coatingHeights(), COATING_PX, 0.5);
+	}
+
+	/**
+	 * The coating's specular map: a soft sheen that varies a little across the panels, duller in
+	 * the seams.
+	 */
+	static BufferedImage coatingSheen() {
+		int size = COATING_PX;
+		float[] patches = valueNoise(size, size, 64, 34);
+		double[] height = coatingHeights();
+		var img = new BufferedImage(size, size, BufferedImage.TYPE_INT_RGB);
+		for (int y = 0; y < size; y++)
+			for (int x = 0; x < size; x++) {
+				int i = y * size + x;
+				double v = height[i] < 0.4 ? 0.6 : 0.75 + 0.25 * patches[i];
+				int c = (int) Math.round(255 * Math.max(0, Math.min(1, v)));
+				img.setRGB(x, y, (c << 16) | (c << 8) | c);
+			}
+		return img;
+	}
+
+	/**
+	 * A tangent-space normal map (green along +v) from a square, wrapping height field, the slopes
+	 * scaled by {@code strength}.
+	 */
+	private static BufferedImage normalMap(double[] height, int size, double strength) {
+		var img = new BufferedImage(size, size, BufferedImage.TYPE_INT_RGB);
+		for (int y = 0; y < size; y++)
+			for (int x = 0; x < size; x++) {
+				double dx = height[y * size + (x + 1) % size] - height[y * size + (x + size - 1) % size];
+				double dy = height[((y + 1) % size) * size + x] - height[((y + size - 1) % size) * size + x];
+				// Image rows run down while v runs up (jME flips images on load)
+				double[] n = unit(new double[] {-dx * strength / 2, dy * strength / 2, 1});
+				int red = (int) Math.round(255 * (n[0] * 0.5 + 0.5));
+				int green = (int) Math.round(255 * (n[1] * 0.5 + 0.5));
+				int blue = (int) Math.round(255 * (n[2] * 0.5 + 0.5));
+				img.setRGB(x, y, (red << 16) | (green << 8) | blue);
+			}
+		return img;
+	}
+
 	/** Smooth value noise in [0, 1] on a coarse lattice, bilinearly interpolated. */
 	private static float[] valueNoise(int w, int h, int cell, long seed) {
 		Random r = new Random(seed);
@@ -654,22 +778,7 @@ public final class SubmarineModelGenerator {
 	 * tilt of its face, so highlights break up into the tile grid under grazing light.
 	 */
 	static BufferedImage tileNormals() {
-		int size = TILES_PER_TEXTURE * TILE_PX;
-		double[] height = tileHeights();
-		var img = new BufferedImage(size, size, BufferedImage.TYPE_INT_RGB);
-		double strength = 0.35;
-		for (int y = 0; y < size; y++)
-			for (int x = 0; x < size; x++) {
-				double dx = height[y * size + (x + 1) % size] - height[y * size + (x + size - 1) % size];
-				double dy = height[((y + 1) % size) * size + x] - height[((y + size - 1) % size) * size + x];
-				// Image rows run down while v runs up (jME flips images on load)
-				double[] n = unit(new double[] {-dx * strength / 2, dy * strength / 2, 1});
-				int red = (int) Math.round(255 * (n[0] * 0.5 + 0.5));
-				int green = (int) Math.round(255 * (n[1] * 0.5 + 0.5));
-				int blue = (int) Math.round(255 * (n[2] * 0.5 + 0.5));
-				img.setRGB(x, y, (red << 16) | (green << 8) | blue);
-			}
-		return img;
+		return normalMap(tileHeights(), TILES_PER_TEXTURE * TILE_PX, 0.35);
 	}
 
 	// ── Hull ─────────────────────────────────────────────────────────────────

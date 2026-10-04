@@ -21,7 +21,7 @@ d  1.0
 Ns  30.0
 illum 2
 #
-# Duct, stators and fittings: near-black satin, with enough specular to show the shape
+# Fittings: near-black satin, with enough specular to show the shape
 newmtl Metal_Black_Plain
 Ka  0.07 0.07 0.07
 Kd  0.07 0.07 0.07
@@ -39,16 +39,16 @@ d  1.0
 Ns  60.0
 illum 2
 #
-# Hatches: mid-grey satin metal, between hull and accents
+# Hatches and frames: dark polished gunmetal, mostly highlight and little diffuse grey
 newmtl Metal_Gunmetal
-Ka  0.18 0.18 0.18
-Kd  0.24 0.24 0.24
-Ks  0.50 0.50 0.50
+Ka  0.06 0.06 0.06
+Kd  0.09 0.09 0.09
+Ks  0.90 0.90 0.90
 d  1.0
-Ns  40.0
+Ns  80.0
 illum 2
 #
-# Rudders, bow planes and rotor: dark matte grey
+# Rotor: dark matte grey
 newmtl rubber
 Ka  0.10 0.10 0.10
 Kd  0.13 0.13 0.13
@@ -56,6 +56,18 @@ Ks  0.15 0.15 0.15
 d  1.0
 Ns  10.0
 illum 2
+#
+# Fins, tail flaps, bow planes, duct and stators: near-black absorbent coating laid in panels, with a broad, soft satin sheen
+newmtl Stealth_Coating
+Ka  0.05 0.05 0.05
+Kd  0.05 0.05 0.05
+Ks  0.30 0.30 0.30
+d  1.0
+Ns  8.0
+illum 2
+map_Kd submarine-coating.png
+map_Bump submarine-coating-normal.png
+map_Ks submarine-coating-spec.png
 #
 # Sonar window and flank arrays: glossy black, so they read as a different surface
 newmtl Sensor_Window
