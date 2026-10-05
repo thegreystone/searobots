@@ -117,6 +117,10 @@ public final class SubmarineModelGenerator {
 	// a door towards it slides it under the skin (the hull's section is wider than tall). The engine's table must match.
 	private static final double[][] TUBES = {{-1.7, -0.6}, {1.7, -0.6}, {-1.25, -1.45}, {1.25, -1.45}};
 	private static final double TUBE_R = 0.3, DOOR_DEPTH = 0.03, DOOR_OVERLAP = 0.08; // shutter: under the skin, overlapping the hole
+	// A collar round each opening runs this deep into the hull along its normal, past the closed shutter, before the
+	// bore takes over; the hull round the openings is split until none of its edges sags more than FILL_SAG below the
+	// bow's curve (the shutters sit DOOR_DEPTH below it)
+	private static final double COLLAR_DEPTH = 0.05, FILL_SAG = 0.004, REFINE_RADIUS = 0.6;
 	private static final double CUT_MARGIN = 0.05; // hull triangles this close to a tube's circle are cut away
 
 	// Sensors: the flank arrays, large flat panels on both sides (from y, to y), FLANK_ARRAY_HALF_HEIGHT metres either side of
@@ -2115,10 +2119,11 @@ public final class SubmarineModelGenerator {
 	private void buildTorpedoTubes(Group body, Group bores) {
 		cutOpenings(body);
 		int[][] muzzles = stitchOpenings(body);
+		refineNearTubes(body, muzzles);
 		for (int t = 0; t < TUBES.length; t++) {
 			double x0 = -TUBES[t][0], z0 = TUBES[t][1];
 			int[] muzzle = muzzles[t];
-			buildBore(bores, muzzle, x0, z0);
+			buildBore(bores, buildCollar(group("TubeCollars", "Metal_Black_Plain"), muzzle, x0, z0), x0, z0);
 			Group door = group("TubeDoor" + (t + 1), "Metal_Black_Plain");
 			int firstFace = door.faces.size();
 			hullSkinPatch(door, x0, z0, TUBE_R + DOOR_OVERLAP, -DOOR_DEPTH);
@@ -2265,6 +2270,30 @@ public final class SubmarineModelGenerator {
 	 * The tube's bore: a dark cylinder from the opening's ring back into the hull, facing inwards,
 	 * closed at the far end.
 	 */
+	/**
+	 * A collar round a tube's opening: a short wall from the opening's ring on the hull straight
+	 * down along the hull's normal, {@link #COLLAR_DEPTH} deep, past the closed shutter. With the
+	 * shutter closed the opening reads as an even recess; open, the bore carries on from the
+	 * collar's lower edge, which is returned.
+	 */
+	private int[] buildCollar(Group g, int[] ring, double x0, double z0) {
+		int n = ring.length;
+		int[] lower = new int[n];
+		for (int i = 0; i < n; i++) {
+			double[] p = verts.get(ring[i] - 1);
+			lower[i] = vertex(add(p, scale(hullNormal(p), -COLLAR_DEPTH)));
+		}
+		for (int i = 0; i < n; i++) {
+			int j = (i + 1) % n;
+			double[] a = verts.get(ring[i] - 1), b = verts.get(ring[j] - 1);
+			double mx = (a[0] + b[0]) / 2, mz = (a[2] + b[2]) / 2, my = (a[1] + b[1]) / 2;
+			// Seen from inside the opening: "inside" for the winding test is outside the ring
+			double[] beyond = {x0 + (mx - x0) * 2, my, z0 + (mz - z0) * 2};
+			quad(g, ring[i], ring[j], lower[j], lower[i], beyond);
+		}
+		return lower;
+	}
+
 	private void buildBore(Group g, int[] ring, double x0, double z0) {
 		double back = bowExitY(x0, z0) + 3.0;
 		int n = ring.length;
@@ -2460,6 +2489,108 @@ public final class SubmarineModelGenerator {
 
 	private static long edgeKey(int a, int b) {
 		return ((long) a << 32) | (b & 0xffffffffL);
+	}
+
+	private static long undirected(int a, int b) {
+		return edgeKey(Math.min(a, b), Math.max(a, b));
+	}
+
+	/**
+	 * Refines the hull round the tube openings so that it follows the bow's curve closely enough
+	 * for the shutters, {@link #DOOR_DEPTH} under the true surface, never to show through: the
+	 * hull's own rings are far apart here, and the triangles filling the cuts are long and flat.
+	 * Every edge with both ends within {@link #REFINE_RADIUS} of a tube's axis is split while it
+	 * sags more than {@link #FILL_SAG} below the hull, except the rings round the openings (shared
+	 * with the collars). Each split splits every triangle on the edge, so no cracks open.
+	 */
+	private void refineNearTubes(Group body, int[][] rings) {
+		java.util.Set<Long> fixed = new java.util.HashSet<>();
+		for (int[] ring : rings)
+			for (int i = 0; i < ring.length; i++)
+				fixed.add(undirected(ring[i], ring[(i + 1) % ring.length]));
+		List<int[]> tris = new ArrayList<>();
+		for (var it = body.faces.iterator(); it.hasNext();) {
+			Corner[] f = it.next();
+			if (f.length == 3) {
+				tris.add(new int[] {f[0].v, f[1].v, f[2].v});
+				it.remove();
+			}
+		}
+		for (int[] t : refineOnHull(tris, fixed, body)) {
+			// Where two cuts ran into each other the filling can come out wound inwards; face every triangle out
+			double[] p = verts.get(t[0] - 1), q = verts.get(t[1] - 1), r = verts.get(t[2] - 1);
+			double[] centre = scale(add(add(p, q), r), 1.0 / 3);
+			if (centre[1] > NOSE_Y && dot(cross(sub(q, p), sub(r, p)), hullNormal(onHullSurface(centre))) < 0)
+				t = new int[] {t[0], t[2], t[1]};
+			body.faces.add(new Corner[] {new Corner(t[0], 0), new Corner(t[1], 0), new Corner(t[2], 0)});
+		}
+	}
+
+	/** True if {@code p} is within {@link #REFINE_RADIUS} of a tube's axis, at the bow. */
+	private static boolean nearTube(double[] p) {
+		if (p[1] > MID_Y0)
+			return false;
+		for (double[] tube : TUBES)
+			if (Math.hypot(p[0] + tube[0], p[2] - tube[1]) < REFINE_RADIUS)
+				return true;
+		return false;
+	}
+
+	/**
+	 * Splits the edges of {@code tris} near the tubes ({@link #nearTube} at both ends) that sag
+	 * furthest below the hull, again and again, with each midpoint moved onto the hull, until none
+	 * but the {@code fixed} ones sags more than {@link #FILL_SAG}. Each split keeps the winding of
+	 * the triangles it splits. New vertices take the hull's own normal in {@code body}.
+	 */
+	private List<int[]> refineOnHull(List<int[]> tris, java.util.Set<Long> fixed, Group body) {
+		List<int[]> out = new ArrayList<>(tris);
+		for (int iteration = 0;; iteration++) {
+			if (iteration > 20000)
+				throw new IllegalStateException("the hull round the tube openings does not settle onto the hull");
+			int a = -1, b = -1;
+			double worst = FILL_SAG;
+			double[] onHull = null;
+			for (int[] t : out)
+				for (int k = 0; k < 3; k++) {
+					int p = t[k], q = t[(k + 1) % 3];
+					if (fixed.contains(undirected(p, q)) || !nearTube(verts.get(p - 1)) || !nearTube(verts.get(q - 1)))
+						continue;
+					double[] mid = scale(add(verts.get(p - 1), verts.get(q - 1)), 0.5), surface = onHullSurface(mid);
+					double sag = distance(mid, surface);
+					if (sag > worst) {
+						worst = sag;
+						a = p;
+						b = q;
+						onHull = surface;
+					}
+				}
+			if (a < 0)
+				return out;
+			int m = vertex(onHull);
+			body.onHull.add(m);
+			List<int[]> next = new ArrayList<>();
+			for (int[] t : out) {
+				int k = -1;
+				for (int i = 0; i < 3; i++)
+					if (undirected(t[i], t[(i + 1) % 3]) == undirected(a, b))
+						k = i;
+				if (k < 0) {
+					next.add(t);
+					continue;
+				}
+				int p = t[k], q = t[(k + 1) % 3], r = t[(k + 2) % 3];
+				next.add(new int[] {p, m, r});
+				next.add(new int[] {m, q, r});
+			}
+			out = next;
+		}
+	}
+
+	/** The point on the hull at the same station and angle round its section as {@code p}. */
+	private static double[] onHullSurface(double[] p) {
+		double y = p[1], w = hullHalfWidth(y), h = hullHalfHeight(y);
+		double a = Math.atan2((p[2] - AXIS_Z) / h, p[0] / w);
+		return new double[] {w * Math.cos(a), y, AXIS_Z + h * Math.sin(a)};
 	}
 
 	/**
