@@ -130,13 +130,10 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 	private final Map<Integer, Geometry> torpedoCollisionGeoms = new HashMap<>();
 	private volatile List<TorpedoSnapshot> latestTorpedoSnapshots = List.of();
 
-	// 3D explosion effects
-	private record Explosion3D(int id, Vector3f position, float startTime, ColorRGBA color) {
-	}
-
-	private final java.util.List<Explosion3D> activeExplosions = new java.util.ArrayList<>();
-	private final Map<Integer, Geometry> explosionGeoms = new HashMap<>(); // fireball sphere
-	private final Map<Integer, ParticleEmitter> debrisEmitters = new HashMap<>(); // debris particles
+	// 3D explosion effects (torpedo detonations)
+	private ExplosionEffects explosions;
+	// A detonation this close (metres) to a submarine counts as a hit on it, as in CinematicDirector
+	private static final double EXPLOSION_HIT_RANGE = 80;
 	private final Map<Integer, ParticleEmitter> deathBubbles = new HashMap<>(); // sub death bubbles
 	private final Map<Integer, ParticleEmitter> torpedoBubbles = new HashMap<>(); // torpedo wake
 	private final Map<Integer, Float> deathPropSpin = new HashMap<>(); // decaying prop spin rate
@@ -148,9 +145,6 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 	// torpedo model's body (nose at -11.6, cylindrical from -10 to 4): mid-body
 	private static final float[] TORPEDO_RING = {-3.6f, -2.4f};
 	private final java.util.Set<Integer> teamLightsOut = new java.util.HashSet<>();
-	private float appTime = 0; // running time for animations
-	private static final float EXPLOSION_DURATION = 3.5f; // seconds
-	private static final float EXPLOSION_MAX_RADIUS = 80f;
 
 	// Torpedo collision cylinder dimensions (visual, shrunk from physical hull)
 	// Torpedo visual cylinder matches physics: VehicleConfig.torpedo() hullHalfLength/hullHalfBeam
@@ -656,6 +650,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 			interceptMarker.setCullHint(Spatial.CullHint.Always);
 			rootNode.attachChild(interceptMarker);
 		}
+		explosions = new ExplosionEffects(assetManager, rootNode, guiNode, cam);
 
 		cam.setLocation(new Vector3f(0, 15, 60));
 		cam.lookAt(Vector3f.ZERO, Vector3f.UNIT_Y);
@@ -2601,128 +2596,18 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 				float jy = (float) tPos.z();
 				float jz = (float) -tPos.y();
 				var ec = ts.color();
-				activeExplosions.add(new Explosion3D(ts.id(), new Vector3f(jx, jy, jz), appTime,
-						new ColorRGBA(ec.getRed() / 255f, ec.getGreen() / 255f, ec.getBlue() / 255f, 1f)));
+				boolean subHit = false;
+				for (var s : snapshots)
+					subHit |= s.pose().position().distanceTo(tPos) < EXPLOSION_HIT_RANGE;
+				explosions.spawn(new Vector3f(jx, jy, jz),
+						new ColorRGBA(ec.getRed() / 255f, ec.getGreen() / 255f, ec.getBlue() / 255f, 1f), subHit);
 			}
 		}
 		knownTorpedoIds3D.retainAll(activeTorpIds.stream().map(i -> -i).collect(java.util.stream.Collectors.toSet()));
 
-		// Render 3D explosions: fireball + shockwave ring + debris particles
-		appTime += tpf;
-		var explosionIter = activeExplosions.iterator();
-		while (explosionIter.hasNext()) {
-			var exp = explosionIter.next();
-			float elapsed = appTime - exp.startTime();
-			float t = elapsed / EXPLOSION_DURATION;
-
-			if (t > 1.0f) {
-				// Expired: clean up all effect geometries
-				var geom = explosionGeoms.remove(exp.id());
-				if (geom != null)
-					geom.removeFromParent();
-				var debris = debrisEmitters.remove(exp.id());
-				if (debris != null)
-					debris.removeFromParent();
-				explosionIter.remove();
-				continue;
-			}
-
-			// === Fireball (expanding hot sphere) ===
-			Geometry geom = explosionGeoms.get(exp.id());
-			if (geom == null) {
-				var sphere = new com.jme3.scene.shape.Sphere(16, 16, 1f);
-				geom = new Geometry("explosion-" + exp.id(), sphere);
-				Material mat = new Material(assetManager, "Common/MatDefs/Misc/Unshaded.j3md");
-				mat.getAdditionalRenderState().setBlendMode(RenderState.BlendMode.Additive);
-				mat.getAdditionalRenderState().setDepthWrite(false);
-				geom.setMaterial(mat);
-				geom.setQueueBucket(RenderQueue.Bucket.Transparent);
-				rootNode.attachChild(geom);
-				explosionGeoms.put(exp.id(), geom);
-			}
-
-			float fireRadius;
-			float fade = (1.0f - t) * (1.0f - t);
-			float r, g, b, a;
-			if (elapsed < 0.15f) {
-				// Intense white flash (very bright, visible through water)
-				float flashT = elapsed / 0.15f;
-				r = 2f;
-				g = 2f;
-				b = 1.5f; // >1 for extra glow with additive blending
-				a = (1 - flashT * 0.3f);
-				fireRadius = EXPLOSION_MAX_RADIUS * 0.5f * (0.5f + flashT);
-			} else if (elapsed < 0.8f) {
-				// Hot orange-yellow fireball expanding
-				float phase = (elapsed - 0.15f) / 0.65f;
-				r = 2f - phase * 0.5f;
-				g = 1.2f - phase * 0.6f;
-				b = 0.4f - phase * 0.3f;
-				a = (1 - phase * 0.4f) * 0.9f;
-				fireRadius = EXPLOSION_MAX_RADIUS * (0.5f + phase * 0.3f);
-			} else {
-				// Cooling dark cloud, expanding, fading
-				r = 1.0f * fade + exp.color().r * (1 - fade);
-				g = 0.4f * fade + exp.color().g * (1 - fade);
-				b = 0.1f * fade;
-				a = fade * 0.7f;
-				fireRadius = EXPLOSION_MAX_RADIUS * (float) Math.sqrt(t);
-			}
-
-			geom.getMaterial().setColor("Color", new ColorRGBA(r, g, b, a));
-			geom.setLocalTranslation(exp.position());
-			geom.setLocalScale(fireRadius);
-
-			// === Fire/smoke particles (flame texture, animated) ===
-			ParticleEmitter fireEmitter = debrisEmitters.get(exp.id());
-			if (fireEmitter == null) {
-				fireEmitter = new ParticleEmitter("fire-" + exp.id(), ParticleMesh.Type.Triangle, 50);
-				Material fireMat = new Material(assetManager, "Common/MatDefs/Misc/Particle.j3md");
-				fireMat.setTexture("Texture", assetManager.loadTexture("Effects/Explosion/flame.png"));
-				fireMat.getAdditionalRenderState().setBlendMode(RenderState.BlendMode.Additive);
-				fireEmitter.setMaterial(fireMat);
-				fireEmitter.setImagesX(2);
-				fireEmitter.setImagesY(2);
-				fireEmitter.setStartColor(new ColorRGBA(1f, 0.9f, 0.3f, 1f));
-				fireEmitter.setEndColor(new ColorRGBA(1f, 0.2f, 0f, 0f));
-				fireEmitter.setStartSize(5f);
-				fireEmitter.setEndSize(20f);
-				fireEmitter.setGravity(0, 2f, 0); // slight upward drift (hot gas rises)
-				fireEmitter.setLowLife(0.5f);
-				fireEmitter.setHighLife(1.5f);
-				fireEmitter.getParticleInfluencer().setInitialVelocity(new Vector3f(0, 12f, 0));
-				fireEmitter.getParticleInfluencer().setVelocityVariation(1f);
-				fireEmitter.setLocalTranslation(exp.position());
-				fireEmitter.setParticlesPerSec(0); // burst mode
-				fireEmitter.emitAllParticles();
-				rootNode.attachChild(fireEmitter);
-				debrisEmitters.put(exp.id(), fireEmitter);
-
-				// Also spawn debris chunks
-				var debrisEmitter = new ParticleEmitter("debris-" + exp.id(), ParticleMesh.Type.Triangle, 15);
-				Material debrisMat = new Material(assetManager, "Common/MatDefs/Misc/Particle.j3md");
-				debrisMat.setTexture("Texture", assetManager.loadTexture("Effects/Explosion/Debris.png"));
-				debrisEmitter.setMaterial(debrisMat);
-				debrisEmitter.setImagesX(3);
-				debrisEmitter.setImagesY(3);
-				debrisEmitter.setSelectRandomImage(true);
-				debrisEmitter.setRotateSpeed(4);
-				debrisEmitter.setStartColor(ColorRGBA.White);
-				debrisEmitter.setEndColor(new ColorRGBA(0.5f, 0.5f, 0.5f, 0f));
-				debrisEmitter.setStartSize(2f);
-				debrisEmitter.setEndSize(4f);
-				debrisEmitter.setGravity(0, -3f, 0); // debris sinks in water
-				debrisEmitter.setLowLife(1f);
-				debrisEmitter.setHighLife(3f);
-				debrisEmitter.getParticleInfluencer().setInitialVelocity(new Vector3f(0, 15f, 0));
-				debrisEmitter.getParticleInfluencer().setVelocityVariation(0.8f);
-				debrisEmitter.setLocalTranslation(exp.position());
-				debrisEmitter.setParticlesPerSec(0);
-				debrisEmitter.emitAllParticles();
-				rootNode.attachChild(debrisEmitter);
-				// Note: debris emitter is not tracked separately; it self-cleans when particles die
-			}
-		}
+		// Animate the explosions; they hold still while the simulation is paused
+		var simForExplosions = getActiveSim();
+		explosions.update(tpf, simForExplosions != null && simForExplosions.isPaused());
 
 		// Update orbit center tracking (used by Orbit mode and as fallback)
 		// Check both sub nodes and torpedo nodes
@@ -3003,6 +2888,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 			camPos = desiredPos;
 			lookAt = desiredLookAt;
 		}
+		explosions.applyShake(camPos, lookAt);
 		cam.setLocation(camPos);
 		// If camera is mostly above the lookAt point, use north as up to avoid gimbal flicker
 		Vector3f toLook = lookAt.subtract(camPos);
