@@ -60,6 +60,7 @@ public final class SimulationLoop implements SimClock {
 	private final List<TorpedoEntity> torpedoes = new ArrayList<>();
 	private final List<TorpedoEntity> pendingLaunches = new ArrayList<>();
 	private int nextTorpedoId = 1000; // torpedo IDs start at 1000 to avoid conflict with sub IDs
+	private final java.util.Map<Integer, Integer> nextTube = new java.util.HashMap<>(); // per submarine: tubes fired
 	private final TorpedoPhysics torpedoPhysics = new TorpedoPhysics();
 
 	public void run(
@@ -224,48 +225,20 @@ public final class SimulationLoop implements SimClock {
 					var cmd = entity.pendingTorpedoLaunch();
 					if (cmd != null) {
 						entity.clearPendingTorpedoLaunch();
-						// Launch in the submarine's current heading direction,
-						// at the sub's speed + ejection boost.
-						// Torpedo exits along the sub's heading (tubes are fixed forward)
-						// Alternate port/starboard tubes (offset ~2m from centerline)
-						double launchHdg = entity.heading();
-						double launchPitch = entity.pitch();
-						double ejectionSpeed = 3.0; // m/s additional from tube ejection
-						// Use the same local frame as the collision system
-						double sinH = Math.sin(launchHdg);
-						double cosH = Math.cos(launchHdg);
-						double sinP = Math.sin(launchPitch);
-						double cosP = Math.cos(launchPitch);
-						// Forward: bow direction (same as terrain collision points)
-						double fwdX = sinH * cosP, fwdY = cosH * cosP, fwdZ = sinP;
-						// Right: perpendicular in horizontal plane
-						double rightX = cosH, rightY = -sinH;
-
-						// Launch from the bow collision point, pulled back one torpedo length
-						double bowDist = 33.5; // same as SubmarinePhysics
-						double torpBack = 6.0; // pull back from bow tip
-						double tubeLateral = 2.0; // port/starboard offset
-						boolean portTube = (nextTorpedoId % 2 == 0);
-						double latSign = portTube ? -1.0 : 1.0;
-
-						double spawnFwd = bowDist - torpBack;
-						var launchPos = new Vec3(entity.x() + fwdX * spawnFwd + rightX * latSign * tubeLateral,
-								entity.y() + fwdY * spawnFwd + rightY * latSign * tubeLateral,
-								entity.z() + fwdZ * spawnFwd - 1.5); // below hull centerline
+						// Load the torpedo into the submarine's next tube. It rides in the tube (see TorpedoTubes) and
+						// only gets its launch context, controller and physics once it has cleared the muzzle.
+						int tubeIndex = nextTube.merge(entity.id(), 1, Integer::sum) - 1;
+						var tube = TorpedoTubes.TUBES.get(tubeIndex % TorpedoTubes.TUBES.size());
 						double fuseR = Math.clamp(cmd.fuseRadius(), config.minFuseRadius(), config.maxFuseRadius());
 
 						var customCtrl = entity.controller().createTorpedoController();
 						var torpCtrl = customCtrl != null ? customCtrl
 								: new se.hirt.searobots.engine.ships.SimpleTorpedoController();
 						var torp = new TorpedoEntity(nextTorpedoId++, entity.id(), VehicleConfig.torpedo(), torpCtrl,
-								launchPos, launchHdg, launchPitch, fuseR, entity.color());
-						// Initial speed = sub speed + ejection
-						torp.setSpeed(Math.max(entity.speed(), 0) + ejectionSpeed);
+								new Vec3(entity.x(), entity.y(), entity.z()), entity.heading(), entity.pitch(), fuseR,
+								entity.color());
+						torp.loadIntoTube(entity, tube, dt, cmd.missionData() != null ? cmd.missionData() : "");
 						torp.setLaunchTick(tick);
-
-						var launchCtx = new TorpedoLaunchContext(config, world.terrain(), launchPos, launchHdg,
-								launchPitch, cmd.missionData() != null ? cmd.missionData() : "");
-						torpCtrl.onLaunch(launchCtx);
 						pendingLaunches.add(torp);
 					}
 					entity.decrementLaunchTransient();
@@ -277,6 +250,20 @@ public final class SimulationLoop implements SimClock {
 				for (var torp : torpedoes) {
 					if (!torp.alive())
 						continue;
+
+					// Still in its tube: carried by the submarine until it has cleared the muzzle, then released
+					if (torp.inTube()) {
+						var owner = torp.tubeOwner();
+						boolean ownerGone = owner.hp() <= 0 || owner.forfeited();
+						if (torp.advanceInTube(dt) || ownerGone) {
+							torp.leaveTube();
+							torp.setLaunchTick(tick);
+							var launchPos = new Vec3(torp.x(), torp.y(), torp.z());
+							torp.controller().onLaunch(new TorpedoLaunchContext(config, world.terrain(), launchPos,
+									torp.heading(), torp.pitch(), torp.missionData()));
+						}
+						continue;
+					}
 
 					// Manual detonation request
 					if (torp.detonateRequested()) {
@@ -353,7 +340,7 @@ public final class SimulationLoop implements SimClock {
 
 				// Proximity fuse check against sub ellipsoid (only after arming delay)
 				for (var torp : torpedoes) {
-					if (!torp.alive())
+					if (!torp.alive() || torp.inTube())
 						continue;
 					torp.decrementArmingDelay();
 					if (!torp.fuseArmed())

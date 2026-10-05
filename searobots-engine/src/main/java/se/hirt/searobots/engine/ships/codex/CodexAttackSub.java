@@ -175,7 +175,7 @@ public final class CodexAttackSub implements SubmarineController {
 
 	@Override
 	public String name() {
-		return "Codex Sub";
+		return "Codex";
 	}
 
 	@Override

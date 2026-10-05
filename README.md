@@ -80,6 +80,10 @@ java -XstartOnFirstThread -jar searobots-viewer-<version>.jar
 java -jar searobots-viewer-<version>.jar
 ```
 
+To start on a specific seed, pass it in hex (as the viewer shows it in its title bar and the F2
+dialog), e.g. `java -jar searobots-viewer-<version>.jar 2c`. A `.srl` file instead replays a
+recorded match.
+
 **From source:**
 
 ```bash
@@ -155,9 +159,9 @@ Press **F2** to open simulation configuration. Select controllers
 for each ship slot and optionally enter a hex seed for reproducible
 matches:
 
-- **Claude Sub**: Claude-authored attack submarine (custom torpedo AI)
-- **Codex Sub**: Codex-authored attack submarine
-- **Default Sub**: reference implementation (fires torpedoes)
+- **Claude**: Claude-authored attack submarine (custom torpedo AI)
+- **Codex**: Codex-authored attack submarine
+- **Default**: reference implementation (fires torpedoes)
 - **Sub Drone**: simple patrol submarine (no combat AI)
 - **Ship Drone**: noisy surface vessel (target practice)
 

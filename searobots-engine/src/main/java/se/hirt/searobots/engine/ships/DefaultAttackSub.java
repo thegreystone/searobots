@@ -48,7 +48,7 @@ public final class DefaultAttackSub implements SubmarineController {
 
 	@Override
 	public String name() {
-		return "Default Sub";
+		return "Default";
 	}
 
 	// ── State machine ──

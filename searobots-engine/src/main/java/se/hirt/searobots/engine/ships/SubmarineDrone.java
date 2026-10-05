@@ -43,6 +43,11 @@ public final class SubmarineDrone implements SubmarineController {
 		return "Sub Drone";
 	}
 
+	@Override
+	public String shortName() {
+		return "SD";
+	}
+
 	private static final double CRUISE_THROTTLE = 0.2; // quiet patrol, ~6 m/s
 	private static final double TARGET_DEPTH = -40; // fixed operating depth
 	private static final double BOUNDARY_MARGIN = 1500;

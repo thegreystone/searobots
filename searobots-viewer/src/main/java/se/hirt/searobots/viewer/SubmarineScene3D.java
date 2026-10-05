@@ -44,6 +44,7 @@ import com.jme3.math.FastMath;
 import com.jme3.math.Quaternion;
 import com.jme3.math.Vector3f;
 import com.jme3.post.FilterPostProcessor;
+import com.jme3.post.filters.BloomFilter;
 import com.jme3.post.filters.FogFilter;
 import com.jme3.post.filters.LightScatteringFilter;
 import com.jme3.renderer.queue.RenderQueue;
@@ -85,8 +86,37 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 	private static final Vector3f SHIP_PROP_LOCAL = new Vector3f(0f, 67.9f, -5.0f);
 	// Ship rudder stock (hinge axis is vertical, so only X and Y matter)
 	private static final Vector3f SHIP_RUDDER_LOCAL = new Vector3f(0f, 71.6f, -3.9f);
-	// Control-surface group names: the submarine has upper/lower rudders, the ship a single one
-	private static final String[] RUDDER_GROUPS = {"rudderu", "rudderl", "Rudder"};
+
+	// Submarine X-tail: four fins at 45 degrees, each with a flap hinged behind it, swinging about a swept hinge line
+	// (a point on the line and its direction from root to tip). Values from SubmarineModelGenerator, which prints them.
+	private record TailFlap(String name, Vector3f hinge, Vector3f axis) {
+	}
+
+	private static final List<TailFlap> TAIL_FLAPS = List.of(
+			new TailFlap("tailflap_pu", new Vector3f(0.177f, 33.559f, 0.287f), new Vector3f(0.6678f, 0.3289f, 0.6678f)),
+			new TailFlap("tailflap_su", new Vector3f(-0.177f, 33.559f, 0.287f),
+					new Vector3f(-0.6678f, 0.3289f, 0.6678f)),
+			new TailFlap("tailflap_sl", new Vector3f(-0.177f, 33.559f, -0.067f),
+					new Vector3f(-0.6678f, 0.3289f, -0.6678f)),
+			new TailFlap("tailflap_pl", new Vector3f(0.177f, 33.559f, -0.067f),
+					new Vector3f(0.6678f, 0.3289f, -0.6678f)));
+	// Full rudder and full stern planes swing a flap this far (radians); mixed, a flap goes no further than the limit
+	private static final float RUDDER_THROW = 0.4f, PLANES_THROW = 0.3f, FLAP_LIMIT = 0.5f;
+	// Torpedo tube doors (TubeDoor1..4: port upper, starboard upper, port lower, starboard lower) are shutters that
+	// open by turning about the hull's centreline, sliding under the skin. Pivot on the centreline at the muzzle and
+	// signed opening angle about the model's +Y axis, from SubmarineModelGenerator; each tube's offset in the
+	// submarine's frame (to starboard, up) as in the engine's TorpedoTubes, to tell which tube a new torpedo is in
+	private static final String[] TUBE_DOORS = {"TubeDoor1", "TubeDoor2", "TubeDoor3", "TubeDoor4"};
+	private static final Vector3f[] TUBE_DOOR_PIVOTS = {new Vector3f(0f, -33.161f, 0.11f),
+			new Vector3f(0f, -33.161f, 0.11f), new Vector3f(0f, -32.601f, 0.11f), new Vector3f(0f, -32.601f, 0.11f)};
+	private static final float[] TUBE_DOOR_OPEN_ANGLES = {-0.3840f, 0.3840f, -0.8639f, 0.8639f};
+	private static final double[][] TUBE_OFFSETS = {{-1.7, -0.6}, {1.7, -0.6}, {-1.25, -1.45}, {1.25, -1.45}};
+	// Doors take this long to slide open or shut, and stay open this long after the torpedo appears, which covers
+	// its time in the tube (TorpedoTubes) with a little to spare
+	private static final float TUBE_DOOR_SLIDE_SECONDS = 0.8f, TUBE_DOOR_HOLD_SECONDS = 4.5f;
+	private final java.util.Set<Integer> seenTorpedoes = new java.util.HashSet<>();
+	private final Map<Integer, float[]> tubeDoorOpenUntil = new HashMap<>(), tubeDoorAngle = new HashMap<>();
+	private float tubeDoorClock;
 	private Geometry terrainGeometry;
 	private Spatial sky;
 	private Geometry sunBillboard;
@@ -110,6 +140,14 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 	private final Map<Integer, ParticleEmitter> deathBubbles = new HashMap<>(); // sub death bubbles
 	private final Map<Integer, ParticleEmitter> torpedoBubbles = new HashMap<>(); // torpedo wake
 	private final Map<Integer, Float> deathPropSpin = new HashMap<>(); // decaying prop spin rate
+	// Team lights: the row of small lights along each flank (model group TeamLights) shine in the submarine's colour,
+	// at this fraction of it so they stay discreet, with this much of it again as glow for the bloom filter. They
+	// go out when the submarine dies.
+	private static final float TEAM_LIGHT_LEVEL = 0.85f, TEAM_LIGHT_GLOW = 1.0f;
+	// Torpedoes carry a band of light in the team colour, lit like the team lights, between these stations along the
+	// torpedo model's body (nose at -11.6, cylindrical from -10 to 4): mid-body
+	private static final float[] TORPEDO_RING = {-3.6f, -2.4f};
+	private final java.util.Set<Integer> teamLightsOut = new java.util.HashSet<>();
 	private float appTime = 0; // running time for animations
 	private static final float EXPLOSION_DURATION = 3.5f; // seconds
 	private static final float EXPLOSION_MAX_RADIUS = 80f;
@@ -247,7 +285,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 	 */
 	public static void main(String[] args) {
 		// A .srl path launches straight into replay of that recorded match; otherwise the
-		// first arg (if any) is a seed for a fresh match.
+		// first arg (if any) is a seed for a fresh match, in hex as the viewer shows it.
 		String replayPath = (args.length > 0 && args[0].toLowerCase().endsWith(".srl")) ? args[0] : null;
 		long seed;
 		if (replayPath != null) {
@@ -259,7 +297,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 				return;
 			}
 		} else {
-			seed = args.length > 0 ? Long.parseLong(args[0])
+			seed = args.length > 0 ? SimConfigState.parseSeed(args[0])
 					: java.util.concurrent.ThreadLocalRandom.current().nextLong();
 		}
 
@@ -382,6 +420,11 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 		fpp.addFilter(fogFilter);
 
 		fpp.addFilter(waterFilter);
+		// Bloom on glowing objects only (the team lights), so the rest of the scene keeps its look
+		var bloom = new BloomFilter(BloomFilter.GlowMode.Objects);
+		bloom.setBloomIntensity(2.5f);
+		bloom.setBlurScale(1.6f);
+		fpp.addFilter(bloom);
 		viewPort.addProcessor(fpp);
 
 		// Load submarine model
@@ -389,16 +432,19 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 		try {
 			Spatial hull = assetManager.loadModel("models/submarine-hybrid.obj");
 			generateSmoothNormals(hull);
+			SubmarineModelSupport.prepare(assetManager, hull);
 			disableBackFaceCulling(hull);
 			modelNode.attachChild(hull);
 			// Set up pivot nodes for control surfaces (hinge at hull attachment)
 			// OBJ coords: Y=fore-aft, X=left-right, Z=up-down
 			// Scaled model: 75m x 12m (sx=0.4, sy=0.567, sz=0.4 from original)
-			setupPivotAt(modelNode, "rudderl", new Vector3f(0f, 34f, 0.13f));
-			setupPivotAt(modelNode, "rudderu", new Vector3f(0f, 34f, 0.09f));
+			for (TailFlap flap : TAIL_FLAPS)
+				setupPivotAt(modelNode, flap.name(), flap.hinge());
 			setupPivotAt(modelNode, "elevatorl", new Vector3f(4.3f, -10f, 0f)); // under tower center
 			setupPivotAt(modelNode, "elevatorr", new Vector3f(-4.4f, -10f, 0f)); // under tower center
 			setupPivotAt(modelNode, "Propeller", SUB_PROP_LOCAL);
+			for (int i = 0; i < TUBE_DOORS.length; i++)
+				setupPivotAt(modelNode, TUBE_DOORS[i], TUBE_DOOR_PIVOTS[i]);
 			System.out.println("Loaded submarine-hybrid.obj");
 		} catch (Exception e) {
 			System.err.println("Failed to load submarine model: " + e.getMessage());
@@ -452,7 +498,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 				}
 			});
 			torpedoModelNode.attachChild(torpHull);
-			System.out.println("Loaded torpedo.obj (scale 0.07)");
+			System.out.println("Loaded torpedo.obj (scale 0.19)");
 		} catch (Exception e) {
 			// Fallback: small yellow elongated sphere
 			var cyl = new com.jme3.scene.shape.Sphere(8, 8, 1f);
@@ -1476,6 +1522,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 		for (Node n : subNodes.values())
 			n.removeFromParent();
 		subNodes.clear();
+		teamLightsOut.clear();
 		for (Node n : trailNodes.values())
 			n.removeFromParent();
 		trailNodes.clear();
@@ -2156,6 +2203,9 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 				Node template = snap.surfaceLocked() ? shipModelNode : modelNode;
 				subNode = (Node) template.deepClone();
 				subNode.setName("sub-" + snap.id());
+				setTeamLights(subNode, snap.color(), true);
+				SubmarineDecals.paint(assetManager, subNode, SubmarineDecals.code(snap.shortName(), snap.id()),
+						snap.name());
 				subNodes.put(snap.id(), subNode);
 				rootNode.attachChild(subNode);
 				// Snap to position on first appearance
@@ -2168,14 +2218,14 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 				Vector3f currentPos = subNode.getLocalTranslation();
 				subNode.setLocalTranslation(currentPos.interpolateLocal(targetPos, lerpFactor));
 
-				Quaternion currentRot = subNode.getLocalRotation();
-				currentRot.slerp(targetRot, lerpFactor);
-				subNode.setLocalRotation(currentRot);
+				turnToward(subNode, targetRot, lerpFactor);
 			}
 
 			// Spin propeller: based on throttle when alive, free-spinning when dead
 			Spatial prop = findChild(subNode, "Propeller");
 			if (prop != null) {
+				if (snap.hp() <= 0 && teamLightsOut.add(snap.id()))
+					setTeamLights(subNode, snap.color(), false);
 				if (snap.hp() > 0) {
 					float spinRate = (float) snap.throttle() * tpf * 8f;
 					prop.rotate(0, spinRate, 0);
@@ -2225,26 +2275,29 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 			// ~3 deg/s actuator rate: full throw in ~8 seconds
 			float surfaceLerp = Math.min(1f, tpf * SURFACE_SPEED);
 
-			float rudderAngle = (float) snap.rudder() * 0.4f; // +/- 0.4 rad (~23 deg)
+			float rudderAngle = (float) snap.rudder() * RUDDER_THROW; // +/- 0.4 rad (~23 deg)
 			float elevAngle = (float) -snap.sternPlanes() * 0.3f; // +/- 0.3 rad (~17 deg)
-			var targetRudder = new Quaternion().fromAngles(0, 0, rudderAngle);
 			var targetElev = new Quaternion().fromAngles(elevAngle, 0, 0);
 
-			for (String rudderGroup : RUDDER_GROUPS) {
-				Spatial rudder = findChild(subNode, rudderGroup);
-				if (rudder != null) {
-					rudder.getLocalRotation().slerp(targetRudder, surfaceLerp);
-				}
+			for (TailFlap flap : TAIL_FLAPS) {
+				Spatial s = findChild(subNode, flap.name());
+				if (s != null)
+					turnToward(s,
+							new Quaternion().fromAngleAxis(
+									flapAngle(flap.axis(), (float) snap.rudder(), (float) snap.sternPlanes()),
+									flap.axis()),
+							surfaceLerp);
 			}
+			Spatial shipRudder = findChild(subNode, "Rudder"); // a surface ship's, on a vertical stock
+			if (shipRudder != null)
+				turnToward(shipRudder, new Quaternion().fromAngleAxis(rudderAngle, Vector3f.UNIT_Z), surfaceLerp);
 
 			Spatial el = findChild(subNode, "elevatorl");
 			Spatial er = findChild(subNode, "elevatorr");
-			if (el != null) {
-				el.getLocalRotation().slerp(targetElev, surfaceLerp);
-			}
-			if (er != null) {
-				er.getLocalRotation().slerp(targetElev, surfaceLerp);
-			}
+			if (el != null)
+				turnToward(el, targetElev, surfaceLerp);
+			if (er != null)
+				turnToward(er, targetElev, surfaceLerp);
 
 			// Bubble emitter: cavitation noise visualization
 			ParticleEmitter bubbles = bubbleEmitters.get(snap.id());
@@ -2378,6 +2431,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 
 		// ── Torpedo 3D rendering ──
 		var torpSnapshots = latestTorpedoSnapshots;
+		updateTubeDoors(snapshots, torpSnapshots, tpf);
 		// Remove nodes for torpedoes that no longer exist
 		var activeTorpIds = torpSnapshots.stream().mapToInt(TorpedoSnapshot::id).boxed()
 				.collect(java.util.stream.Collectors.toSet());
@@ -2406,6 +2460,9 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 			if (torpNode == null) {
 				torpNode = (Node) torpedoModelNode.deepClone();
 				torpNode.setName("torpedo-" + ts.id());
+				if (!torpNode.getChildren().isEmpty() && torpNode.getChild(0) instanceof Node torpHull)
+					TorpedoRing.attach(assetManager, torpHull, ts.color(), TORPEDO_RING[0], TORPEDO_RING[1],
+							TEAM_LIGHT_LEVEL, TEAM_LIGHT_GLOW);
 				torpedoNodes.put(ts.id(), torpNode);
 				rootNode.attachChild(torpNode);
 				torpNode.setLocalTranslation(targetPos);
@@ -2414,14 +2471,16 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 				// Smooth interpolation (same lerpFactor as subs)
 				Vector3f currentPos = torpNode.getLocalTranslation();
 				torpNode.setLocalTranslation(currentPos.interpolateLocal(targetPos, lerpFactor));
-				Quaternion currentRot = torpNode.getLocalRotation();
-				currentRot.slerp(targetRot, lerpFactor);
-				torpNode.setLocalRotation(currentRot);
+				turnToward(torpNode, targetRot, lerpFactor);
 			}
-			// Spin torpedo propeller proportional to speed
-			Spatial torpProp = findChild(torpNode, "g_Propeller_Plane");
-			if (torpProp != null && ts.speed() > 1) {
-				torpProp.rotate(0, tpf * (float) ts.speed() * 0.4f, 0);
+			// Spin the torpedo's contra-rotating propellers in proportion to speed, the aft one the other way
+			if (ts.speed() > 1) {
+				float spin = tpf * (float) ts.speed() * 0.4f;
+				Spatial torpProp = findChild(torpNode, "Propeller"), torpPropAft = findChild(torpNode, "PropellerAft");
+				if (torpProp != null)
+					torpProp.rotate(0, spin, 0);
+				if (torpPropAft != null)
+					torpPropAft.rotate(0, -spin, 0);
 			}
 
 			// Torpedo wake bubbles (much more than sub: torpedo is loud and fast)
@@ -3143,6 +3202,75 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 	 * Reparent a named child under a pivot node at a fixed hinge position. The pivot keeps the
 	 * original child name so findChild() still finds it.
 	 */
+	/**
+	 * Opens the torpedo tube door a newly launched torpedo is in, and slides every door towards
+	 * open or closed. The engine starts each torpedo in one of its submarine's tubes
+	 * (TorpedoTubes); which one follows from the torpedo's offset in the submarine's frame when it
+	 * first appears.
+	 */
+	private void updateTubeDoors(List<SubmarineSnapshot> snapshots, List<TorpedoSnapshot> torpSnapshots, float tpf) {
+		tubeDoorClock += tpf;
+		for (var ts : torpSnapshots) {
+			if (!ts.alive() || !seenTorpedoes.add(ts.id()))
+				continue;
+			for (var sub : snapshots) {
+				if (sub.id() != ts.ownerId())
+					continue;
+				var d = ts.pose().position().subtract(sub.pose().position());
+				double h = sub.pose().heading(), p = sub.pose().pitch();
+				double right = d.x() * Math.cos(h) - d.y() * Math.sin(h);
+				double up = -d.x() * Math.sin(h) * Math.sin(p) - d.y() * Math.cos(h) * Math.sin(p)
+						+ d.z() * Math.cos(p);
+				int nearest = 0;
+				for (int i = 1; i < TUBE_OFFSETS.length; i++)
+					if (Math.hypot(right - TUBE_OFFSETS[i][0], up - TUBE_OFFSETS[i][1]) < Math
+							.hypot(right - TUBE_OFFSETS[nearest][0], up - TUBE_OFFSETS[nearest][1]))
+						nearest = i;
+				tubeDoorOpenUntil.computeIfAbsent(sub.id(), k -> new float[TUBE_DOORS.length])[nearest] = tubeDoorClock
+						+ TUBE_DOOR_HOLD_SECONDS;
+			}
+		}
+		for (var e : subNodes.entrySet()) {
+			float[] until = tubeDoorOpenUntil.get(e.getKey());
+			float[] angle = tubeDoorAngle.computeIfAbsent(e.getKey(), k -> new float[TUBE_DOORS.length]);
+			for (int i = 0; i < TUBE_DOORS.length; i++) {
+				float target = until != null && tubeDoorClock < until[i] ? TUBE_DOOR_OPEN_ANGLES[i] : 0f;
+				float step = Math.abs(TUBE_DOOR_OPEN_ANGLES[i]) / TUBE_DOOR_SLIDE_SECONDS * tpf;
+				angle[i] += Math.max(-step, Math.min(step, target - angle[i]));
+				Spatial door = findChild(e.getValue(), TUBE_DOORS[i]);
+				if (door != null)
+					door.setLocalRotation(new Quaternion().fromAngleAxis(angle[i], Vector3f.UNIT_Y));
+			}
+		}
+	}
+
+	/**
+	 * How far a tail flap swings about its hinge axis (root to tip) for the given rudder and stern
+	 * plane commands. Turning about that axis moves the flap's trailing edge round the hull, so
+	 * each command contributes in proportion to how much of that motion is sideways (rudder: the
+	 * trailing edge goes to starboard for positive rudder) or vertical (stern planes: up for
+	 * positive, nose-up, planes). Scaled so that full rudder alone swings every flap by
+	 * {@link #RUDDER_THROW}, and full stern planes alone by {@link #PLANES_THROW}.
+	 */
+	private static float flapAngle(Vector3f axis, float rudder, float planes) {
+		float across = FastMath.sqrt(axis.x * axis.x + axis.z * axis.z);
+		float up = axis.z / across, side = axis.x / across, norm = Math.max(Math.abs(up), Math.abs(side));
+		float angle = (RUDDER_THROW * rudder * up + PLANES_THROW * planes * side) / norm;
+		return FastMath.clamp(angle, -FLAP_LIMIT, FLAP_LIMIT);
+	}
+
+	/**
+	 * Turns {@code s} a fraction {@code t} of the way towards {@code target}. jME's in-place slerp
+	 * falls back to an unnormalised linear blend for nearby rotations, and the shortened quaternion
+	 * scales the offsets of everything below the spatial (rudders and planes pop out of their
+	 * sockets), so the result is normalised. The target is left untouched.
+	 */
+	private static void turnToward(Spatial s, Quaternion target, float t) {
+		Quaternion q = s.getLocalRotation().clone();
+		q.slerp(target.clone(), t);
+		s.setLocalRotation(q.normalizeLocal());
+	}
+
 	private void setupPivotAt(Node root, String childName, Vector3f hingePos) {
 		Spatial part = findChild(root, childName);
 		if (part == null) {
@@ -3213,6 +3341,21 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 			for (Spatial child : node.getChildren())
 				generateSmoothNormals(child);
 		}
+	}
+
+	/**
+	 * Lights the submarine's team lights in its colour (or puts them out): an unshaded material, so
+	 * they show whatever the light, with a glow for the bloom filter.
+	 */
+	private void setTeamLights(Node sub, java.awt.Color color, boolean on) {
+		Spatial lights = findChild(sub, "TeamLights");
+		if (lights == null)
+			return;
+		ColorRGBA c = new ColorRGBA(color.getRed() / 255f, color.getGreen() / 255f, color.getBlue() / 255f, 1f);
+		Material m = new Material(assetManager, "Common/MatDefs/Misc/Unshaded.j3md");
+		m.setColor("Color", on ? c.mult(TEAM_LIGHT_LEVEL) : c.mult(0.08f));
+		m.setColor("GlowColor", on ? c.mult(TEAM_LIGHT_GLOW) : ColorRGBA.Black);
+		lights.setMaterial(m);
 	}
 
 	private void disableBackFaceCulling(Spatial spatial) {

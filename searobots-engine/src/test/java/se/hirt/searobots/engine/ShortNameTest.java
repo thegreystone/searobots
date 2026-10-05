@@ -28,41 +28,23 @@
  */
 package se.hirt.searobots.engine;
 
-import se.hirt.searobots.api.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 
-import java.awt.*;
-import java.util.List;
+import org.junit.jupiter.api.Test;
 
-public record SubmarineSnapshot(int id, String name, String shortName, Pose pose, Velocity velocity, double speed,
-		Color color, boolean forfeited, int hp, double noiseLevel, double sourceLevelDb, double throttle, double rudder,
-		double sternPlanes, String status, boolean pingRequested, int torpedoesRemaining,
-		List<ContactEstimate> contactEstimates, List<Waypoint> waypoints, List<StrategicWaypointViz> strategicWaypoints,
-		FiringSolution firingSolution, boolean surfaceLocked) {
-
-	public record StrategicWaypointViz(Waypoint waypoint, Purpose purpose) {
+class ShortNameTest {
+	@Test
+	void takesTheFirstTwoLettersOrDigitsUpperCased() {
+		assertEquals("CL", SubmarineSnapshot.toShortName("Claude", "Claude"));
+		assertEquals("SD", SubmarineSnapshot.toShortName("sd", "Sub Drone"));
+		assertEquals("R2", SubmarineSnapshot.toShortName("r-2 unit", "R2"));
 	}
 
-	/**
-	 * The two-letter code painted on the sail: the first two letters or digits of {@code requested}
-	 * (see {@link SubmarineController#shortName()}), upper-cased, or of {@code name} if
-	 * {@code requested} has fewer than two, padded with X if neither has.
-	 */
-	public static String toShortName(String requested, String name) {
-		for (String candidate : new String[] {requested, name}) {
-			String code = codeLetters(candidate);
-			if (code.length() >= 2)
-				return code.substring(0, 2);
-		}
-		return (codeLetters(name) + "XX").substring(0, 2);
-	}
-
-	private static String codeLetters(String s) {
-		if (s == null)
-			return "";
-		StringBuilder sb = new StringBuilder();
-		for (char c : s.toUpperCase(java.util.Locale.ROOT).toCharArray())
-			if (c >= 'A' && c <= 'Z' || c >= '0' && c <= '9')
-				sb.append(c);
-		return sb.toString();
+	@Test
+	void fallsBackToTheNameAndThenToX() {
+		assertEquals("DE", SubmarineSnapshot.toShortName("?", "Default"));
+		assertEquals("DE", SubmarineSnapshot.toShortName(null, "Default"));
+		assertEquals("QX", SubmarineSnapshot.toShortName("Å", "Qå"));
+		assertEquals("XX", SubmarineSnapshot.toShortName("", ""));
 	}
 }

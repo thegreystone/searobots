@@ -174,8 +174,9 @@ class ReplayPlayerTest {
 	}
 
 	private static SubmarineSnapshot sub(int id) {
-		return new SubmarineSnapshot(id, "Sub" + id, Pose.at(Vec3.ZERO), Velocity.ZERO, 0, new Color(60, 220, 120),
-				false, 1000, 0, 90, 0, 0, 0, "PATROL", false, 8, List.of(), List.of(), List.of(), null, false);
+		return new SubmarineSnapshot(id, "Sub" + id, "SU", Pose.at(Vec3.ZERO), Velocity.ZERO, 0,
+				new Color(60, 220, 120), false, 1000, 0, 90, 0, 0, 0, "PATROL", false, 8, List.of(), List.of(),
+				List.of(), null, false);
 	}
 
 	private static MatchConfig shortMatch(long seed, int durationTicks) {

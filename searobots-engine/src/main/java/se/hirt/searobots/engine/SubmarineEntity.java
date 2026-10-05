@@ -39,6 +39,8 @@ public final class SubmarineEntity implements SubmarineOutput {
 	private final VehicleConfig vehicleConfig;
 	private final int id;
 	private final SubmarineController controller;
+	// the two-letter code on the sail, fixed for the match
+	private final String shortName;
 	private final Color color;
 	private final int maxHp;
 
@@ -98,6 +100,9 @@ public final class SubmarineEntity implements SubmarineOutput {
 		this.vehicleConfig = vehicleConfig;
 		this.id = id;
 		this.controller = controller;
+		// Some tests drive an entity without a controller
+		this.shortName = controller == null ? "XX"
+				: SubmarineSnapshot.toShortName(controller.shortName(), controller.name());
 		this.color = color;
 		this.maxHp = maxHp;
 		this.hp = maxHp;
@@ -477,8 +482,8 @@ public final class SubmarineEntity implements SubmarineOutput {
 	}
 
 	public SubmarineSnapshot snapshot() {
-		return new SubmarineSnapshot(id, controller.name(), pose(), velocity(), speed, color, forfeited, hp, noiseLevel,
-				sourceLevelDb, throttle, rudder, sternPlanes, status, pingRequested, torpedoesRemaining,
+		return new SubmarineSnapshot(id, controller.name(), shortName, pose(), velocity(), speed, color, forfeited, hp,
+				noiseLevel, sourceLevelDb, throttle, rudder, sternPlanes, status, pingRequested, torpedoesRemaining,
 				contactEstimates(), waypoints(), strategicWaypoints(), firingSolution, vehicleConfig.surfaceLocked());
 	}
 

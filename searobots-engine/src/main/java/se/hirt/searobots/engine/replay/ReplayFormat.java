@@ -49,7 +49,7 @@ import java.util.Locale;
  * <pre>
  *   SRREPLAY  &lt;version&gt;                 magic + format version (line 1)
  *   H   seed tickRate durationTicks ...   match header
- *   S   id name colorRGB spawnX spawnY spawnZ   one per submarine (definitions)
+ *   S   id name colorRGB spawnX spawnY spawnZ surface shortName   one per submarine (definitions)
  *   T   &lt;tick&gt;                         begins a frame
  *   s   id ...fixed... status             submarine state (one per sub per frame)
  *   c   ...contact estimate...            child of the preceding s line
