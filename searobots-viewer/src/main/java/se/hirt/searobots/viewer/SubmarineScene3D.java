@@ -130,14 +130,24 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 	private final Map<Integer, Geometry> torpedoCollisionGeoms = new HashMap<>();
 	private volatile List<TorpedoSnapshot> latestTorpedoSnapshots = List.of();
 
-	// 3D explosion effects
-	private record Explosion3D(int id, Vector3f position, float startTime, ColorRGBA color) {
+	// 3D explosion effects (torpedo detonations)
+	private ExplosionEffects explosions;
+	// A detonation this close (metres) to a submarine counts as a hit on it, as in CinematicDirector
+	private static final double EXPLOSION_HIT_RANGE = 80;
+
+	// Torpedo detonations from the sim thread, with the submarines as they were on that tick
+	private record Detonation(long tick, TorpedoSnapshot torpedo, List<SubmarineSnapshot> submarines) {
 	}
 
-	private final java.util.List<Explosion3D> activeExplosions = new java.util.ArrayList<>();
-	private final Map<Integer, Geometry> explosionGeoms = new HashMap<>(); // fireball sphere
-	private final Map<Integer, ParticleEmitter> debrisEmitters = new HashMap<>(); // debris particles
-	private final Map<Integer, ParticleEmitter> deathBubbles = new HashMap<>(); // sub death bubbles
+	private final java.util.Queue<Detonation> pendingDetonations = new java.util.concurrent.ConcurrentLinkedQueue<>();
+	private static final long DETONATION_MAX_AGE_TICKS = 150; // 3 s of sim time
+	// Above this speed (fast-forward), detonations older than that are skipped rather than shown late
+	private static final double DETONATION_SKIP_SPEED = 100;
+	// Scripted screenshots of explosions, when started with -Dsearobots.capture.dir (see ExplosionCapture)
+	private ExplosionCapture capture;
+	// With -Dsearobots.fastForwardTo=TICK, the match runs fast until that tick, then at normal speed (0: done)
+	private volatile long fastForwardTo = Long.getLong("searobots.fastForwardTo", 0L);
+	private WreckEmissions wrecks; // oil and bubbles from dead submarines
 	private final Map<Integer, ParticleEmitter> torpedoBubbles = new HashMap<>(); // torpedo wake
 	private final Map<Integer, Float> deathPropSpin = new HashMap<>(); // decaying prop spin rate
 	// Team lights: the row of small lights along each flank (model group TeamLights) shine in the submarine's colour,
@@ -148,15 +158,11 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 	// torpedo model's body (nose at -11.6, cylindrical from -10 to 4): mid-body
 	private static final float[] TORPEDO_RING = {-3.6f, -2.4f};
 	private final java.util.Set<Integer> teamLightsOut = new java.util.HashSet<>();
-	private float appTime = 0; // running time for animations
-	private static final float EXPLOSION_DURATION = 3.5f; // seconds
-	private static final float EXPLOSION_MAX_RADIUS = 80f;
 
 	// Torpedo collision cylinder dimensions (visual, shrunk from physical hull)
 	// Torpedo visual cylinder matches physics: VehicleConfig.torpedo() hullHalfLength/hullHalfBeam
 	private static final float TORP_HALF_LENGTH = 2.5f; // 5m total (matches physics)
 	private static final float TORP_RADIUS = 0.25f; // 0.5m diameter (matches physics)
-	private final java.util.Set<Integer> knownTorpedoIds3D = new java.util.HashSet<>();
 	// Torpedo intercept marker (3D diamond at published target)
 	private Geometry interceptMarker;
 
@@ -420,6 +426,8 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 		fpp.addFilter(fogFilter);
 
 		fpp.addFilter(waterFilter);
+		// Underwater effects (ExplosionEffects.UNDERWATER) draw here, after the water and fog filters
+		fpp.addFilter(new com.jme3.post.filters.TranslucentBucketFilter());
 		// Bloom on glowing objects only (the team lights), so the rest of the scene keeps its look
 		var bloom = new BloomFilter(BloomFilter.GlowMode.Objects);
 		bloom.setBloomIntensity(2.5f);
@@ -655,6 +663,16 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 			interceptMarker.setQueueBucket(RenderQueue.Bucket.Transparent);
 			interceptMarker.setCullHint(Spatial.CullHint.Always);
 			rootNode.attachChild(interceptMarker);
+		}
+		explosions = new ExplosionEffects(assetManager, rootNode, guiNode, cam);
+		explosions.preload(renderManager);
+		wrecks = new WreckEmissions(assetManager, rootNode, cam);
+		capture = ExplosionCapture.fromSystemProperties(stateManager, guiNode, this::getActiveSim,
+				() -> latestTorpedoSnapshots, () -> latestSnapshots, this::stop);
+		if (capture != null) {
+			capture.waitFor(() -> terrainGeometry != null);
+			setDisplayFps(false);
+			setDisplayStatView(false);
 		}
 
 		cam.setLocation(new Vector3f(0, 15, 60));
@@ -1321,6 +1339,33 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 	// Fast-forward-to-next-event: boost the active clock to max speed, then restore the
 	// prior speed once a pause-on-event trigger (or end of match) halts it.
 	private static final double FFW_MAX_SPEED = 1_000_000;
+	private static final double FAST_FORWARD_TO_SPEED = 40;
+
+	/**
+	 * Runs the match fast, once the terrain is in, until the tick asked for with
+	 * -Dsearobots.fastForwardTo; {@link #endFastForwardTo} brings it back to normal speed there.
+	 */
+	private void updateFastForwardTo() {
+		var sim = getActiveSim();
+		if (fastForwardTo > 0 && sim != null && terrainGeometry != null
+				&& sim.getSpeedMultiplier() != FAST_FORWARD_TO_SPEED)
+			sim.setSpeedMultiplier(FAST_FORWARD_TO_SPEED);
+	}
+
+	/**
+	 * Back to normal speed once the fast-forward reaches its tick. Called on the simulation thread,
+	 * for every tick, as frames can be seconds apart while the scene loads.
+	 */
+	private void endFastForwardTo(long tick) {
+		if (fastForwardTo <= 0 || tick < fastForwardTo)
+			return;
+		fastForwardTo = 0;
+		var sim = getActiveSim();
+		if (sim != null)
+			sim.setSpeedMultiplier(1);
+		System.out.println("Fast-forwarded to tick " + tick + ", now at normal speed");
+	}
+
 	private volatile boolean ffwActive;
 	private volatile double ffwRestoreSpeed = 1.0;
 
@@ -1360,6 +1405,9 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 			updateOverlays();
 			updateFastForward();
 			updateReplayLabel(tpf);
+			if (capture != null)
+				capture.update(tpf);
+			updateFastForwardTo();
 			// Loading indicator
 			if (loadingText != null) {
 				var simSt = simStateSupplier.get();
@@ -1480,8 +1528,13 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 	@Override
 	public void onTick(
 		long tick, List<SubmarineSnapshot> submarines, List<se.hirt.searobots.engine.TorpedoSnapshot> torpedoes) {
+		endFastForwardTo(tick);
 		updateSubmarines(tick, submarines);
 		latestTorpedoSnapshots = torpedoes != null ? torpedoes : List.of();
+		if (torpedoes != null)
+			for (var t : torpedoes)
+				if (t.detonated())
+					pendingDetonations.add(new Detonation(tick, t, submarines));
 	}
 
 	@Override
@@ -1523,6 +1576,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 			n.removeFromParent();
 		subNodes.clear();
 		teamLightsOut.clear();
+		deathPropSpin.clear();
 		for (Node n : trailNodes.values())
 			n.removeFromParent();
 		trailNodes.clear();
@@ -2240,35 +2294,10 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 				}
 			}
 
-			// Death bubbles: stream of bubbles from a sinking sub
+			// Wreck: oil, bubbles and belches of air from a dead submarine
 			if (snap.hp() <= 0) {
-				ParticleEmitter db = deathBubbles.get(snap.id());
-				if (db == null) {
-					db = new ParticleEmitter("deathBubbles-" + snap.id(), ParticleMesh.Type.Triangle, 100);
-					Material dbMat = new Material(assetManager, "Common/MatDefs/Misc/Particle.j3md");
-					dbMat.setTexture("Texture", assetManager.loadTexture("Effects/Explosion/smoketrail.png"));
-					dbMat.getAdditionalRenderState().setBlendMode(RenderState.BlendMode.Alpha);
-					db.setMaterial(dbMat);
-					db.setImagesX(1);
-					db.setImagesY(3);
-					db.setStartColor(new ColorRGBA(0.8f, 0.9f, 1f, 0.6f));
-					db.setEndColor(new ColorRGBA(0.9f, 0.95f, 1f, 0f));
-					db.setStartSize(0.5f);
-					db.setEndSize(3f);
-					db.setGravity(0, 5f, 0); // bubbles float up (JME Y = up)
-					db.setLowLife(2f);
-					db.setHighLife(5f);
-					db.getParticleInfluencer().setInitialVelocity(new Vector3f(0, 8f, 0));
-					db.getParticleInfluencer().setVelocityVariation(0.5f);
-					db.setParticlesPerSec(15);
-					rootNode.attachChild(db);
-					deathBubbles.put(snap.id(), db);
-				}
-				db.setLocalTranslation(targetPos);
-				// Reduce bubbles as the sub settles (less motion = fewer air leaks)
-				float sinkSpeed = Math.abs((float) snap.speed()) + 0.5f;
-				var simLp = getActiveSim();
-				db.setParticlesPerSec(simLp != null && simLp.isPaused() ? 0 : Math.max(2, (int) (sinkSpeed * 3)));
+				var simW = getActiveSim();
+				wrecks.update(snap.id(), subNode, tpf, simW != null && simW.isPaused());
 			}
 
 			// Animate control surfaces with inertia (slerp toward target)
@@ -2300,7 +2329,13 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 				turnToward(er, targetElev, surfaceLerp);
 
 			// Bubble emitter: cavitation noise visualization
+			// The cache is by submarine id, which a new match (the same seed, say) reuses for new models: an emitter
+			// on a model since replaced is stale
 			ParticleEmitter bubbles = bubbleEmitters.get(snap.id());
+			if (bubbles != null && bubbles.getParent() != subNode) {
+				bubbles.removeFromParent();
+				bubbles = null;
+			}
 			if (bubbles == null) {
 				bubbles = new ParticleEmitter("bubbles-" + snap.id(), ParticleMesh.Type.Triangle, 200);
 				Material bubbleMat = new Material(assetManager, "Common/MatDefs/Misc/Particle.j3md");
@@ -2592,137 +2627,30 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 			}
 		}
 
-		// Detect detonations: torpedoes that disappeared and were detonated
-		for (var ts : torpSnapshots) {
-			if (ts.detonated() && !knownTorpedoIds3D.contains(-ts.id())) { // use negative to mark seen
-				knownTorpedoIds3D.add(-ts.id());
-				var tPos = ts.pose().position();
-				float jx = (float) tPos.x();
-				float jy = (float) tPos.z();
-				float jz = (float) -tPos.y();
-				var ec = ts.color();
-				activeExplosions.add(new Explosion3D(ts.id(), new Vector3f(jx, jy, jz), appTime,
-						new ColorRGBA(ec.getRed() / 255f, ec.getGreen() / 255f, ec.getBlue() / 255f, 1f)));
-			}
-		}
-		knownTorpedoIds3D.retainAll(activeTorpIds.stream().map(i -> -i).collect(java.util.stream.Collectors.toSet()));
-
-		// Render 3D explosions: fireball + shockwave ring + debris particles
-		appTime += tpf;
-		var explosionIter = activeExplosions.iterator();
-		while (explosionIter.hasNext()) {
-			var exp = explosionIter.next();
-			float elapsed = appTime - exp.startTime();
-			float t = elapsed / EXPLOSION_DURATION;
-
-			if (t > 1.0f) {
-				// Expired: clean up all effect geometries
-				var geom = explosionGeoms.remove(exp.id());
-				if (geom != null)
-					geom.removeFromParent();
-				var debris = debrisEmitters.remove(exp.id());
-				if (debris != null)
-					debris.removeFromParent();
-				explosionIter.remove();
+		// Detonations queued by onTick: the sim reports a detonated torpedo for one tick only, which a frame can
+		// easily miss at speed. During fast-forward, ones the clock has already left behind are skipped.
+		var simNow = getActiveSim();
+		boolean skipStale = simNow != null && simNow.getSpeedMultiplier() > DETONATION_SKIP_SPEED;
+		for (Detonation d; (d = pendingDetonations.poll()) != null;) {
+			if (skipStale && d.tick() < latestTick - DETONATION_MAX_AGE_TICKS)
 				continue;
-			}
-
-			// === Fireball (expanding hot sphere) ===
-			Geometry geom = explosionGeoms.get(exp.id());
-			if (geom == null) {
-				var sphere = new com.jme3.scene.shape.Sphere(16, 16, 1f);
-				geom = new Geometry("explosion-" + exp.id(), sphere);
-				Material mat = new Material(assetManager, "Common/MatDefs/Misc/Unshaded.j3md");
-				mat.getAdditionalRenderState().setBlendMode(RenderState.BlendMode.Additive);
-				mat.getAdditionalRenderState().setDepthWrite(false);
-				geom.setMaterial(mat);
-				geom.setQueueBucket(RenderQueue.Bucket.Transparent);
-				rootNode.attachChild(geom);
-				explosionGeoms.put(exp.id(), geom);
-			}
-
-			float fireRadius;
-			float fade = (1.0f - t) * (1.0f - t);
-			float r, g, b, a;
-			if (elapsed < 0.15f) {
-				// Intense white flash (very bright, visible through water)
-				float flashT = elapsed / 0.15f;
-				r = 2f;
-				g = 2f;
-				b = 1.5f; // >1 for extra glow with additive blending
-				a = (1 - flashT * 0.3f);
-				fireRadius = EXPLOSION_MAX_RADIUS * 0.5f * (0.5f + flashT);
-			} else if (elapsed < 0.8f) {
-				// Hot orange-yellow fireball expanding
-				float phase = (elapsed - 0.15f) / 0.65f;
-				r = 2f - phase * 0.5f;
-				g = 1.2f - phase * 0.6f;
-				b = 0.4f - phase * 0.3f;
-				a = (1 - phase * 0.4f) * 0.9f;
-				fireRadius = EXPLOSION_MAX_RADIUS * (0.5f + phase * 0.3f);
-			} else {
-				// Cooling dark cloud, expanding, fading
-				r = 1.0f * fade + exp.color().r * (1 - fade);
-				g = 0.4f * fade + exp.color().g * (1 - fade);
-				b = 0.1f * fade;
-				a = fade * 0.7f;
-				fireRadius = EXPLOSION_MAX_RADIUS * (float) Math.sqrt(t);
-			}
-
-			geom.getMaterial().setColor("Color", new ColorRGBA(r, g, b, a));
-			geom.setLocalTranslation(exp.position());
-			geom.setLocalScale(fireRadius);
-
-			// === Fire/smoke particles (flame texture, animated) ===
-			ParticleEmitter fireEmitter = debrisEmitters.get(exp.id());
-			if (fireEmitter == null) {
-				fireEmitter = new ParticleEmitter("fire-" + exp.id(), ParticleMesh.Type.Triangle, 50);
-				Material fireMat = new Material(assetManager, "Common/MatDefs/Misc/Particle.j3md");
-				fireMat.setTexture("Texture", assetManager.loadTexture("Effects/Explosion/flame.png"));
-				fireMat.getAdditionalRenderState().setBlendMode(RenderState.BlendMode.Additive);
-				fireEmitter.setMaterial(fireMat);
-				fireEmitter.setImagesX(2);
-				fireEmitter.setImagesY(2);
-				fireEmitter.setStartColor(new ColorRGBA(1f, 0.9f, 0.3f, 1f));
-				fireEmitter.setEndColor(new ColorRGBA(1f, 0.2f, 0f, 0f));
-				fireEmitter.setStartSize(5f);
-				fireEmitter.setEndSize(20f);
-				fireEmitter.setGravity(0, 2f, 0); // slight upward drift (hot gas rises)
-				fireEmitter.setLowLife(0.5f);
-				fireEmitter.setHighLife(1.5f);
-				fireEmitter.getParticleInfluencer().setInitialVelocity(new Vector3f(0, 12f, 0));
-				fireEmitter.getParticleInfluencer().setVelocityVariation(1f);
-				fireEmitter.setLocalTranslation(exp.position());
-				fireEmitter.setParticlesPerSec(0); // burst mode
-				fireEmitter.emitAllParticles();
-				rootNode.attachChild(fireEmitter);
-				debrisEmitters.put(exp.id(), fireEmitter);
-
-				// Also spawn debris chunks
-				var debrisEmitter = new ParticleEmitter("debris-" + exp.id(), ParticleMesh.Type.Triangle, 15);
-				Material debrisMat = new Material(assetManager, "Common/MatDefs/Misc/Particle.j3md");
-				debrisMat.setTexture("Texture", assetManager.loadTexture("Effects/Explosion/Debris.png"));
-				debrisEmitter.setMaterial(debrisMat);
-				debrisEmitter.setImagesX(3);
-				debrisEmitter.setImagesY(3);
-				debrisEmitter.setSelectRandomImage(true);
-				debrisEmitter.setRotateSpeed(4);
-				debrisEmitter.setStartColor(ColorRGBA.White);
-				debrisEmitter.setEndColor(new ColorRGBA(0.5f, 0.5f, 0.5f, 0f));
-				debrisEmitter.setStartSize(2f);
-				debrisEmitter.setEndSize(4f);
-				debrisEmitter.setGravity(0, -3f, 0); // debris sinks in water
-				debrisEmitter.setLowLife(1f);
-				debrisEmitter.setHighLife(3f);
-				debrisEmitter.getParticleInfluencer().setInitialVelocity(new Vector3f(0, 15f, 0));
-				debrisEmitter.getParticleInfluencer().setVelocityVariation(0.8f);
-				debrisEmitter.setLocalTranslation(exp.position());
-				debrisEmitter.setParticlesPerSec(0);
-				debrisEmitter.emitAllParticles();
-				rootNode.attachChild(debrisEmitter);
-				// Note: debris emitter is not tracked separately; it self-cleans when particles die
-			}
+			var tPos = d.torpedo().pose().position();
+			var ec = d.torpedo().color();
+			boolean subHit = false;
+			for (var s : d.submarines())
+				subHit |= s.pose().position().distanceTo(tPos) < EXPLOSION_HIT_RANGE;
+			var blast = explosions.spawn(new Vector3f((float) tPos.x(), (float) tPos.z(), (float) -tPos.y()),
+					new ColorRGBA(ec.getRed() / 255f, ec.getGreen() / 255f, ec.getBlue() / 255f, 1f), subHit);
+			if (capture != null)
+				capture.onDetonation(blast, subHit);
 		}
+
+		wrecks.retain(snapshots.stream().map(SubmarineSnapshot::id).collect(java.util.stream.Collectors.toSet()));
+
+		// Animate the explosions; they hold still while the simulation is paused
+		var simForExplosions = getActiveSim();
+		explosions.update(tpf,
+				(simForExplosions != null && simForExplosions.isPaused()) || (capture != null && capture.freezing()));
 
 		// Update orbit center tracking (used by Orbit mode and as fallback)
 		// Check both sub nodes and torpedo nodes
@@ -3003,6 +2931,9 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 			camPos = desiredPos;
 			lookAt = desiredLookAt;
 		}
+		if (capture != null)
+			capture.overrideCamera(camPos, lookAt);
+		explosions.applyShake(camPos, lookAt);
 		cam.setLocation(camPos);
 		// If camera is mostly above the lookAt point, use north as up to avoid gimbal flicker
 		Vector3f toLook = lookAt.subtract(camPos);
