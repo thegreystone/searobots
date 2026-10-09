@@ -53,16 +53,16 @@ import se.hirt.searobots.viewer.SubmarineModelSupport;
  * tune the explosion without running a match; needs a display and an OpenGL context (a window opens
  * briefly).
  * <p>
- * Usage: {@code ExplosionRenderCheck <out-dir> [under|above]}: the camera sits underwater near the
- * blast (default) or above the surface, to see the spray. Classpath as for
- * {@link ModelRenderCheck}.
+ * Usage: {@code ExplosionRenderCheck <out-dir> [under|above|surface]}: the camera sits underwater
+ * near the blast (default), far above the surface, or just above it close by, to see the spray.
+ * Classpath as for {@link ModelRenderCheck}.
  */
 public final class ExplosionRenderCheck extends SimpleApplication {
 	// Seconds after the detonation at which to take a screenshot
-	private static final float[] SHOTS = {0.03f, 0.1f, 0.25f, 0.5f, 0.8f, 1.0f, 1.3f, 1.8f, 2.6f, 4f, 6f};
-	private static final Vector3f BLAST = new Vector3f(0, -45, 0);
+	private static final float[] SHOTS = {0.03f, 0.1f, 0.25f, 0.5f, 0.8f, 1.0f, 1.3f, 1.8f, 2.6f, 4f, 6f, 8f, 10f};
+	static Vector3f BLAST = new Vector3f(0, -45, 0);
 	static String outDir;
-	static boolean above;
+	static boolean above, close;
 	ExplosionEffects explosions;
 	ScreenshotAppState shots;
 	float time = -0.5f; // let the scene settle first
@@ -70,7 +70,10 @@ public final class ExplosionRenderCheck extends SimpleApplication {
 
 	public static void main(String[] args) {
 		outDir = args[0].endsWith("/") ? args[0] : args[0] + "/";
-		above = args.length > 1 && args[1].equals("above");
+		close = args.length > 1 && args[1].equals("surface");
+		above = close || args.length > 1 && args[1].equals("above");
+		if (args.length > 2)
+			BLAST = new Vector3f(0, -Float.parseFloat(args[2]), 0);
 		var app = new ExplosionRenderCheck();
 		var settings = new AppSettings(true);
 		settings.setWidth(1280);
@@ -98,7 +101,7 @@ public final class ExplosionRenderCheck extends SimpleApplication {
 		sub.setLocalTranslation(BLAST.add(-6, 4, 12));
 		rootNode.attachChild(sub);
 
-		rootNode.attachChild(plane("floor", -140f, new ColorRGBA(0.35f, 0.33f, 0.28f, 1f)));
+		rootNode.attachChild(plane("floor", Math.min(-140f, BLAST.y - 95f), new ColorRGBA(0.35f, 0.33f, 0.28f, 1f)));
 		if (above)
 			rootNode.attachChild(plane("sea", 0f, new ColorRGBA(0.05f, 0.25f, 0.40f, 1f)));
 
@@ -111,6 +114,7 @@ public final class ExplosionRenderCheck extends SimpleApplication {
 		rootNode.addLight(ambient);
 
 		var fpp = new FilterPostProcessor(assetManager);
+		fpp.addFilter(new com.jme3.post.filters.TranslucentBucketFilter()); // as in SubmarineScene3D
 		var bloom = new BloomFilter(BloomFilter.GlowMode.Objects);
 		bloom.setBloomIntensity(2.5f);
 		bloom.setBlurScale(1.6f);
@@ -119,7 +123,8 @@ public final class ExplosionRenderCheck extends SimpleApplication {
 
 		cam.setFrustumPerspective(50f, (float) cam.getWidth() / cam.getHeight(), 1f, 5000f);
 		explosions = new ExplosionEffects(assetManager, rootNode, guiNode, cam);
-		shots = new ScreenshotAppState(outDir, above ? "explosion-above" : "explosion-under", 0);
+		shots = new ScreenshotAppState(outDir,
+				close ? "explosion-surface" : above ? "explosion-above" : "explosion-under", 0);
 		stateManager.attach(shots);
 	}
 
@@ -143,8 +148,9 @@ public final class ExplosionRenderCheck extends SimpleApplication {
 			explosions.spawn(BLAST, new ColorRGBA(0.9f, 0.3f, 0.2f, 1f), true);
 		explosions.update(time >= 0 ? tpf : 0, false);
 
-		Vector3f camPos = above ? new Vector3f(420, 140, 520) : new Vector3f(170, -20, 230);
-		Vector3f lookAt = above ? new Vector3f(0, 10, 0) : BLAST.clone();
+		Vector3f camPos = close ? new Vector3f(190, 22, 250)
+				: above ? new Vector3f(420, 140, 520) : new Vector3f(170, -20, 230);
+		Vector3f lookAt = close ? new Vector3f(0, 45, 0) : above ? new Vector3f(0, 10, 0) : BLAST.clone();
 		explosions.applyShake(camPos, lookAt);
 		cam.setLocation(camPos);
 		cam.lookAt(lookAt, Vector3f.UNIT_Y);
