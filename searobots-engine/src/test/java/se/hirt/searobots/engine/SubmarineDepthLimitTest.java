@@ -124,6 +124,47 @@ class SubmarineDepthLimitTest {
 		assertEquals(0, sub.hp(), "The starting depth must also obey the absolute limit");
 	}
 
+	@Test
+	void collisionProjectionPastCrushDepthDestroysTheHullBeforeItsSnapshot() {
+		var config = CONFIG.withMatchDurationTicks(1);
+		var world = new GeneratedWorld(config, TERRAIN, List.of(), NO_CURRENT,
+				List.of(new Vec3(0, 0, config.crushDepth() + 0.1), new Vec3(0, 0, config.crushDepth() + 8.1)));
+		SubmarineController hold = (input, output) -> output.setBallast(0.5);
+		var sim = new SimulationLoop();
+		sim.setSpeedMultiplier(1_000_000);
+		var lastSnapshot = new SubmarineSnapshot[1];
+		sim.run(world, List.of(hold, hold), List.of(VehicleConfig.submarine(), VehicleConfig.submarine()),
+				List.of(0.0, 0.0), new SimulationListener() {
+					@Override
+					public void onTick(long tick, List<SubmarineSnapshot> submarines, List<TorpedoSnapshot> torpedoes) {
+						lastSnapshot[0] = submarines.getFirst();
+					}
+
+					@Override
+					public void onMatchEnd() {
+					}
+				});
+
+		assertNotNull(lastSnapshot[0]);
+		assertTrue(lastSnapshot[0].pose().position().z() <= config.crushDepth(),
+				"Pair separation must push the lower hull across the crush boundary in this fixture");
+		assertEquals(0, lastSnapshot[0].hp(), "Contact projection must not bypass the absolute depth limit");
+	}
+
+	@Test
+	void checkingProjectedDepthDoesNotChargeExtraPressureExposure() {
+		var physics = new SubmarinePhysics(CONFIG);
+		var projected = movingSub(CONFIG.ratedDepth() - 50, 0);
+		var control = movingSub(CONFIG.ratedDepth() - 50, 0);
+		var controlPhysics = new SubmarinePhysics(CONFIG);
+		for (int tick = 0; tick < 500; tick++) {
+			physics.step(projected, 1.0 / CONFIG.tickRateHz(), TERRAIN, NO_CURRENT, CONFIG.battleArea());
+			controlPhysics.step(control, 1.0 / CONFIG.tickRateHz(), TERRAIN, NO_CURRENT, CONFIG.battleArea());
+			physics.enforceCrushDepth(projected);
+			assertEquals(control.hp(), projected.hp(), "A final-position guard must not count a second physics tick");
+		}
+	}
+
 	private static SubmarineEntity movingSub(double z, double verticalSpeed) {
 		var sub = new SubmarineEntity(VehicleConfig.submarine(), 0, null, new Vec3(0, 0, z), 0, Color.GREEN,
 				CONFIG.startingHp());

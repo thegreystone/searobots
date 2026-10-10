@@ -61,6 +61,7 @@ import com.jme3.util.BufferUtils;
 import com.jme3.util.SkyFactory;
 import com.jme3.water.WaterFilter;
 import se.hirt.searobots.api.TerrainMap;
+import se.hirt.searobots.api.VehicleConfig;
 import se.hirt.searobots.api.Vec3;
 import se.hirt.searobots.api.Waypoint;
 import se.hirt.searobots.engine.GeneratedWorld;
@@ -119,6 +120,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 	private final Map<Integer, float[]> tubeDoorOpenUntil = new HashMap<>(), tubeDoorAngle = new HashMap<>();
 	private float tubeDoorClock;
 	private Geometry terrainGeometry;
+	private TerrainMap displayedTerrain;
 	private Spatial sky;
 	private Geometry sunBillboard;
 	private volatile GeneratedWorld pendingWorld;
@@ -1561,6 +1563,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 		}
 
 		TerrainMap terrain = world.terrain();
+		displayedTerrain = terrain;
 		Mesh mesh = TerrainMeshBuilder.build(terrain, 2);
 
 		terrainGeometry = new Geometry("terrain", mesh);
@@ -2402,16 +2405,28 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 						(float) envelope.semiHeight());
 			}
 
-			// Terrain collision points: 7 purple spheres
-			// center, bow, stern, port, starboard, tower top, keel
+			// Purple markers show the same adaptive terrain contact hull used by physics.
+			var contactConfig = snap.surfaceLocked() ? VehicleConfig.surfaceShip() : VehicleConfig.submarine();
+			var terrainPoints = showCollisionEllipsoids && displayedTerrain != null
+					? HullGeometry.terrainContactPoints(snap.pose().position(), snap.pose().heading(),
+							snap.pose().pitch(), contactConfig, displayedTerrain)
+					: HullGeometry.terrainSamplePoints(contactConfig);
+			if (terrainPoints.length == 0) {
+				terrainPoints = HullGeometry.terrainSamplePoints(contactConfig);
+			}
 			Geometry[] tpGeoms = terrainPointGeoms.get(snap.id());
-			if (tpGeoms == null) {
-				tpGeoms = new Geometry[7];
-				var tpSphere = new com.jme3.scene.shape.Sphere(8, 8, 0.75f);
+			if (tpGeoms == null || tpGeoms.length != terrainPoints.length) {
+				if (tpGeoms != null) {
+					for (var marker : tpGeoms) {
+						marker.removeFromParent();
+					}
+				}
+				tpGeoms = new Geometry[terrainPoints.length];
+				var tpSphere = new com.jme3.scene.shape.Sphere(8, 8, 0.25f);
 				Material tpMat = new Material(assetManager, "Common/MatDefs/Misc/Unshaded.j3md");
 				tpMat.setColor("Color", new ColorRGBA(0.7f, 0.2f, 0.9f, 0.8f));
 				tpMat.getAdditionalRenderState().setBlendMode(RenderState.BlendMode.Alpha);
-				for (int tp = 0; tp < 7; tp++) {
+				for (int tp = 0; tp < tpGeoms.length; tp++) {
 					tpGeoms[tp] = new Geometry("tp-" + snap.id() + "-" + tp, tpSphere);
 					tpGeoms[tp].setMaterial(tpMat);
 					tpGeoms[tp].setQueueBucket(RenderQueue.Bucket.Transparent);
@@ -2439,9 +2454,8 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 				// Up: cross(fwd, right)
 				double upX = -sinH * sinP, upY = -cosH * sinP, upZ = cosP;
 
-				var points = HullGeometry.terrainSamplePoints(snap.surfaceLocked());
-				for (int tp = 0; tp < 7; tp++) {
-					var point = points[tp];
+				for (int tp = 0; tp < tpGeoms.length; tp++) {
+					var point = terrainPoints[tp];
 					double x = simX + rightX * point.x() + fwdX * point.y() + upX * point.z();
 					double y = simY + rightY * point.x() + fwdY * point.y() + upY * point.z();
 					double z = simZ + rightZ * point.x() + fwdZ * point.y() + upZ * point.z();

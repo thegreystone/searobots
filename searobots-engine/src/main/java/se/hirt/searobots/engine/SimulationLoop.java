@@ -383,7 +383,10 @@ public final class SimulationLoop implements SimClock {
 				}
 
 				// Sub-to-sub collision (ramming)
-				checkSubCollisions(entities, world.currentField());
+				checkSubCollisions(entities, world.currentField(), world.terrain());
+				for (var entity : entities) {
+					physics.enforceCrushDepth(entity);
+				}
 
 				// Snapshots BEFORE removing dead torpedoes, so the viewer sees
 				// detonated torpedoes for one tick and can create explosion effects.
@@ -638,21 +641,11 @@ public final class SimulationLoop implements SimClock {
 	}
 
 	static void checkSubCollisions(List<SubmarineEntity> entities, CurrentField currentField) {
-		for (int i = 0; i < entities.size(); i++) {
-			var a = entities.get(i);
-			if (a.forfeited() || a.hp() <= 0)
-				continue;
-			for (int j = i + 1; j < entities.size(); j++) {
-				var b = entities.get(j);
-				if (b.forfeited() || b.hp() <= 0)
-					continue;
+		checkSubCollisions(entities, currentField, null);
+	}
 
-				var contact = HullOverlap.contact(a, b);
-				if (contact != null) {
-					SubCollisionResponse.resolve(a, b, contact, currentField);
-				}
-			}
-		}
+	static void checkSubCollisions(List<SubmarineEntity> entities, CurrentField currentField, TerrainMap terrain) {
+		HullContactSolver.resolve(entities, currentField, terrain);
 	}
 
 	/** Check whether the full oriented hull ellipsoids intersect, including tangent contact. */

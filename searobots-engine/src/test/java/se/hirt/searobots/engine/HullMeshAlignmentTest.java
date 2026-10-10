@@ -31,6 +31,7 @@ package se.hirt.searobots.engine;
 import org.junit.jupiter.api.Test;
 import se.hirt.searobots.api.Vec3;
 import se.hirt.searobots.api.VehicleConfig;
+import se.hirt.searobots.api.TerrainMap;
 
 import java.awt.Color;
 
@@ -148,5 +149,53 @@ class HullMeshAlignmentTest {
 			assertEquals(0, gap, 1e-6, "The submerged ship hull must contain OBJ " + point);
 		}
 		assertTrue(submergedCount >= 1300, "Check the main underwater mesh, including the bulb and transom");
+	}
+
+	@Test
+	void physicalTerrainEnvelopeCoversTheRenderedBodyAndAppendagesAtEveryPitch() throws IOException {
+		var vertices = submarineVertices();
+		var terrain = new TerrainMap(new double[] {-100, -100, -100, -100}, 2, 2, -200, -200, 400);
+		var position = new Vec3(14, -23, -90);
+		for (double heading : new double[] {0, 0.73, Math.PI / 2}) {
+			for (int degrees = -90; degrees <= 90; degrees += 5) {
+				double pitch = Math.toRadians(degrees);
+				double lowestContact = Double.POSITIVE_INFINITY;
+				var contacts = HullGeometry.terrainContactPoints(position, heading, pitch, VehicleConfig.submarine(),
+						terrain);
+				for (var local : contacts) {
+					lowestContact = Math.min(lowestContact,
+							HullTerrainGeometry.worldPoint(local, position, heading, pitch).z());
+				}
+				for (var local : vertices) {
+					double meshZ = HullTerrainGeometry.worldPoint(local, position, heading, pitch).z();
+					assertTrue(contacts.length == 0 ? meshZ >= -100 - 1e-6 : lowestContact <= meshZ + 1e-6,
+							"Terrain contact must cover the actual mesh at pitch " + degrees + ", vertex " + local);
+				}
+			}
+		}
+	}
+
+	private static ArrayList<Vec3> submarineVertices() throws IOException {
+		Path relative = Path.of("searobots-viewer", "src", "main", "resources", "models", "submarine-hybrid.obj");
+		Path model = Files.isRegularFile(relative) ? relative : Path.of("..").resolve(relative);
+		var vertices = new ArrayList<Vec3>();
+		var referenced = new HashSet<Integer>();
+		for (String line : Files.readAllLines(model)) {
+			if (line.startsWith("v ")) {
+				String[] fields = line.split("\\s+");
+				vertices.add(new Vec3(-Double.parseDouble(fields[1]), -Double.parseDouble(fields[2]),
+						Double.parseDouble(fields[3])));
+			} else if (line.startsWith("f ")) {
+				for (String field : line.substring(2).trim().split("\\s+")) {
+					int index = Integer.parseInt(field.split("/")[0]);
+					referenced.add(index > 0 ? index - 1 : vertices.size() + index);
+				}
+			}
+		}
+		assertTrue(referenced.size() > 20000, "Include the main hull, sail, fins, and propeller");
+		var result = new ArrayList<Vec3>();
+		for (int index : referenced)
+			result.add(vertices.get(index));
+		return result;
 	}
 }

@@ -112,6 +112,7 @@ class SubCollisionTest {
 
 		assertTrue(sub1.hp() <= 0, "Sub1 should be dead from head-on ram, hp=" + sub1.hp());
 		assertTrue(sub2.hp() <= 0, "Sub2 should be dead from head-on ram, hp=" + sub2.hp());
+		assertFalse(HullOverlap.overlaps(sub1, sub2), "The fatal impact must still separate the physical hulls.");
 	}
 
 	@Test
@@ -255,6 +256,27 @@ class SubCollisionTest {
 		assertEquals(1000, sub2.hp());
 		assertVectorEquals(Vec3.ZERO, sub1.velocity().linear(), 1e-12);
 		assertVectorEquals(Vec3.ZERO, sub2.velocity().linear(), 1e-12);
+	}
+
+	@Test
+	void threeUnequalMassHullsSeparateWithoutChangingTheirCentreOfMassOrVelocity() {
+		var a = makeSub(0, new Vec3(0, 0, -200), 0, 0);
+		var b = makeSub(withDryMass(submarine(), 5_000_000), 1, new Vec3(10, 0, -200), 0, 0);
+		var c = makeSub(2, new Vec3(20, 0, -200), 0, 0);
+		var subs = List.of(a, b, c);
+		double weightedXBefore = subs.stream().mapToDouble(sub -> sub.x() * sub.vehicleConfig().dryMass()).sum();
+
+		SimulationLoop.checkSubCollisions(subs);
+
+		double weightedXAfter = subs.stream().mapToDouble(sub -> sub.x() * sub.vehicleConfig().dryMass()).sum();
+		assertEquals(weightedXBefore, weightedXAfter, 1e-6);
+		for (int i = 0; i < subs.size(); i++) {
+			assertEquals(1000, subs.get(i).hp());
+			assertEquals(Vec3.ZERO, subs.get(i).velocity().linear());
+			for (int j = i + 1; j < subs.size(); j++) {
+				assertFalse(HullOverlap.overlaps(subs.get(i), subs.get(j)), "Every final pair must be separated.");
+			}
+		}
 	}
 
 	@Test

@@ -30,6 +30,10 @@ package se.hirt.searobots.engine;
 
 import se.hirt.searobots.api.Vec3;
 import se.hirt.searobots.api.VehicleConfig;
+import se.hirt.searobots.api.TerrainMap;
+
+import java.util.ArrayList;
+import java.util.Arrays;
 
 /**
  * Hull collision geometry: ellipsoid parameters and distance calculations shared between the
@@ -105,9 +109,44 @@ public final class HullGeometry {
 		if (config.surfaceLocked()) {
 			return envelope(config).terrainSamplePoints();
 		}
-		// Conservative coverage of the submarine's hull and appendages.
-		return new Vec3[] {Vec3.ZERO, new Vec3(0, 33.5, 0), new Vec3(0, -40, 0), new Vec3(config.hullHalfBeam(), 0, 0),
-				new Vec3(-config.hullHalfBeam(), 0, 0), new Vec3(0, 0, 6.5), new Vec3(0, 0, -5)};
+		// Keep the established keel and tips, and bound appendages outside the body ellipsoid.
+		// These bounds follow the generated mesh's fins, propeller mount, sail, and dive planes.
+		var points = new ArrayList<Vec3>(Arrays.asList(Vec3.ZERO, new Vec3(0, 33.5, 0), new Vec3(0, -40, 0),
+				new Vec3(6, 0, 0), new Vec3(-6, 0, 0), new Vec3(0, 0, 6.5), new Vec3(0, 0, -5)));
+		for (var box : HullTerrainGeometry.APPENDAGES) {
+			for (double x : new double[] {box[0], box[1]}) {
+				for (double y : new double[] {box[2], box[3]}) {
+					for (double z : new double[] {box[4], box[5]}) {
+						points.add(new Vec3(x, y, z));
+					}
+				}
+			}
+		}
+		double lengthScale = config.hullHalfLength() / 37.5;
+		double beamScale = config.hullHalfBeam() / 6;
+		return points.stream().map(p -> new Vec3(p.x() * beamScale, p.y() * lengthScale, p.z() * beamScale))
+				.toArray(Vec3[]::new);
+	}
+
+	/**
+	 * Physical contact candidates in the vehicle's local frame. In addition to appendages, these
+	 * sample the continuous lower ellipsoid at terrain lattice locations and its support points. A
+	 * returned local point can be transformed at both poses to calculate its contact velocity.
+	 */
+	public static Vec3[] terrainContactPoints(
+		Vec3 position, double heading, double pitch, VehicleConfig config, TerrainMap terrain) {
+		return HullTerrainGeometry.contactPoints(position, heading, pitch, config, terrain);
+	}
+
+	/** Maximum vertical physical penetration; useful for position-only constraint projection. */
+	public static double terrainPenetration(
+		Vec3 position, double heading, double pitch, VehicleConfig config, TerrainMap terrain) {
+		double penetration = 0;
+		for (var local : terrainContactPoints(position, heading, pitch, config, terrain)) {
+			var world = HullTerrainGeometry.worldPoint(local, position, heading, pitch);
+			penetration = Math.max(penetration, terrain.elevationAt(world.x(), world.y()) - world.z());
+		}
+		return penetration;
 	}
 
 	public static Vec3[] terrainSamplePoints(boolean surfaceLocked) {

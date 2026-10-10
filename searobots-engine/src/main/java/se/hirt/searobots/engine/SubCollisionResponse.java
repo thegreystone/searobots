@@ -29,6 +29,7 @@
 package se.hirt.searobots.engine;
 
 import se.hirt.searobots.api.CurrentField;
+import se.hirt.searobots.api.TerrainMap;
 import se.hirt.searobots.api.Vec3;
 
 /**
@@ -43,7 +44,7 @@ final class SubCollisionResponse {
 	private SubCollisionResponse() {
 	}
 
-	static void resolve(SubmarineEntity a, SubmarineEntity b, HullOverlap.Contact contact, CurrentField currents) {
+	static void impact(SubmarineEntity a, SubmarineEntity b, HullOverlap.Contact contact, CurrentField currents) {
 		var normal = contact.normal();
 		// Separate support points would add spurious torque when the hulls overlap;
 		// apply the opposite impulses at one shared physical contact point.
@@ -65,12 +66,15 @@ final class SubCollisionResponse {
 			a.setHp(Math.max(0, a.hp() - damage));
 			b.setHp(Math.max(0, b.hp() - damage));
 		}
+	}
 
-		// Resolve penetration even for stationary or separating hulls, without adding energy.
+	/** Position correction is independent of impact velocity and may be repeated without damage. */
+	static void separate(SubmarineEntity a, SubmarineEntity b, HullOverlap.Contact contact, TerrainMap terrain) {
+		var normal = contact.normal();
 		double remaining = contact.penetration() + SEPARATION_SLOP;
-		for (int i = 0; i < 2 && remaining > 1e-10; i++) {
-			var mobilityA = separationMobility(a, normal.scale(-1));
-			var mobilityB = separationMobility(b, normal);
+		for (int i = 0; i < 4 && remaining > 1e-10; i++) {
+			var mobilityA = separationMobility(a, normal.scale(-1), terrain);
+			var mobilityB = separationMobility(b, normal, terrain);
 			double mobility = mobilityB.subtract(mobilityA).dot(normal);
 			if (mobility <= 0) {
 				break;
@@ -78,10 +82,21 @@ final class SubCollisionResponse {
 			var previousA = a.pose().position();
 			var previousB = b.pose().position();
 			double correction = remaining / mobility;
-			translate(a, mobilityA.scale(correction));
-			translate(b, mobilityB.scale(correction));
+			translate(a, mobilityA.scale(correction), terrain);
+			translate(b, mobilityB.scale(correction), terrain);
 			remaining -= b.pose().position().subtract(previousB).subtract(a.pose().position().subtract(previousA))
 					.dot(normal);
+		}
+		if (remaining > 1e-8 && terrain != null && HullOverlap.overlaps(a, b)) {
+			// A hull caught between the seabed and the surface cannot separate vertically.
+			// Use a horizontal support plane rather than repeatedly pushing through the floor.
+			var horizontal = HullOverlap.horizontalContact(a, b);
+			var mobilityA = linearMobility(a, horizontal.normal().scale(-1));
+			var mobilityB = linearMobility(b, horizontal.normal());
+			double correction = (horizontal.penetration() + SEPARATION_SLOP)
+					/ mobilityB.subtract(mobilityA).dot(horizontal.normal());
+			translate(a, mobilityA.scale(correction), terrain);
+			translate(b, mobilityB.scale(correction), terrain);
 		}
 	}
 
@@ -115,11 +130,20 @@ final class SubCollisionResponse {
 		return cfg.collisionYawInertia() * cosP * cosP + cfg.collisionRollInertia() * sinP * sinP;
 	}
 
-	private static Vec3 separationMobility(SubmarineEntity sub, Vec3 direction) {
+	private static Vec3 separationMobility(SubmarineEntity sub, Vec3 direction, TerrainMap terrain) {
 		var result = linearMobility(sub, direction);
 		// If one hull reaches the water surface, put the remainder of the correction
 		// into the other available directions rather than leaving the pair interpenetrating.
-		return sub.z() >= 0 && result.z() > 0 ? new Vec3(result.x(), result.y(), 0) : result;
+		if (sub.z() >= 0 && result.z() > 0) {
+			return new Vec3(result.x(), result.y(), 0);
+		}
+		if (terrain != null && result.z() < 0) {
+			var below = sub.pose().position().add(new Vec3(0, 0, -1e-7));
+			if (HullGeometry.terrainPenetration(below, sub.heading(), sub.pitch(), sub.vehicleConfig(), terrain) > 0) {
+				return new Vec3(result.x(), result.y(), 0);
+			}
+		}
+		return result;
 	}
 
 	private static double inverseContactMass(SubmarineEntity sub, Vec3 offset, Vec3 normal) {
@@ -146,9 +170,13 @@ final class SubCollisionResponse {
 		}
 	}
 
-	private static void translate(SubmarineEntity sub, Vec3 displacement) {
+	private static void translate(SubmarineEntity sub, Vec3 displacement, TerrainMap terrain) {
 		sub.setX(sub.x() + displacement.x());
 		sub.setY(sub.y() + displacement.y());
 		sub.setZ(sub.vehicleConfig().surfaceLocked() ? 0 : Math.min(Math.max(0, sub.z()), sub.z() + displacement.z()));
+		if (terrain != null) {
+			sub.setZ(sub.z() + Math.max(0, HullGeometry.terrainPenetration(sub.pose().position(), sub.heading(),
+					sub.pitch(), sub.vehicleConfig(), terrain)));
+		}
 	}
 }

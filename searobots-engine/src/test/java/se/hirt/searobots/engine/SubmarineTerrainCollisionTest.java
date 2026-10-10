@@ -50,6 +50,87 @@ class SubmarineTerrainCollisionTest {
 
 		assertEquals(1000, sub.hp(), "Position correction must not become impact velocity.");
 		assertEquals(-95, sub.z(), 1e-9, "The physical keel must rest on the floor without a navigation buffer.");
+		assertEquals(0, sub.verticalSpeed(), 1e-9, "Correcting a stationary overlap must not create a bounce.");
+		for (int tick = 0; tick < 100; tick++) {
+			step(sub, DT, FLAT);
+			assertEquals(-95, sub.z(), 1e-9);
+			assertEquals(0, sub.verticalSpeed(), 1e-9);
+			assertEquals(1000, sub.hp(), "Resting on the floor must not accumulate impact damage.");
+		}
+	}
+
+	@Test
+	void pitchedHullAndSternAppendageAreClearedFromAShallowFloor() {
+		// These are actual lowest rendered vertices at the two pitches, in engine-local coordinates.
+		// The old seven contact points left the forebody 1.74 m and stern appendage 1.34 m embedded.
+		var forebody = new Vec3(0, 29.149572, -2.723796);
+		var sternAppendage = new Vec3(2.847645, -35.355881, -2.744716);
+		for (double degrees : new double[] {-10, 10}) {
+			var sub = submarine(0, 0);
+			var clearWater = submarine(0, 0);
+			sub.setPitch(Math.toRadians(degrees));
+			clearWater.setPitch(sub.pitch());
+			var shallowFloor = flat(degrees < 0 ? -6 : -7.5);
+			step(sub, DT, shallowFloor);
+			step(clearWater, DT, flat(-1000));
+
+			assertTrue(sub.z() > 1, "A pitched hull must be lifted enough to clear its rendered underside.");
+			assertRenderedPointClear(sub, degrees < 0 ? forebody : sternAppendage, shallowFloor);
+			assertEquals(clearWater.pitch(), sub.pitch(), 1e-9,
+					"Geometric correction must preserve the normal hydrostatic pitch integration.");
+			assertEquals(0, sub.verticalSpeed(), 1e-9, "Existing overlap must not launch the hull upward.");
+			assertEquals(1000, sub.hp(), "Existing overlap without inward motion must not cause impact damage.");
+		}
+	}
+
+	@Test
+	void ridgeBetweenTheFormerCentreAndBowSamplesClearsTheWholeHull() {
+		var sub = submarine(-100, 0);
+		// A single raised row in the default 10 m terrain grid lies between the former samples.
+		var ridge = terrain((x, y) -> y == 20 ? -98 : -120);
+		step(sub, DT, ridge);
+
+		assertTrue(sub.z() > -98, "The interior hull section must detect the ridge under its belly.");
+		assertRenderedPointClear(sub, new Vec3(0, 20.477005, -3.511588), ridge);
+		assertEquals(1000, sub.hp());
+		assertEquals(0, sub.speed(), 1e-9);
+		assertEquals(0, sub.verticalSpeed(), 1e-9, "Static contact projection must not create upward velocity.");
+		for (int tick = 0; tick < 10; tick++) {
+			step(sub, DT, ridge);
+			assertRenderedPointClear(sub, new Vec3(0, 20.477005, -3.511588), ridge);
+			assertEquals(1000, sub.hp());
+			assertEquals(0, sub.verticalSpeed(), 1e-9);
+		}
+	}
+
+	@Test
+	void tangentialMotionWhileEmbeddedDoesNotInventAnImpactOrContactDrag() {
+		var sub = submarine(-102, 0);
+		var clearWater = submarine(-102, 0);
+		sub.setSpeed(5);
+		clearWater.setSpeed(5);
+		for (int tick = 0; tick < 20; tick++) {
+			step(sub, DT, FLAT);
+			step(clearWater, DT, flat(-1000));
+			assertEquals(clearWater.speed(), sub.speed(), 1e-9,
+					"Tangential movement must retain ordinary water drag rather than an artificial impact penalty.");
+			assertEquals(0, sub.verticalSpeed(), 1e-9);
+			assertEquals(1000, sub.hp());
+		}
+	}
+
+	@Test
+	void ridgeBetweenSternFinCornersClearsTheRenderedAppendage() {
+		var sub = submarine(-100, 0);
+		sub.setY(4);
+		// The raised grid row passes through the fin between its local forward endpoints.
+		// Its underside reaches below the tapered body here, so body contact alone is insufficient.
+		var ridge = terrain((x, y) -> y == -30 ? -98 : -120);
+		step(sub, DT, ridge);
+
+		assertRenderedPointClear(sub, new Vec3(2.784986, -33.997710, -2.797510), ridge);
+		assertEquals(1000, sub.hp());
+		assertEquals(0, sub.verticalSpeed(), 1e-9);
 	}
 
 	@Test
@@ -236,8 +317,10 @@ class SubmarineTerrainCollisionTest {
 		var sub = submarine(-100, 0);
 		sub.setPitchRate(-0.1);
 		var level = submarine(-100, 0);
-		// Only the bow reaches this ridge. The stationary keel remains clear of the deeper floor.
-		var ridge = terrain((x, y) -> y >= 30 && y <= 40 ? -100 : -140);
+		// At forward=30 m the continuous lower body is 2.65 m below its origin. A 2.70 m
+		// gap leaves the level bow clear, but real inward pitch moves it into the ridge.
+		// The centre keel remains clear of the deeper floor.
+		var ridge = terrain((x, y) -> y >= 30 && y <= 40 ? -102.7 : -140);
 		step(level, DT, ridge);
 		step(sub, DT, ridge);
 
@@ -252,7 +335,7 @@ class SubmarineTerrainCollisionTest {
 
 	@Test
 	void bouncePitchCorrectionLeavesTheHullClearOnTheNextTick() {
-		var sub = submarine(-95.03, 0);
+		var sub = submarine(-95.03, -2);
 		sub.setPitch(-0.08);
 		step(sub, DT, FLAT);
 
@@ -328,6 +411,18 @@ class SubmarineTerrainCollisionTest {
 
 	private static SubmarineEntity surfaceShip(double heading) {
 		return new SubmarineEntity(VehicleConfig.surfaceShip(), 0, null, Vec3.ZERO, heading, Color.BLUE, 1000);
+	}
+
+	private static void assertRenderedPointClear(SubmarineEntity sub, Vec3 local, TerrainMap terrain) {
+		double sinHeading = Math.sin(sub.heading()), cosHeading = Math.cos(sub.heading());
+		double sinPitch = Math.sin(sub.pitch()), cosPitch = Math.cos(sub.pitch());
+		double x = sub.x() + cosHeading * local.x() + sinHeading * cosPitch * local.y()
+				- sinHeading * sinPitch * local.z();
+		double y = sub.y() - sinHeading * local.x() + cosHeading * cosPitch * local.y()
+				- cosHeading * sinPitch * local.z();
+		double z = sub.z() + sinPitch * local.y() + cosPitch * local.z();
+		assertTrue(z >= terrain.elevationAt(x, y) - 1e-6,
+				"Rendered hull point " + local + " must clear the floor after contact correction.");
 	}
 
 	private static SubmarineEntity submarine(double z, double verticalSpeed) {

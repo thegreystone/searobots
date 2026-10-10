@@ -55,6 +55,13 @@ public final class SubmarinePhysics {
 	}
 
 	/**
+	 * Checks a position changed by contact projection without charging another tick of exposure.
+	 */
+	void enforceCrushDepth(SubmarineEntity sub) {
+		hullPressure.step(sub, 0, sub.z());
+	}
+
+	/**
 	 * Lift coefficient with stall. Linear below stallAngle, smooth rolloff above (drops to ~60% at
 	 * full deflection).
 	 */
@@ -310,9 +317,9 @@ public final class SubmarinePhysics {
 		// must not rescue a hull that has already crossed its absolute crush depth.
 		hullPressure.step(sub, dt, Math.min(sub.z(), newZ));
 
-		// 7. Terrain collision: check 7 hull points (pitch-aware)
-		//    center, bow, stern, port, starboard, tower top, keel
-		double[][] points = hullPoints(newX, newY, heading, pitch, cfg);
+		// 7. Terrain collision: cover the curved hull, appendages and terrain cells beneath it.
+		var samples = HullGeometry.terrainContactPoints(new Vec3(newX, newY, newZ), heading, pitch, cfg, terrain);
+		double[][] points = hullPoints(newX, newY, heading, pitch, samples);
 
 		// Navigation margins belong to controllers. Only the physical contact samples
 		// can ground, damage or slow a hull; neither living hulls nor wrecks get an
@@ -325,7 +332,9 @@ public final class SubmarinePhysics {
 			// Rotation and currents move contact points even when the centre has no surge.
 			var impact = new TerrainImpact(0, 0);
 			if (sub.hp() > 0) {
-				var previousPoints = hullPoints(previousX, previousY, previousHeading, previousPitch, cfg);
+				// Track the same material points in both poses. Independently querying adaptive
+				// support points at the previous pose would turn a changing sample into velocity.
+				var previousPoints = hullPoints(previousX, previousY, previousHeading, previousPitch, samples);
 				impact = terrainImpact(points, newX, newY, newZ, previousPoints, contactVerticalSpeed, heading, pitch,
 						cfg, terrain, dt);
 			}
@@ -352,7 +361,7 @@ public final class SubmarinePhysics {
 				// Settle toward terrain pitch (not flat)
 				double currentPitch = sub.pitch();
 				sub.setPitch(currentPitch + (terrainPitch - currentPitch) * 0.03);
-			} else {
+			} else if (impact.closingSpeed() > 1e-9) {
 				// Alive: bounce, take damage from inward contact motion, lose speed.
 				int damage = TerrainImpactEnergy.damage(impact.energyJoules(), cfg.collisionDamageFactor());
 				sub.setHp(Math.max(0, sub.hp() - damage));
@@ -368,8 +377,8 @@ public final class SubmarinePhysics {
 			// The bounce and wreck settling can change pitch. Clear the resulting hull as well;
 			// that positional correction must not be charged as another impact next tick.
 			if (sub.pitch() != pitch) {
-				var responsePoints = hullPoints(newX, newY, heading, sub.pitch(), cfg);
-				newZ += Math.max(0, terrainPenetration(responsePoints, newZ, terrain));
+				newZ += Math.max(0, HullGeometry.terrainPenetration(new Vec3(newX, newY, newZ), heading, sub.pitch(),
+						cfg, terrain));
 			}
 		}
 
@@ -457,13 +466,12 @@ public final class SubmarinePhysics {
 		}
 	}
 
-	/** World X/Y and centre-relative Z for the seven terrain contact points. */
-	private static double[][] hullPoints(double x, double y, double heading, double pitch, VehicleConfig cfg) {
+	/** World X/Y and centre-relative Z for local material points on the terrain contact hull. */
+	private static double[][] hullPoints(double x, double y, double heading, double pitch, Vec3[] samples) {
 		double sinH = Math.sin(heading), cosH = Math.cos(heading);
 		double sinPt = Math.sin(pitch), cosPt = Math.cos(pitch);
 		double fwdX = sinH * cosPt, fwdY = cosH * cosPt;
 		double upX = -sinH * sinPt, upY = -cosH * sinPt;
-		var samples = HullGeometry.terrainSamplePoints(cfg);
 		var points = new double[samples.length][3];
 		for (int i = 0; i < samples.length; i++) {
 			var local = samples[i];

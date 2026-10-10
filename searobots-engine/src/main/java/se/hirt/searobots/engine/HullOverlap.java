@@ -110,6 +110,35 @@ final class HullOverlap {
 		return new Contact(normal, pointA, pointB, penetration);
 	}
 
+	/** A separating support plane when the surface and seabed block vertical correction. */
+	static Contact horizontalContact(SubmarineEntity a, SubmarineEntity b) {
+		var hullA = hull(a);
+		var hullB = hull(b);
+		var delta = hullB.center.subtract(hullA.center);
+		double sign = a.id() <= b.id() ? 1 : -1;
+		var best = contact(hullA, hullB, new Vec3(delta.x() == 0 ? sign : Math.signum(delta.x()), 0, 0));
+		var north = contact(hullA, hullB, new Vec3(0, delta.y() == 0 ? sign : Math.signum(delta.y()), 0));
+		if (north.penetration() < best.penetration()) {
+			best = north;
+		}
+		for (var sub : new SubmarineEntity[] {a, b}) {
+			var right = new Vec3(Math.cos(sub.heading()), -Math.sin(sub.heading()), 0);
+			double projection = delta.dot(right);
+			var candidate = contact(hullA, hullB, right.scale(projection == 0 ? sign : Math.signum(projection)));
+			if (candidate.penetration() < best.penetration()) {
+				best = candidate;
+			}
+		}
+		var horizontal = new Vec3(delta.x(), delta.y(), 0);
+		if (horizontal.lengthSquared() > 0) {
+			var outward = contact(hullA, hullB, horizontal.normalize());
+			if (outward.penetration() < best.penetration()) {
+				best = outward;
+			}
+		}
+		return best;
+	}
+
 	private static Vec3 coincidentNormal(SubmarineEntity a, SubmarineEntity b, Hull hullA, Hull hullB) {
 		// No geometric direction exists for coincident centres. Pick the shallowest of
 		// the world-axis support planes; stable identity order reverses the normal on swap.
