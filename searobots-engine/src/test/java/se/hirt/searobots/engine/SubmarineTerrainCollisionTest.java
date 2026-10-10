@@ -84,8 +84,8 @@ class SubmarineTerrainCollisionTest {
 		step(sub, DT, shore);
 
 		int damage = 1000 - sub.hp();
-		assertTrue(damage >= 17 && damage <= 21,
-				"A real 2 m/s descent must still cause about 20 HP of damage after terrain lift: " + damage);
+		assertTrue(damage >= 40 && damage <= 46,
+				"A real 2 m/s descent must still cause about 45 HP of damage after terrain lift: " + damage);
 		assertTrue(sub.verticalSpeed() > 0, "The collision must still turn downward movement into an upward bounce.");
 	}
 
@@ -97,8 +97,8 @@ class SubmarineTerrainCollisionTest {
 			var sub = submarine(-90, -2);
 			step(sub, dt, FLAT);
 			int damage = 1000 - sub.hp();
-			assertTrue(damage >= 17 && damage <= 21,
-					"A 2 m/s impact should cost about 20 HP regardless of existing overlap or timestep: " + damage);
+			assertTrue(damage >= 40 && damage <= 46,
+					"A 2 m/s impact should cost about 45 HP regardless of existing overlap or timestep: " + damage);
 			minDamage = Math.min(minDamage, damage);
 			maxDamage = Math.max(maxDamage, damage);
 		}
@@ -114,7 +114,8 @@ class SubmarineTerrainCollisionTest {
 		step(slow, DT, FLAT);
 		step(fast, DT, FLAT);
 
-		assertTrue(fast.hp() > 0 && fast.hp() < 750, "An 8 m/s impact must remain serious but finite.");
+		assertTrue(fast.hp() > 0 && fast.hp() < 350,
+				"An 8 m/s impact must remove at least 650 HP while remaining finite.");
 		assertTrue(1000 - fast.hp() > 10 * (1000 - slow.hp()));
 		assertTrue(fast.verticalSpeed() > 0, "A downward impact must still produce an upward bounce.");
 		assertTrue(fast.speed() > 0 && fast.speed() < 4,
@@ -128,10 +129,44 @@ class SubmarineTerrainCollisionTest {
 		var slope = terrain((x, y) -> -100 + x);
 		step(sub, DT, slope);
 
-		// At the starboard contact, a vertical speed sqrt(8) has a 2 m/s normal component
-		// against this 45-degree slope. Tangential motion must not increase the impact.
+		// At the starboard contact, a vertical speed sqrt(8) has a 2 m/s normal component.
+		// The combined sway/heave effective mass is about 5.92 million kg, giving 47 HP.
 		int damage = 1000 - sub.hp();
-		assertTrue(damage >= 17 && damage <= 21, "The surface normal must have unit length: " + damage);
+		assertTrue(damage >= 43 && damage <= 48, "The surface normal must have unit length: " + damage);
+	}
+
+	@Test
+	void flankSpeedBowStrikeOnSteepRidgeIsLethal() {
+		var sub = submarine(-88, 0);
+		sub.setSpeed(15);
+		var ridge = terrain((x, y) -> y >= 30 && y <= 40 ? -100 + 10 * (y - 33.5) : -400);
+		step(sub, DT, ridge);
+
+		assertEquals(0, sub.hp(), "A direct 15 m/s bow strike must destroy a default 1000-HP hull.");
+	}
+
+	@Test
+	void fastBowOnlyDescentCausesMajorDamageEvenWhenItCanRotate() {
+		var sub = submarine(-88, -8);
+		var ridge = terrain((x, y) -> y >= 30 && y <= 40 ? -100 : -140);
+		step(sub, DT, ridge);
+
+		assertTrue(sub.hp() >= 800 && sub.hp() <= 860,
+				"An 8 m/s bow-only descent must remove substantial HP despite rotational relief: " + sub.hp());
+		assertTrue(sub.verticalSpeed() > 0);
+	}
+
+	@Test
+	void massiveKeelContactCanDominateAFasterRotatingSternContact() {
+		var sub = submarine(-90, -4);
+		sub.setPitchRate(0.04);
+		step(sub, DT, FLAT);
+
+		// The pitching stern moves down faster, but can rotate away from its contact.
+		// The centre/keel contact has more normal impact energy despite its lower speed.
+		int damage = 1000 - sub.hp();
+		assertTrue(damage >= 170 && damage <= 182,
+				"Choose the largest contact energy rather than the fastest contact or their sum: " + damage);
 	}
 
 	@Test

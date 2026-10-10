@@ -71,6 +71,20 @@ public record VehicleConfig(double dryMass, double addedMassSurge, double addedM
 	}
 
 	/**
+	 * Collision pitch inertia in kg m^2, approximating a uniform ellipsoid with the configured hull
+	 * dimensions and directional dry plus added-water masses. The manoeuvring
+	 * {@code rotationalInertia} coefficient tunes steering and is not a physical hull moment.
+	 */
+	public double collisionPitchInertia() {
+		return (massHeave() * hullHalfLength * hullHalfLength + massSurge() * hullHalfBeam * hullHalfBeam) / 5.0;
+	}
+
+	/** Collision yaw inertia in kg m^2, using the same ellipsoid approximation. */
+	public double collisionYawInertia() {
+		return (massSway() * hullHalfLength * hullHalfLength + massSurge() * hullHalfBeam * hullHalfBeam) / 5.0;
+	}
+
+	/**
 	 * Attack submarine: 75m length, 12m beam, ~2500 tonnes. Max speed 15 m/s (~29 knots). Turn
 	 * radius ~150-300m at patrol speed.
 	 */

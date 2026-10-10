@@ -32,6 +32,8 @@ import se.hirt.searobots.api.BattleArea;
 import se.hirt.searobots.api.CurrentField;
 import se.hirt.searobots.api.MatchConfig;
 import se.hirt.searobots.api.TerrainMap;
+import se.hirt.searobots.api.Vec3;
+import se.hirt.searobots.api.VehicleConfig;
 
 /**
  * Simplified submarine physics based on Fossen's 6-DOF formulation. See docs/physics-model.md for
@@ -310,12 +312,12 @@ public final class SubmarinePhysics {
 			scraping = true;
 			// Measure the incoming motion before correcting overlap or changing the bounce pose.
 			// Rotation and currents move contact points even when the centre has no surge.
-			double closingSpeed = 0;
+			var impact = new TerrainImpact(0, 0);
 			if (sub.hp() > 0) {
 				var previousPoints = hullPoints(previousX, previousY, previousHeading, previousPitch,
 						cfg.hullHalfBeam());
-				closingSpeed = terrainClosingSpeed(points, newZ, previousPoints, contactVerticalSpeed, clearance,
-						terrain, dt);
+				impact = terrainImpact(points, newX, newY, newZ, previousPoints, contactVerticalSpeed, heading, pitch,
+						cfg, clearance, terrain, dt);
 			}
 			newZ = newZ + worstPenetration;
 
@@ -342,12 +344,12 @@ public final class SubmarinePhysics {
 				sub.setPitch(currentPitch + (terrainPitch - currentPitch) * 0.03);
 			} else {
 				// Alive: bounce, take damage from inward contact motion, lose speed.
-				int damage = (int) (cfg.collisionDamageFactor() * closingSpeed * closingSpeed);
+				int damage = TerrainImpactEnergy.damage(impact.energyJoules(), cfg.collisionDamageFactor());
 				sub.setHp(Math.max(0, sub.hp() - damage));
 				sub.setVerticalSpeed(cfg.bounceSpeed());
 				sub.setPitch(Math.max(sub.pitch(), 0));
 
-				if (closingSpeed > 3.0) {
+				if (impact.closingSpeed() > 3.0) {
 					sub.setSpeed(speed * 0.5);
 				} else {
 					sub.setSpeed(speed * 0.95);
@@ -466,10 +468,14 @@ public final class SubmarinePhysics {
 		return worst;
 	}
 
-	private static double terrainClosingSpeed(
-		double[][] points, double z, double[][] previousPoints, double centreVerticalSpeed, double clearance,
-		TerrainMap terrain, double dt) {
+	private record TerrainImpact(double closingSpeed, double energyJoules) {
+	}
+
+	private static TerrainImpact terrainImpact(
+		double[][] points, double x, double y, double z, double[][] previousPoints, double centreVerticalSpeed,
+		double heading, double pitch, VehicleConfig cfg, double clearance, TerrainMap terrain, double dt) {
 		double closingSpeed = 0;
+		double energyJoules = 0;
 		double sample = Math.min(1.0, terrain.getCellSize() * 0.5);
 		for (int i = 0; i < points.length; i++) {
 			var point = points[i];
@@ -485,9 +491,16 @@ public final class SubmarinePhysics {
 			double slopeY = (terrain.elevationAt(point[0], point[1] + sample)
 					- terrain.elevationAt(point[0], point[1] - sample)) / (2 * sample);
 			// Project onto the outward unit normal (-slopeX, -slopeY, 1).
-			double inwardSpeed = (slopeX * vx + slopeY * vy - vz) / Math.hypot(Math.hypot(slopeX, slopeY), 1.0);
+			double normalLength = Math.hypot(Math.hypot(slopeX, slopeY), 1.0);
+			var normal = new Vec3(-slopeX / normalLength, -slopeY / normalLength, 1 / normalLength);
+			double inwardSpeed = -(normal.x() * vx + normal.y() * vy + normal.z() * vz);
 			closingSpeed = Math.max(closingSpeed, inwardSpeed);
+			var offset = new Vec3(point[0] - x, point[1] - y, point[2]);
+			// Contacts can have different effective masses. Choose the greatest energy, not
+			// merely the fastest point, and do not charge the same hull seven times.
+			energyJoules = Math.max(energyJoules,
+					TerrainImpactEnergy.energyJoules(cfg, offset, normal, heading, pitch, inwardSpeed));
 		}
-		return closingSpeed;
+		return new TerrainImpact(closingSpeed, energyJoules);
 	}
 }

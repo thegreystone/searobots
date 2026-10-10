@@ -42,18 +42,22 @@ public final class TorpedoPhysics {
 	private static final double WATER_DENSITY = 1025.0; // kg/m^3
 	private static final double NEGATIVE_BUOYANCY = 30.0; // N downward (slight)
 	private static final double LIFT_COEFFICIENT = 0.3; // lift per m/s^2 at depth
+	private static final double MAX_CONTROL_DEFLECTION = Math.PI / 4;
+	private static final double FULL_DEFLECTION_LIFT_FRACTION = 0.6;
 
 	/**
-	 * Lift coefficient as a function of angle of attack, with stall. Same formula as
-	 * SubmarinePhysics.
+	 * Preserve the existing attached-flow lift below stall, then progressively reduce authority as
+	 * flow separates. Full deflection retains 60% of peak lift; this is game calibration.
 	 */
 	private static double liftCoefficient(double alpha, double stallAngle) {
-		if (Math.abs(alpha) <= stallAngle) {
+		double absAlpha = Math.abs(alpha);
+		if (absAlpha <= stallAngle) {
 			return 2 * Math.PI * Math.sin(alpha);
 		}
-		double sign = Math.signum(alpha);
-		double postStall = 0.5 * Math.sin(2 * alpha);
-		return sign * Math.max(Math.abs(postStall), 0.1);
+		double peakLift = 2 * Math.PI * Math.sin(stallAngle);
+		double postStallFraction = Math.clamp((absAlpha - stallAngle) / (MAX_CONTROL_DEFLECTION - stallAngle), 0, 1);
+		double separation = postStallFraction * postStallFraction * (3 - 2 * postStallFraction);
+		return Math.copySign(peakLift * (1 - (1 - FULL_DEFLECTION_LIFT_FRACTION) * separation), alpha);
 	}
 
 	/**
@@ -128,7 +132,7 @@ public final class TorpedoPhysics {
 		torp.setActualSternPlanes(actualPlanes);
 
 		// 5. Yaw dynamics (same first-order model as submarine, different coefficients)
-		double rudderAngle = actualRudder * Math.PI / 4;
+		double rudderAngle = actualRudder * MAX_CONTROL_DEFLECTION;
 		double rudderCl = liftCoefficient(rudderAngle, cfg.stallAngle());
 		double rudderMoment = 0.5 * WATER_DENSITY * speed * Math.abs(speed) * cfg.rudderArea() * rudderCl
 				* cfg.rudderArm();
@@ -160,7 +164,7 @@ public final class TorpedoPhysics {
 
 		// 6. Pitch dynamics
 		if (cfg.planesArea() > 0) {
-			double planesAngle = actualPlanes * Math.PI / 4;
+			double planesAngle = actualPlanes * MAX_CONTROL_DEFLECTION;
 			double planesCl = liftCoefficient(planesAngle, cfg.stallAngle());
 			double pitchMoment = 0.5 * WATER_DENSITY * speed * Math.abs(speed) * cfg.planesArea() * planesCl
 					* cfg.planesArm();

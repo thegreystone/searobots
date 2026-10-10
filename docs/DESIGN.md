@@ -905,6 +905,25 @@ surfaces are only effective when there is sufficient water flow, and control
 authority is proportional to speed squared, so a slow or stalled torpedo
 cannot steer.
 
+Torpedo fin stall peaks at the configured angle (30 degrees by default).
+Below that angle, the existing `2 * pi * sin(angle)` lift coefficient is
+retained. Beyond it, a continuous smoothstep rolloff reduces lift to 60%
+of the peak at the maximum 45-degree deflection. Both rudder and stern
+planes use this curve. The 60% retention is game calibration: flow
+separation still penalizes excessive deflection, while crossing the stall
+angle no longer produces an instantaneous 86% loss of steering force.
+The force still follows `0.5 * density * speed^2 * area * liftCoefficient`;
+see [NASA's lift equation](https://www1.grc.nasa.gov/beginners-guide-to-aeronautics/lift-equation/)
+and [inclination effects](https://www.grc.nasa.gov/WWW/k-12/VirtualAero/BottleRocket/airplane/incline.html).
+
+Speed-dependent yaw and pitch resistance and actuator slew remain in effect.
+At 23 m/s, near-stall rudder gives about a 184 m steady turning radius,
+and full rudder about 306 m. At 5 m/s these are about 44 m and 73 m.
+Pitch responds faster by design, but its best radius at 23 m/s is still
+about 84 m. Tests hold the commanded speed and deflection, allow angular
+rates to settle, and check these limits as well as continuity, symmetry,
+low-speed authority, and recovery from excessive deflection.
+
 ### Numerical Integration
 
 - Fixed-timestep RK4 at the simulation tick rate (e.g. 50 Hz).
