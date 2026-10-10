@@ -204,6 +204,9 @@ class TorpedoPhysicsTest {
 
 	private static void advance(TorpedoEntity torpedo, double seconds) {
 		for (int tick = 0; tick < Math.round(seconds / DT); tick++) {
+			// These tests measure unconstrained fin authority and rate response. Keep the
+			// orientation away from the pitch stops without resetting angular momentum.
+			torpedo.setPitch(0);
 			PHYSICS.step(torpedo, DT, null, null, null);
 		}
 	}

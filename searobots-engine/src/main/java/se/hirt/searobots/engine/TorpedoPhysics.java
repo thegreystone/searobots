@@ -183,7 +183,12 @@ public final class TorpedoPhysics {
 			torp.setPitchRate(pitchRate);
 
 			double pitch = torp.pitch() + pitchRate * dt;
-			pitch = Math.clamp(pitch, -Math.PI / 3, Math.PI / 3); // max 60 deg
+			double pitchLimit = Math.PI / 3; // max 60 deg
+			pitch = Math.clamp(pitch, -pitchLimit, pitchLimit);
+			if ((pitch == pitchLimit && pitchRate > 0) || (pitch == -pitchLimit && pitchRate < 0)) {
+				// The pitch stop removes outward motion; inward control can recover immediately.
+				torp.setPitchRate(0);
+			}
 			torp.setPitch(pitch);
 		}
 

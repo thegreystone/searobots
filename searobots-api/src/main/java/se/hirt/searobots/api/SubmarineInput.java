@@ -40,6 +40,16 @@ public interface SubmarineInput {
 	EnvironmentSnapshot environment();
 
 	/**
+	 * Linear velocity over the seabed in world (x, y, z) axes, in m/s. Includes the ocean current
+	 * at the submarine's depth. Use {@code self().velocity()} for motion relative to the water.
+	 */
+	default Vec3 groundVelocity() {
+		var state = self();
+		var current = environment().currentField().currentAt(state.pose().position().z());
+		return state.velocity().linear().add(new Vec3(current.x(), current.y(), 0));
+	}
+
+	/**
 	 * Passive sonar detections this tick (bearing + signal excess, no range).
 	 */
 	default List<SonarContact> sonarContacts() {

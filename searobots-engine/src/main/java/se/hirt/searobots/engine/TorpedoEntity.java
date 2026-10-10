@@ -546,7 +546,7 @@ public final class TorpedoEntity {
 		double vx = speed * Math.sin(heading) * Math.cos(pitch);
 		double vy = speed * Math.cos(heading) * Math.cos(pitch);
 		double vz = speed * Math.sin(pitch) + verticalSpeed;
-		return new Velocity(new Vec3(vx, vy, vz), Vec3.ZERO);
+		return new Velocity(new Vec3(vx, vy, vz), new Vec3(0, pitchRate, yawRate));
 	}
 
 	public TorpedoSnapshot snapshot() {

@@ -29,14 +29,20 @@
 package se.hirt.searobots.api;
 
 /**
- * Linear velocity relative to the water, expressed along the world (x, y, z) axes in m/s. Angular
- * components are the rates of change of the pose angles: (roll rate, pitch rate, yaw rate) in
- * rad/s, where yaw rate is the rate of change of heading.
+ * Vehicle velocity relative to the water. Linear components use world (x, y, z) axes in m/s,
+ * including heave: x points east, y north and z up. Ocean current drift is available separately
+ * through {@link SubmarineInput#groundVelocity()} and {@link TorpedoInput#groundVelocity()}.
+ * Angular components are the rates of change of the pose angles: (roll rate, pitch rate, yaw rate)
+ * in rad/s, where yaw rate is the rate of change of heading. These are pose-angle rates, rather
+ * than components of a body-frame angular velocity vector.
  */
 public record Velocity(Vec3 linear, Vec3 angular) {
 
 	public static final Velocity ZERO = new Velocity(Vec3.ZERO, Vec3.ZERO);
 
+	/**
+	 * Magnitude of the water-relative linear velocity, including heave, in m/s.
+	 */
 	public double speed() {
 		return linear.length();
 	}

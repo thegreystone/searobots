@@ -115,4 +115,44 @@ class SubmarineVelocityTelemetryTest {
 						EPSILON),
 				() -> assertEquals(8 * Math.sin(Math.toRadians(25)) - 1, linear.z(), EPSILON));
 	}
+
+	@Test
+	void pitchLimitsStopOutwardAngularMotion() {
+		for (int direction : new int[] {-1, 1}) {
+			var sub = pitchedSubmarine();
+			sub.setPitch(direction * Math.PI / 4);
+			sub.setSpeed(8);
+			sub.setPitchRate(direction * 0.5);
+
+			step(sub);
+
+			assertEquals(direction * Math.PI / 4, sub.pitch(), EPSILON);
+			assertEquals(0, sub.pitchRate(), EPSILON, "A pitch stop must remove outward angular motion");
+			assertEquals(0, sub.state().velocity().angular().y(), EPSILON);
+		}
+	}
+
+	@Test
+	void pitchLimitsAllowInwardAngularMotion() {
+		for (int direction : new int[] {-1, 1}) {
+			var sub = pitchedSubmarine();
+			sub.setPitch(direction * Math.PI / 4);
+			sub.setSpeed(8);
+			sub.setPitchRate(-direction * 0.5);
+			double pitchBefore = sub.pitch();
+
+			step(sub);
+
+			assertTrue(direction * sub.pitchRate() < 0, "Motion away from a pitch stop must remain possible");
+			assertEquals((sub.pitch() - pitchBefore) / 0.02, sub.velocity().angular().y(), EPSILON);
+		}
+	}
+
+	private void step(SubmarineEntity sub) {
+		double[] depths = new double[25];
+		Arrays.fill(depths, -500);
+		var terrain = new TerrainMap(depths, 5, 5, -200, -200, 100);
+		new SubmarinePhysics().step(sub, 0.02, terrain, new CurrentField(List.of()),
+				MatchConfig.withDefaults(42).battleArea());
+	}
 }

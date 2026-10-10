@@ -222,7 +222,12 @@ public final class SubmarinePhysics {
 			sub.setPitchRate(pitchRate);
 
 			double pitch = sub.pitch() + pitchRate * dt;
-			pitch = Math.clamp(pitch, -Math.PI / 4, Math.PI / 4);
+			double pitchLimit = Math.PI / 4;
+			pitch = Math.clamp(pitch, -pitchLimit, pitchLimit);
+			if ((pitch == pitchLimit && pitchRate > 0) || (pitch == -pitchLimit && pitchRate < 0)) {
+				// The pitch stop removes outward motion; inward control can recover immediately.
+				sub.setPitchRate(0);
+			}
 			sub.setPitch(pitch);
 		}
 

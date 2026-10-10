@@ -292,6 +292,7 @@ public interface SubmarineInput {
     long deadlineNanos();
 
     SubmarineState self();              // pose, velocity, HP, torpedoes remaining
+    Vec3 groundVelocity();              // linear velocity including current drift
     SonarSnapshot sonar();              // no FFI
     List<TorpedoPosition> ownTorpedoes(); // exact positions, no control
     EnvironmentSnapshot environment();
@@ -302,6 +303,21 @@ The submarine always knows the exact position of its own active
 torpedoes via `ownTorpedoes()`, but has no control over them. This is
 telemetry only, useful for evasive action if your own torpedo starts
 heading back toward you.
+
+The current engine reports `self().velocity().linear()` relative to the
+water, in world axes (x east, y north, z up), including vertical heave.
+`velocity().speed()` is the magnitude of that vector; `self().surgeSpeed()`
+is the signed forward speed through the water. `groundVelocity()` adds
+the horizontal ocean current at the submarine's current depth, giving
+linear velocity over the seabed for navigation and motion prediction.
+
+`velocity().angular()` contains pose-angle rates in radians per second:
+(roll rate, pitch rate, heading rate). The engine does not simulate roll,
+so its rate is zero. Pitch and heading rates remain meaningful when the
+vessel is tilted or its heading wraps through zero. Pitch stops remove
+outward pitch rate at the submarine's ±45° and torpedo's ±60° limits.
+These rates describe ongoing motion; instantaneous collision pose
+corrections are not converted into angular rates.
 
 ### SubmarineOutput
 
@@ -572,11 +588,17 @@ practice.
 
 **Sensors received:**
 
-- Pose and velocity
+- Pose, water-relative velocity, and `groundVelocity()` including current drift
 - Sonar contacts (no FFI: cannot distinguish friend from foe)
 - Status (fuel remaining, armed state, fuse radius, speed)
 - Terrain map (received via `TorpedoLaunchContext` at launch, same
   heightmap as the submarine)
+
+Torpedo linear and angular velocity use the same world-axis and pose-rate
+conventions as submarine telemetry. `speed()` remains forward speed
+through the water. The simulation supplies current-inclusive
+`groundVelocity()` without exposing the whole current field to torpedoes;
+the interface default assumes still water for existing input providers.
 
 **Actuators:**
 
@@ -859,9 +881,12 @@ Where:
 - **g(η)**: gravitational and buoyancy restoring forces
 - **τ**: external forces: propulsion, control surfaces, currents, explosions
 
-This is a system of 12 first-order ODEs integrated at each tick using
-fixed-timestep **RK4** (4th-order Runge-Kutta) for determinism and
-stability.
+This formulation is the reference model. The current game engine uses
+fixed-step force updates for surge and heave and first-order filters
+toward steady-state pitch and yaw rates. It rotates surge into world
+axes and adds the depth-dependent horizontal current when advancing
+position. Controller `Velocity` telemetry follows the conventions
+described under `SubmarineInput`, rather than the body-frame ν above.
 
 ### Simplifications for the Game
 

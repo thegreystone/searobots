@@ -298,6 +298,12 @@ public final class SimulationLoop implements SimClock {
 						}
 
 						@Override
+						public Vec3 groundVelocity() {
+							var current = world.currentField().currentAt(torp.z());
+							return torp.velocity().linear().add(new Vec3(current.x(), current.y(), 0));
+						}
+
+						@Override
 						public double speed() {
 							return torp.speed();
 						}
