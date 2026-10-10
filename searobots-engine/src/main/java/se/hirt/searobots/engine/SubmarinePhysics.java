@@ -264,10 +264,16 @@ public final class SubmarinePhysics {
 			sub.setVerticalSpeed(0);
 		}
 
-		// 5. Position update (surge only, sway removed for simplicity)
+		// Collision impulses can leave lateral motion. Quadratic water drag dissipates it;
+		// the implicit update remains stable even after a large impact.
+		double swaySpeed = sub.swaySpeed();
+		swaySpeed /= 1 + cfg.swayDragCoeff() * Math.abs(swaySpeed) * dt / cfg.massSway();
+		sub.setSwaySpeed(swaySpeed);
+
+		// 5. Position update (surge, lateral drift and vertical motion)
 		double pitch = sub.pitch();
-		double vx = speed * Math.sin(heading) * Math.cos(pitch);
-		double vy = speed * Math.cos(heading) * Math.cos(pitch);
+		double vx = speed * Math.sin(heading) * Math.cos(pitch) + swaySpeed * Math.cos(heading);
+		double vy = speed * Math.cos(heading) * Math.cos(pitch) - swaySpeed * Math.sin(heading);
 		double vz = speed * Math.sin(pitch) + verticalSpeed;
 
 		// Apply current

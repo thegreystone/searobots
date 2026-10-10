@@ -44,20 +44,33 @@ final class HullOverlap {
 	}
 
 	static boolean overlaps(SubmarineEntity a, SubmarineEntity b) {
+		return contact(a, b) != null;
+	}
+
+	/**
+	 * Contact normal points from A toward B. The two points lie on the original hull surfaces;
+	 * translating B along the normal by penetration produces separating support planes. This is a
+	 * conservative separation for deep overlaps, and agrees with the common normal at tangency.
+	 */
+	record Contact(Vec3 normal, Vec3 pointA, Vec3 pointB, double penetration) {
+	}
+
+	/** Returns contact geometry for intersecting closed hulls, or null for separated hulls. */
+	static Contact contact(SubmarineEntity a, SubmarineEntity b) {
 		var hullA = hull(a);
 		var hullB = hull(b);
 		var delta = hullB.center.subtract(hullA.center);
 		double distanceSquared = delta.dot(delta);
 		if (!Double.isFinite(distanceSquared)) {
-			return false;
+			return null;
 		}
 		// The longest semi-axis bounds every orientation; reject distant pairs cheaply.
 		double diameter = 2 * HullGeometry.SEMI_LENGTH;
 		if (distanceSquared > diameter * diameter * (1.0 + CONTACT_TOLERANCE)) {
-			return false;
+			return null;
 		}
 		if (distanceSquared == 0.0) {
-			return true;
+			return contact(hullA, hullB, coincidentNormal(a, b, hullA, hullB));
 		}
 
 		var difference = hullB.shape.subtract(hullA.shape);
@@ -71,11 +84,12 @@ final class HullOverlap {
 			double quadratic = delta.dot(solved);
 			double contact = t * (1.0 - t) * quadratic;
 			if (contact > 1.0 + CONTACT_TOLERANCE) {
-				return false; // Any such value proves the maximum exceeds one.
+				return null; // Any such value proves the maximum exceeds one.
 			}
 			double derivative = (1.0 - 2.0 * t) * quadratic - t * (1.0 - t) * difference.quadratic(solved);
 			if (derivative == 0.0) {
-				return true;
+				lower = upper = t;
+				break;
 			}
 			if (derivative > 0.0) {
 				lower = t;
@@ -83,7 +97,41 @@ final class HullOverlap {
 				upper = t;
 			}
 		}
-		return true;
+		// The contact-function gradient is the common surface normal of the uniformly
+		// scaled hulls at tangency. Centre-to-centre direction is generally not a surface normal.
+		var normal = hullA.shape.blend(hullB.shape, (lower + upper) * 0.5).solve(delta).normalize();
+		return contact(hullA, hullB, normal);
+	}
+
+	private static Contact contact(Hull a, Hull b, Vec3 normal) {
+		var pointA = a.center.add(a.shape.support(normal));
+		var pointB = b.center.subtract(b.shape.support(normal));
+		double penetration = Math.max(0.0, pointA.subtract(pointB).dot(normal));
+		return new Contact(normal, pointA, pointB, penetration);
+	}
+
+	private static Vec3 coincidentNormal(SubmarineEntity a, SubmarineEntity b, Hull hullA, Hull hullB) {
+		// No geometric direction exists for coincident centres. Pick the shallowest of
+		// the world-axis support planes; stable identity order reverses the normal on swap.
+		Vec3[] axes = {new Vec3(1, 0, 0), new Vec3(0, 1, 0), new Vec3(0, 0, 1)};
+		Vec3 normal = axes[0];
+		double width = Double.POSITIVE_INFINITY;
+		// A surface-locked hull cannot move down, and a surfaced submarine cannot move up.
+		// Horizontal separation remains feasible for either ordering of a mixed pair.
+		int axisCount = a.vehicleConfig().surfaceLocked() || b.vehicleConfig().surfaceLocked() ? 2 : axes.length;
+		for (int i = 0; i < axisCount; i++) {
+			Vec3 axis = axes[i];
+			double candidate = Math.sqrt(hullA.shape.quadratic(axis)) + Math.sqrt(hullB.shape.quadratic(axis));
+			if (candidate < width) {
+				width = candidate;
+				normal = axis;
+			}
+		}
+		int order = Integer.compare(a.id(), b.id());
+		if (order == 0) {
+			order = Integer.compareUnsigned(System.identityHashCode(a), System.identityHashCode(b));
+		}
+		return order <= 0 ? normal : normal.scale(-1);
 	}
 
 	private static Hull hull(SubmarineEntity sub) {
@@ -126,6 +174,13 @@ final class HullOverlap {
 		double quadratic(Vec3 v) {
 			return xx * v.x() * v.x() + yy * v.y() * v.y() + zz * v.z() * v.z()
 					+ 2 * (xy * v.x() * v.y() + xz * v.x() * v.z() + yz * v.y() * v.z());
+		}
+
+		Vec3 support(Vec3 normal) {
+			double distance = Math.sqrt(quadratic(normal));
+			return new Vec3(xx * normal.x() + xy * normal.y() + xz * normal.z(),
+					xy * normal.x() + yy * normal.y() + yz * normal.z(),
+					xz * normal.x() + yz * normal.y() + zz * normal.z()).scale(1.0 / distance);
 		}
 
 		Vec3 solve(Vec3 delta) {

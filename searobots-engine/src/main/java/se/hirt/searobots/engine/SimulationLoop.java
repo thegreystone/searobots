@@ -380,7 +380,7 @@ public final class SimulationLoop implements SimClock {
 				}
 
 				// Sub-to-sub collision (ramming)
-				checkSubCollisions(entities);
+				checkSubCollisions(entities, world.currentField());
 
 				// Snapshots BEFORE removing dead torpedoes, so the viewer sees
 				// detonated torpedoes for one tick and can create explosion effects.
@@ -631,9 +631,11 @@ public final class SimulationLoop implements SimClock {
 
 	// ── Sub-to-sub collision ───────────────────────────────────────
 
-	private static final double COLLISION_DAMAGE_FACTOR = 5.0;
-
 	static void checkSubCollisions(List<SubmarineEntity> entities) {
+		checkSubCollisions(entities, new CurrentField(List.of()));
+	}
+
+	static void checkSubCollisions(List<SubmarineEntity> entities, CurrentField currentField) {
 		for (int i = 0; i < entities.size(); i++) {
 			var a = entities.get(i);
 			if (a.forfeited() || a.hp() <= 0)
@@ -643,39 +645,9 @@ public final class SimulationLoop implements SimClock {
 				if (b.forfeited() || b.hp() <= 0)
 					continue;
 
-				if (!ellipsoidsOverlap(a, b))
-					continue;
-
-				var posA = new Vec3(a.x(), a.y(), a.z());
-				var posB = new Vec3(b.x(), b.y(), b.z());
-				double dist = posA.distanceTo(posB);
-
-				// Collision line: from A to B
-				Vec3 line = (dist > 0.01) ? posB.subtract(posA).normalize() : new Vec3(1, 0, 0); // degenerate: pick arbitrary
-
-				Vec3 velA = a.velocity().linear();
-				Vec3 velB = b.velocity().linear();
-				double vAlong = velA.dot(line);
-				double vBlong = velB.dot(line);
-				double closingSpeed = vAlong - vBlong;
-
-				if (closingSpeed > 0) {
-					int damage = Math.max(1, (int) (COLLISION_DAMAGE_FACTOR * closingSpeed * closingSpeed));
-					a.setHp(Math.max(0, a.hp() - damage));
-					b.setHp(Math.max(0, b.hp() - damage));
-
-					// Bounce apart: push each sub along collision line
-					double halfSep = dist > 0.01 ? 1.0 : 0.5;
-					a.setX(a.x() - line.x() * halfSep);
-					a.setY(a.y() - line.y() * halfSep);
-					a.setZ(a.z() - line.z() * halfSep);
-					b.setX(b.x() + line.x() * halfSep);
-					b.setY(b.y() + line.y() * halfSep);
-					b.setZ(b.z() + line.z() * halfSep);
-
-					// Reduce speeds
-					a.setSpeed(a.speed() * 0.3);
-					b.setSpeed(b.speed() * 0.3);
+				var contact = HullOverlap.contact(a, b);
+				if (contact != null) {
+					SubCollisionResponse.resolve(a, b, contact, currentField);
 				}
 			}
 		}

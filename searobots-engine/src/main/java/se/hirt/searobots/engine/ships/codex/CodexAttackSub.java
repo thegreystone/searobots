@@ -55,6 +55,10 @@ public final class CodexAttackSub implements SubmarineController {
 	private static final double CHASE_RANGE = 3_500.0;
 	private static final double FIRING_RANGE = 2_100.0;
 	private static final double TMA_SETUP_QUALITY = 0.55;
+	private static final double TRACK_MIN_BEARING_GATE = Math.toRadians(15.0);
+	private static final double TRACK_MAX_BEARING_GATE = Math.toRadians(55.0);
+	private static final double ACTIVE_MOTION_HEADING_CHANGE = Math.toRadians(25.0);
+	private static final double ACTIVE_MOTION_SPEED_CHANGE = 2.0;
 	private static final double TORPEDO_THREAT_MAX_ACTIVE_RANGE = 2_200.0;
 	private static final long OWN_TORPEDO_IGNORE_TICKS = 750L;
 	private static final double OWN_TORPEDO_IGNORE_BEARING = Math.toRadians(40.0);
@@ -137,7 +141,7 @@ public final class CodexAttackSub implements SubmarineController {
 	private double trackedX = Double.NaN;
 	private double trackedY = Double.NaN;
 	private double trackedHeading = Double.NaN;
-	private double trackedSpeed = 5.0;
+	private double trackedSpeed = -1.0;
 	private double trackedDepth = Double.NaN;
 	private double trackedSolutionQuality = 0.0;
 	private double contactAlive = 0.0;
@@ -166,7 +170,7 @@ public final class CodexAttackSub implements SubmarineController {
 	private double lastActiveFixY = Double.NaN;
 	private double lastActiveFixDepth = Double.NaN;
 	private double lastActiveFixHeading = Double.NaN;
-	private double lastActiveFixSpeed = 0.0;
+	private double lastActiveFixSpeed = -1.0;
 	private SonarContact torpedoThreat;
 	private long lastTorpedoThreatTick = Long.MIN_VALUE / 4;
 	private double lastTorpedoThreatBearing = Double.NaN;
@@ -206,7 +210,7 @@ public final class CodexAttackSub implements SubmarineController {
 		this.trackedX = Double.NaN;
 		this.trackedY = Double.NaN;
 		this.trackedHeading = Double.NaN;
-		this.trackedSpeed = 5.0;
+		this.trackedSpeed = -1.0;
 		this.trackedDepth = Double.NaN;
 		this.trackedSolutionQuality = 0.0;
 		this.contactAlive = 0.0;
@@ -232,7 +236,7 @@ public final class CodexAttackSub implements SubmarineController {
 		this.lastActiveFixY = Double.NaN;
 		this.lastActiveFixDepth = Double.NaN;
 		this.lastActiveFixHeading = Double.NaN;
-		this.lastActiveFixSpeed = 0.0;
+		this.lastActiveFixSpeed = -1.0;
 		this.torpedoThreat = null;
 		this.lastTorpedoThreatTick = Long.MIN_VALUE / 4;
 		this.lastTorpedoThreatBearing = Double.NaN;
@@ -264,7 +268,7 @@ public final class CodexAttackSub implements SubmarineController {
 		handleExplosionFeedback(input.explosionEvents(), pos, tick);
 		updateTorpedoThreat(input.sonarContacts(), input.activeSonarReturns(), heading, tick);
 		boolean torpedoThreatActive = hasTorpedoThreat(tick);
-		SonarContact bestContact = pickBestContact(input.sonarContacts(), input.activeSonarReturns());
+		SonarContact bestContact = pickBestContact(input.sonarContacts(), input.activeSonarReturns(), pos, tick);
 
 		updateTrackedContact(bestContact, pos, tick);
 		updateMode(pos, tick);
@@ -525,14 +529,20 @@ public final class CodexAttackSub implements SubmarineController {
 		return len;
 	}
 
-	private SonarContact pickBestContact(List<SonarContact> passive, List<SonarContact> active) {
+	private SonarContact pickBestContact(List<SonarContact> passive, List<SonarContact> active, Vec3 pos, long tick) {
 		SonarContact best = null;
 		double bestScore = Double.NEGATIVE_INFINITY;
+		SonarContact continuous = null;
+		double continuousScore = Double.NEGATIVE_INFINITY;
 		for (SonarContact contact : active) {
 			double score = trackContactScore(contact, true);
 			if (score > bestScore) {
 				best = contact;
 				bestScore = score;
+			}
+			if (score > continuousScore && isContinuousContact(contact, pos, tick)) {
+				continuous = contact;
+				continuousScore = score;
 			}
 		}
 		for (SonarContact contact : passive) {
@@ -541,8 +551,46 @@ public final class CodexAttackSub implements SubmarineController {
 				best = contact;
 				bestScore = score;
 			}
+			if (score > continuousScore && isContinuousContact(contact, pos, tick)) {
+				continuous = contact;
+				continuousScore = score;
+			}
+		}
+		if (hasTrackedContact && best != null) {
+			if (continuous != null) {
+				return continuous;
+			}
+			// A discontinuous detection is a new hypothesis, not a correction to a fresh incumbent.
+			if (tick - lastContactTick <= STALE_CONTACT_TICKS) {
+				return null;
+			}
+			clearTrack();
 		}
 		return best;
+	}
+
+	private boolean isContinuousContact(SonarContact contact, Vec3 pos, long tick) {
+		if (!hasTrackedContact || !isTrackContact(contact)) {
+			return false;
+		}
+		double range = CodexAutopilot.hdist(pos.x(), pos.y(), trackedX, trackedY);
+		double bearing = CodexAutopilot.norm(Math.atan2(trackedX - pos.x(), trackedY - pos.y()));
+		double secondsSinceContact = Math.max(0L, tick - lastContactTick) / 50.0;
+		double positionGate = Math.max(180.0, uncertaintyRadius + config.maxSubSpeed() * secondsSinceContact);
+		double bearingUncertainty = Double.isFinite(contact.bearingUncertainty())
+				? Math.max(0.0, contact.bearingUncertainty()) : TRACK_MAX_BEARING_GATE;
+		double bearingGate = Math.clamp(Math.atan2(positionGate, Math.max(100.0, range)) + 3.0 * bearingUncertainty,
+				TRACK_MIN_BEARING_GATE, TRACK_MAX_BEARING_GATE);
+		if (Math.abs(CodexAutopilot.adiff(contact.bearing(), bearing)) > bearingGate) {
+			return false;
+		}
+		if (contact.range() > 50.0 && Double.isFinite(contact.range())) {
+			double measuredRange = contact.isActive() ? horizontalRange(contact, pos.z()) : contact.range();
+			double rangeError = contact.rangeUncertainty() > 0.0 ? contact.rangeUncertainty()
+					: contact.isActive() ? 90.0 : measuredRange * 0.6;
+			return Math.abs(measuredRange - range) <= positionGate + 2.0 * rangeError;
+		}
+		return true;
 	}
 
 	private double trackContactScore(SonarContact contact, boolean active) {
@@ -563,8 +611,9 @@ public final class CodexAttackSub implements SubmarineController {
 
 	private void updateTrackedContact(SonarContact bestContact, Vec3 pos, long tick) {
 		double dt = 1.0 / 50.0;
+		boolean hadTrack = hasTrackedContact;
 		if (hasTrackedContact) {
-			if (!Double.isNaN(trackedHeading)) {
+			if (!Double.isNaN(trackedHeading) && trackedSpeed > 0.0) {
 				trackedX += trackedSpeed * Math.sin(trackedHeading) * dt;
 				trackedY += trackedSpeed * Math.cos(trackedHeading) * dt;
 			}
@@ -577,7 +626,8 @@ public final class CodexAttackSub implements SubmarineController {
 
 		if (bestContact == null) {
 			consecutiveContactTicks = 0;
-			if (hasTrackedContact && uncertaintyRadius > LOST_TRACK_RADIUS) {
+			if (hasTrackedContact && uncertaintyRadius > LOST_TRACK_RADIUS
+					&& tick - lastContactTick > STALE_CONTACT_TICKS) {
 				clearTrack();
 			}
 			return;
@@ -589,15 +639,30 @@ public final class CodexAttackSub implements SubmarineController {
 		consecutiveContactTicks++;
 		contactAlive = 1.0;
 		trackedSolutionQuality = bestContact.solutionQuality();
+		if (!bestContact.isActive() && hasRecentActiveTrack(tick, ACTIVE_TRACK_MEMORY_TICKS)) {
+			boolean unresolvedHeading = Double.isNaN(bestContact.estimatedHeading())
+					&& !Double.isNaN(lastActiveFixHeading);
+			boolean changedHeading = !Double.isNaN(lastActiveFixHeading)
+					&& !Double.isNaN(bestContact.estimatedHeading())
+					&& Math.abs(CodexAutopilot.adiff(bestContact.estimatedHeading(),
+							lastActiveFixHeading)) > ACTIVE_MOTION_HEADING_CHANGE;
+			boolean changedSpeed = bestContact.estimatedSpeed() >= 0.0 && lastActiveFixSpeed >= 0.0
+					&& Math.abs(bestContact.estimatedSpeed() - lastActiveFixSpeed) > ACTIVE_MOTION_SPEED_CHANGE;
+			if (unresolvedHeading || changedHeading || changedSpeed) {
+				// The old position remains a range anchor, but its old velocity no longer authorizes a shot.
+				rangeConfirmedByActive = false;
+				lastActiveFixHeading = Double.NaN;
+				lastActiveFixSpeed = -1.0;
+			}
+		}
 
 		if (bestContact.estimatedSpeed() >= 0.0) {
 			double quality = bestContact.isActive() ? 0.85 : Math.clamp(bestContact.signalExcess() / 25.0, 0.15, 0.45);
-			trackedSpeed = hasTrackedContact ? trackedSpeed * (1.0 - quality) + bestContact.estimatedSpeed() * quality
+			trackedSpeed = hadTrack && trackedSpeed >= 0.0
+					? trackedSpeed * (1.0 - quality) + bestContact.estimatedSpeed() * quality
 					: bestContact.estimatedSpeed();
 		}
-		if (!Double.isNaN(bestContact.estimatedHeading())) {
-			trackedHeading = bestContact.estimatedHeading();
-		}
+		trackedHeading = bestContact.estimatedHeading();
 		if (!Double.isNaN(bestContact.estimatedDepth())) {
 			trackedDepth = Double.isNaN(trackedDepth) ? bestContact.estimatedDepth()
 					: trackedDepth * 0.3 + bestContact.estimatedDepth() * 0.7;
@@ -631,29 +696,36 @@ public final class CodexAttackSub implements SubmarineController {
 			lastActiveFixY = trackedY;
 			lastActiveFixDepth = trackedDepth;
 			lastActiveFixHeading = trackedHeading;
-			lastActiveFixSpeed = Math.max(trackedSpeed, 0.0);
+			lastActiveFixSpeed = trackedSpeed;
 		} else {
 			double passiveSpread = Math.max(450.0,
 					range * Math.max(bestContact.bearingUncertainty(), Math.toRadians(6.0)) * 2.5);
 			passiveSpread = Math.max(passiveSpread,
 					range * (1.0 - Math.clamp(bestContact.solutionQuality(), 0.05, 0.95)) * 0.55);
+			double reportedRangeBound = Double.isFinite(bestContact.rangeUncertainty())
+					? Math.max(0.0, bestContact.rangeUncertainty()) : Double.MAX_VALUE;
+			if (bestContact.range() > 50.0 && Double.isFinite(bestContact.range())) {
+				double reportedX = pos.x() + bestContact.range() * Math.sin(bestContact.bearing());
+				double reportedY = pos.y() + bestContact.range() * Math.cos(bestContact.bearing());
+				reportedRangeBound = Math.min(Double.MAX_VALUE,
+						reportedRangeBound + CodexAutopilot.hdist(trackedX, trackedY, reportedX, reportedY));
+			}
+			passiveSpread = Math.max(passiveSpread, reportedRangeBound);
 			boolean recentActiveTrack = hasRecentActiveTrack(tick, ACTIVE_TRACK_MEMORY_TICKS)
 					&& isTrackContact(bestContact);
 			if (recentActiveTrack) {
 				double secondsSinceFix = Math.max(0.0, tick - trackedLastFixTick) / 50.0;
 				double activeMemorySpread = Math.max(250.0,
 						refUncertainty + config.maxSubSpeed() * secondsSinceFix * 1.25);
-				passiveSpread = Math.min(passiveSpread, Math.max(activeMemorySpread, refUncertainty));
-				uncertaintyRadius = hasTrackedContact
-						? Math.min(passiveSpread, Math.max(uncertaintyRadius, activeMemorySpread)) : passiveSpread;
+				double anchorOffset = CodexAutopilot.hdist(trackedX, trackedY, predictedActiveTargetX(tick),
+						predictedActiveTargetY(tick));
+				// A better independent range bound still has to reach the published, blended position.
+				uncertaintyRadius = Math.min(passiveSpread, activeMemorySpread + anchorOffset);
 			} else {
-				uncertaintyRadius = hasTrackedContact ? Math.max(250.0, uncertaintyRadius * 0.7 + passiveSpread * 0.3)
+				uncertaintyRadius = hadTrack
+						? Math.max(reportedRangeBound, Math.max(250.0, uncertaintyRadius * 0.7 + passiveSpread * 0.3))
 						: passiveSpread;
 			}
-		}
-
-		if (uncertaintyRadius > LOST_TRACK_RADIUS) {
-			clearTrack();
 		}
 	}
 
@@ -667,10 +739,13 @@ public final class CodexAttackSub implements SubmarineController {
 		double trackedDist = CodexAutopilot.hdist(pos.x(), pos.y(), trackedX, trackedY);
 		boolean freshActiveFix = hasFreshActiveFix(tick, 300L);
 		boolean recentActiveTrack = hasRecentActiveTrack(tick, ACTIVE_TRACK_MEMORY_TICKS);
+		boolean freshPassiveEvidence = ticksSinceContact < 400L && contactAlive > 0.35;
+		boolean usefulPositionBound = uncertaintyRadius <= Math.max(900.0, trackedDist * 0.65);
 		if (freshActiveFix
 				|| (recentActiveTrack && trackedDist < ACTIVE_MEMORY_REACQUIRE_RANGE && uncertaintyRadius < 900.0)
-				|| trackedSolutionQuality > TMA_SETUP_QUALITY
-				|| (trackedSolutionQuality > 0.42 && trackedDist < CHASE_RANGE && ticksSinceContact < 400)
+				|| (freshPassiveEvidence && usefulPositionBound && trackedSolutionQuality > TMA_SETUP_QUALITY)
+				|| (freshPassiveEvidence && usefulPositionBound && trackedSolutionQuality > 0.42
+						&& trackedDist < CHASE_RANGE)
 				|| (uncertaintyRadius < 425.0 && ticksSinceContact < 300)) {
 			mode = Mode.CHASE;
 		} else if (hasTrackedContact && (consecutiveContactTicks >= CONTACT_CONFIRM_TICKS
@@ -993,9 +1068,7 @@ public final class CodexAttackSub implements SubmarineController {
 			if (!Double.isNaN(trackedHeading)) {
 				lastActiveFixHeading = trackedHeading;
 			}
-			if (trackedSpeed > 0.0) {
-				lastActiveFixSpeed = trackedSpeed;
-			}
+			lastActiveFixSpeed = trackedSpeed;
 			if (!Double.isNaN(trackedDepth)) {
 				lastActiveFixDepth = trackedDepth;
 			}
@@ -1308,8 +1381,8 @@ public final class CodexAttackSub implements SubmarineController {
 		double torpedoSpeed = Math.sqrt(torpedoConfig.maxThrust() / torpedoConfig.dragCoeff());
 		double interceptSeconds = Math.clamp(trackedDist / Math.max(torpedoSpeed, 12.0), 8.0, 45.0);
 		double leadFactor = behind ? 0.95 : 0.75;
-		double shotHeading = !Double.isNaN(lastActiveFixHeading) ? lastActiveFixHeading : trackedHeading;
-		double shotSpeed = lastActiveFixSpeed > 0.0 ? lastActiveFixSpeed : trackedSpeed;
+		double shotHeading = trackedHeading;
+		double shotSpeed = trackedSpeed;
 		double leadX = targetX;
 		double leadY = targetY;
 		if (!Double.isNaN(shotHeading) && shotSpeed > 0.5) {
@@ -1650,19 +1723,22 @@ public final class CodexAttackSub implements SubmarineController {
 		trackedX = Double.NaN;
 		trackedY = Double.NaN;
 		trackedHeading = Double.NaN;
-		trackedSpeed = 5.0;
+		trackedSpeed = -1.0;
 		trackedDepth = Double.NaN;
 		trackedSolutionQuality = 0.0;
 		contactAlive = 0.0;
 		uncertaintyRadius = 0.0;
+		refUncertainty = 400.0;
 		estimatedRange = Double.POSITIVE_INFINITY;
 		rangeConfirmedByActive = false;
+		trackedLastFixTick = Long.MIN_VALUE / 4;
+		lastContactTick = Long.MIN_VALUE / 4;
 		consecutiveContactTicks = 0;
 		lastActiveFixX = Double.NaN;
 		lastActiveFixY = Double.NaN;
 		lastActiveFixDepth = Double.NaN;
 		lastActiveFixHeading = Double.NaN;
-		lastActiveFixSpeed = 0.0;
+		lastActiveFixSpeed = -1.0;
 		resetTorpedoFireControl();
 	}
 }

@@ -61,7 +61,9 @@ package se.hirt.searobots.api;
  * @param solutionQuality
  *            TMA solution quality (0.0 to 1.0), equivalent to Cold Waters SOL%
  * @param estimatedHeading
- *            estimated target heading in radians [0, 2pi), or NaN if quality too low
+ *            estimated target heading in radians [0, 2pi), or NaN if quality is too low or recent
+ *            observed motion is unresolved, interrupted, stopped, or contradicts the old solution.
+ *            An accurate active range fix alone does not resolve target heading.
  * @param estimatedDepth
  *            estimated target depth in meters (negative = below surface), derived from vertical
  *            bearing angle and range for active returns. NaN if unavailable (passive contacts).

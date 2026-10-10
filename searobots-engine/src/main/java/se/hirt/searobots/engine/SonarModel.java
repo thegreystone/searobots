@@ -444,6 +444,11 @@ public final class SonarModel {
 							tracker.speedNoise.next(tick, rng));
 
 					// Update contact tracker
+					if (inBaffles) {
+						// Hearing a source keeps its acoustic identity alive, but a degraded
+						// bearing does not refresh the range or motion solution.
+						tracker.decay(tick, maxSubSpeed);
+					}
 					tracker.update(tick, reportedBearing, measuredSe, listener.x(), listener.y(), listener.heading(),
 							inBaffles, distance, source.x(), source.y(), rng);
 					observedSourceIds.add(source.id());

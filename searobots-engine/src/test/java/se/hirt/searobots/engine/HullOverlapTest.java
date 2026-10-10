@@ -36,6 +36,8 @@ import java.awt.Color;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class HullOverlapTest {
@@ -137,6 +139,96 @@ class HullOverlapTest {
 			assertOverlap(true, a, centeredSub(tangentCenter.subtract(step), pose[2], pose[3]));
 			assertOverlap(true, a, centeredSub(tangentCenter, pose[2], pose[3]));
 			assertOverlap(false, a, centeredSub(tangentCenter.add(step), pose[2], pose[3]));
+			var contact = HullOverlap.contact(a, centeredSub(tangentCenter, pose[2], pose[3]));
+			assertNotNull(contact);
+			assertVector(normal, contact.normal(), 1e-8);
+			assertVector(center.add(supportPoint(normal, pose[0], pose[1])), contact.pointA(), 1e-8);
+			assertVector(contact.pointA(), contact.pointB(), 1e-8);
+			assertEquals(0, contact.penetration(), 1e-8);
+		}
+	}
+
+	@Test
+	void grazingContactNormalFollowsHullSurfaceInsteadOfCenterLine() {
+		Vec3 offset = new Vec3(
+				2 * HullGeometry.SEMI_BEAM * Math.sqrt(1 - Math.pow(30 / (2 * HullGeometry.SEMI_LENGTH), 2)), 30, 0);
+		var a = centeredSub(Vec3.ZERO, 0, 0);
+		var b = centeredSub(offset, 0, 0);
+		var contact = HullOverlap.contact(a, b);
+		assertNotNull(contact);
+		var expectedNormal = new Vec3(offset.x() / Math.pow(HullGeometry.SEMI_BEAM, 2),
+				offset.y() / Math.pow(HullGeometry.SEMI_LENGTH, 2), 0).normalize();
+		assertVector(expectedNormal, contact.normal(), 1e-10);
+		assertTrue(contact.normal().dot(offset.normalize()) < 0.4, "A grazing surface normal differs from centre line");
+		assertEquals(0, contact.penetration(), 1e-10);
+	}
+
+	@Test
+	void contactGeometryReversesWhenHullsAreSwapped() {
+		var a = centeredSub(new Vec3(300, -400, -200), 0.4, -0.3);
+		var b = centeredSub(new Vec3(307, -395, -197), 1.3, 0.2);
+		var forward = HullOverlap.contact(a, b);
+		var reverse = HullOverlap.contact(b, a);
+		assertNotNull(forward);
+		assertNotNull(reverse);
+		assertVector(forward.normal().scale(-1), reverse.normal(), 1e-10);
+		assertVector(forward.pointA(), reverse.pointB(), 1e-8);
+		assertVector(forward.pointB(), reverse.pointA(), 1e-8);
+		assertEquals(forward.penetration(), reverse.penetration(), 1e-8);
+	}
+
+	@Test
+	void supportPlanePenetrationSeparatesDeepAndCoincidentOverlaps() {
+		Vec3 center = new Vec3(0, 0, -200);
+		Vec3[] offsets = {Vec3.ZERO, new Vec3(8, 30, 0), new Vec3(20, 18, 2)};
+		for (Vec3 offset : offsets) {
+			var a = centeredSub(center, 0, 0);
+			var b = centeredSub(center.add(offset), 1.4, 0.3);
+			var contact = HullOverlap.contact(a, b);
+			assertNotNull(contact);
+			assertEquals(1.0, contact.normal().length(), 1e-10);
+			assertTrue(Double.isFinite(contact.penetration()) && contact.penetration() > 0);
+			var reverse = HullOverlap.contact(b, a);
+			assertNotNull(reverse);
+			assertVector(contact.normal().scale(-1), reverse.normal(), 1e-10);
+			var separation = contact.normal().scale((contact.penetration() + CONTACT_STEP) * 0.5);
+			assertNull(
+					HullOverlap.contact(centeredSub(center.subtract(separation), 0, 0),
+							centeredSub(center.add(offset).add(separation), 1.4, 0.3)),
+					"Support planes must separate hulls");
+		}
+	}
+
+	@Test
+	void coincidentSurfaceLockedHullsSeparateHorizontally() {
+		var a = new SubmarineEntity(VehicleConfig.surfaceShip(), 1, (input, output) -> {
+		}, Vec3.ZERO, 0, Color.RED, 1000);
+		var b = new SubmarineEntity(VehicleConfig.surfaceShip(), 2, (input, output) -> {
+		}, Vec3.ZERO, 0, Color.BLUE, 1000);
+		var contact = HullOverlap.contact(a, b);
+		assertNotNull(contact);
+		assertEquals(0, contact.normal().z(), 0);
+		assertEquals(2 * HullGeometry.SEMI_BEAM, contact.penetration(), 1e-10);
+		var reverse = HullOverlap.contact(b, a);
+		assertNotNull(reverse);
+		assertVector(contact.normal().scale(-1), reverse.normal(), 1e-10);
+	}
+
+	@Test
+	void coincidentMixedSurfacePairHasHorizontalNormalForEitherIdentityOrder() {
+		for (int shipId = 0; shipId <= 1; shipId++) {
+			var ship = new SubmarineEntity(VehicleConfig.surfaceShip(), shipId, (input, output) -> {
+			}, Vec3.ZERO, 0, Color.RED, 1000);
+			var sub = new SubmarineEntity(VehicleConfig.submarine(), 1 - shipId, (input, output) -> {
+			}, Vec3.ZERO, 0, Color.BLUE, 1000);
+			var contact = HullOverlap.contact(ship, sub);
+			assertNotNull(contact);
+			assertEquals(0, contact.normal().z(), 0);
+			assertEquals(1, contact.normal().length(), 1e-10);
+			assertEquals(2 * HullGeometry.SEMI_BEAM, contact.penetration(), 1e-10);
+			var reverse = HullOverlap.contact(sub, ship);
+			assertNotNull(reverse);
+			assertVector(contact.normal().scale(-1), reverse.normal(), 1e-10);
 		}
 	}
 
@@ -156,6 +248,12 @@ class HullOverlapTest {
 	private static void assertOverlap(boolean expected, SubmarineEntity a, SubmarineEntity b) {
 		assertEquals(expected, SimulationLoop.ellipsoidsOverlap(a, b), "A against B");
 		assertEquals(expected, SimulationLoop.ellipsoidsOverlap(b, a), "B against A");
+	}
+
+	private static void assertVector(Vec3 expected, Vec3 actual, double tolerance) {
+		assertEquals(expected.x(), actual.x(), tolerance);
+		assertEquals(expected.y(), actual.y(), tolerance);
+		assertEquals(expected.z(), actual.z(), tolerance);
 	}
 
 	private static SubmarineEntity positionedSub(Vec3 position, double heading, double pitch) {

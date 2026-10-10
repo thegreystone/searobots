@@ -57,7 +57,7 @@ public final class SubmarineEntity implements SubmarineOutput {
 	private double actualBallast = 0.5; // physical ballast state (lags behind commanded)
 	private double previousActualBallast = 0.5; // for tracking ballast change rate
 	private double actualThrottle; // physical engine state (lags behind commanded)
-	private double swaySpeed; // lateral velocity from turning (m/s)
+	private double swaySpeed; // lateral water-relative velocity, including collision impulses (m/s)
 	private double yawRate; // angular velocity around vertical axis (rad/s)
 	private double pitchRate; // angular velocity around lateral axis (rad/s)
 
@@ -475,8 +475,8 @@ public final class SubmarineEntity implements SubmarineOutput {
 	}
 
 	public Velocity velocity() {
-		double vx = speed * Math.sin(heading) * Math.cos(pitch);
-		double vy = speed * Math.cos(heading) * Math.cos(pitch);
+		double vx = speed * Math.sin(heading) * Math.cos(pitch) + swaySpeed * Math.cos(heading);
+		double vy = speed * Math.cos(heading) * Math.cos(pitch) - swaySpeed * Math.sin(heading);
 		double vz = speed * Math.sin(pitch) + verticalSpeed;
 		return new Velocity(new Vec3(vx, vy, vz), new Vec3(0, pitchRate, yawRate));
 	}
