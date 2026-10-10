@@ -208,7 +208,7 @@ class HullOverlapTest {
 		var contact = HullOverlap.contact(a, b);
 		assertNotNull(contact);
 		assertEquals(0, contact.normal().z(), 0);
-		assertEquals(2 * HullGeometry.SEMI_BEAM, contact.penetration(), 1e-10);
+		assertEquals(2 * HullGeometry.envelope(VehicleConfig.surfaceShip()).semiBeam(), contact.penetration(), 1e-10);
 		var reverse = HullOverlap.contact(b, a);
 		assertNotNull(reverse);
 		assertVector(contact.normal().scale(-1), reverse.normal(), 1e-10);
@@ -219,17 +219,71 @@ class HullOverlapTest {
 		for (int shipId = 0; shipId <= 1; shipId++) {
 			var ship = new SubmarineEntity(VehicleConfig.surfaceShip(), shipId, (input, output) -> {
 			}, Vec3.ZERO, 0, Color.RED, 1000);
+			var envelope = HullGeometry.envelope(VehicleConfig.surfaceShip());
+			var commonCenter = envelope.worldPoint(Vec3.ZERO, Vec3.ZERO, 0, 0);
 			var sub = new SubmarineEntity(VehicleConfig.submarine(), 1 - shipId, (input, output) -> {
-			}, Vec3.ZERO, 0, Color.BLUE, 1000);
+			}, commonCenter.subtract(new Vec3(0, HullGeometry.AFT_OFFSET, HullGeometry.UP_OFFSET)), 0, Color.BLUE,
+					1000);
 			var contact = HullOverlap.contact(ship, sub);
 			assertNotNull(contact);
 			assertEquals(0, contact.normal().z(), 0);
 			assertEquals(1, contact.normal().length(), 1e-10);
-			assertEquals(2 * HullGeometry.SEMI_BEAM, contact.penetration(), 1e-10);
+			assertEquals(envelope.semiBeam() + HullGeometry.SEMI_BEAM, contact.penetration(), 1e-10);
 			var reverse = HullOverlap.contact(sub, ship);
 			assertNotNull(reverse);
 			assertVector(contact.normal().scale(-1), reverse.normal(), 1e-10);
 		}
+	}
+
+	@Test
+	void shipBowCanMeetASubmarineBeyondTheFormerBroadPhaseRadius() {
+		var ship = new SubmarineEntity(VehicleConfig.surfaceShip(), 0, (input, output) -> {
+		}, Vec3.ZERO, 0, Color.RED, 1000);
+		var envelope = HullGeometry.envelope(ship.vehicleConfig());
+		var center = envelope.worldPoint(Vec3.ZERO, Vec3.ZERO, 0, 0);
+		double separation = envelope.semiLength() + HullGeometry.SEMI_LENGTH;
+		assertOverlap(true, ship, centeredSub(center.add(new Vec3(0, separation - CONTACT_STEP, 0)), 0, 0));
+		assertOverlap(true, ship, centeredSub(center.add(new Vec3(0, separation, 0)), 0, 0));
+		assertOverlap(false, ship, centeredSub(center.add(new Vec3(0, separation + CONTACT_STEP, 0)), 0, 0));
+	}
+
+	@Test
+	void mixedVehicleContactIsCorrectAcrossDifferentHeadingsAndPitch() {
+		var shipEnvelope = HullGeometry.envelope(VehicleConfig.surfaceShip());
+		var normal = new Vec3(1, 2, 0.3).normalize();
+		Vec3 center = new Vec3(300, -400, -200);
+		double shipHeading = 0.4, subHeading = 2.2, subPitch = -0.3;
+		var shipPosition = center.subtract(forward(shipHeading, 0).scale(shipEnvelope.forwardOffset()))
+				.subtract(up(shipHeading, 0).scale(shipEnvelope.upOffset()));
+		var ship = new SubmarineEntity(VehicleConfig.surfaceShip(), 0, (input, output) -> {
+		}, shipPosition, shipHeading, Color.RED, 1000);
+		ship.setZ(shipPosition.z()); // Artificial translation for the support-plane geometry check.
+		var touchingCenter = center.add(supportPoint(normal, shipHeading, 0, shipEnvelope))
+				.add(supportPoint(normal, subHeading, subPitch));
+		assertOverlap(true, ship,
+				centeredSub(touchingCenter.subtract(normal.scale(CONTACT_STEP)), subHeading, subPitch));
+		assertOverlap(true, ship, centeredSub(touchingCenter, subHeading, subPitch));
+		assertOverlap(false, ship, centeredSub(touchingCenter.add(normal.scale(CONTACT_STEP)), subHeading, subPitch));
+		var contact = HullOverlap.contact(ship, centeredSub(touchingCenter, subHeading, subPitch));
+		assertNotNull(contact);
+		assertVector(normal, contact.normal(), 1e-8);
+		assertVector(contact.pointA(), contact.pointB(), 1e-8);
+	}
+
+	@Test
+	void approachingSubmarineHitsShipForebodyBeyondTheFormerCollisionRadius() {
+		var ship = new SubmarineEntity(VehicleConfig.surfaceShip(), 0, (input, output) -> {
+		}, Vec3.ZERO, 0, Color.RED, 1000);
+		var center = HullGeometry.envelope(ship.vehicleConfig()).worldPoint(Vec3.ZERO, Vec3.ZERO, 0, 0);
+		var approaching = centeredSub(center.add(new Vec3(0, 125, 0)), Math.PI, 0);
+		approaching.setSpeed(5);
+
+		SimulationLoop.checkSubCollisions(List.of(ship, approaching));
+
+		assertTrue(ship.hp() < 1000 && ship.hp() > 0, "The ship's forebody must receive the collision");
+		assertEquals(ship.hp(), approaching.hp());
+		assertTrue(ship.speed() < 0, "The ship must receive southward momentum from the incoming submarine");
+		assertEquals(false, SimulationLoop.ellipsoidsOverlap(ship, approaching));
 	}
 
 	@Test
@@ -275,13 +329,17 @@ class HullOverlapTest {
 	}
 
 	private static Vec3 supportPoint(Vec3 normal, double heading, double pitch) {
+		return supportPoint(normal, heading, pitch, HullGeometry.envelope(VehicleConfig.submarine()));
+	}
+
+	private static Vec3 supportPoint(Vec3 normal, double heading, double pitch, HullGeometry.Envelope envelope) {
 		Vec3 f = forward(heading, pitch), r = right(heading), u = up(heading, pitch);
-		double along = HullGeometry.SEMI_LENGTH * f.dot(normal);
-		double across = HullGeometry.SEMI_BEAM * r.dot(normal);
-		double above = HullGeometry.SEMI_HEIGHT * u.dot(normal);
+		double along = envelope.semiLength() * f.dot(normal);
+		double across = envelope.semiBeam() * r.dot(normal);
+		double above = envelope.semiHeight() * u.dot(normal);
 		double scale = Math.sqrt(along * along + across * across + above * above);
-		return f.scale(HullGeometry.SEMI_LENGTH * along / scale).add(r.scale(HullGeometry.SEMI_BEAM * across / scale))
-				.add(u.scale(HullGeometry.SEMI_HEIGHT * above / scale));
+		return f.scale(envelope.semiLength() * along / scale).add(r.scale(envelope.semiBeam() * across / scale))
+				.add(u.scale(envelope.semiHeight() * above / scale));
 	}
 
 	private static Vec3 forward(double heading, double pitch) {

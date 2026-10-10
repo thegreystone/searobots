@@ -83,7 +83,10 @@ class TorpedoTurnRadiusTest {
 	void fasterPitchResponseStillHasAWideRadiusAtMaximumSpeed() {
 		for (double angle : FAST_CONTROL_ANGLES) {
 			var torpedo = settled(23, 0, angle);
+			assertTrue(Double.isFinite(torpedo.pitchRate()) && torpedo.pitchRate() > 0,
+					"The fixture must measure active pitch authority before the pitch stop");
 			double radius = torpedo.speed() / Math.abs(torpedo.pitchRate());
+			assertTrue(Double.isFinite(radius), "An infinite radius must not satisfy the pitch safety bound");
 			assertTrue(radius >= 80,
 					"23 m/s needs at least an 80 m pitch radius at " + angle + " degrees, got " + radius);
 		}
@@ -93,8 +96,13 @@ class TorpedoTurnRadiusTest {
 	void combiningYawAndPitchCannotProduceAnInstantTurnAtMaximumSpeed() {
 		for (double angle : FAST_CONTROL_ANGLES) {
 			var torpedo = settled(23, angle, angle);
+			assertTrue(
+					Double.isFinite(torpedo.yawRate()) && torpedo.yawRate() > 0 && Double.isFinite(torpedo.pitchRate())
+							&& torpedo.pitchRate() > 0,
+					"The fixture must exercise both steering axes before the pitch stop");
 			// Omitting the cos(pitch) factor overestimates yaw curvature, so this is a conservative bound.
 			double radius = torpedo.speed() / Math.hypot(torpedo.yawRate(), torpedo.pitchRate());
+			assertTrue(Double.isFinite(radius), "The combined radius must be a finite steering measurement");
 			assertTrue(radius >= 70, "Combined steering at 23 m/s needs at least a 70 m radius, got " + radius);
 		}
 	}
@@ -119,6 +127,8 @@ class TorpedoTurnRadiusTest {
 		torpedo.setActualSternPlanes(planes);
 		var physics = new TorpedoPhysics();
 		for (int tick = 0; tick < Math.round(60 / DT); tick++) {
+			// Hold orientation away from its stop while preserving the angular-rate response.
+			torpedo.setPitch(0);
 			physics.step(torpedo, DT, null, null, null);
 		}
 		assertEquals(speed, torpedo.speed(), 1e-10, "The fixture must maintain the requested speed");

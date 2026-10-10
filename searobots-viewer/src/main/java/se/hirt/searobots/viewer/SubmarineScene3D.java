@@ -2391,14 +2391,15 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 				Quaternion subModelRot = subNode.getLocalRotation();
 
 				// Hull-body envelope shared with collision and fuse geometry.
+				var envelope = HullGeometry.envelope(snap);
 				ellGeom.setLocalRotation(subModelRot);
 				// OBJ +Y points aft, while the engine's longitudinal offset is along forward.
 				Vector3f offset = subModelRot
-						.mult(new Vector3f(0, (float) -HullGeometry.AFT_OFFSET, (float) HullGeometry.UP_OFFSET));
+						.mult(new Vector3f(0, (float) -envelope.forwardOffset(), (float) envelope.upOffset()));
 				ellGeom.setLocalTranslation(subModelPos.add(offset));
 				// OBJ axes: X = beam, Y = length, Z = height.
-				ellGeom.setLocalScale((float) HullGeometry.SEMI_BEAM, (float) HullGeometry.SEMI_LENGTH,
-						(float) HullGeometry.SEMI_HEIGHT);
+				ellGeom.setLocalScale((float) envelope.semiBeam(), (float) envelope.semiLength(),
+						(float) envelope.semiHeight());
 			}
 
 			// Terrain collision points: 7 purple spheres
@@ -2438,25 +2439,14 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 				// Up: cross(fwd, right)
 				double upX = -sinH * sinP, upY = -cosH * sinP, upZ = cosP;
 
-				double bowDist = 33.5;
-				double sternDist = 40.0;
-				double beamDist = 6.0;
-				double towerHeight = 6.5;
-				double keelDepth = 5.0;
-
-				// Offsets in local frame -> world coords
-				double[][] pts = {{simX, simY, simZ}, // center
-						{simX + fwdX * bowDist, simY + fwdY * bowDist, simZ + fwdZ * bowDist}, // bow
-						{simX - fwdX * sternDist, simY - fwdY * sternDist, simZ - fwdZ * sternDist}, // stern
-						{simX + rightX * beamDist, simY + rightY * beamDist, simZ + rightZ * beamDist},
-						// port (actually starboard, sign doesn't matter for collision)
-						{simX - rightX * beamDist, simY - rightY * beamDist, simZ - rightZ * beamDist}, // starboard
-						{simX + upX * towerHeight, simY + upY * towerHeight, simZ + upZ * towerHeight}, // tower top
-						{simX - upX * keelDepth, simY - upY * keelDepth, simZ - upZ * keelDepth}, // keel
-				};
+				var points = HullGeometry.terrainSamplePoints(snap.surfaceLocked());
 				for (int tp = 0; tp < 7; tp++) {
+					var point = points[tp];
+					double x = simX + rightX * point.x() + fwdX * point.y() + upX * point.z();
+					double y = simY + rightY * point.x() + fwdY * point.y() + upY * point.z();
+					double z = simZ + rightZ * point.x() + fwdZ * point.y() + upZ * point.z();
 					// sim (X,Y,Z) -> JME (X, Z, -Y)
-					tpGeoms[tp].setLocalTranslation((float) pts[tp][0], (float) pts[tp][2], (float) -pts[tp][1]);
+					tpGeoms[tp].setLocalTranslation((float) x, (float) z, (float) -y);
 				}
 			}
 		}

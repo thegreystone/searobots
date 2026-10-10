@@ -40,6 +40,15 @@ public interface SubmarineInput {
 	EnvironmentSnapshot environment();
 
 	/**
+	 * Recommended navigation clearance between the hull's lowest point and the seabed, in metres.
+	 * Controllers may use this safety margin when planning routes and depths. Physical grounding
+	 * occurs at hull contact and does not enforce this advisory margin.
+	 */
+	default double recommendedTerrainClearance() {
+		return VehicleConfig.submarine().terrainClearance();
+	}
+
+	/**
 	 * Linear velocity over the seabed in world (x, y, z) axes, in m/s. Includes the ocean current
 	 * at the submarine's depth. Use {@code self().velocity()} for motion relative to the water.
 	 */

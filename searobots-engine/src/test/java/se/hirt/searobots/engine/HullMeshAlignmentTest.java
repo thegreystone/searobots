@@ -30,6 +30,9 @@ package se.hirt.searobots.engine;
 
 import org.junit.jupiter.api.Test;
 import se.hirt.searobots.api.Vec3;
+import se.hirt.searobots.api.VehicleConfig;
+
+import java.awt.Color;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -99,5 +102,51 @@ class HullMeshAlignmentTest {
 		}
 		assertTrue(maximumGap <= 1e-6,
 				"The collision hull must contain the rendered body; gap=" + maximumGap + " m at OBJ " + worstPoint);
+	}
+
+	@Test
+	void surfaceShipHullContainsTheActualSubmergedMainHullAndBulb() throws IOException {
+		Path relative = Path.of("searobots-viewer", "src", "main", "resources", "models", "surface-ship.obj");
+		Path model = Files.isRegularFile(relative) ? relative : Path.of("..").resolve(relative);
+		assertTrue(Files.isRegularFile(model), "The actual surface ship model must be present: " + model);
+		var vertices = new ArrayList<Vec3>();
+		var hullIndices = new HashSet<Integer>();
+		Set<String> hullGroups = Set.of("HullBelow", "HullBoot", "TransomBoot", "Bulb");
+		var seenGroups = new HashSet<String>();
+		String group = "";
+		try (var reader = Files.newBufferedReader(model)) {
+			String line;
+			while ((line = reader.readLine()) != null) {
+				if (line.startsWith("v ")) {
+					String[] fields = line.split("\\s+");
+					vertices.add(new Vec3(Double.parseDouble(fields[1]), Double.parseDouble(fields[2]),
+							Double.parseDouble(fields[3])));
+				} else if (line.startsWith("g ")) {
+					group = line.substring(2).trim();
+					if (hullGroups.contains(group))
+						seenGroups.add(group);
+				} else if (line.startsWith("f ") && hullGroups.contains(group)) {
+					for (String field : line.substring(2).trim().split("\\s+")) {
+						int slash = field.indexOf('/');
+						int index = Integer.parseInt(slash < 0 ? field : field.substring(0, slash));
+						hullIndices.add(index > 0 ? index - 1 : vertices.size() + index);
+					}
+				}
+			}
+		}
+		assertEquals(hullGroups, seenGroups);
+		var ship = new SubmarineEntity(VehicleConfig.surfaceShip(), 0, (input, output) -> {
+		}, Vec3.ZERO, 0, Color.BLUE, 1000);
+		int submergedCount = 0;
+		for (int index : hullIndices) {
+			var point = vertices.get(index);
+			if (point.z() > 0)
+				continue;
+			submergedCount++;
+			// Ship OBJ: X starboard, Y aft, Z up; engine heading zero points north.
+			double gap = HullGeometry.distanceToHull(point.x(), -point.y(), point.z(), ship);
+			assertEquals(0, gap, 1e-6, "The submerged ship hull must contain OBJ " + point);
+		}
+		assertTrue(submergedCount >= 1300, "Check the main underwater mesh, including the bulb and transom");
 	}
 }

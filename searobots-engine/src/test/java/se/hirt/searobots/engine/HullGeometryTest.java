@@ -29,12 +29,15 @@
 package se.hirt.searobots.engine;
 
 import org.junit.jupiter.api.Test;
+import se.hirt.searobots.api.MatchConfig;
 import se.hirt.searobots.api.Vec3;
 import se.hirt.searobots.api.VehicleConfig;
 
 import java.awt.Color;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static se.hirt.searobots.engine.HullGeometry.AFT_OFFSET;
 import static se.hirt.searobots.engine.HullGeometry.SEMI_BEAM;
 import static se.hirt.searobots.engine.HullGeometry.SEMI_HEIGHT;
@@ -124,6 +127,76 @@ class HullGeometryTest {
 						torpedoPitch, halfLength, position.x(), position.y(), position.z(), heading, pitch),
 				EPSILON);
 		assertEquals(expectedBowDistance, HullGeometry.bowDistanceToHull(torpedo.snapshot(), sub.snapshot()), EPSILON);
+	}
+
+	@Test
+	void surfaceShipDistanceUsesItsOwnEnvelopeUnderTranslationAndRotation() {
+		var envelope = HullGeometry.envelope(VehicleConfig.surfaceShip());
+		var surface = new Vec3(envelope.semiBeam() * 0.48, envelope.semiLength() * 0.6, envelope.semiHeight() * 0.64);
+		var normal = new Vec3(surface.x() / Math.pow(envelope.semiBeam(), 2),
+				surface.y() / Math.pow(envelope.semiLength(), 2), surface.z() / Math.pow(envelope.semiHeight(), 2))
+				.normalize();
+		var local = surface.add(normal.scale(3.33));
+		var position = new Vec3(1250, -870, -200);
+		for (double heading : new double[] {0, Math.PI / 2, 1.1, -2.4}) {
+			for (double pitch : new double[] {0, -0.6, 0.45}) {
+				var ship = new SubmarineEntity(VehicleConfig.surfaceShip(), 0, (input, output) -> {
+				}, position, heading, Color.BLUE, 1000);
+				ship.setZ(position.z()); // Artificial translation for a geometry invariance check.
+				ship.setPitch(pitch);
+				var point = envelope.worldPoint(local, position, heading, pitch);
+				assertEquals(3.33, HullGeometry.distanceToHull(point.x(), point.y(), point.z(), ship), EPSILON);
+				assertEquals(3.33, HullGeometry.distanceToHull(point, ship.snapshot()), EPSILON);
+			}
+		}
+	}
+
+	@Test
+	void torpedoBowFuseAndSnapshotQueriesUseTheSurfaceShipEnvelope() {
+		double heading = 0.8, pitch = 0.4;
+		var envelope = HullGeometry.envelope(VehicleConfig.surfaceShip());
+		var position = new Vec3(1250, -870, -200);
+		var ship = new SubmarineEntity(VehicleConfig.surfaceShip(), 0, (input, output) -> {
+		}, position, heading, Color.BLUE, 1000);
+		ship.setZ(position.z()); // Geometry fixture; surface locking belongs to physics.
+		ship.setPitch(pitch);
+		double halfLength = VehicleConfig.torpedo().hullHalfLength();
+		var torpedoPosition = envelope.worldPoint(new Vec3(0, envelope.semiLength() + 3.33 + halfLength, 0), position,
+				heading, pitch);
+		var torpedo = new TorpedoEntity(1, 1, VehicleConfig.torpedo(), null, torpedoPosition, heading + Math.PI, -pitch,
+				4, Color.RED);
+
+		assertEquals(3.33 + halfLength, HullGeometry.distanceToHull(torpedo, ship), EPSILON);
+		assertEquals(3.33, HullGeometry.bowDistanceToHull(torpedo, ship), EPSILON);
+		assertEquals(3.33, HullGeometry.bowDistanceToHull(torpedo.snapshot(), ship.snapshot()), EPSILON);
+		assertTrue(HullGeometry.bowDistanceToHull(torpedo, ship) < torpedo.fuseRadius(),
+				"The ship bow must trigger a fuse even when the old submarine hull is far away");
+	}
+
+	@Test
+	void detonationAtActualBulbousBowReceivesPointBlankHullDamage() {
+		var ship = new SubmarineEntity(VehicleConfig.surfaceShip(), 0, (input, output) -> {
+		}, Vec3.ZERO, 0, Color.BLUE, 1000);
+		// The mesh bulb reaches forward 80.5 m at depth 4.031 m. Place the warhead there.
+		var torpedo = new TorpedoEntity(1, 1, VehicleConfig.torpedo(), null, new Vec3(0, 83, -4.031), Math.PI, 0, 4,
+				Color.RED);
+
+		SimulationLoop.handleDetonation(torpedo, List.of(ship), MatchConfig.withDefaults(42), true);
+
+		assertEquals(0, ship.hp(), "A warhead inside the ship's actual bow must receive point-blank damage");
+		assertTrue(torpedo.detonated());
+	}
+
+	@Test
+	void shipTerrainSamplesCarryTheEnvelopeOffsetsWhileSubmarineSamplesStayEstablished() {
+		var ship = HullGeometry.envelope(VehicleConfig.surfaceShip());
+		var points = HullGeometry.terrainSamplePoints(VehicleConfig.surfaceShip());
+		assertEquals(new Vec3(0, ship.forwardOffset() + ship.semiLength(), ship.upOffset()), points[1]);
+		assertEquals(new Vec3(0, ship.forwardOffset() - ship.semiLength(), ship.upOffset()), points[2]);
+		assertEquals(new Vec3(0, ship.forwardOffset(), ship.upOffset() - ship.semiHeight()), points[6]);
+		assertEquals(new Vec3(0, 33.5, 0), HullGeometry.terrainSamplePoints(false)[1]);
+		assertEquals(new Vec3(0, -40, 0), HullGeometry.terrainSamplePoints(false)[2]);
+		assertEquals(new Vec3(0, 0, -5), HullGeometry.terrainSamplePoints(false)[6]);
 	}
 
 	private static Vec3 outsideAlongNormal(Vec3 surface, double distance) {

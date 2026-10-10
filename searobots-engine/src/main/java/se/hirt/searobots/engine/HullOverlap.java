@@ -65,7 +65,7 @@ final class HullOverlap {
 			return null;
 		}
 		// The longest semi-axis bounds every orientation; reject distant pairs cheaply.
-		double diameter = 2 * HullGeometry.SEMI_LENGTH;
+		double diameter = hullA.boundingRadius() + hullB.boundingRadius();
 		if (distanceSquared > diameter * diameter * (1.0 + CONTACT_TOLERANCE)) {
 			return null;
 		}
@@ -140,13 +140,14 @@ final class HullOverlap {
 		var forward = new Vec3(sinH * cosP, cosH * cosP, sinP);
 		var right = new Vec3(cosH, -sinH, 0);
 		var up = new Vec3(-sinH * sinP, -cosH * sinP, cosP);
-		var center = new Vec3(sub.x(), sub.y(), sub.z()).add(forward.scale(HullGeometry.AFT_OFFSET))
-				.add(up.scale(HullGeometry.UP_OFFSET));
-		return new Hull(center, Shape.axis(forward, HullGeometry.SEMI_LENGTH)
-				.add(Shape.axis(right, HullGeometry.SEMI_BEAM)).add(Shape.axis(up, HullGeometry.SEMI_HEIGHT)));
+		var envelope = HullGeometry.envelope(sub.vehicleConfig());
+		var center = new Vec3(sub.x(), sub.y(), sub.z()).add(forward.scale(envelope.forwardOffset()))
+				.add(up.scale(envelope.upOffset()));
+		return new Hull(center, Shape.axis(forward, envelope.semiLength()).add(Shape.axis(right, envelope.semiBeam()))
+				.add(Shape.axis(up, envelope.semiHeight())), envelope.boundingRadius());
 	}
 
-	private record Hull(Vec3 center, Shape shape) {
+	private record Hull(Vec3 center, Shape shape, double boundingRadius) {
 	}
 
 	/** Six independent entries of a symmetric 3x3 shape matrix (squared semi-axes). */

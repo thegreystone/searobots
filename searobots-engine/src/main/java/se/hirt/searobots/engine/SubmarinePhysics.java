@@ -294,6 +294,9 @@ public final class SubmarinePhysics {
 				contactVerticalSpeed = -previousZ / dt;
 			}
 			newZ = 0;
+			// Remove upward heave stopped by the surface. Do not invent downward heave
+			// to cancel pitched surge: leveling or diving must release the constraint.
+			sub.setVerticalSpeed(Math.min(0, verticalSpeed));
 		}
 
 		// For surfaceLocked vehicles, force z=0 and zero vertical speed
@@ -309,15 +312,12 @@ public final class SubmarinePhysics {
 
 		// 7. Terrain collision: check 7 hull points (pitch-aware)
 		//    center, bow, stern, port, starboard, tower top, keel
-		double[][] points = hullPoints(newX, newY, heading, pitch, cfg.hullHalfBeam());
+		double[][] points = hullPoints(newX, newY, heading, pitch, cfg);
 
-		// Dead subs rest directly on the seabed (no clearance buffer).
-		// Alive subs maintain a safety margin above terrain.
-		double clearance = sub.hp() <= 0 ? 1.0 : cfg.terrainClearance();
-
-		double worstPenetration = terrainPenetration(points, newZ, clearance, terrain);
-
-		double minZ = newZ + worstPenetration;
+		// Navigation margins belong to controllers. Only the physical contact samples
+		// can ground, damage or slow a hull; neither living hulls nor wrecks get an
+		// invisible safety shell that lifts them off the seabed or out of the water.
+		double worstPenetration = terrainPenetration(points, newZ, terrain);
 		boolean scraping = false;
 		if (worstPenetration > 0) {
 			scraping = true;
@@ -325,10 +325,9 @@ public final class SubmarinePhysics {
 			// Rotation and currents move contact points even when the centre has no surge.
 			var impact = new TerrainImpact(0, 0);
 			if (sub.hp() > 0) {
-				var previousPoints = hullPoints(previousX, previousY, previousHeading, previousPitch,
-						cfg.hullHalfBeam());
+				var previousPoints = hullPoints(previousX, previousY, previousHeading, previousPitch, cfg);
 				impact = terrainImpact(points, newX, newY, newZ, previousPoints, contactVerticalSpeed, heading, pitch,
-						cfg, clearance, terrain, dt);
+						cfg, terrain, dt);
 			}
 			newZ = newZ + worstPenetration;
 
@@ -369,8 +368,8 @@ public final class SubmarinePhysics {
 			// The bounce and wreck settling can change pitch. Clear the resulting hull as well;
 			// that positional correction must not be charged as another impact next tick.
 			if (sub.pitch() != pitch) {
-				var responsePoints = hullPoints(newX, newY, heading, sub.pitch(), cfg.hullHalfBeam());
-				newZ += Math.max(0, terrainPenetration(responsePoints, newZ, clearance, terrain));
+				var responsePoints = hullPoints(newX, newY, heading, sub.pitch(), cfg);
+				newZ += Math.max(0, terrainPenetration(responsePoints, newZ, terrain));
 			}
 		}
 
@@ -459,22 +458,26 @@ public final class SubmarinePhysics {
 	}
 
 	/** World X/Y and centre-relative Z for the seven terrain contact points. */
-	private static double[][] hullPoints(double x, double y, double heading, double pitch, double halfBeam) {
+	private static double[][] hullPoints(double x, double y, double heading, double pitch, VehicleConfig cfg) {
 		double sinH = Math.sin(heading), cosH = Math.cos(heading);
 		double sinPt = Math.sin(pitch), cosPt = Math.cos(pitch);
 		double fwdX = sinH * cosPt, fwdY = cosH * cosPt;
 		double upX = -sinH * sinPt, upY = -cosH * sinPt;
-		// Keep the collision hull aligned with the visual debug overlay.
-		return new double[][] {{x, y, 0}, {x + fwdX * 33.5, y + fwdY * 33.5, sinPt * 33.5},
-				{x - fwdX * 40.0, y - fwdY * 40.0, -sinPt * 40.0}, {x + cosH * halfBeam, y - sinH * halfBeam, 0},
-				{x - cosH * halfBeam, y + sinH * halfBeam, 0}, {x + upX * 6.5, y + upY * 6.5, cosPt * 6.5},
-				{x - upX * 5.0, y - upY * 5.0, -cosPt * 5.0}};
+		var samples = HullGeometry.terrainSamplePoints(cfg);
+		var points = new double[samples.length][3];
+		for (int i = 0; i < samples.length; i++) {
+			var local = samples[i];
+			points[i][0] = x + cosH * local.x() + fwdX * local.y() + upX * local.z();
+			points[i][1] = y - sinH * local.x() + fwdY * local.y() + upY * local.z();
+			points[i][2] = sinPt * local.y() + cosPt * local.z();
+		}
+		return points;
 	}
 
-	private static double terrainPenetration(double[][] points, double z, double clearance, TerrainMap terrain) {
+	private static double terrainPenetration(double[][] points, double z, TerrainMap terrain) {
 		double worst = Double.NEGATIVE_INFINITY;
 		for (var point : points) {
-			worst = Math.max(worst, terrain.elevationAt(point[0], point[1]) + clearance - (z + point[2]));
+			worst = Math.max(worst, terrain.elevationAt(point[0], point[1]) - (z + point[2]));
 		}
 		return worst;
 	}
@@ -484,13 +487,13 @@ public final class SubmarinePhysics {
 
 	private static TerrainImpact terrainImpact(
 		double[][] points, double x, double y, double z, double[][] previousPoints, double centreVerticalSpeed,
-		double heading, double pitch, VehicleConfig cfg, double clearance, TerrainMap terrain, double dt) {
+		double heading, double pitch, VehicleConfig cfg, TerrainMap terrain, double dt) {
 		double closingSpeed = 0;
 		double energyJoules = 0;
 		double sample = Math.min(1.0, terrain.getCellSize() * 0.5);
 		for (int i = 0; i < points.length; i++) {
 			var point = points[i];
-			if (terrain.elevationAt(point[0], point[1]) + clearance <= z + point[2]) {
+			if (terrain.elevationAt(point[0], point[1]) <= z + point[2]) {
 				continue;
 			}
 			var previous = previousPoints[i];

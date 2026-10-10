@@ -105,7 +105,8 @@ class SubmarineDepthLimitTest {
 	void terrainCorrectionCannotRescueACrushDepthCrossing() {
 		var sub = movingSub(CONFIG.crushDepth() + 0.01, -2);
 		double[] elevations = new double[9];
-		Arrays.fill(elevations, CONFIG.crushDepth() - 5);
+		// Physical keel contact raises the centre one metre above the limit.
+		Arrays.fill(elevations, CONFIG.crushDepth() - 4);
 		var terrain = new TerrainMap(elevations, 3, 3, -100, -100, 100);
 		new SubmarinePhysics(CONFIG).step(sub, 1.0 / CONFIG.tickRateHz(), terrain, NO_CURRENT, CONFIG.battleArea());
 

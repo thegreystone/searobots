@@ -45,6 +45,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class TorpedoVelocityTelemetryTest {
 
 	private static final double EPSILON = 1e-10;
+	private static final double DT = 1.0 / 50;
 
 	private TorpedoEntity pitchedTorpedo() {
 		return new TorpedoEntity(1, 0, VehicleConfig.torpedo(), null, new Vec3(0, 0, -200), Math.toRadians(60),
@@ -154,5 +155,85 @@ class TorpedoVelocityTelemetryTest {
 				() -> assertEquals(8 * Math.cos(Math.toRadians(60)) * Math.cos(Math.toRadians(25)), linear.y(),
 						EPSILON),
 				() -> assertEquals(8 * Math.sin(Math.toRadians(25)) - 1, linear.z(), EPSILON));
+	}
+
+	@Test
+	void surfaceVelocitySuppressesOnlyOutwardMotion() {
+		var torpedo = pitchedTorpedo();
+		torpedo.setZ(0);
+		torpedo.setSpeed(8);
+		torpedo.setVerticalSpeed(1);
+		assertEquals(0, torpedo.velocity().linear().z(), EPSILON);
+		assertEquals(0, torpedo.snapshot().velocity().linear().z(), EPSILON);
+
+		torpedo.setZ(-0.001);
+		assertEquals(8 * Math.sin(Math.toRadians(25)) + 1, torpedo.velocity().linear().z(), EPSILON,
+				"An underwater hull must still report its upward motion");
+
+		torpedo.setZ(0);
+		torpedo.setPitch(-Math.toRadians(25));
+		assertEquals(-8 * Math.sin(Math.toRadians(25)) + 1, torpedo.velocity().linear().z(), EPSILON,
+				"The surface must allow inward motion immediately");
+	}
+
+	@Test
+	void repeatedSurfaceTicksReportZeroRiseWithoutAccumulatingCounterVelocity() {
+		var torpedo = surfaceTorpedo();
+		torpedo.setVerticalSpeed(2);
+		var physics = new TorpedoPhysics();
+		for (int tick = 0; tick < 10; tick++) {
+			double previousZ = torpedo.z();
+			physics.step(torpedo, DT, null, null, null);
+			assertEquals(previousZ, torpedo.z(), EPSILON);
+			assertEquals(0, torpedo.velocity().linear().z(), EPSILON);
+			assertEquals(0, torpedo.snapshot().velocity().linear().z(), EPSILON);
+			assertEquals(0, torpedo.verticalSpeed(), EPSILON,
+					"Surface support must not store a downward velocity to cancel pitched surge");
+		}
+
+		torpedo.setPitch(0);
+		physics.step(torpedo, DT, null, null, null);
+		assertEquals(0, torpedo.z(), EPSILON, "Levelling out must not produce an artificial downward lurch");
+		assertEquals(0, torpedo.verticalSpeed(), EPSILON);
+
+		torpedo.setPitch(-0.1);
+		physics.step(torpedo, DT, null, null, null);
+		assertTrue(torpedo.z() < 0, "Pitching down must release the surface constraint immediately");
+		assertEquals(torpedo.z() / DT, torpedo.velocity().linear().z(), EPSILON);
+	}
+
+	@Test
+	void reachingTheSurfaceStopsOutwardFeedbackAndPreservesHorizontalMotion() {
+		var torpedo = surfaceTorpedo();
+		torpedo.setZ(-0.01);
+		double previousX = torpedo.x(), previousY = torpedo.y();
+		new TorpedoPhysics().step(torpedo, DT, null, null, null);
+		assertEquals(0, torpedo.z(), EPSILON);
+		assertEquals(0, torpedo.velocity().linear().z(), EPSILON);
+		assertEquals(torpedo.velocity().linear().x(), (torpedo.x() - previousX) / DT, EPSILON);
+		assertEquals(torpedo.velocity().linear().y(), (torpedo.y() - previousY) / DT, EPSILON);
+	}
+
+	@Test
+	void inwardHeaveAtTheSurfaceIsNotCancelled() {
+		var torpedo = surfaceTorpedo();
+		torpedo.setPitch(0);
+		torpedo.setVerticalSpeed(-1);
+		new TorpedoPhysics().step(torpedo, DT, null, null, null);
+		assertTrue(torpedo.z() < 0);
+		assertTrue(torpedo.verticalSpeed() < 0);
+		assertEquals(torpedo.z() / DT, torpedo.velocity().linear().z(), EPSILON);
+	}
+
+	private TorpedoEntity surfaceTorpedo() {
+		var torpedo = pitchedTorpedo();
+		torpedo.setZ(0);
+		torpedo.setPitch(Math.PI / 6);
+		torpedo.setSpeed(20);
+		var cfg = torpedo.vehicleConfig();
+		double throttle = cfg.dragCoeff() * 20 * 20 / cfg.maxThrust();
+		torpedo.setActualThrottle(throttle);
+		torpedo.createOutput().setThrottle(throttle);
+		return torpedo;
 	}
 }

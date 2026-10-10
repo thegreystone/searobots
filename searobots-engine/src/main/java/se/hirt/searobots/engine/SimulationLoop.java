@@ -196,6 +196,11 @@ public final class SimulationLoop implements SimClock {
 						}
 
 						@Override
+						public double recommendedTerrainClearance() {
+							return entity.vehicleConfig().terrainClearance();
+						}
+
+						@Override
 						public List<SonarContact> sonarContacts() {
 							return sr.passiveContacts();
 						}
@@ -358,9 +363,7 @@ public final class SimulationLoop implements SimClock {
 						if (sub.id() == torp.ownerId() && tick - torp.launchTick() < 250)
 							continue;
 						// Use torpedo bow (nose) point: warhead is in the front
-						double hullDist = HullGeometry.bowDistanceToHull(torp.x(), torp.y(), torp.z(), torp.heading(),
-								torp.pitch(), torp.vehicleConfig().hullHalfLength(), sub.x(), sub.y(), sub.z(),
-								sub.heading(), sub.pitch());
+						double hullDist = HullGeometry.bowDistanceToHull(torp, sub);
 						if (hullDist < torp.fuseRadius()) {
 							System.out.printf(
 									"[Torpedo %d] PROXIMITY FUSE at tick %d, hull dist=%.1fm to sub %d (%s)%n",
@@ -554,7 +557,7 @@ public final class SimulationLoop implements SimClock {
 	private static final int EXPLOSION_BASE_DAMAGE = 1200; // instant kill at point blank, heavy damage at close range
 	private static final double EXPLOSION_IMPULSE = 15.0; // m/s velocity change at zero range (before mass division)
 
-	private static void handleDetonation(
+	static void handleDetonation(
 		TorpedoEntity torp, List<SubmarineEntity> subs, MatchConfig config, boolean submarineHit) {
 		torp.detonate();
 		torp.setExplosionProcessed();
@@ -591,8 +594,7 @@ public final class SimulationLoop implements SimClock {
 			double centerDist = Math.sqrt(dx * dx + dy * dy + dz * dz);
 
 			// Use hull surface distance from blast point for damage
-			double hullDist = HullGeometry.distanceToHull(blastX, blastY, blastZ, sub.x(), sub.y(), sub.z(),
-					sub.heading(), sub.pitch());
+			double hullDist = HullGeometry.distanceToHull(blastX, blastY, blastZ, sub);
 			if (hullDist < blastRadius) {
 				// Quadratic falloff based on distance to hull surface
 				double falloff = (1.0 - hullDist / blastRadius);

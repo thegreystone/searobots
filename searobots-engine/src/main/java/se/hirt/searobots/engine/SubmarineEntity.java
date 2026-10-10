@@ -478,6 +478,12 @@ public final class SubmarineEntity implements SubmarineOutput {
 		double vx = speed * Math.sin(heading) * Math.cos(pitch) + swaySpeed * Math.cos(heading);
 		double vy = speed * Math.cos(heading) * Math.cos(pitch) - swaySpeed * Math.sin(heading);
 		double vz = speed * Math.sin(pitch) + verticalSpeed;
+		// The surface clips upward translation while still allowing an immediate dive.
+		if (vehicleConfig.surfaceLocked()) {
+			vz = 0;
+		} else if (z >= 0) {
+			vz = Math.min(0, vz);
+		}
 		return new Velocity(new Vec3(vx, vy, vz), new Vec3(0, pitchRate, yawRate));
 	}
 

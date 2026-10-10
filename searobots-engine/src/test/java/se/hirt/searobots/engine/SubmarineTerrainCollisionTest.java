@@ -45,16 +45,67 @@ class SubmarineTerrainCollisionTest {
 
 	@Test
 	void stationaryOverlapIsCorrectedWithoutInventingAnImpact() {
-		var sub = submarine(-90, 0);
+		var sub = submarine(-102, 0);
 		step(sub, DT, FLAT);
 
 		assertEquals(1000, sub.hp(), "Position correction must not become impact velocity.");
-		assertTrue(sub.z() >= -100 + sub.vehicleConfig().terrainClearance() + 5 - 1e-9);
+		assertEquals(-95, sub.z(), 1e-9, "The physical keel must rest on the floor without a navigation buffer.");
+	}
+
+	@Test
+	void surfacedSubmarineKeepsItsWaterlineWhenTheKeelClearsTheFloor() {
+		for (double waterDepth : new double[] {10, 5}) {
+			var sub = submarine(0, 0);
+			var water = flat(-waterDepth);
+			for (int tick = 0; tick < 100; tick++) {
+				step(sub, DT, water);
+				assertEquals(0, sub.z(), 1e-9, "Water depth " + waterDepth + " must not lift a surfaced hull.");
+				assertEquals(0, sub.verticalSpeed(), 1e-9, "Navigation clearance must not cause a bounce.");
+				assertEquals(1000, sub.hp());
+			}
+		}
+	}
+
+	@Test
+	void fastDescentInsideNavigationMarginDoesNotCausePhysicalContact() {
+		var nearFloor = submarine(-90, -1);
+		var clearWater = submarine(-90, -1);
+		nearFloor.setSpeed(10);
+		clearWater.setSpeed(10);
+		var deepFloor = flat(-1000);
+		for (int tick = 0; tick < 100; tick++) {
+			step(nearFloor, DT, FLAT);
+			step(clearWater, DT, deepFloor);
+			double keelGap = nearFloor.z() - 5 + 100;
+			assertTrue(keelGap > 0 && keelGap < nearFloor.vehicleConfig().terrainClearance(),
+					"The hull remains physically clear while inside its navigation safety margin.");
+			assertEquals(1000, nearFloor.hp(), "Clear water below the keel must not cause impact damage.");
+			assertEquals(clearWater.z(), nearFloor.z(), 1e-9, "Navigation clearance must not lift the hull.");
+			assertEquals(clearWater.speed(), nearFloor.speed(), 1e-9,
+					"Navigation clearance must not apply contact drag.");
+			assertEquals(clearWater.verticalSpeed(), nearFloor.verticalSpeed(), 1e-9,
+					"Navigation clearance must not reverse a real descent into a bounce.");
+			assertEquals(clearWater.sourceLevelDb(), nearFloor.sourceLevelDb(), 1e-9,
+					"A hull clear of the seabed must not generate scraping noise.");
+		}
+	}
+
+	@Test
+	void wreckRestsDirectlyOnItsPhysicalKeel() {
+		var wreck = submarine(-96, -1);
+		wreck.setHp(0);
+		for (int tick = 0; tick < 100; tick++) {
+			step(wreck, DT, FLAT);
+			assertEquals(-95, wreck.z(), 1e-9, "A wreck must not retain a one-metre clearance buffer.");
+			assertEquals(0, wreck.z() - 5 + 100, 1e-9);
+			assertEquals(0, wreck.verticalSpeed(), 1e-9);
+			assertEquals(0, wreck.hp());
+		}
 	}
 
 	@Test
 	void embeddedHullMovingAwayFromTheFloorDoesNotTakeImpactDamage() {
-		var sub = submarine(-90, 2);
+		var sub = submarine(-102, 2);
 		step(sub, DT, FLAT);
 
 		assertEquals(1000, sub.hp(), "Existing overlap does not make an outward movement an impact.");
@@ -94,7 +145,7 @@ class SubmarineTerrainCollisionTest {
 		int minDamage = Integer.MAX_VALUE;
 		int maxDamage = 0;
 		for (double dt : new double[] {0.01, 0.02, 0.04}) {
-			var sub = submarine(-90, -2);
+			var sub = submarine(-102, -2);
 			step(sub, dt, FLAT);
 			int damage = 1000 - sub.hp();
 			assertTrue(damage >= 40 && damage <= 46,
@@ -107,8 +158,8 @@ class SubmarineTerrainCollisionTest {
 
 	@Test
 	void highSpeedGroundingStillCausesSubstantialDamage() {
-		var slow = submarine(-83, -2);
-		var fast = submarine(-83, -8);
+		var slow = submarine(-95, -2);
+		var fast = submarine(-95, -8);
 		slow.setSpeed(6);
 		fast.setSpeed(6);
 		step(slow, DT, FLAT);
@@ -125,7 +176,7 @@ class SubmarineTerrainCollisionTest {
 
 	@Test
 	void inclinedFloorUsesTheNormalComponentOfImpactSpeed() {
-		var sub = submarine(-82, -Math.sqrt(8));
+		var sub = submarine(-94, -Math.sqrt(8));
 		var slope = terrain((x, y) -> -100 + x);
 		step(sub, DT, slope);
 
@@ -137,7 +188,7 @@ class SubmarineTerrainCollisionTest {
 
 	@Test
 	void flankSpeedBowStrikeOnSteepRidgeIsLethal() {
-		var sub = submarine(-88, 0);
+		var sub = submarine(-100, 0);
 		sub.setSpeed(15);
 		var ridge = terrain((x, y) -> y >= 30 && y <= 40 ? -100 + 10 * (y - 33.5) : -400);
 		step(sub, DT, ridge);
@@ -147,7 +198,7 @@ class SubmarineTerrainCollisionTest {
 
 	@Test
 	void fastBowOnlyDescentCausesMajorDamageEvenWhenItCanRotate() {
-		var sub = submarine(-88, -8);
+		var sub = submarine(-100, -8);
 		var ridge = terrain((x, y) -> y >= 30 && y <= 40 ? -100 : -140);
 		step(sub, DT, ridge);
 
@@ -158,7 +209,7 @@ class SubmarineTerrainCollisionTest {
 
 	@Test
 	void massiveKeelContactCanDominateAFasterRotatingSternContact() {
-		var sub = submarine(-90, -4);
+		var sub = submarine(-102, -4);
 		sub.setPitchRate(0.04);
 		step(sub, DT, FLAT);
 
@@ -171,7 +222,7 @@ class SubmarineTerrainCollisionTest {
 
 	@Test
 	void rotatingBowCanImpactTerrainWithAStationaryCentre() {
-		var sub = submarine(-88, 0);
+		var sub = submarine(-100, 0);
 		sub.setYawRate(0.1);
 		var ridge = terrain((x, y) -> y >= 30 && y <= 40 ? -100 + x : -140);
 		step(sub, DT, ridge);
@@ -182,16 +233,16 @@ class SubmarineTerrainCollisionTest {
 
 	@Test
 	void pitchingBowCanImpactTerrainWithAStationaryCentre() {
-		var sub = submarine(-88, 0);
+		var sub = submarine(-100, 0);
 		sub.setPitchRate(-0.1);
-		var level = submarine(-88, 0);
+		var level = submarine(-100, 0);
 		// Only the bow reaches this ridge. The stationary keel remains clear of the deeper floor.
 		var ridge = terrain((x, y) -> y >= 30 && y <= 40 ? -100 : -140);
 		step(level, DT, ridge);
 		step(sub, DT, ridge);
 
 		assertEquals(1000, level.hp(), "A level, stationary hull must remain clear of the ridge.");
-		assertEquals(-88, level.z(), 1e-9);
+		assertEquals(-100, level.z(), 1e-9);
 		assertEquals(0, sub.x(), 1e-9);
 		assertEquals(0, sub.y(), 1e-9);
 		assertEquals(0, sub.speed(), 1e-9);
@@ -201,17 +252,82 @@ class SubmarineTerrainCollisionTest {
 
 	@Test
 	void bouncePitchCorrectionLeavesTheHullClearOnTheNextTick() {
-		var sub = submarine(-83.03, 0);
+		var sub = submarine(-95.03, 0);
 		sub.setPitch(-0.08);
 		step(sub, DT, FLAT);
 
 		assertEquals(0, sub.pitch(), 1e-9);
 		assertTrue(sub.verticalSpeed() > 0, "Pitch correction must preserve the upward collision response.");
-		assertTrue(sub.z() - 5 >= -100 + sub.vehicleConfig().terrainClearance() - 1e-9,
-				"Changing pitch during the bounce must not leave the keel embedded.");
+		assertTrue(sub.z() - 5 >= -100 - 1e-9, "Changing pitch during the bounce must not leave the keel embedded.");
 		int hpAfterContact = sub.hp();
 		step(sub, DT, FLAT);
 		assertEquals(hpAfterContact, sub.hp(), "The previous geometric correction must not cause another impact.");
+	}
+
+	@Test
+	void surfaceShipBowAndSternReachTerrainBeyondTheSubmarineSamples() {
+		for (double heading : new double[] {0, Math.PI / 2, Math.PI}) {
+			var ship = surfaceShip(heading);
+			var shoal = terrain((x, y) -> (heading == Math.PI / 2 ? x : Math.abs(y)) >= 80 ? -2 : -50);
+			step(ship, DT, shoal);
+			assertTrue(ship.z() > 0, "The ship's long submerged hull must detect the distant shoal.");
+			assertEquals(1000, ship.hp(), "Correcting a stationary overlap must not invent an impact.");
+		}
+	}
+
+	@Test
+	void surfaceShipBroadBeamDetectsAShoalOutsideTheSubmarineBeam() {
+		var ship = surfaceShip(0);
+		// The raised band starts beyond the submarine's six-metre half-beam.
+		// It must reach the physical ship side, rather than only its navigation margin.
+		var shoal = terrain((x, y) -> x >= 10 ? -2 : -50);
+		step(ship, DT, shoal);
+		assertTrue(ship.z() > 0, "The ship's side extends beyond the submarine's terrain sample.");
+		assertEquals(1000, ship.hp());
+	}
+
+	@Test
+	void surfaceShipGroundingUsesItsOwnPhysicalDraft() {
+		var ship = surfaceShip(0);
+		var shoal = flat(-9);
+		step(ship, DT, shoal);
+		var hull = HullGeometry.envelope(ship.vehicleConfig());
+		assertEquals(-9 - hull.upOffset() + hull.semiHeight(), ship.z(), 1e-9);
+		assertEquals(1000, ship.hp());
+		step(ship, DT, shoal);
+		assertEquals(1000, ship.hp(), "Restoring the waterline must not turn grounding correction into damage.");
+	}
+
+	@Test
+	void surfaceShipKeepsItsWaterlineInsideNavigationClearance() {
+		var ship = surfaceShip(0);
+		var clearWater = surfaceShip(0);
+		ship.setSpeed(5);
+		clearWater.setSpeed(5);
+		var shallowFloor = flat(-12);
+		var deepFloor = flat(-50);
+		for (int tick = 0; tick < 100; tick++) {
+			step(ship, DT, shallowFloor);
+			step(clearWater, DT, deepFloor);
+			assertEquals(0, ship.z(), 1e-9, "The 9.5-metre draft clears a 12-metre water column.");
+			assertEquals(1000, ship.hp());
+			assertEquals(clearWater.speed(), ship.speed(), 1e-9);
+			assertEquals(clearWater.sourceLevelDb(), ship.sourceLevelDb(), 1e-9);
+		}
+	}
+
+	@Test
+	void surfaceShipKeepsItsWaterlineWhenTheWholeHullIsClear() {
+		var ship = surfaceShip(0);
+		ship.setSpeed(5);
+		step(ship, DT, flat(-50));
+		assertEquals(0, ship.z(), 1e-9);
+		assertEquals(1000, ship.hp());
+		assertTrue(ship.y() > 0);
+	}
+
+	private static SubmarineEntity surfaceShip(double heading) {
+		return new SubmarineEntity(VehicleConfig.surfaceShip(), 0, null, Vec3.ZERO, heading, Color.BLUE, 1000);
 	}
 
 	private static SubmarineEntity submarine(double z, double verticalSpeed) {

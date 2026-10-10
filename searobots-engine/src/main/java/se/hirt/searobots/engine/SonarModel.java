@@ -59,6 +59,11 @@ public final class SonarModel {
 	static final int TORPEDO_PING_COOLDOWN_TICKS = 50; // torpedoes: 1 second (small transducer, fast cycle)
 	static final double TARGET_STRENGTH_DB = 20.0;
 	static final double RANGE_NOISE_FRACTION = 0.02; // 2% RMS range noise on active returns
+	// Echo amplitude also depends on target reflection and array calibration. It is
+	// not a second exact ranging channel alongside the measured time of flight.
+	static final double ACTIVE_LEVEL_BIAS_DB = 3.0;
+	static final double ACTIVE_LEVEL_WANDER_DB = 1.0;
+	static final double ACTIVE_LEVEL_CORRELATION_S = 30.0;
 
 	// Terrain occlusion: per-cell penalties (samples step at half-cell, so halved per sample)
 	// Underwater ridge: up to 15 dB per cell of terrain above the sound path
@@ -147,7 +152,8 @@ public final class SonarModel {
 				if (isPinging(listener)) {
 					double bearing = Math.atan2(torp.x() - listener.x(), torp.y() - listener.y());
 					double bafflePenalty = isInBaffles(listener.heading(), bearing) ? BAFFLE_PENALTY_DB : 0;
-					var ret = activeDetect(listener.x(), listener.y(), listener.z(), listener.sourceLevelDb(),
+					var ret = activeDetect(tick, sensorNoiseFor(tick, listener.id(), torp.id()), listener.x(),
+							listener.y(), listener.z(), listener.sourceLevelDb(),
 							listener.vehicleConfig().sonarSelfNoiseOffsetDb(), bafflePenalty, torp.x(), torp.y(),
 							torp.z(), torp.speed(), terrain, thermalLayers);
 					if (ret != null)
@@ -186,8 +192,9 @@ public final class SonarModel {
 				for (var source : entities) {
 					if (source.forfeited() || source.hp() <= 0)
 						continue;
-					var ret = activeDetect(torp.x(), torp.y(), torp.z(), torp.sourceLevelDb(), torpSonarOffset, 0,
-							source.x(), source.y(), source.z(), source.speed(), terrain, thermalLayers);
+					var ret = activeDetect(tick, sensorNoiseFor(tick, torp.id(), source.id()), torp.x(), torp.y(),
+							torp.z(), torp.sourceLevelDb(), torpSonarOffset, 0, source.x(), source.y(), source.z(),
+							source.speed(), terrain, thermalLayers);
 					if (ret != null)
 						active.add(ret);
 				}
@@ -277,7 +284,10 @@ public final class SonarModel {
 	 */
 	private static final class SensorNoise {
 		final double levelBiasDb;
+		final double activeLevelBiasDb;
 		final CorrelatedNoise level = new CorrelatedNoise(PASSIVE_LEVEL_CORRELATION_S,
+				ContactTracker.SENSOR_CORRELATED_FRACTION);
+		final CorrelatedNoise activeLevel = new CorrelatedNoise(ACTIVE_LEVEL_CORRELATION_S,
 				ContactTracker.SENSOR_CORRELATED_FRACTION);
 		final CorrelatedNoise bearing = new CorrelatedNoise(ContactTracker.BEARING_CORRELATION_S,
 				ContactTracker.SENSOR_CORRELATED_FRACTION);
@@ -285,8 +295,9 @@ public final class SonarModel {
 				ContactTracker.SENSOR_CORRELATED_FRACTION);
 		long lastTick;
 
-		SensorNoise(double levelBiasDb) {
+		SensorNoise(double levelBiasDb, double activeLevelBiasDb) {
 			this.levelBiasDb = levelBiasDb;
+			this.activeLevelBiasDb = activeLevelBiasDb;
 		}
 	}
 
@@ -295,23 +306,31 @@ public final class SonarModel {
 
 	private SensorNoise sensorNoiseFor(long tick, int listenerId, int sourceId) {
 		var noise = sensorNoise.computeIfAbsent(trackerKey(listenerId, sourceId),
-				k -> new SensorNoise(passiveLevelBias(k)));
+				k -> new SensorNoise(levelBias(k, PASSIVE_LEVEL_BIAS_DB),
+						levelBias(k ^ 0xD1B54A32D192ED03L, ACTIVE_LEVEL_BIAS_DB)));
 		noise.lastTick = tick;
 		return noise;
 	}
 
-	private double passiveLevelBias(long pairKey) {
+	private double levelBias(long pairKey, double standardDeviation) {
 		// Mix the model seed and pair identity before sampling, independently of tick RNG.
 		long mixed = seed + pairKey + 0x9E3779B97F4A7C15L;
 		mixed = (mixed ^ (mixed >>> 30)) * 0xBF58476D1CE4E5B9L;
 		mixed = (mixed ^ (mixed >>> 27)) * 0x94D049BB133111EBL;
 		mixed ^= mixed >>> 31;
-		return new Random(mixed).nextGaussian() * PASSIVE_LEVEL_BIAS_DB;
+		return new Random(mixed).nextGaussian() * standardDeviation;
 	}
 
 	private double measuredPassiveStrength(long tick, double trueSe, SensorNoise noise) {
 		return Math.max(DETECTION_THRESHOLD_DB,
 				trueSe + noise.levelBiasDb + noise.level.next(tick, rng) * PASSIVE_LEVEL_WANDER_DB);
+	}
+
+	private double measuredActiveStrength(long tick, double trueSe, SensorNoise noise) {
+		// Independent echo calibration prevents subtracting a simultaneously heard
+		// known-strength source ping from its echo to cancel the passive measurement error.
+		return Math.max(DETECTION_THRESHOLD_DB,
+				trueSe + noise.activeLevelBiasDb + noise.activeLevel.next(tick, rng) * ACTIVE_LEVEL_WANDER_DB);
 	}
 
 	private static double estimateSourceLevel(double measuredSe, double listenerNoiseDb, double estimatedRange) {
@@ -330,8 +349,9 @@ public final class SonarModel {
 	 * Active sonar return: does the ping illuminate the target? Returns contact or null.
 	 */
 	private SonarContact activeDetect(
-		double lx, double ly, double lz, double lSLdB, double lSonarOffset, double bafflePenalty, double sx, double sy,
-		double sz, double sSpeed, TerrainMap terrain, List<ThermalLayer> thermalLayers) {
+		long tick, SensorNoise noise, double lx, double ly, double lz, double lSLdB, double lSonarOffset,
+		double bafflePenalty, double sx, double sy, double sz, double sSpeed, TerrainMap terrain,
+		List<ThermalLayer> thermalLayers) {
 		double distance = Math.sqrt((sx - lx) * (sx - lx) + (sy - ly) * (sy - ly) + (sz - lz) * (sz - lz));
 		if (distance < 1.0)
 			distance = 1.0;
@@ -347,7 +367,8 @@ public final class SonarModel {
 		double activeSe = ACTIVE_PING_SL_DB - 2 * tl + TARGET_STRENGTH_DB - nl;
 
 		if (activeSe > DETECTION_THRESHOLD_DB) {
-			double bearingError = bearingStdDev(activeSe);
+			double measuredSe = measuredActiveStrength(tick, activeSe, noise);
+			double bearingError = bearingStdDev(measuredSe);
 			double noisyBearing = trueBearing + bearingError * rng.nextGaussian();
 			noisyBearing = ((noisyBearing % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
 			double rangeRmsNoise = distance * RANGE_NOISE_FRACTION;
@@ -364,8 +385,9 @@ public final class SonarModel {
 			// Active sonar reflects off the target; the "source level" is the echo
 			// strength, not the target's own noise. Source level is unavailable;
 			// classification relies on speed and depth instead of acoustic signature.
-			return new SonarContact(noisyBearing, activeSe, noisyRange, true, estSpd, bearingError, rangeRmsNoise,
-					Double.NaN, 0, Double.NaN, estimatedDepth, classify(activeSe, estSpd, Double.NaN, estimatedDepth));
+			return new SonarContact(noisyBearing, measuredSe, noisyRange, true, estSpd, bearingError,
+					noisyRange * RANGE_NOISE_FRACTION, Double.NaN, 0, Double.NaN, estimatedDepth,
+					classify(measuredSe, estSpd, Double.NaN, estimatedDepth));
 		}
 		return null;
 	}
@@ -464,13 +486,15 @@ public final class SonarModel {
 					// Round-trip: 2 * TL
 					double activeSe = ACTIVE_PING_SL_DB - 2 * tl + TARGET_STRENGTH_DB - nl;
 					if (activeSe > DETECTION_THRESHOLD_DB) {
-						double activeBrgStdDev = bearingStdDev(activeSe);
+						double measuredActiveSe = measuredActiveStrength(tick, activeSe,
+								sensorNoiseFor(tick, listener.id(), source.id()));
+						double activeBrgStdDev = bearingStdDev(measuredActiveSe);
 						double bearingError = rng.nextGaussian() * activeBrgStdDev;
 						double reportedBearing = normalizeBearing(trueBearing + bearingError);
 						double rangeRmsNoise = distance * RANGE_NOISE_FRACTION;
 						double rangeNoise = rangeRmsNoise * rng.nextGaussian();
 						double reportedRange = Math.max(1.0, distance + rangeNoise);
-						double estSpeed = estimateTargetSpeed(source.speed(), activeSe, rng.nextGaussian());
+						double estSpeed = estimateTargetSpeed(source.speed(), measuredActiveSe, rng.nextGaussian());
 						double estSL = estimateSourceLevel(measuredSe, nl, reportedRange);
 						double depthNoiseRms = Math.max(5.0, distance * 0.05);
 						double estimatedDepth = source.z() + depthNoiseRms * rng.nextGaussian();
@@ -480,10 +504,10 @@ public final class SonarModel {
 						tracker.updateFromPing(tick, reportedRange);
 						observedSourceIds.add(source.id());
 
-						active.add(new SonarContact(reportedBearing, activeSe, reportedRange, true, estSpeed,
-								activeBrgStdDev, rangeRmsNoise, estSL, tracker.solutionQuality(),
+						active.add(new SonarContact(reportedBearing, measuredActiveSe, reportedRange, true, estSpeed,
+								activeBrgStdDev, reportedRange * RANGE_NOISE_FRACTION, estSL, tracker.solutionQuality(),
 								tracker.estimatedHeading(), estimatedDepth,
-								classify(activeSe, estSpeed, estSL, estimatedDepth)));
+								classify(measuredActiveSe, estSpeed, estSL, estimatedDepth)));
 					}
 				}
 			}

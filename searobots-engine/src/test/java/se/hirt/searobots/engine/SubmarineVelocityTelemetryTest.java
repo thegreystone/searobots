@@ -30,9 +30,12 @@ package se.hirt.searobots.engine;
 
 import org.junit.jupiter.api.Test;
 import se.hirt.searobots.api.CurrentField;
+import se.hirt.searobots.api.EnvironmentSnapshot;
 import se.hirt.searobots.api.MatchConfig;
 import se.hirt.searobots.api.TerrainMap;
 import se.hirt.searobots.api.Vec3;
+import se.hirt.searobots.api.Vec2;
+import se.hirt.searobots.api.VehicleConfig;
 import se.hirt.searobots.engine.ships.DefaultAttackSub;
 
 import java.awt.Color;
@@ -148,11 +151,101 @@ class SubmarineVelocityTelemetryTest {
 		}
 	}
 
+	@Test
+	void repeatedSurfaceTicksReportClippedVerticalMotionAndPreserveHorizontalDrift() {
+		var sub = pitchedSubmarine();
+		sub.setZ(-0.01);
+		sub.setSpeed(10);
+		sub.setSwaySpeed(1.5);
+		sub.setVerticalSpeed(2);
+		var current = new CurrentField(List.of(new CurrentField.CurrentBand(-1000, 0, new Vec2(2, -3))));
+		for (int tick = 0; tick < 20; tick++) {
+			double previousX = sub.x(), previousY = sub.y();
+			step(sub, current);
+			var velocity = sub.velocity().linear();
+			var input = new TestHelpers.TestInput(tick, 0.02, sub.state(),
+					new EnvironmentSnapshot(flatTerrain(), List.of(), current), List.of(), List.of(), 0);
+			assertAll(() -> assertEquals(0, sub.z(), EPSILON), () -> assertEquals(0, velocity.z(), EPSILON),
+					() -> assertEquals(0, sub.state().velocity().linear().z(), EPSILON),
+					() -> assertEquals(0, sub.snapshot().velocity().linear().z(), EPSILON),
+					() -> assertEquals(new Vec3(velocity.x() + 2, velocity.y() - 3, 0), input.groundVelocity()),
+					() -> assertEquals(velocity.x() + 2, (sub.x() - previousX) / 0.02, 1e-10),
+					() -> assertEquals(velocity.y() - 3, (sub.y() - previousY) / 0.02, 1e-10));
+		}
+		assertEquals(0, sub.verticalSpeed(), EPSILON, "The surface must remove independent upward heave.");
+	}
+
+	@Test
+	void levelingAfterSurfaceContactDoesNotInventDownwardHeave() {
+		var sub = pitchedSubmarine();
+		sub.setZ(0);
+		sub.setSpeed(10);
+		step(sub);
+		sub.setPitch(0);
+		sub.setPitchRate(0);
+		step(sub);
+		assertEquals(0, sub.z(), EPSILON);
+		assertEquals(0, sub.velocity().linear().z(), EPSILON);
+		assertEquals(0, sub.verticalSpeed(), EPSILON);
+	}
+
+	@Test
+	void divingPitchImmediatelyReleasesSurfaceConstraint() {
+		var sub = pitchedSubmarine();
+		sub.setZ(0);
+		sub.setSpeed(10);
+		step(sub);
+		sub.setPitch(-Math.toRadians(20));
+		sub.setPitchRate(0);
+		step(sub);
+		assertTrue(sub.z() < 0, "The submarine must be able to leave the surface on the next tick.");
+		assertEquals(sub.speed() * Math.sin(sub.pitch()), sub.velocity().linear().z(), EPSILON);
+		assertEquals(sub.velocity().linear().z(), sub.z() / 0.02, EPSILON);
+	}
+
+	@Test
+	void surfaceAllowsNegativeHeaveAndStopsPositiveHeave() {
+		var rising = pitchedSubmarine();
+		rising.setZ(-0.01);
+		rising.setSpeed(0);
+		rising.setVerticalSpeed(2);
+		step(rising);
+		assertEquals(0, rising.z(), EPSILON);
+		assertEquals(0, rising.velocity().linear().z(), EPSILON);
+		assertEquals(0, rising.verticalSpeed(), EPSILON);
+
+		var sinking = pitchedSubmarine();
+		sinking.setZ(0);
+		sinking.setVerticalSpeed(-2);
+		step(sinking);
+		assertTrue(sinking.z() < 0);
+		assertEquals(sinking.velocity().linear().z(), sinking.z() / 0.02, EPSILON);
+	}
+
+	@Test
+	void surfaceLockedVehicleNeverReportsVerticalTranslation() {
+		var ship = new SubmarineEntity(VehicleConfig.surfaceShip(), 0, new DefaultAttackSub(), Vec3.ZERO, 0, Color.BLUE,
+				1000);
+		ship.setSpeed(8);
+		ship.setPitch(0.3);
+		ship.setVerticalSpeed(-2);
+		assertEquals(0, ship.velocity().linear().z(), EPSILON);
+		step(ship);
+		assertEquals(0, ship.z(), EPSILON);
+		assertEquals(0, ship.state().velocity().linear().z(), EPSILON);
+	}
+
 	private void step(SubmarineEntity sub) {
+		step(sub, new CurrentField(List.of()));
+	}
+
+	private void step(SubmarineEntity sub, CurrentField currents) {
+		new SubmarinePhysics().step(sub, 0.02, flatTerrain(), currents, MatchConfig.withDefaults(42).battleArea());
+	}
+
+	private TerrainMap flatTerrain() {
 		double[] depths = new double[25];
 		Arrays.fill(depths, -500);
-		var terrain = new TerrainMap(depths, 5, 5, -200, -200, 100);
-		new SubmarinePhysics().step(sub, 0.02, terrain, new CurrentField(List.of()),
-				MatchConfig.withDefaults(42).battleArea());
+		return new TerrainMap(depths, 5, 5, -200, -200, 100);
 	}
 }
