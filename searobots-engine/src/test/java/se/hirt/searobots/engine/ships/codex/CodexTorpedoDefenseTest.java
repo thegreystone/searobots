@@ -160,6 +160,28 @@ class CodexTorpedoDefenseTest {
 				"Launch bearing should follow the same lead point encoded in mission data.");
 	}
 
+	@Test
+	void alignedFreshTrackAllowsPairedLongRangeShotWhileDefending() {
+		var world = GeneratedWorld.deepFlat();
+		var controller = new CodexAttackSub();
+		controller.onMatchStart(new MatchContext(MatchConfig.withDefaults(0L), world.terrain(), world.thermalLayers(),
+				world.currentField()));
+		var self = submarineState(new Vec3(0.0, 0.0, -140.0), 0.0, 7.5);
+		var opening = new TestHelpers.CapturedOutput();
+		controller.onTick(new TestHelpers.TestInput(700L, DT, self, environment(world), List.of(),
+				List.of(activeSubmarine(0.0, 3_000.0)), 250), opening);
+		assertEquals(1, opening.launchedTorpedoCount);
+
+		var followup = new TestHelpers.CapturedOutput();
+		controller.onTick(
+				new TestHelpers.TestInput(771L, DT, self, environment(world), List.of(),
+						List.of(activeSubmarine(0.0, 3_000.0), activeTorpedo(Math.toRadians(24.0), 2_000.0)), 250),
+				followup);
+		assertTrue(followup.status.startsWith("!"));
+		assertEquals(1, followup.launchedTorpedoCount,
+				"A fresh aligned track should permit the second salvo shot during defense, beyond snapshot range.");
+	}
+
 	private static EnvironmentSnapshot environment(GeneratedWorld world) {
 		return new EnvironmentSnapshot(world.terrain(), world.thermalLayers(), world.currentField());
 	}

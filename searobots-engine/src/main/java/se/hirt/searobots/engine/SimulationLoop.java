@@ -83,7 +83,7 @@ public final class SimulationLoop implements SimClock {
 		Objects.requireNonNull(vehicleConfigs, "vehicleConfigs must not be null");
 		state = State.INITIALIZING;
 		var config = world.config();
-		var physics = new SubmarinePhysics();
+		var physics = new SubmarinePhysics(config);
 		var sonar = new SonarModel(config.worldSeed(), config.maxSubSpeed());
 		double dt = 1.0 / config.tickRateHz();
 

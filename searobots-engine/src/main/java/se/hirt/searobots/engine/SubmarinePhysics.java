@@ -30,6 +30,7 @@ package se.hirt.searobots.engine;
 
 import se.hirt.searobots.api.BattleArea;
 import se.hirt.searobots.api.CurrentField;
+import se.hirt.searobots.api.MatchConfig;
 import se.hirt.searobots.api.TerrainMap;
 
 /**
@@ -40,6 +41,16 @@ public final class SubmarinePhysics {
 
 	private static final double WATER_DENSITY = 1025.0; // kg/m^3 seawater
 	private static final double CL_SLOPE = 2 * Math.PI; // thin airfoil theory
+	private final HullPressureModel hullPressure;
+
+	public SubmarinePhysics() {
+		this(MatchConfig.withDefaults(0));
+	}
+
+	/** Creates physics with the match's depth limits and seeded pressure-hull failures. */
+	public SubmarinePhysics(MatchConfig config) {
+		hullPressure = new HullPressureModel(config);
+	}
 
 	/**
 	 * Lift coefficient with stall. Linear below stallAngle, smooth rolloff above (drops to ~60% at
@@ -266,6 +277,10 @@ public final class SubmarinePhysics {
 			newZ = 0;
 			sub.setVerticalSpeed(0);
 		}
+
+		// Pressure applies to the deepest centre position reached this tick. Terrain correction
+		// must not rescue a hull that has already crossed its absolute crush depth.
+		hullPressure.step(sub, dt, Math.min(sub.z(), newZ));
 
 		// 7. Terrain collision: check 7 hull points (pitch-aware)
 		//    center, bow, stern, port, starboard, tower top, keel

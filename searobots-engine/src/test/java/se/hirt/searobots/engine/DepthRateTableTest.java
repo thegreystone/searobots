@@ -29,6 +29,7 @@
 package se.hirt.searobots.engine;
 
 import org.junit.jupiter.api.Test;
+import se.hirt.searobots.api.MatchConfig;
 import se.hirt.searobots.api.Vec3;
 import se.hirt.searobots.api.VehicleConfig;
 
@@ -45,8 +46,19 @@ import java.awt.*;
 class DepthRateTableTest {
 
 	static final double DT = 1.0 / 50;
-	static final SubmarinePhysics physics = new SubmarinePhysics();
 	static final GeneratedWorld world = GeneratedWorld.deepFlat();
+	// These measurements isolate hydrodynamics, including ascent from 800 m. Put the pressure
+	// limits below the test seabed so hull damage cannot corrupt the generated control tables.
+	static final SubmarinePhysics physics = new SubmarinePhysics(characterizationConfig());
+
+	private static MatchConfig characterizationConfig() {
+		var config = world.config();
+		return new MatchConfig(config.worldSeed(), config.tickRateHz(), config.matchDurationTicks(),
+				config.submarineCount(), config.torpedoCount(), config.startingHp(), config.blastRadius(),
+				config.minFuseRadius(), config.maxFuseRadius(), -1500, -2000, config.battleArea(),
+				config.terrainMarginMeters(), config.gridCellMeters(), config.minSeaFloorZ(), config.maxSeaFloorZ(),
+				config.maxSubSpeed(), config.startTime());
+	}
 
 	// ── Stern planes depth rate ──
 
