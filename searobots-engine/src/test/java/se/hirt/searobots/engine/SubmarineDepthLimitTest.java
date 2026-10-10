@@ -38,6 +38,7 @@ import se.hirt.searobots.api.VehicleConfig;
 
 import java.util.Arrays;
 import java.util.List;
+import java.awt.Color;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -79,6 +80,56 @@ class SubmarineDepthLimitTest {
 		assertEquals(0, sub.hp(), "Reaching the absolute crush depth should destroy the submarine on that tick");
 	}
 
+	@Test
+	void simulationUsesConfiguredDepthLimits() {
+		var config = new MatchConfig(CONFIG.worldSeed(), CONFIG.tickRateHz(), CONFIG.matchDurationTicks(),
+				CONFIG.submarineCount(), CONFIG.torpedoCount(), CONFIG.startingHp(), CONFIG.blastRadius(),
+				CONFIG.minFuseRadius(), CONFIG.maxFuseRadius(), -100, -200, CONFIG.battleArea(),
+				CONFIG.terrainMarginMeters(), CONFIG.gridCellMeters(), CONFIG.minSeaFloorZ(), CONFIG.maxSeaFloorZ(),
+				CONFIG.maxSubSpeed(), CONFIG.startTime());
+		var stressed = runAtDepth(config, -150, 10 * config.tickRateHz());
+		assertTrue(stressed.hp() > 0 && stressed.hp() < config.startingHp());
+		assertEquals(0, runAtDepth(config, -200, 1).hp());
+	}
+
+	@Test
+	void crossingCrushDepthDuringMovementDestroysTheHull() {
+		var sub = movingSub(CONFIG.crushDepth() + 0.01, -2);
+		new SubmarinePhysics(CONFIG).step(sub, 1.0 / CONFIG.tickRateHz(), TERRAIN, NO_CURRENT, CONFIG.battleArea());
+
+		assertTrue(sub.z() < CONFIG.crushDepth(), "The step should cross the crush-depth boundary");
+		assertEquals(0, sub.hp());
+	}
+
+	@Test
+	void terrainCorrectionCannotRescueACrushDepthCrossing() {
+		var sub = movingSub(CONFIG.crushDepth() + 0.01, -2);
+		double[] elevations = new double[9];
+		Arrays.fill(elevations, CONFIG.crushDepth() - 5);
+		var terrain = new TerrainMap(elevations, 3, 3, -100, -100, 100);
+		new SubmarinePhysics(CONFIG).step(sub, 1.0 / CONFIG.tickRateHz(), terrain, NO_CURRENT, CONFIG.battleArea());
+
+		assertTrue(sub.z() > CONFIG.crushDepth(), "Terrain should have moved the wreck back above crush depth");
+		assertEquals(0, sub.hp(), "The pressure failure must survive terrain correction");
+		assertEquals(0, sub.verticalSpeed(), "The imploded hull should settle as a wreck rather than bounce");
+	}
+
+	@Test
+	void startingBeyondCrushDepthCannotEscapeInTheSameTick() {
+		var sub = movingSub(CONFIG.crushDepth() - 0.01, 2);
+		new SubmarinePhysics(CONFIG).step(sub, 1.0 / CONFIG.tickRateHz(), TERRAIN, NO_CURRENT, CONFIG.battleArea());
+
+		assertTrue(sub.z() > CONFIG.crushDepth(), "The movement should end above crush depth");
+		assertEquals(0, sub.hp(), "The starting depth must also obey the absolute limit");
+	}
+
+	private static SubmarineEntity movingSub(double z, double verticalSpeed) {
+		var sub = new SubmarineEntity(VehicleConfig.submarine(), 0, null, new Vec3(0, 0, z), 0, Color.GREEN,
+				CONFIG.startingHp());
+		sub.setVerticalSpeed(verticalSpeed);
+		return sub;
+	}
+
 	private static TerrainMap deepFlat() {
 		double[] elevations = new double[9];
 		Arrays.fill(elevations, -1500);
@@ -86,7 +137,11 @@ class SubmarineDepthLimitTest {
 	}
 
 	private static SubmarineSnapshot runAtDepth(double depth, int durationTicks) {
-		var config = CONFIG.withMatchDurationTicks(durationTicks);
+		return runAtDepth(CONFIG, depth, durationTicks);
+	}
+
+	private static SubmarineSnapshot runAtDepth(MatchConfig matchConfig, double depth, int durationTicks) {
+		var config = matchConfig.withMatchDurationTicks(durationTicks);
 		var world = new GeneratedWorld(config, TERRAIN, List.of(), NO_CURRENT, List.of(new Vec3(0, 0, depth)));
 		SubmarineController holdPosition = (input, output) -> {
 			output.setThrottle(0);

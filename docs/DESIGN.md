@@ -1144,75 +1144,57 @@ When a submarine's HP reaches zero:
 - Collision with terrain or other submarines deals damage proportional to
   impact velocity and applies a corresponding impulse.
 
-**Crush depth:**
+**Pressure hull and crush depth:**
 
-Submarines have a pressure hull with a **rated depth** and an
-**absolute crush depth**. The zone between them is survivable but
-increasingly dangerous: the longer and deeper you stay, the worse
-it gets.
+At or above **rated depth** (default −400 m), submarines take no
+pressure damage and accumulate no implosion risk. Below it, damage
+starts gradually and catastrophic failure becomes increasingly likely.
+Combat damage and pressure damage both weaken the remaining hull margin.
+**Absolute crush depth** (default −700 m) destroys the submarine
+immediately, regardless of HP or exposure history.
 
-- **Rated depth** (e.g. −400 m): the submarine's design limit. Above
-  this, no depth-related effects. Below this, things start going wrong.
-- **Between rated depth and crush depth** (−400 m to −700 m):
-    - **Hull stress damage:** the submarine takes HP damage each tick,
-      proportional to how far past rated depth it is. Mild near the
-      boundary, severe deeper down.
-    - **Implosion risk:** each tick below rated depth has a probability
-      of **catastrophic implosion** (instant destruction). The
-      probability increases with both **excess depth** and
-      **accumulated time** below rated depth. A quick dive to −450 m
-      and back up is a calculated risk. Lingering at −600 m is playing
-      Russian roulette.
-    - The engine tracks accumulated hull stress per submarine. Stress
-      builds while below rated depth and slowly recovers above it.
-      Multiple deep dives without recovery between them are cumulative.
-- **Crush depth** (e.g. −700 m): **instant destruction**, no chance of
-  survival. The hull implodes regardless of HP or stress history.
-- **Terrain goes deeper** than crush depth (e.g. −900 m). Deep
-  trenches and canyons on the map are absolute no-go zones for
-  submarines, lethal terrain features that constrain navigation.
-- **Torpedoes are unaffected**: their smaller hulls are rated for
-  the full ocean depth. A submarine cannot escape a torpedo by diving
-  to its own death.
-- All depth parameters are in `MatchConfig` and communicated to
-  controllers at match start.
+Use positive depths `d = -z`, `R = -ratedDepth`, `C = -crushDepth`:
 
-**Implosion model:**
+```text
+effectiveHP = max(0, HP - fractionalPressureDamage)
+damageFraction = clamp(1 - effectiveHP / maxHP, 0, 1)
+collapseScale = R + (C - R) * (1 - 0.35 * damageFraction)
+stress = max(0, (d - R) / (collapseScale - R))
 
-```
-excess = rated_depth - current_depth          (positive when below rated)
-ratio = excess / (rated_depth - crush_depth)  (0.0 at rated, 1.0 at crush)
-
-hull_stress_damage_per_tick = max_stress_dmg × ratio²
-accumulated_stress += ratio × dt              (builds while below rated)
-accumulated_stress -= recovery_rate × dt      (decays while above rated)
-accumulated_stress = clamp(0, max_stress)
-
-implosion_probability = base_rate × ratio² × (1 + accumulated_stress)
-if random() < implosion_probability:
-    submarine is destroyed (implosion)
-
-if current_depth <= crush_depth:
-    submarine is destroyed (implosion)
+pressureDamageRate = maxHP * 0.01 * stress^2     # HP/second
+implosionHazard = (ln(2) / 5) * stress^8         # inverse seconds
+accumulatedHazard += implosionHazard * dt
 ```
 
-This creates layered tactical choices:
+`collapseScale` controls the hazard curve; crossing it is not an
+instant-death boundary. With default limits it is 700 m when healthy
+and 647.5 m at half HP. At `stress = 1` and constant hull condition,
+median time to implosion is five seconds. The steep eighth-power
+hazard makes shallow excursions practical and near-crush dives risky.
 
-- **Brief deep dives** are viable: duck below rated depth to dodge a
-  torpedo or cross below a thermocline, then climb back quickly.
-  Costs some HP and stress but manageable.
-- **Extended deep operations** are a gamble. You might survive, you
-  might implode. The accumulated stress mechanic means you can't
-  repeatedly yo-yo below rated depth without consequence.
-- **Deep canyons are death traps**: a submarine chased into a canyon
-  that descends past crush depth has nowhere to go.
-- **Damaged submarines are fragile**: with low HP, even mild hull
-  stress damage becomes critical. Depth management gets harder as
-  the match progresses.
-- **Depth as a match parameter**: a shallow rated depth (e.g. −250 m)
-  compresses the vertical play space, making sonar more effective.
-  A deep rated depth (e.g. −500 m) opens up more evasion room but
-  pushes crush depth closer to the deepest terrain.
+Each submarine draws one exponential failure threshold `-ln(U)` from
+a dedicated deterministic seed derived from the match seed and entity
+ID. It implodes when integrated hazard reaches that threshold. Fractional
+damage accumulates until whole HP can be deducted. Both accumulators
+persist across dives: ascending stops further exposure but does not
+repair damage or erase previous exposure. Pressure randomness does
+not consume the world or sonar random streams.
+
+The engine-side `HullPressureModel` is owned by `SubmarinePhysics`.
+`SimulationLoop` supplies `MatchConfig`; a directly constructed
+`SubmarinePhysics` uses default depth limits and seed zero. Each step
+uses the deeper of the starting and proposed centre depths before
+terrain correction, so terrain repositioning cannot hide a crush-depth
+crossing. Dead and forfeited entities, surface-locked vehicles and
+vehicles without ballast are excluded. Torpedo physics is unaffected.
+
+A brief 450–500 m dive costs a healthy submarine little HP; lingering
+at 600 m or diving near 700 m is a serious gamble, especially after
+damage. Trenches below crush depth constrain navigation even where
+the terrain permits deeper travel. Depth limits are configured in
+`MatchConfig` and communicated to controllers at match start.
+See [Pressure-hull model](pressure-hull-model.md) for the physical
+basis, calibration examples and verification approach.
 
 **Explosion model (simplified):**
 
