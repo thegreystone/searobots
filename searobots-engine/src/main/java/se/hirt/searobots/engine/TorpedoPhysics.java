@@ -31,6 +31,8 @@ package se.hirt.searobots.engine;
 import se.hirt.searobots.api.BattleArea;
 import se.hirt.searobots.api.CurrentField;
 import se.hirt.searobots.api.TerrainMap;
+import se.hirt.searobots.api.Vec3;
+import se.hirt.searobots.api.VehicleConfig;
 
 /**
  * Physics model for torpedoes. Simplified relative to submarine physics: no ballast, no clutch, no
@@ -42,18 +44,23 @@ public final class TorpedoPhysics {
 	private static final double WATER_DENSITY = 1025.0; // kg/m^3
 	private static final double NEGATIVE_BUOYANCY = 30.0; // N downward (slight)
 	private static final double LIFT_COEFFICIENT = 0.3; // lift per m/s^2 at depth
+	private static final double MAX_CONTROL_DEFLECTION = Math.PI / 4;
+	private static final double FULL_DEFLECTION_LIFT_FRACTION = 0.6;
+	private static final int MAX_TERRAIN_BROADPHASE_CORNERS = 256;
 
 	/**
-	 * Lift coefficient as a function of angle of attack, with stall. Same formula as
-	 * SubmarinePhysics.
+	 * Preserve the existing attached-flow lift below stall, then progressively reduce authority as
+	 * flow separates. Full deflection retains 60% of peak lift; this is game calibration.
 	 */
 	private static double liftCoefficient(double alpha, double stallAngle) {
-		if (Math.abs(alpha) <= stallAngle) {
+		double absAlpha = Math.abs(alpha);
+		if (absAlpha <= stallAngle) {
 			return 2 * Math.PI * Math.sin(alpha);
 		}
-		double sign = Math.signum(alpha);
-		double postStall = 0.5 * Math.sin(2 * alpha);
-		return sign * Math.max(Math.abs(postStall), 0.1);
+		double peakLift = 2 * Math.PI * Math.sin(stallAngle);
+		double postStallFraction = Math.clamp((absAlpha - stallAngle) / (MAX_CONTROL_DEFLECTION - stallAngle), 0, 1);
+		double separation = postStallFraction * postStallFraction * (3 - 2 * postStallFraction);
+		return Math.copySign(peakLift * (1 - (1 - FULL_DEFLECTION_LIFT_FRACTION) * separation), alpha);
 	}
 
 	/**
@@ -72,10 +79,13 @@ public final class TorpedoPhysics {
 	 */
 	public void step(
 		TorpedoEntity torp, double dt, TerrainMap terrain, CurrentField currentField, BattleArea battleArea) {
-		if (!torp.alive())
+		if (!torp.alive() || torp.inTube())
 			return;
 
 		var cfg = torp.vehicleConfig();
+		var previousPosition = torp.pose().position();
+		double previousHeading = torp.heading();
+		double previousPitch = torp.pitch();
 
 		// 1. Fuel consumption
 		double cmdThrottle = torp.cmdThrottle(); // already 0 if no fuel
@@ -128,7 +138,7 @@ public final class TorpedoPhysics {
 		torp.setActualSternPlanes(actualPlanes);
 
 		// 5. Yaw dynamics (same first-order model as submarine, different coefficients)
-		double rudderAngle = actualRudder * Math.PI / 4;
+		double rudderAngle = actualRudder * MAX_CONTROL_DEFLECTION;
 		double rudderCl = liftCoefficient(rudderAngle, cfg.stallAngle());
 		double rudderMoment = 0.5 * WATER_DENSITY * speed * Math.abs(speed) * cfg.rudderArea() * rudderCl
 				* cfg.rudderArm();
@@ -160,7 +170,7 @@ public final class TorpedoPhysics {
 
 		// 6. Pitch dynamics
 		if (cfg.planesArea() > 0) {
-			double planesAngle = actualPlanes * Math.PI / 4;
+			double planesAngle = actualPlanes * MAX_CONTROL_DEFLECTION;
 			double planesCl = liftCoefficient(planesAngle, cfg.stallAngle());
 			double pitchMoment = 0.5 * WATER_DENSITY * speed * Math.abs(speed) * cfg.planesArea() * planesCl
 					* cfg.planesArm();
@@ -179,7 +189,12 @@ public final class TorpedoPhysics {
 			torp.setPitchRate(pitchRate);
 
 			double pitch = torp.pitch() + pitchRate * dt;
-			pitch = Math.clamp(pitch, -Math.PI / 3, Math.PI / 3); // max 60 deg
+			double pitchLimit = Math.PI / 3; // max 60 deg
+			pitch = Math.clamp(pitch, -pitchLimit, pitchLimit);
+			if ((pitch == pitchLimit && pitchRate > 0) || (pitch == -pitchLimit && pitchRate < 0)) {
+				// The pitch stop removes outward motion; inward control can recover immediately.
+				torp.setPitchRate(0);
+			}
 			torp.setPitch(pitch);
 		}
 
@@ -229,17 +244,21 @@ public final class TorpedoPhysics {
 		// 9. Surface clamp
 		if (newZ > 0) {
 			newZ = 0;
-			torp.setVerticalSpeed(0);
+			// Remove upward heave without inventing a downward counter-velocity for pitched surge.
+			torp.setVerticalSpeed(Math.min(0, verticalSpeed));
 		}
 
 		// 10. Terrain collision: torpedo DETONATES on impact (can damage nearby subs)
 		if (terrain != null) {
-			double floor = terrain.elevationAt(newX, newY);
-			if (newZ < floor + cfg.terrainClearance()) {
+			var contact = firstTerrainContact(previousPosition, new Vec3(newX, newY, newZ), previousHeading, heading,
+					previousPitch, torp.pitch(), cfg, terrain);
+			if (contact != null) {
 				torp.detonate(); // detonate, not just kill
-				torp.setX(newX);
-				torp.setY(newY);
-				torp.setZ(floor + cfg.terrainClearance());
+				torp.setX(contact.position().x());
+				torp.setY(contact.position().y());
+				torp.setZ(contact.position().z());
+				torp.setHeading(contact.heading());
+				torp.setPitch(contact.pitch());
 				return;
 			}
 		}
@@ -257,5 +276,121 @@ public final class TorpedoPhysics {
 		double baseNoise = cfg.baseSlDb();
 		double speedNoise = cfg.speedNoiseDbPerMs() * speed;
 		torp.setSourceLevelDb(baseNoise + speedNoise);
+	}
+
+	private record TerrainContact(Vec3 position, double heading, double pitch) {
+	}
+
+	/**
+	 * Finds the first intersecting pose, including terrain crossed between the tick's endpoints.
+	 */
+	private static TerrainContact firstTerrainContact(
+		Vec3 start, Vec3 end, double startHeading, double endHeading, double startPitch, double endPitch,
+		VehicleConfig cfg, TerrainMap terrain) {
+		if (clearsTerrainBounds(start, end, cfg, terrain)) {
+			return null;
+		}
+		double headingChange = Math.atan2(Math.sin(endHeading - startHeading), Math.cos(endHeading - startHeading));
+		var movement = end.subtract(start);
+		double spacing = Math.min(cfg.hullHalfLength(), terrain.getCellSize() * 0.5);
+		double radius = Math.max(cfg.hullHalfLength(), cfg.hullHalfBeam());
+		double tipTravel = movement.length() + radius * (Math.abs(headingChange) + Math.abs(endPitch - startPitch));
+		int samples = Math.max(1, (int) Math.ceil(tipTravel / spacing));
+		double previousFraction = 0;
+		if (terrainGap(start, startHeading, startPitch, cfg, terrain) < 0) {
+			return new TerrainContact(start, startHeading, startPitch);
+		}
+		for (int i = 1; i <= samples; i++) {
+			double fraction = (double) i / samples;
+			var position = start.add(movement.scale(fraction));
+			double heading = startHeading + headingChange * fraction;
+			double pitch = startPitch + (endPitch - startPitch) * fraction;
+			if (terrainGap(position, heading, pitch, cfg, terrain) < 0) {
+				double lower = previousFraction, upper = fraction;
+				for (int iteration = 0; iteration < 24; iteration++) {
+					double middle = (lower + upper) * 0.5;
+					if (terrainGap(start.add(movement.scale(middle)), startHeading + headingChange * middle,
+							startPitch + (endPitch - startPitch) * middle, cfg, terrain) < 0) {
+						upper = middle;
+					} else {
+						lower = middle;
+					}
+				}
+				return new TerrainContact(start.add(movement.scale(upper)), startHeading + headingChange * upper,
+						startPitch + (endPitch - startPitch) * upper);
+			}
+			previousFraction = fraction;
+		}
+		return null;
+	}
+
+	/** Bilinear elevations never exceed the greatest lattice corner in the swept hull's bounds. */
+	private static boolean clearsTerrainBounds(Vec3 start, Vec3 end, VehicleConfig cfg, TerrainMap terrain) {
+		double radius = Math.max(cfg.hullHalfLength(), cfg.hullHalfBeam());
+		double lowestHullZ = Math.min(start.z(), end.z()) - radius;
+		if (lowestHullZ >= terrain.getMaxElevation()) {
+			return true;
+		}
+		double cell = terrain.getCellSize();
+		double minX = Math.min(start.x(), end.x()) - radius, maxX = Math.max(start.x(), end.x()) + radius;
+		double minY = Math.min(start.y(), end.y()) - radius, maxY = Math.max(start.y(), end.y()) + radius;
+		int minCol = (int) Math.max(0, Math.floor((minX - terrain.getOriginX()) / cell));
+		int maxCol = (int) Math.min(terrain.getCols() - 1, Math.floor((maxX - terrain.getOriginX()) / cell) + 1);
+		int minRow = (int) Math.max(0, Math.floor((minY - terrain.getOriginY()) / cell));
+		int maxRow = (int) Math.min(terrain.getRows() - 1, Math.floor((maxY - terrain.getOriginY()) / cell) + 1);
+		double maximum = terrain.getMinElevation(); // Also bounds the map's out-of-grid interpolation corners.
+		if (minCol > maxCol || minRow > maxRow) {
+			return lowestHullZ >= maximum;
+		}
+		long corners = ((long) maxCol - minCol + 1) * ((long) maxRow - minRow + 1);
+		if (corners > MAX_TERRAIN_BROADPHASE_CORNERS) {
+			return false;
+		}
+		for (int row = minRow; row <= maxRow; row++) {
+			for (int col = minCol; col <= maxCol; col++) {
+				maximum = Math.max(maximum, terrain.elevationAtGrid(col, row));
+			}
+		}
+		return lowestHullZ >= maximum;
+	}
+
+	/** Physical gap beneath the oriented hull, with terrain-normal support points. */
+	private static double terrainGap(
+		Vec3 position, double heading, double pitch, VehicleConfig cfg, TerrainMap terrain) {
+		double sinH = Math.sin(heading), cosH = Math.cos(heading);
+		double sinP = Math.sin(pitch), cosP = Math.cos(pitch);
+		var forward = new Vec3(sinH * cosP, cosH * cosP, sinP);
+		var right = new Vec3(cosH, -sinH, 0);
+		var up = new Vec3(-sinH * sinP, -cosH * sinP, cosP);
+		double length = cfg.hullHalfLength(), radius = cfg.hullHalfBeam();
+		Vec3[] offsets = {Vec3.ZERO, forward.scale(length), forward.scale(-length), right.scale(radius),
+				right.scale(-radius), up.scale(radius), up.scale(-radius)};
+		double minimum = Double.POSITIVE_INFINITY;
+		double sample = Math.min(radius, terrain.getCellSize() * 0.25);
+		for (var offset : offsets) {
+			var point = position.add(offset);
+			minimum = Math.min(minimum, gapAt(point, terrain));
+			// On a plane this reaches the exact extremity in one iteration. Re-sampling
+			// the normal covers the changing slopes of bilinear terrain cells as well.
+			for (int iteration = 0; iteration < 3; iteration++) {
+				double slopeX = (terrain.elevationAt(point.x() + sample, point.y())
+						- terrain.elevationAt(point.x() - sample, point.y())) / (2 * sample);
+				double slopeY = (terrain.elevationAt(point.x(), point.y() + sample)
+						- terrain.elevationAt(point.x(), point.y() - sample)) / (2 * sample);
+				var inward = new Vec3(slopeX, slopeY, -1);
+				double along = inward.dot(forward), across = inward.dot(right), above = inward.dot(up);
+				double supportLength = Math
+						.sqrt(length * length * along * along + radius * radius * (across * across + above * above));
+				var support = forward.scale(length * length * along).add(right.scale(radius * radius * across))
+						.add(up.scale(radius * radius * above)).scale(1 / supportLength);
+				point = position.add(support);
+				minimum = Math.min(minimum, gapAt(point, terrain));
+			}
+		}
+		return minimum;
+	}
+
+	private static double gapAt(Vec3 point, TerrainMap terrain) {
+		return point.z() - terrain.elevationAt(point.x(), point.y());
 	}
 }

@@ -36,9 +36,9 @@ Each `SonarContact` provides:
 | rangeUncertainty     | Engine TMA          | 1-sigma bound in metres; can exceed range while solution is poor |
 | estimatedSpeed       | Blade-rate analysis | Good at high SE (close range)                                    |
 | estimatedHeading     | Engine TMA          | Requires quality > 0.5 (deliberate maneuvering)                  |
-| estimatedSourceLevel | Signal analysis     | For classification                                               |
+| estimatedSourceLevel | Strength + TMA range | Shares the range solution's uncertainty; NaN without ranging support |
 | estimatedDepth       | Active sonar only   | From vertical angle + range (5% noise, min 5m). NaN for passive. |
-| signalExcess         | Direct measurement  | Instantaneous                                                    |
+| signalExcess         | Strength measurement | Persistent calibration error plus slow wander; not exact range |
 | solutionQuality      | Engine TMA          | 0.0 (no data) to 1.0 (fire-quality solution)                     |
 
 The `solutionQuality` field is the equivalent of Cold Waters' SOL%.
@@ -75,6 +75,8 @@ not time:
    relative to estimated range. At 2000m range, you need ~2000m
    of accumulated cross-track for maximum quality from this component.
    Capped at 0.5.
+   If an initial range guess sits on the 100 m floor, the reported
+   uncertainty supplies the baseline scale instead of hidden true range.
 
 2. **Leg count**: each own-ship course change > 15 degrees counts as
    a new leg and adds 0.12 quality (capped at 0.35). Two deliberate
@@ -86,7 +88,8 @@ not time:
    resolving range: you must maneuver.
 
 4. **Active ping**: immediately sets quality to 0.95 (known range).
-   Calibrates the SL for subsequent passive ranging.
+   A simultaneous passive measurement can then support a source-level
+   estimate using the measured range.
 
 Quality floor is 0.05 (essentially "bearing only, no range info").
 
@@ -155,7 +158,7 @@ honest, but consecutive samples share most of their error.
 |--------------------------|------------------|----------------|
 | Bearing                  | 20 s             | 20%            |
 | Blade-rate speed         | 10 s             | 20%            |
-| Estimated source level   | 30 s             | 20%            |
+| Passive signal strength  | 30 s             | 20%            |
 | TMA range wander         | 20 s             | 0%             |
 | TMA heading              | 60 s             | 0%             |
 
@@ -170,6 +173,32 @@ processes since they have no `ContactTracker`.
 
 The array-and-environment wander is the realistic part; the small
 white fraction is what keeps a bearing display from looking frozen.
+
+### Passive Strength and Source-Level Ambiguity
+
+Detection uses the internal sonar equation below, retaining the game's
+existing detection ranges. Controllers receive a strength measurement
+with a fixed listener/source calibration error (6 dB RMS) plus correlated
+wander (2 dB RMS, 30-second time constant). Detected contacts report at
+least the detection threshold. The fixed error survives contact loss
+and reacquisition, so long averages cannot remove it. The 6 dB setting
+is game tuning: with cylindrical spreading it corresponds to roughly
+a factor of four uncertainty in amplitude-derived range.
+
+Bearing uncertainty, bearing-error variance and blade-rate speed
+precision use this same measured strength. They do not expose the
+exact internal signal excess through another field or through sample
+variance. Stronger measured signals still give better measurements.
+
+Absolute source level requires a transmission-loss estimate. For
+submarine tracks, `estimatedSourceLevel` is reconstructed from measured
+strength, listener noise and spreading at the **reported TMA range**.
+Inverting that value with the sonar equation simply reproduces the
+existing uncertain range solution. It cannot bypass maneuvering.
+Thermal layers and terrain make this spreading-only reconstruction
+less reliable still. Contacts without a range solution, including
+passive torpedo contacts and contacts heard only through the baffles,
+report `NaN`. Acoustic classification remains a separate signature cue.
 
 ### Heading Estimation
 
@@ -295,10 +324,12 @@ When the listener pings:
 
 1. Active returns give precise range (2% RMS noise) and estimated
    depth (from vertical bearing angle, 5% RMS noise, min 5m).
-2. The tracker calibrates the source level: `SL = SE + TL + NL`
-   where TL uses the known range.
-3. Subsequent passive observations use the calibrated SL for more
-   accurate SE-based ranging.
+2. If the target is also heard passively, its source-level estimate is
+   `SL = measured passive SE + spreading at measured range + listener NL`.
+   An echo alone does not reveal the target's radiated noise level.
+3. Subsequent passive observations retain the active range fix while
+   it is recent, improving source-level estimates alongside the TMA
+   range estimate.
 4. Solution quality jumps to 0.95 and then fades with a 60 second time
    constant (0.35 after one minute, 0.13 after two) unless passive
    geometry keeps it up. The range wander fades in from the 2% active
@@ -361,12 +392,14 @@ trackers.
 
 **TMA Reset:**
 When a contact is lost for more than ~30 seconds, the tracker is
-discarded. A new detection starts fresh. However, if a ping was
-previously used to calibrate SL for a contact in a similar bearing,
-the calibration data can be reused.
+discarded. A new detection starts a fresh TMA solution. Passive
+strength calibration uncertainty persists across reacquisition.
 
 ## References
 
+- National Research Council, [Ocean Noise and Marine Mammals](https://www.ncbi.nlm.nih.gov/books/NBK221259/?report=printable),
+  applications of the sonar equation: received level depends on source
+  level and propagation loss, which varies with geometry and environment.
 - Cold Waters: automatic TMA with SOL%, crew builds solution in
   background, quality depends on signal strength and maneuvering.
 - Dangerous Waters: fully manual TMA, bearing-only from passive,

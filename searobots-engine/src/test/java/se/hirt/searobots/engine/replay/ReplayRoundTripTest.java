@@ -191,9 +191,9 @@ class ReplayRoundTripTest {
 				List.of(), new FiringSolution(1234.5, -678.25, 2.1, 8.5, 0.85), true);
 
 		var torp = new TorpedoSnapshot(1001, 0, new Pose(new Vec3(200.0, 300.0, -180.0), 0.75, 0.05, 0.0),
-				new Velocity(new Vec3(23.0, 0.0, 0.5), Vec3.ZERO), 23.0, new Color(255, 80, 80), 220.5, false, true,
-				140.0, false, 1000.0, 2000.0, -200.0, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN,
-				1100.0, 2100.0, -195.0, "TERMINAL");
+				new Velocity(new Vec3(23.0, 0.0, 0.5), new Vec3(0, 0.04, -0.07)), 23.0, new Color(255, 80, 80), 220.5,
+				false, true, 140.0, false, 1000.0, 2000.0, -200.0, Double.NaN, Double.NaN, Double.NaN, Double.NaN,
+				Double.NaN, 1100.0, 2100.0, -195.0, "TERMINAL");
 
 		var live = new CaptureListener();
 		try (var writer = new ReplayWriter(config, List.of(new Vec3(0, 0, -100)), file)) {
@@ -231,9 +231,9 @@ class ReplayRoundTripTest {
 				List.of(new Waypoint(500.0, 600.0, -250.0, true, false)), List.of(),
 				new FiringSolution(1234.5, -678.25, 2.1, 8.5, 0.85), false);
 		var torp = new TorpedoSnapshot(1001, 0, new Pose(new Vec3(200.0, 300.0, -180.0), 0.75, 0.05, 0.0),
-				new Velocity(new Vec3(23.0, 0.0, 0.5), Vec3.ZERO), 23.0, new Color(255, 80, 80), 220.5, false, true,
-				140.0, false, 1000.0, 2000.0, -200.0, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN,
-				1100.0, 2100.0, -195.0, "TERMINAL");
+				new Velocity(new Vec3(23.0, 0.0, 0.5), new Vec3(0, 0.04, -0.07)), 23.0, new Color(255, 80, 80), 220.5,
+				false, true, 140.0, false, 1000.0, 2000.0, -200.0, Double.NaN, Double.NaN, Double.NaN, Double.NaN,
+				Double.NaN, 1100.0, 2100.0, -195.0, "TERMINAL");
 
 		try (var writer = new ReplayWriter(config, List.of(new Vec3(0, 0, -100)), v2File)) {
 			writer.onTick(0, List.of(sub), List.of(torp));

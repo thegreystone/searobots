@@ -44,6 +44,10 @@ public final class SonarModel {
 	static final double SELF_NOISE_OFFSET_DB = 35.0;
 	// Cylindrical spreading for shallow water at our scale (surface + floor waveguide)
 	static final double SPREADING_COEFFICIENT = 10.0;
+	// Passive amplitude cannot separate range from uncertain propagation/calibration.
+	static final double PASSIVE_LEVEL_BIAS_DB = 6.0;
+	static final double PASSIVE_LEVEL_WANDER_DB = 2.0;
+	static final double PASSIVE_LEVEL_CORRELATION_S = 30.0;
 
 	// Baffles: ~100° blind cone behind sub (>130° from bow on each side)
 	static final double BAFFLE_HALF_ARC = Math.toRadians(130);
@@ -55,6 +59,11 @@ public final class SonarModel {
 	static final int TORPEDO_PING_COOLDOWN_TICKS = 50; // torpedoes: 1 second (small transducer, fast cycle)
 	static final double TARGET_STRENGTH_DB = 20.0;
 	static final double RANGE_NOISE_FRACTION = 0.02; // 2% RMS range noise on active returns
+	// Echo amplitude also depends on target reflection and array calibration. It is
+	// not a second exact ranging channel alongside the measured time of flight.
+	static final double ACTIVE_LEVEL_BIAS_DB = 3.0;
+	static final double ACTIVE_LEVEL_WANDER_DB = 1.0;
+	static final double ACTIVE_LEVEL_CORRELATION_S = 30.0;
 
 	// Terrain occlusion: per-cell penalties (samples step at half-cell, so halved per sample)
 	// Underwater ridge: up to 15 dB per cell of terrain above the sound path
@@ -64,6 +73,7 @@ public final class SonarModel {
 	static final double ISLAND_OCCLUSION_PER_CELL_DB = 30.0;
 
 	private final Random rng;
+	private final long seed;
 	private final double maxSubSpeed;
 	private final Map<Long, ContactTracker> trackers = new HashMap<>();
 
@@ -73,6 +83,7 @@ public final class SonarModel {
 
 	public SonarModel(long seed, double maxSubSpeed) {
 		this.rng = new Random(seed);
+		this.seed = seed;
 		this.maxSubSpeed = maxSubSpeed;
 	}
 
@@ -110,11 +121,8 @@ public final class SonarModel {
 	}
 
 	/**
-	 * Compute all sonar contacts for each entity this tick. Returns a map from entity ID to its
-	 * sonar result.
-	 */
-	/**
-	 * Compute sonar contacts including torpedoes as sources and listeners.
+	 * Compute all sonar contacts, including free-swimming torpedoes as sources and listeners.
+	 * Returns a map from entity ID to its sonar result.
 	 */
 	public Map<Integer, SonarResult> computeContacts(
 		long tick, List<SubmarineEntity> entities, List<TorpedoEntity> torpedoes, TerrainMap terrain,
@@ -123,34 +131,46 @@ public final class SonarModel {
 		// First: compute sub-to-sub contacts using the existing logic
 		var results = computeSubToSubContacts(tick, entities, terrain, thermalLayers);
 
-		// Second: torpedoes as additional noise sources for submarine listeners
-		// (subs hear torpedoes via passive sonar)
+		// Second: submarines hear torpedoes and receive echoes from their own pings
 		for (var listener : entities) {
 			if (listener.forfeited() || listener.hp() <= 0)
 				continue;
 			var existing = results.get(listener.id());
 			var extraPassive = new ArrayList<>(existing.passiveContacts());
+			var extraActive = new ArrayList<>(existing.activeReturns());
 
 			for (var torp : torpedoes) {
-				if (!torp.alive())
+				if (!torp.alive() || torp.inTube())
 					continue;
 				var contact = passiveDetect(tick, sensorNoiseFor(tick, listener.id(), torp.id()), listener.x(),
 						listener.y(), listener.z(), listener.heading(), listener.sourceLevelDb(),
 						listener.vehicleConfig().sonarSelfNoiseOffsetDb(), torp.x(), torp.y(), torp.z(),
-						torp.sourceLevelDb(), torp.speed(), torp.pingRequested(), terrain, thermalLayers);
+						torp.sourceLevelDb(), torp.speed(), isPinging(torp), terrain, thermalLayers);
 				if (contact != null)
 					extraPassive.add(contact);
+
+				if (isPinging(listener)) {
+					double bearing = Math.atan2(torp.x() - listener.x(), torp.y() - listener.y());
+					double bafflePenalty = isInBaffles(listener.heading(), bearing) ? BAFFLE_PENALTY_DB : 0;
+					var ret = activeDetect(tick, sensorNoiseFor(tick, listener.id(), torp.id()), listener.x(),
+							listener.y(), listener.z(), listener.sourceLevelDb(),
+							listener.vehicleConfig().sonarSelfNoiseOffsetDb(), bafflePenalty, torp.x(), torp.y(),
+							torp.z(), torp.speed(), terrain, thermalLayers);
+					if (ret != null)
+						extraActive.add(ret);
+				}
 			}
 
-			if (extraPassive.size() > existing.passiveContacts().size()) {
+			if (extraPassive.size() > existing.passiveContacts().size()
+					|| extraActive.size() > existing.activeReturns().size()) {
 				results.put(listener.id(),
-						new SonarResult(extraPassive, existing.activeReturns(), existing.cooldownTicks()));
+						new SonarResult(List.copyOf(extraPassive), List.copyOf(extraActive), existing.cooldownTicks()));
 			}
 		}
 
 		// Third: compute contacts FOR torpedo listeners (torpedoes hear subs)
 		for (var torp : torpedoes) {
-			if (!torp.alive())
+			if (!torp.alive() || torp.inTube())
 				continue;
 			var passive = new ArrayList<SonarContact>();
 			var active = new ArrayList<SonarContact>();
@@ -162,32 +182,55 @@ public final class SonarModel {
 					continue;
 				var contact = passiveDetect(tick, sensorNoiseFor(tick, torp.id(), source.id()), torp.x(), torp.y(),
 						torp.z(), torp.heading(), torp.sourceLevelDb(), torpSonarOffset, source.x(), source.y(),
-						source.z(), source.sourceLevelDb(), source.speed(), source.pingRequested(), terrain,
-						thermalLayers);
+						source.z(), source.sourceLevelDb(), source.speed(), isPinging(source), terrain, thermalLayers);
 				if (contact != null)
 					passive.add(contact);
 			}
 
 			// Torpedo active sonar returns
-			if (torp.pingRequested()) {
+			if (isPinging(torp)) {
 				for (var source : entities) {
 					if (source.forfeited() || source.hp() <= 0)
 						continue;
-					var ret = activeDetect(torp.x(), torp.y(), torp.z(), torp.sourceLevelDb(), torpSonarOffset,
-							source.x(), source.y(), source.z(), source.speed(), terrain, thermalLayers);
+					var ret = activeDetect(tick, sensorNoiseFor(tick, torp.id(), source.id()), torp.x(), torp.y(),
+							torp.z(), torp.sourceLevelDb(), torpSonarOffset, 0, source.x(), source.y(), source.z(),
+							source.speed(), terrain, thermalLayers);
 					if (ret != null)
 						active.add(ret);
 				}
-				// Clear ping and set cooldown (torpedoes cycle faster than subs)
-				torp.clearPingRequested();
-				torp.setActiveSonarCooldown(TORPEDO_PING_COOLDOWN_TICKS);
 			}
 
-			results.put(torp.id(), new SonarResult(passive, active, torp.activeSonarCooldown()));
+			results.put(torp.id(),
+					new SonarResult(List.copyOf(passive), List.copyOf(active), torp.activeSonarCooldown()));
+		}
+
+		// Consume requests only after every listener has observed this tick's pulses.
+		// Controllers must see the cooldown that begins with the emitted ping.
+		for (var entity : entities) {
+			if (isPinging(entity))
+				entity.setActiveSonarCooldown(ACTIVE_PING_COOLDOWN_TICKS);
+			entity.setPingRequested(false);
+			results.computeIfPresent(entity.id(), (id, result) -> new SonarResult(result.passiveContacts(),
+					result.activeReturns(), entity.activeSonarCooldown()));
+		}
+		for (var torp : torpedoes) {
+			if (isPinging(torp))
+				torp.setActiveSonarCooldown(TORPEDO_PING_COOLDOWN_TICKS);
+			torp.clearPingRequested();
+			results.computeIfPresent(torp.id(), (id, result) -> new SonarResult(result.passiveContacts(),
+					result.activeReturns(), torp.activeSonarCooldown()));
 		}
 
 		expireSensorNoise(tick);
 		return results;
+	}
+
+	private static boolean isPinging(SubmarineEntity entity) {
+		return entity.pingRequested() && entity.activeSonarCooldown() <= 0 && !entity.forfeited() && entity.hp() > 0;
+	}
+
+	private static boolean isPinging(TorpedoEntity torp) {
+		return torp.pingRequested() && torp.activeSonarCooldown() <= 0 && torp.alive() && !torp.inTube();
 	}
 
 	public Map<Integer, SonarResult> computeContacts(
@@ -222,37 +265,80 @@ public final class SonarModel {
 
 		double se = sl - tl - nl;
 		if (se > DETECTION_THRESHOLD_DB) {
-			double bearingError = bearingStdDev(se);
+			double measuredSe = measuredPassiveStrength(tick, se, noise);
+			double bearingError = bearingStdDev(measuredSe);
 			double noisyBearing = trueBearing + bearingError * noise.bearing.next(tick, rng);
 			noisyBearing = ((noisyBearing % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
 			// Speed estimate from blade-rate analysis (noisy)
-			double estSpd = sSpeed > 0 ? sSpeed + noise.speed.next(tick, rng) * 2 : -1;
-			return new SonarContact(noisyBearing, se, 0, false, estSpd, bearingError, 0, sl, 0, Double.NaN, Double.NaN,
-					classify(se, estSpd, sl, Double.NaN));
+			double estSpd = sSpeed > 0 ? estimateTargetSpeed(sSpeed, measuredSe, noise.speed.next(tick, rng)) : -1;
+			return new SonarContact(noisyBearing, measuredSe, 0, false, estSpd, bearingError, 0, Double.NaN, 0,
+					Double.NaN, Double.NaN, classify(measuredSe, estSpd, sl, Double.NaN));
 		}
 		return null;
 	}
 
 	/**
-	 * Correlated error processes for a listener/source pair that has no {@link ContactTracker}
-	 * (torpedoes as either side). Entries are dropped once the pair has not been evaluated for
-	 * {@link #SENSOR_NOISE_EXPIRY_TICKS}.
+	 * Passive strength errors for every listener/source pair, plus bearing and speed errors for
+	 * pairs without a {@link ContactTracker}. Entries expire after inactivity; the calibration bias
+	 * is stable across recreation so losing a contact cannot reroll its amplitude error.
 	 */
 	private static final class SensorNoise {
+		final double levelBiasDb;
+		final double activeLevelBiasDb;
+		final CorrelatedNoise level = new CorrelatedNoise(PASSIVE_LEVEL_CORRELATION_S,
+				ContactTracker.SENSOR_CORRELATED_FRACTION);
+		final CorrelatedNoise activeLevel = new CorrelatedNoise(ACTIVE_LEVEL_CORRELATION_S,
+				ContactTracker.SENSOR_CORRELATED_FRACTION);
 		final CorrelatedNoise bearing = new CorrelatedNoise(ContactTracker.BEARING_CORRELATION_S,
 				ContactTracker.SENSOR_CORRELATED_FRACTION);
 		final CorrelatedNoise speed = new CorrelatedNoise(ContactTracker.SPEED_CORRELATION_S,
 				ContactTracker.SENSOR_CORRELATED_FRACTION);
 		long lastTick;
+
+		SensorNoise(double levelBiasDb, double activeLevelBiasDb) {
+			this.levelBiasDb = levelBiasDb;
+			this.activeLevelBiasDb = activeLevelBiasDb;
+		}
 	}
 
 	private static final long SENSOR_NOISE_EXPIRY_TICKS = 1500;
 	private final Map<Long, SensorNoise> sensorNoise = new HashMap<>();
 
 	private SensorNoise sensorNoiseFor(long tick, int listenerId, int sourceId) {
-		var noise = sensorNoise.computeIfAbsent(trackerKey(listenerId, sourceId), k -> new SensorNoise());
+		var noise = sensorNoise.computeIfAbsent(trackerKey(listenerId, sourceId),
+				k -> new SensorNoise(levelBias(k, PASSIVE_LEVEL_BIAS_DB),
+						levelBias(k ^ 0xD1B54A32D192ED03L, ACTIVE_LEVEL_BIAS_DB)));
 		noise.lastTick = tick;
 		return noise;
+	}
+
+	private double levelBias(long pairKey, double standardDeviation) {
+		// Mix the model seed and pair identity before sampling, independently of tick RNG.
+		long mixed = seed + pairKey + 0x9E3779B97F4A7C15L;
+		mixed = (mixed ^ (mixed >>> 30)) * 0xBF58476D1CE4E5B9L;
+		mixed = (mixed ^ (mixed >>> 27)) * 0x94D049BB133111EBL;
+		mixed ^= mixed >>> 31;
+		return new Random(mixed).nextGaussian() * standardDeviation;
+	}
+
+	private double measuredPassiveStrength(long tick, double trueSe, SensorNoise noise) {
+		return Math.max(DETECTION_THRESHOLD_DB,
+				trueSe + noise.levelBiasDb + noise.level.next(tick, rng) * PASSIVE_LEVEL_WANDER_DB);
+	}
+
+	private double measuredActiveStrength(long tick, double trueSe, SensorNoise noise) {
+		// Independent echo calibration prevents subtracting a simultaneously heard
+		// known-strength source ping from its echo to cancel the passive measurement error.
+		return Math.max(DETECTION_THRESHOLD_DB,
+				trueSe + noise.activeLevelBiasDb + noise.activeLevel.next(tick, rng) * ACTIVE_LEVEL_WANDER_DB);
+	}
+
+	private static double estimateSourceLevel(double measuredSe, double listenerNoiseDb, double estimatedRange) {
+		if (!Double.isFinite(measuredSe) || estimatedRange <= 0)
+			return Double.NaN;
+		// Only the existing range solution supplies spreading loss. Unknown target depth and
+		// path losses cannot be recovered from the signature or from ground-truth coordinates.
+		return measuredSe + listenerNoiseDb + SPREADING_COEFFICIENT * Math.log10(Math.max(estimatedRange, 1.0));
 	}
 
 	private void expireSensorNoise(long tick) {
@@ -263,8 +349,9 @@ public final class SonarModel {
 	 * Active sonar return: does the ping illuminate the target? Returns contact or null.
 	 */
 	private SonarContact activeDetect(
-		double lx, double ly, double lz, double lSLdB, double lSonarOffset, double sx, double sy, double sz,
-		double sSpeed, TerrainMap terrain, List<ThermalLayer> thermalLayers) {
+		long tick, SensorNoise noise, double lx, double ly, double lz, double lSLdB, double lSonarOffset,
+		double bafflePenalty, double sx, double sy, double sz, double sSpeed, TerrainMap terrain,
+		List<ThermalLayer> thermalLayers) {
 		double distance = Math.sqrt((sx - lx) * (sx - lx) + (sy - ly) * (sy - ly) + (sz - lz) * (sz - lz));
 		if (distance < 1.0)
 			distance = 1.0;
@@ -276,11 +363,12 @@ public final class SonarModel {
 		double tl = transmissionLossDb(distance, new Vec3(lx, ly, lz), new Vec3(sx, sy, sz), terrain, thermalLayers);
 
 		double selfNoiseDb = lSLdB - lSonarOffset;
-		double nl = Math.max(AMBIENT_NOISE_DB, selfNoiseDb);
+		double nl = Math.max(AMBIENT_NOISE_DB, selfNoiseDb) + bafflePenalty;
 		double activeSe = ACTIVE_PING_SL_DB - 2 * tl + TARGET_STRENGTH_DB - nl;
 
 		if (activeSe > DETECTION_THRESHOLD_DB) {
-			double bearingError = bearingStdDev(activeSe);
+			double measuredSe = measuredActiveStrength(tick, activeSe, noise);
+			double bearingError = bearingStdDev(measuredSe);
 			double noisyBearing = trueBearing + bearingError * rng.nextGaussian();
 			noisyBearing = ((noisyBearing % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
 			double rangeRmsNoise = distance * RANGE_NOISE_FRACTION;
@@ -295,16 +383,17 @@ public final class SonarModel {
 
 			double estSpd = sSpeed > 0 ? sSpeed + rng.nextGaussian() * 2 : -1;
 			// Active sonar reflects off the target; the "source level" is the echo
-			// strength, not the target's own noise. Pass 0 for estimatedSL so
+			// strength, not the target's own noise. Source level is unavailable;
 			// classification relies on speed and depth instead of acoustic signature.
-			return new SonarContact(noisyBearing, activeSe, noisyRange, true, estSpd, bearingError, rangeRmsNoise, 0, 0,
-					Double.NaN, estimatedDepth, classify(activeSe, estSpd, 0, estimatedDepth));
+			return new SonarContact(noisyBearing, measuredSe, noisyRange, true, estSpd, bearingError,
+					noisyRange * RANGE_NOISE_FRACTION, Double.NaN, 0, Double.NaN, estimatedDepth,
+					classify(measuredSe, estSpd, Double.NaN, estimatedDepth));
 		}
 		return null;
 	}
 
 	/**
-	 * Original submarine-to-submarine sonar computation (unchanged).
+	 * Submarine-to-submarine detection and contact tracking.
 	 */
 	private Map<Integer, SonarResult> computeSubToSubContacts(
 		long tick, List<SubmarineEntity> entities, TerrainMap terrain, List<ThermalLayer> thermalLayers) {
@@ -352,7 +441,7 @@ public final class SonarModel {
 
 				// If the source pinged this tick, their SL is the ping level
 				// (everyone hears the ping as a passive contact)
-				if (source.pingRequested()) {
+				if (isPinging(source)) {
 					sl = Math.max(sl, ACTIVE_PING_SL_DB);
 				}
 
@@ -364,55 +453,61 @@ public final class SonarModel {
 				}
 
 				double se = sl - tl - nl;
+				double measuredSe = Double.NaN;
 				if (se > DETECTION_THRESHOLD_DB) {
 					// Measurement errors are drawn from the tracker's correlated
 					// noise processes so consecutive ticks share most of their error.
 					var tracker = getOrCreateTracker(listener.id(), source.id());
-					double brgStdDev = bearingStdDev(se);
+					measuredSe = measuredPassiveStrength(tick, se, sensorNoiseFor(tick, listener.id(), source.id()));
+					double brgStdDev = bearingStdDev(measuredSe);
 					double bearingError = tracker.bearingNoise.next(tick, rng) * brgStdDev;
 					double reportedBearing = normalizeBearing(trueBearing + bearingError);
-					double estSpeed = estimateTargetSpeed(source.speed(), se, tracker.speedNoise.next(tick, rng));
-					// Estimate source level from signal characteristics.
-					// Accuracy improves with SE (closer = better signal analysis).
-					double slError = Math.clamp(10.0 / Math.max(se, 1.0), 1.0, 8.0);
-					double estSL = sl + tracker.sourceLevelNoise.next(tick, rng) * slError;
+					double estSpeed = estimateTargetSpeed(source.speed(), measuredSe,
+							tracker.speedNoise.next(tick, rng));
 
 					// Update contact tracker
-					tracker.update(tick, reportedBearing, se, estSpeed, estSL, listener.x(), listener.y(),
-							listener.heading(), inBaffles, distance, source.x(), source.y(), rng);
+					if (inBaffles) {
+						// Hearing a source keeps its acoustic identity alive, but a degraded
+						// bearing does not refresh the range or motion solution.
+						tracker.decay(tick, maxSubSpeed);
+					}
+					tracker.update(tick, reportedBearing, measuredSe, listener.x(), listener.y(), listener.heading(),
+							inBaffles, distance, source.x(), source.y(), rng);
 					observedSourceIds.add(source.id());
 
-					passive.add(new SonarContact(reportedBearing, se, tracker.estimatedRange(), false, estSpeed,
+					double estSL = estimateSourceLevel(measuredSe, nl, tracker.estimatedRange());
+					passive.add(new SonarContact(reportedBearing, measuredSe, tracker.estimatedRange(), false, estSpeed,
 							brgStdDev, tracker.rangeUncertainty(), estSL, tracker.solutionQuality(),
-							tracker.estimatedHeading(), Double.NaN, classify(se, estSpeed, estSL, Double.NaN)));
+							tracker.estimatedHeading(), Double.NaN, classify(measuredSe, estSpeed, sl, Double.NaN)));
 				}
 
 				// --- Active sonar returns (for the listener's own ping) ---
-				if (listener.pingRequested() && listener.activeSonarCooldown() <= 0) {
+				if (isPinging(listener)) {
 					// Round-trip: 2 * TL
 					double activeSe = ACTIVE_PING_SL_DB - 2 * tl + TARGET_STRENGTH_DB - nl;
 					if (activeSe > DETECTION_THRESHOLD_DB) {
-						double activeBrgStdDev = bearingStdDev(activeSe);
+						double measuredActiveSe = measuredActiveStrength(tick, activeSe,
+								sensorNoiseFor(tick, listener.id(), source.id()));
+						double activeBrgStdDev = bearingStdDev(measuredActiveSe);
 						double bearingError = rng.nextGaussian() * activeBrgStdDev;
 						double reportedBearing = normalizeBearing(trueBearing + bearingError);
 						double rangeRmsNoise = distance * RANGE_NOISE_FRACTION;
 						double rangeNoise = rangeRmsNoise * rng.nextGaussian();
 						double reportedRange = Math.max(1.0, distance + rangeNoise);
-						double estSpeed = estimateTargetSpeed(source.speed(), activeSe, rng.nextGaussian());
-						double slError = Math.clamp(10.0 / Math.max(activeSe, 1.0), 1.0, 5.0);
-						double estSL = sl + rng.nextGaussian() * slError;
+						double estSpeed = estimateTargetSpeed(source.speed(), measuredActiveSe, rng.nextGaussian());
+						double estSL = estimateSourceLevel(measuredSe, nl, reportedRange);
 						double depthNoiseRms = Math.max(5.0, distance * 0.05);
 						double estimatedDepth = source.z() + depthNoiseRms * rng.nextGaussian();
 
 						// Update contact tracker from ping
 						var tracker = getOrCreateTracker(listener.id(), source.id());
-						tracker.updateFromPing(tick, reportedRange, activeSe);
+						tracker.updateFromPing(tick, reportedRange);
 						observedSourceIds.add(source.id());
 
-						active.add(new SonarContact(reportedBearing, activeSe, reportedRange, true, estSpeed,
-								activeBrgStdDev, rangeRmsNoise, estSL, tracker.solutionQuality(),
+						active.add(new SonarContact(reportedBearing, measuredActiveSe, reportedRange, true, estSpeed,
+								activeBrgStdDev, reportedRange * RANGE_NOISE_FRACTION, estSL, tracker.solutionQuality(),
 								tracker.estimatedHeading(), estimatedDepth,
-								classify(activeSe, estSpeed, estSL, estimatedDepth)));
+								classify(measuredActiveSe, estSpeed, estSL, estimatedDepth)));
 					}
 				}
 			}
@@ -422,17 +517,6 @@ public final class SonarModel {
 
 			results.put(listener.id(),
 					new SonarResult(List.copyOf(passive), List.copyOf(active), listener.activeSonarCooldown()));
-		}
-
-		// Consume ping requests AFTER processing all entities, so that a
-		// pinger's SL boost is visible to all listeners during this tick.
-		for (var entity : entities) {
-			if (entity.pingRequested()) {
-				if (entity.activeSonarCooldown() <= 0) {
-					entity.setActiveSonarCooldown(ACTIVE_PING_COOLDOWN_TICKS);
-				}
-				entity.setPingRequested(false);
-			}
 		}
 
 		return results;

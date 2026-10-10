@@ -271,7 +271,10 @@ class PassiveSonarGeometryTest {
 		// Target at 8 m/s (SL 96) at 800 m: SE = 96 - 10*log10(800) - 55 = 12 dB.
 		// In the baffles NL rises by 20 dB, so SE = -8 dB: no contact.
 		double range = 800;
-		double expectedSe = slForSpeed(8) - 10 * Math.log10(range) - SonarModel.AMBIENT_NOISE_DB;
+		var referenceListener = makeSub(0, new Vec3(0, 0, DEPTH), 0, 2);
+		var referenceTarget = makeSub(1, new Vec3(0, range, DEPTH), Math.PI, 8);
+		double referenceSe = passive(new SonarModel(7), 0, referenceListener, referenceTarget, FLAT).getFirst()
+				.signalExcess();
 		double baffleDeg = Math.toDegrees(SonarModel.BAFFLE_HALF_ARC);
 
 		for (int deg = 0; deg <= 180; deg += 5) {
@@ -293,10 +296,11 @@ class PassiveSonarGeometryTest {
 						"Relative bearing " + sign * deg + " deg: expected detected=" + expectDetected);
 				if (expectDetected) {
 					var c = contacts.getFirst();
-					assertEquals(expectedSe, c.signalExcess(), 0.05,
-							"Signal excess must not depend on bearing inside the forward arc (" + sign * deg + " deg)");
-					assertEquals(SonarModel.bearingStdDev(expectedSe), c.bearingUncertainty(), 1e-9,
-							"Bearing uncertainty must not depend on bearing inside the forward arc");
+					assertEquals(referenceSe, c.signalExcess(), 0.05,
+							"Measured strength for the same pair and seed must not depend on forward bearing ("
+									+ sign * deg + " deg)");
+					assertEquals(SonarModel.bearingStdDev(c.signalExcess()), c.bearingUncertainty(), 1e-9,
+							"Bearing uncertainty must follow the measured strength");
 				}
 			}
 			assertEquals(detectedBySide[0], detectedBySide[1], "Baffles must be symmetric port/starboard at " + deg);
@@ -327,24 +331,29 @@ class PassiveSonarGeometryTest {
 		// A very loud source (SL 130) astern at 300 m punches through the 20 dB baffle
 		// penalty (SE = 130 - 24.8 - 75 = 30 dB) so it is detected, but a baffled
 		// bearing is not usable for TMA: no range, no quality, unbounded uncertainty.
-		var sonar = new SonarModel(7);
+		var baffledSonar = new SonarModel(7);
+		var forwardSonar = new SonarModel(7);
 		var listener = makeSub(0, new Vec3(0, 0, DEPTH), 0, 2);
 		var astern = makeSub(1, new Vec3(0, -300, DEPTH), 0, 8, 130);
-		var ahead = makeSub(2, new Vec3(0, 300, DEPTH), Math.PI, 8, 130);
+		var ahead = makeSub(1, new Vec3(0, 300, DEPTH), Math.PI, 8, 130);
 
 		SonarContact baffled = null, forward = null;
 		for (int t = 0; t < 100; t++) {
-			var b = passive(sonar, t, listener, astern, FLAT);
-			var f = passive(sonar, t, listener, ahead, FLAT);
+			var b = passive(baffledSonar, t, listener, astern, FLAT);
+			var f = passive(forwardSonar, t, listener, ahead, FLAT);
 			assertFalse(b.isEmpty(), "Loud source astern should still be detected at 300 m");
 			assertFalse(f.isEmpty(), "Loud source ahead should be detected at 300 m");
 			baffled = b.getFirst();
 			forward = f.getFirst();
+			if (t == 0) {
+				// The same pair and seed share their initial calibration and strength error.
+				// Later draws differ because only the forward observation updates TMA.
+				assertEquals(forward.signalExcess() - SonarModel.BAFFLE_PENALTY_DB, baffled.signalExcess(), 0.01,
+						"Baffles attenuate paired measurements by the baffle penalty");
+			}
 		}
 
 		assertTrue(baffled.signalExcess() > SonarModel.DETECTION_THRESHOLD_DB);
-		assertEquals(forward.signalExcess() - SonarModel.BAFFLE_PENALTY_DB, baffled.signalExcess(), 0.01,
-				"Baffles cost exactly the baffle penalty");
 		assertEquals(0.0, baffled.range(), "Baffled contact must carry no range estimate");
 		assertEquals(0.0, baffled.solutionQuality(), "Baffled contact must carry no solution quality");
 		assertEquals(Double.MAX_VALUE, baffled.rangeUncertainty(), "Baffled contact range is fully uncertain");
@@ -495,8 +504,8 @@ class PassiveSonarGeometryTest {
 
 	/**
 	 * Standard deviation, across {@code seeds} independent sonar models, of the bearing error
-	 * averaged over {@code windowTicks} consecutive ticks of a static geometry. Returned as a
-	 * fraction of the single-sample sigma the model reports.
+	 * averaged over {@code windowTicks} consecutive ticks of a static geometry. Each error is
+	 * normalized by its own reported sigma before averaging, since measured strength wanders.
 	 */
 	private static double averagedBearingErrorFraction(int seeds, int windowTicks) {
 		var listener = makeSub(0, new Vec3(0, 0, DEPTH), 0, 2);
@@ -504,18 +513,16 @@ class PassiveSonarGeometryTest {
 		double trueBearing = bearingTo(listener, source);
 
 		var means = new ArrayList<Double>();
-		double reportedSigma = Double.NaN;
 		for (int s = 0; s < seeds; s++) {
 			var sonar = new SonarModel(seedFor(9000 + s));
 			double sum = 0;
 			for (int t = 0; t < windowTicks; t++) {
 				var c = passive(sonar, t, listener, source, FLAT).getFirst();
-				sum += angleDiff(c.bearing(), trueBearing);
-				reportedSigma = c.bearingUncertainty();
+				sum += angleDiff(c.bearing(), trueBearing) / c.bearingUncertainty();
 			}
 			means.add(sum / windowTicks);
 		}
-		return stdDev(means) / reportedSigma;
+		return stdDev(means);
 	}
 
 	@Test
@@ -586,7 +593,14 @@ class PassiveSonarGeometryTest {
 
 		assertEquals(n, flat.count, "Flat: always detected");
 		assertEquals(n, behind.count, "Behind ridge: still detected (loud source)");
-		assertEquals(flat.se - occlusion, behind.se, 0.05, "Ridge costs exactly its occlusion in signal excess");
+		for (int i = 0; i < n; i++) {
+			// Paired seeds have the same calibration and strength wander. The ridge still
+			// subtracts its physical loss, but a detected contact's display has a floor.
+			assertEquals(Math.max(SonarModel.DETECTION_THRESHOLD_DB, flat.measuredStrengths[i] - occlusion),
+					behind.measuredStrengths[i], 0.05,
+					"Ridge attenuates each paired measurement, subject to the display floor (seed " + i + ")");
+		}
+		assertTrue(flat.se - behind.se > occlusion * 0.5, "Ridge must substantially lower mean measured strength");
 
 		System.out.printf(
 				"[Terrain] occlusion=%.1f dB  SE %.1f -> %.1f dB  bearing sigma %.2f -> %.2f deg (reported %.2f -> %.2f)  speed sigma %.2f -> %.2f m/s%n",
@@ -599,8 +613,8 @@ class PassiveSonarGeometryTest {
 				"Reported bearing uncertainty must grow behind terrain");
 		// Actual scatter grows and matches what is reported
 		assertTrue(behind.bearingSigma > flat.bearingSigma * 1.5, "Actual bearing scatter must grow behind terrain");
-		assertEquals(1.0, flat.bearingSigma / flat.reportedBearingSigma, 0.35, "Flat: reported sigma is honest");
-		assertEquals(1.0, behind.bearingSigma / behind.reportedBearingSigma, 0.35, "Ridge: reported sigma is honest");
+		assertEquals(1.0, flat.normalizedBearingSigma, 0.2, "Flat: per-observation reported sigma is honest");
+		assertEquals(1.0, behind.normalizedBearingSigma, 0.2, "Ridge: per-observation reported sigma is honest");
 		// Blade-rate speed analysis suffers too
 		assertTrue(behind.speedSigma > flat.speedSigma * 1.5, "Speed estimate scatter must grow behind terrain");
 
@@ -611,7 +625,7 @@ class PassiveSonarGeometryTest {
 	}
 
 	private record StaticStats(int count, double se, double bearingSigma, double reportedBearingSigma,
-			double speedSigma) {
+			double normalizedBearingSigma, double speedSigma, double[] measuredStrengths) {
 	}
 
 	/**
@@ -627,8 +641,10 @@ class PassiveSonarGeometryTest {
 		double trueBearing = bearingTo(listener, source);
 
 		var bearingErrors = new ArrayList<Double>();
+		var normalizedBearingErrors = new ArrayList<Double>();
 		var speedErrors = new ArrayList<Double>();
-		double se = Double.NaN, reported = Double.NaN;
+		double[] measuredStrengths = new double[n];
+		double strengthSum = 0, reportedSigmaSquares = 0;
 		int count = 0;
 		for (int t = 0; t < n; t++) {
 			var sonar = new SonarModel(seedFor(t));
@@ -637,13 +653,18 @@ class PassiveSonarGeometryTest {
 				continue;
 			var c = contacts.getFirst();
 			count++;
-			se = c.signalExcess();
-			reported = c.bearingUncertainty();
-			bearingErrors.add(angleDiff(c.bearing(), trueBearing));
+			measuredStrengths[t] = c.signalExcess();
+			strengthSum += c.signalExcess();
+			reportedSigmaSquares += c.bearingUncertainty() * c.bearingUncertainty();
+			double bearingError = angleDiff(c.bearing(), trueBearing);
+			bearingErrors.add(bearingError);
+			normalizedBearingErrors.add(bearingError / c.bearingUncertainty());
 			if (c.estimatedSpeed() >= 0)
 				speedErrors.add(c.estimatedSpeed() - source.speed());
 		}
-		return new StaticStats(count, se, stdDev(bearingErrors), reported, stdDev(speedErrors));
+		return new StaticStats(count, count > 0 ? strengthSum / count : Double.NaN, stdDev(bearingErrors),
+				count > 0 ? Math.sqrt(reportedSigmaSquares / count) : Double.NaN, stdDev(normalizedBearingErrors),
+				stdDev(speedErrors), measuredStrengths);
 	}
 
 	@Test

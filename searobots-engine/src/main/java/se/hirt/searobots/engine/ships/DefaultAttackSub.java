@@ -79,7 +79,6 @@ public final class DefaultAttackSub implements SubmarineController {
 	private static final long TORPEDO_COOLDOWN = 750; // 15 seconds between launches
 
 	// Torpedo classification
-	private static final double TORPEDO_SL_THRESHOLD = 105; // dB, above = torpedo
 
 	// Evasion and repositioning
 	private static final int REPOSITION_TICKS = 2000; // 40 seconds silent after attack
@@ -373,18 +372,15 @@ public final class DefaultAttackSub implements SubmarineController {
 	}
 
 	/**
-	 * A confirmed torpedo: loud AND fast. Loud but slow = surface ship or sprinting sub.
+	 * A torpedo's high-speed tonal signature can be classified without a range or source level.
 	 */
 	private boolean isConfirmedTorpedo(SonarContact c) {
-		return c.estimatedSourceLevel() > TORPEDO_SL_THRESHOLD && c.estimatedSpeed() > 20;
+		return c.classification() == SonarContact.Classification.TORPEDO;
 	}
 
 	private SonarContact detectTorpedoThreat(List<SonarContact> contacts) {
 		for (var c : contacts) {
-			// Torpedo signature: very loud (>105 dB) AND fast (>20 m/s).
-			// Surface ships and sprinting subs are loud but not 20+ m/s.
-			// Torpedoes cruise at 25 m/s, clearly distinct.
-			if (c.estimatedSourceLevel() > TORPEDO_SL_THRESHOLD && c.estimatedSpeed() > 20) {
+			if (isConfirmedTorpedo(c)) {
 				return c;
 			}
 		}
