@@ -456,7 +456,8 @@ consequences:
 
 Torpedoes are **fire-and-forget**: there is no communication link
 between the submarine and its launched torpedoes. The submarine can
-only track its own torpedoes through passive sonar (they are loud).
+track its own torpedoes through passive sonar (they are loud) or active
+sonar echoes.
 This means:
 
 - You hear your own torpedoes just like the enemy does.
@@ -1053,6 +1054,15 @@ powerful but costly action:
 
 Active pings from torpedoes are **indistinguishable** from submarine
 pings, and this is what makes torpedo decoys work.
+
+Submarine pings can also return echoes from free-swimming torpedoes,
+including their own weapons. These provide noisy range and depth
+estimates; classification still depends on the measured signature.
+Weapons still inside launch tubes do not produce separate contacts.
+Every eligible listener processes a ping in the same sonar tick before
+the request is consumed. Submarines then have a 250-tick (5-second)
+cooldown; torpedoes have a 50-tick (1-second) cooldown. Requests during
+cooldown produce neither another pulse nor another set of echoes.
 
 ### Terrain Occlusion
 

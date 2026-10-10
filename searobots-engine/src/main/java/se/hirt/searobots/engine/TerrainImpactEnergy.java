@@ -65,7 +65,10 @@ final class TerrainImpactEnergy {
 		var lever = contactOffset.cross(normal);
 		double pitchLever = lever.dot(right);
 		double yawLever = lever.z();
-		inverseMass += yawLever * yawLever / cfg.collisionYawInertia();
+		// Heading changes rotate about world Z, which mixes the hull's principal yaw
+		// and longitudinal moments when pitched. There is still no free roll degree of freedom.
+		double yawInertia = cfg.collisionYawInertia() * cosP * cosP + cfg.collisionRollInertia() * sinP * sinP;
+		inverseMass += yawLever * yawLever / yawInertia;
 		if (!cfg.surfaceLocked()) {
 			inverseMass += heave * heave / cfg.massHeave() + pitchLever * pitchLever / cfg.collisionPitchInertia();
 		}

@@ -110,11 +110,8 @@ public final class SonarModel {
 	}
 
 	/**
-	 * Compute all sonar contacts for each entity this tick. Returns a map from entity ID to its
-	 * sonar result.
-	 */
-	/**
-	 * Compute sonar contacts including torpedoes as sources and listeners.
+	 * Compute all sonar contacts, including free-swimming torpedoes as sources and listeners.
+	 * Returns a map from entity ID to its sonar result.
 	 */
 	public Map<Integer, SonarResult> computeContacts(
 		long tick, List<SubmarineEntity> entities, List<TorpedoEntity> torpedoes, TerrainMap terrain,
@@ -123,34 +120,45 @@ public final class SonarModel {
 		// First: compute sub-to-sub contacts using the existing logic
 		var results = computeSubToSubContacts(tick, entities, terrain, thermalLayers);
 
-		// Second: torpedoes as additional noise sources for submarine listeners
-		// (subs hear torpedoes via passive sonar)
+		// Second: submarines hear torpedoes and receive echoes from their own pings
 		for (var listener : entities) {
 			if (listener.forfeited() || listener.hp() <= 0)
 				continue;
 			var existing = results.get(listener.id());
 			var extraPassive = new ArrayList<>(existing.passiveContacts());
+			var extraActive = new ArrayList<>(existing.activeReturns());
 
 			for (var torp : torpedoes) {
-				if (!torp.alive())
+				if (!torp.alive() || torp.inTube())
 					continue;
 				var contact = passiveDetect(tick, sensorNoiseFor(tick, listener.id(), torp.id()), listener.x(),
 						listener.y(), listener.z(), listener.heading(), listener.sourceLevelDb(),
 						listener.vehicleConfig().sonarSelfNoiseOffsetDb(), torp.x(), torp.y(), torp.z(),
-						torp.sourceLevelDb(), torp.speed(), torp.pingRequested(), terrain, thermalLayers);
+						torp.sourceLevelDb(), torp.speed(), isPinging(torp), terrain, thermalLayers);
 				if (contact != null)
 					extraPassive.add(contact);
+
+				if (isPinging(listener)) {
+					double bearing = Math.atan2(torp.x() - listener.x(), torp.y() - listener.y());
+					double bafflePenalty = isInBaffles(listener.heading(), bearing) ? BAFFLE_PENALTY_DB : 0;
+					var ret = activeDetect(listener.x(), listener.y(), listener.z(), listener.sourceLevelDb(),
+							listener.vehicleConfig().sonarSelfNoiseOffsetDb(), bafflePenalty, torp.x(), torp.y(),
+							torp.z(), torp.speed(), terrain, thermalLayers);
+					if (ret != null)
+						extraActive.add(ret);
+				}
 			}
 
-			if (extraPassive.size() > existing.passiveContacts().size()) {
+			if (extraPassive.size() > existing.passiveContacts().size()
+					|| extraActive.size() > existing.activeReturns().size()) {
 				results.put(listener.id(),
-						new SonarResult(extraPassive, existing.activeReturns(), existing.cooldownTicks()));
+						new SonarResult(List.copyOf(extraPassive), List.copyOf(extraActive), existing.cooldownTicks()));
 			}
 		}
 
 		// Third: compute contacts FOR torpedo listeners (torpedoes hear subs)
 		for (var torp : torpedoes) {
-			if (!torp.alive())
+			if (!torp.alive() || torp.inTube())
 				continue;
 			var passive = new ArrayList<SonarContact>();
 			var active = new ArrayList<SonarContact>();
@@ -162,32 +170,54 @@ public final class SonarModel {
 					continue;
 				var contact = passiveDetect(tick, sensorNoiseFor(tick, torp.id(), source.id()), torp.x(), torp.y(),
 						torp.z(), torp.heading(), torp.sourceLevelDb(), torpSonarOffset, source.x(), source.y(),
-						source.z(), source.sourceLevelDb(), source.speed(), source.pingRequested(), terrain,
-						thermalLayers);
+						source.z(), source.sourceLevelDb(), source.speed(), isPinging(source), terrain, thermalLayers);
 				if (contact != null)
 					passive.add(contact);
 			}
 
 			// Torpedo active sonar returns
-			if (torp.pingRequested()) {
+			if (isPinging(torp)) {
 				for (var source : entities) {
 					if (source.forfeited() || source.hp() <= 0)
 						continue;
-					var ret = activeDetect(torp.x(), torp.y(), torp.z(), torp.sourceLevelDb(), torpSonarOffset,
+					var ret = activeDetect(torp.x(), torp.y(), torp.z(), torp.sourceLevelDb(), torpSonarOffset, 0,
 							source.x(), source.y(), source.z(), source.speed(), terrain, thermalLayers);
 					if (ret != null)
 						active.add(ret);
 				}
-				// Clear ping and set cooldown (torpedoes cycle faster than subs)
-				torp.clearPingRequested();
-				torp.setActiveSonarCooldown(TORPEDO_PING_COOLDOWN_TICKS);
 			}
 
-			results.put(torp.id(), new SonarResult(passive, active, torp.activeSonarCooldown()));
+			results.put(torp.id(),
+					new SonarResult(List.copyOf(passive), List.copyOf(active), torp.activeSonarCooldown()));
+		}
+
+		// Consume requests only after every listener has observed this tick's pulses.
+		// Controllers must see the cooldown that begins with the emitted ping.
+		for (var entity : entities) {
+			if (isPinging(entity))
+				entity.setActiveSonarCooldown(ACTIVE_PING_COOLDOWN_TICKS);
+			entity.setPingRequested(false);
+			results.computeIfPresent(entity.id(), (id, result) -> new SonarResult(result.passiveContacts(),
+					result.activeReturns(), entity.activeSonarCooldown()));
+		}
+		for (var torp : torpedoes) {
+			if (isPinging(torp))
+				torp.setActiveSonarCooldown(TORPEDO_PING_COOLDOWN_TICKS);
+			torp.clearPingRequested();
+			results.computeIfPresent(torp.id(), (id, result) -> new SonarResult(result.passiveContacts(),
+					result.activeReturns(), torp.activeSonarCooldown()));
 		}
 
 		expireSensorNoise(tick);
 		return results;
+	}
+
+	private static boolean isPinging(SubmarineEntity entity) {
+		return entity.pingRequested() && entity.activeSonarCooldown() <= 0 && !entity.forfeited() && entity.hp() > 0;
+	}
+
+	private static boolean isPinging(TorpedoEntity torp) {
+		return torp.pingRequested() && torp.activeSonarCooldown() <= 0 && torp.alive() && !torp.inTube();
 	}
 
 	public Map<Integer, SonarResult> computeContacts(
@@ -263,8 +293,8 @@ public final class SonarModel {
 	 * Active sonar return: does the ping illuminate the target? Returns contact or null.
 	 */
 	private SonarContact activeDetect(
-		double lx, double ly, double lz, double lSLdB, double lSonarOffset, double sx, double sy, double sz,
-		double sSpeed, TerrainMap terrain, List<ThermalLayer> thermalLayers) {
+		double lx, double ly, double lz, double lSLdB, double lSonarOffset, double bafflePenalty, double sx, double sy,
+		double sz, double sSpeed, TerrainMap terrain, List<ThermalLayer> thermalLayers) {
 		double distance = Math.sqrt((sx - lx) * (sx - lx) + (sy - ly) * (sy - ly) + (sz - lz) * (sz - lz));
 		if (distance < 1.0)
 			distance = 1.0;
@@ -276,7 +306,7 @@ public final class SonarModel {
 		double tl = transmissionLossDb(distance, new Vec3(lx, ly, lz), new Vec3(sx, sy, sz), terrain, thermalLayers);
 
 		double selfNoiseDb = lSLdB - lSonarOffset;
-		double nl = Math.max(AMBIENT_NOISE_DB, selfNoiseDb);
+		double nl = Math.max(AMBIENT_NOISE_DB, selfNoiseDb) + bafflePenalty;
 		double activeSe = ACTIVE_PING_SL_DB - 2 * tl + TARGET_STRENGTH_DB - nl;
 
 		if (activeSe > DETECTION_THRESHOLD_DB) {
@@ -304,7 +334,7 @@ public final class SonarModel {
 	}
 
 	/**
-	 * Original submarine-to-submarine sonar computation (unchanged).
+	 * Submarine-to-submarine detection and contact tracking.
 	 */
 	private Map<Integer, SonarResult> computeSubToSubContacts(
 		long tick, List<SubmarineEntity> entities, TerrainMap terrain, List<ThermalLayer> thermalLayers) {
@@ -352,7 +382,7 @@ public final class SonarModel {
 
 				// If the source pinged this tick, their SL is the ping level
 				// (everyone hears the ping as a passive contact)
-				if (source.pingRequested()) {
+				if (isPinging(source)) {
 					sl = Math.max(sl, ACTIVE_PING_SL_DB);
 				}
 
@@ -388,7 +418,7 @@ public final class SonarModel {
 				}
 
 				// --- Active sonar returns (for the listener's own ping) ---
-				if (listener.pingRequested() && listener.activeSonarCooldown() <= 0) {
+				if (isPinging(listener)) {
 					// Round-trip: 2 * TL
 					double activeSe = ACTIVE_PING_SL_DB - 2 * tl + TARGET_STRENGTH_DB - nl;
 					if (activeSe > DETECTION_THRESHOLD_DB) {
@@ -422,17 +452,6 @@ public final class SonarModel {
 
 			results.put(listener.id(),
 					new SonarResult(List.copyOf(passive), List.copyOf(active), listener.activeSonarCooldown()));
-		}
-
-		// Consume ping requests AFTER processing all entities, so that a
-		// pinger's SL boost is visible to all listeners during this tick.
-		for (var entity : entities) {
-			if (entity.pingRequested()) {
-				if (entity.activeSonarCooldown() <= 0) {
-					entity.setActiveSonarCooldown(ACTIVE_PING_COOLDOWN_TICKS);
-				}
-				entity.setPingRequested(false);
-			}
 		}
 
 		return results;

@@ -125,7 +125,8 @@ class TerrainImpactEnergyTest {
 	@Test
 	void collisionMomentsUsePhysicalDimensionsAndDirectionalMasses() {
 		assertAll(() -> assertRelative(1_609_031_250, SUBMARINE.collisionPitchInertia()),
-				() -> assertRelative(1_784_812_500, SUBMARINE.collisionYawInertia()));
+				() -> assertRelative(1_784_812_500, SUBMARINE.collisionYawInertia()),
+				() -> assertRelative(85_500_000, SUBMARINE.collisionRollInertia()));
 		var larger = changedConfig(SUBMARINE.dryMass(), SUBMARINE.addedMassSurge(), SUBMARINE.addedMassSway(),
 				SUBMARINE.addedMassHeave(), 2 * SUBMARINE.hullHalfLength(), 2 * SUBMARINE.hullHalfBeam(), false);
 
@@ -152,6 +153,14 @@ class TerrainImpactEnergyTest {
 		assertRelative(7_113_856.274683553, value);
 		assertTrue(value < 0.5 * SUBMARINE.collisionYawInertia() * 0.1 * 0.1,
 				"One contact cannot release more than the incoming rotational kinetic energy.");
+	}
+
+	@Test
+	void pitchedYawContactUsesTheMomentAboutWorldVertical() {
+		var bow = new Vec3(0, 33.5 / Math.sqrt(2), 33.5 / Math.sqrt(2));
+		// At 45 degrees, the world-Z moment is (1,784,812,500 + 85,500,000) / 2.
+		double value = TerrainImpactEnergy.energyJoules(SUBMARINE, bow, RIGHT, 0, Math.PI / 4, 3.35 / Math.sqrt(2));
+		assertRelative(3_691_449.530645445, value);
 	}
 
 	@Test

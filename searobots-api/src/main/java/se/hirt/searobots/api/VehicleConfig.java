@@ -85,6 +85,14 @@ public record VehicleConfig(double dryMass, double addedMassSurge, double addedM
 	}
 
 	/**
+	 * Principal inertia about the hull's length axis in kg m^2. Roll is locked, but this moment
+	 * contributes to rotation about world Z when the hull is pitched.
+	 */
+	public double collisionRollInertia() {
+		return (massSway() + massHeave()) * hullHalfBeam * hullHalfBeam / 5.0;
+	}
+
+	/**
 	 * Attack submarine: 75m length, 12m beam, ~2500 tonnes. Max speed 15 m/s (~29 knots). Turn
 	 * radius ~150-300m at patrol speed.
 	 */
