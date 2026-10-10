@@ -51,16 +51,12 @@ import java.util.Random;
  */
 final class ContactTracker {
 	// Constants
-	private static final double AMBIENT_NOISE_DB = 60.0;
-	private static final double SPREADING_COEFFICIENT = 10.0;
-
 	// Correlation times of the measurement errors (seconds). Bearing wander from
 	// array and multipath effects persists for tens of seconds; blade-rate
 	// speed tracking re-locks faster; the TMA range and heading estimates are
 	// filter outputs and drift slowly.
 	static final double BEARING_CORRELATION_S = 20.0;
 	static final double SPEED_CORRELATION_S = 10.0;
-	static final double SOURCE_LEVEL_CORRELATION_S = 30.0;
 	static final double RANGE_CORRELATION_S = 20.0;
 	static final double HEADING_CORRELATION_S = 60.0;
 	// Fraction of sensor error variance that is slow wander; the rest is
@@ -89,8 +85,6 @@ final class ContactTracker {
 	// Solution quality
 	private double solutionQuality;
 
-	// Active sonar calibration of source level
-	private double calibratedSL = Double.NaN;
 	// Tick of the last active range fix, or -1. A fix anchors the range
 	// solution; its value fades over PING_FIX_MEMORY_S as the target is free
 	// to change course and speed.
@@ -110,12 +104,10 @@ final class ContactTracker {
 	// Measurement error processes. All errors reported for this contact are
 	// correlated in time (see CorrelatedNoise) so that a controller cannot
 	// average them away over a few seconds. The sonar model draws the
-	// per-tick bearing, blade-rate speed, and source-level errors from the
-	// first three; the tracker uses the last two internally.
+	// per-tick bearing and blade-rate speed errors from the first two;
+	// the tracker uses the last two internally.
 	final CorrelatedNoise bearingNoise = new CorrelatedNoise(BEARING_CORRELATION_S, SENSOR_CORRELATED_FRACTION);
 	final CorrelatedNoise speedNoise = new CorrelatedNoise(SPEED_CORRELATION_S, SENSOR_CORRELATED_FRACTION);
-	final CorrelatedNoise sourceLevelNoise = new CorrelatedNoise(SOURCE_LEVEL_CORRELATION_S,
-			SENSOR_CORRELATED_FRACTION);
 	private final CorrelatedNoise rangeNoise = new CorrelatedNoise(RANGE_CORRELATION_S, 1.0);
 	private final CorrelatedNoise headingNoise = new CorrelatedNoise(HEADING_CORRELATION_S, 1.0);
 
@@ -125,9 +117,8 @@ final class ContactTracker {
 	 * output of a real TMA filter.
 	 */
 	void update(
-		long tick, double bearing, double se, double estSpeed, double estSL, double ownX, double ownY,
-		double ownHeading, boolean inBaffles, double actualDistance, double actualTargetX, double actualTargetY,
-		Random rng) {
+		long tick, double bearing, double se, double ownX, double ownY, double ownHeading, boolean inBaffles,
+		double actualDistance, double actualTargetX, double actualTargetY, Random rng) {
 		lastObservationTick = tick;
 
 		// Don't update TMA from baffle-degraded observations
@@ -169,7 +160,7 @@ final class ContactTracker {
 		prevOwnHeading = ownHeading;
 
 		// === Solution quality (must be computed before range, as it gates bias decay) ===
-		updateSolutionQuality(actualDistance);
+		updateSolutionQuality();
 		// A recent active fix is worth more than any passive geometry, and
 		// fades as it ages instead of vanishing on the next passive tick.
 		double fix = pingFixFactor(tick);
@@ -285,11 +276,11 @@ final class ContactTracker {
 	 * <li>Tiny time bonus: just observation count stability, capped very low</li>
 	 * </ol>
 	 */
-	private void updateSolutionQuality(double actualDistance) {
-		// Use actualDistance as proxy for range in the ratio (before we have
-		// a good estimate). This is acceptable: the quality calculation isn't
-		// exposed to controllers, only its effects are.
-		double rangeForRatio = !Double.isNaN(estimatedRange) && estimatedRange > 100 ? estimatedRange : actualDistance;
+	private void updateSolutionQuality() {
+		// Quality is public too: never normalize a short initial guess by hidden true range.
+		// At the range floor, use the reported uncertainty as a conservative baseline scale.
+		double rangeForRatio = !Double.isNaN(estimatedRange) && estimatedRange > 100 ? estimatedRange
+				: Math.max(100, rangeUncertainty);
 
 		// Cross-track ratio: how much perpendicular baseline we've built
 		// relative to the target range. Need ~50% of range in cross-track
@@ -312,18 +303,13 @@ final class ContactTracker {
 	/**
 	 * Active sonar ping gives precise range immediately, bypassing TMA.
 	 */
-	void updateFromPing(long tick, double range, double se) {
+	void updateFromPing(long tick, double range) {
 		estimatedRange = range;
 		rangeBias = 0; // ping eliminates systematic error entirely
 		rangeUncertainty = range * PING_RANGE_NOISE; // 2% RMS
 		solutionQuality = 0.95;
 		lastObservationTick = tick;
 		pingTick = tick;
-
-		// Calibrate SL from active return
-		if (se > 5.0 && range > 1.0) {
-			calibratedSL = se + SPREADING_COEFFICIENT * Math.log10(range) + AMBIENT_NOISE_DB;
-		}
 	}
 
 	/** 1.0 at the moment of an active fix, decaying to 0 as the fix ages; 0 if never pinged. */

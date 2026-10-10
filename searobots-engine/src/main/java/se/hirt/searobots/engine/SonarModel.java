@@ -44,6 +44,10 @@ public final class SonarModel {
 	static final double SELF_NOISE_OFFSET_DB = 35.0;
 	// Cylindrical spreading for shallow water at our scale (surface + floor waveguide)
 	static final double SPREADING_COEFFICIENT = 10.0;
+	// Passive amplitude cannot separate range from uncertain propagation/calibration.
+	static final double PASSIVE_LEVEL_BIAS_DB = 6.0;
+	static final double PASSIVE_LEVEL_WANDER_DB = 2.0;
+	static final double PASSIVE_LEVEL_CORRELATION_S = 30.0;
 
 	// Baffles: ~100° blind cone behind sub (>130° from bow on each side)
 	static final double BAFFLE_HALF_ARC = Math.toRadians(130);
@@ -64,6 +68,7 @@ public final class SonarModel {
 	static final double ISLAND_OCCLUSION_PER_CELL_DB = 30.0;
 
 	private final Random rng;
+	private final long seed;
 	private final double maxSubSpeed;
 	private final Map<Long, ContactTracker> trackers = new HashMap<>();
 
@@ -73,6 +78,7 @@ public final class SonarModel {
 
 	public SonarModel(long seed, double maxSubSpeed) {
 		this.rng = new Random(seed);
+		this.seed = seed;
 		this.maxSubSpeed = maxSubSpeed;
 	}
 
@@ -252,37 +258,68 @@ public final class SonarModel {
 
 		double se = sl - tl - nl;
 		if (se > DETECTION_THRESHOLD_DB) {
-			double bearingError = bearingStdDev(se);
+			double measuredSe = measuredPassiveStrength(tick, se, noise);
+			double bearingError = bearingStdDev(measuredSe);
 			double noisyBearing = trueBearing + bearingError * noise.bearing.next(tick, rng);
 			noisyBearing = ((noisyBearing % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
 			// Speed estimate from blade-rate analysis (noisy)
-			double estSpd = sSpeed > 0 ? sSpeed + noise.speed.next(tick, rng) * 2 : -1;
-			return new SonarContact(noisyBearing, se, 0, false, estSpd, bearingError, 0, sl, 0, Double.NaN, Double.NaN,
-					classify(se, estSpd, sl, Double.NaN));
+			double estSpd = sSpeed > 0 ? estimateTargetSpeed(sSpeed, measuredSe, noise.speed.next(tick, rng)) : -1;
+			return new SonarContact(noisyBearing, measuredSe, 0, false, estSpd, bearingError, 0, Double.NaN, 0,
+					Double.NaN, Double.NaN, classify(measuredSe, estSpd, sl, Double.NaN));
 		}
 		return null;
 	}
 
 	/**
-	 * Correlated error processes for a listener/source pair that has no {@link ContactTracker}
-	 * (torpedoes as either side). Entries are dropped once the pair has not been evaluated for
-	 * {@link #SENSOR_NOISE_EXPIRY_TICKS}.
+	 * Passive strength errors for every listener/source pair, plus bearing and speed errors for
+	 * pairs without a {@link ContactTracker}. Entries expire after inactivity; the calibration bias
+	 * is stable across recreation so losing a contact cannot reroll its amplitude error.
 	 */
 	private static final class SensorNoise {
+		final double levelBiasDb;
+		final CorrelatedNoise level = new CorrelatedNoise(PASSIVE_LEVEL_CORRELATION_S,
+				ContactTracker.SENSOR_CORRELATED_FRACTION);
 		final CorrelatedNoise bearing = new CorrelatedNoise(ContactTracker.BEARING_CORRELATION_S,
 				ContactTracker.SENSOR_CORRELATED_FRACTION);
 		final CorrelatedNoise speed = new CorrelatedNoise(ContactTracker.SPEED_CORRELATION_S,
 				ContactTracker.SENSOR_CORRELATED_FRACTION);
 		long lastTick;
+
+		SensorNoise(double levelBiasDb) {
+			this.levelBiasDb = levelBiasDb;
+		}
 	}
 
 	private static final long SENSOR_NOISE_EXPIRY_TICKS = 1500;
 	private final Map<Long, SensorNoise> sensorNoise = new HashMap<>();
 
 	private SensorNoise sensorNoiseFor(long tick, int listenerId, int sourceId) {
-		var noise = sensorNoise.computeIfAbsent(trackerKey(listenerId, sourceId), k -> new SensorNoise());
+		var noise = sensorNoise.computeIfAbsent(trackerKey(listenerId, sourceId),
+				k -> new SensorNoise(passiveLevelBias(k)));
 		noise.lastTick = tick;
 		return noise;
+	}
+
+	private double passiveLevelBias(long pairKey) {
+		// Mix the model seed and pair identity before sampling, independently of tick RNG.
+		long mixed = seed + pairKey + 0x9E3779B97F4A7C15L;
+		mixed = (mixed ^ (mixed >>> 30)) * 0xBF58476D1CE4E5B9L;
+		mixed = (mixed ^ (mixed >>> 27)) * 0x94D049BB133111EBL;
+		mixed ^= mixed >>> 31;
+		return new Random(mixed).nextGaussian() * PASSIVE_LEVEL_BIAS_DB;
+	}
+
+	private double measuredPassiveStrength(long tick, double trueSe, SensorNoise noise) {
+		return Math.max(DETECTION_THRESHOLD_DB,
+				trueSe + noise.levelBiasDb + noise.level.next(tick, rng) * PASSIVE_LEVEL_WANDER_DB);
+	}
+
+	private static double estimateSourceLevel(double measuredSe, double listenerNoiseDb, double estimatedRange) {
+		if (!Double.isFinite(measuredSe) || estimatedRange <= 0)
+			return Double.NaN;
+		// Only the existing range solution supplies spreading loss. Unknown target depth and
+		// path losses cannot be recovered from the signature or from ground-truth coordinates.
+		return measuredSe + listenerNoiseDb + SPREADING_COEFFICIENT * Math.log10(Math.max(estimatedRange, 1.0));
 	}
 
 	private void expireSensorNoise(long tick) {
@@ -325,10 +362,10 @@ public final class SonarModel {
 
 			double estSpd = sSpeed > 0 ? sSpeed + rng.nextGaussian() * 2 : -1;
 			// Active sonar reflects off the target; the "source level" is the echo
-			// strength, not the target's own noise. Pass 0 for estimatedSL so
+			// strength, not the target's own noise. Source level is unavailable;
 			// classification relies on speed and depth instead of acoustic signature.
-			return new SonarContact(noisyBearing, activeSe, noisyRange, true, estSpd, bearingError, rangeRmsNoise, 0, 0,
-					Double.NaN, estimatedDepth, classify(activeSe, estSpd, 0, estimatedDepth));
+			return new SonarContact(noisyBearing, activeSe, noisyRange, true, estSpd, bearingError, rangeRmsNoise,
+					Double.NaN, 0, Double.NaN, estimatedDepth, classify(activeSe, estSpd, Double.NaN, estimatedDepth));
 		}
 		return null;
 	}
@@ -394,27 +431,27 @@ public final class SonarModel {
 				}
 
 				double se = sl - tl - nl;
+				double measuredSe = Double.NaN;
 				if (se > DETECTION_THRESHOLD_DB) {
 					// Measurement errors are drawn from the tracker's correlated
 					// noise processes so consecutive ticks share most of their error.
 					var tracker = getOrCreateTracker(listener.id(), source.id());
-					double brgStdDev = bearingStdDev(se);
+					measuredSe = measuredPassiveStrength(tick, se, sensorNoiseFor(tick, listener.id(), source.id()));
+					double brgStdDev = bearingStdDev(measuredSe);
 					double bearingError = tracker.bearingNoise.next(tick, rng) * brgStdDev;
 					double reportedBearing = normalizeBearing(trueBearing + bearingError);
-					double estSpeed = estimateTargetSpeed(source.speed(), se, tracker.speedNoise.next(tick, rng));
-					// Estimate source level from signal characteristics.
-					// Accuracy improves with SE (closer = better signal analysis).
-					double slError = Math.clamp(10.0 / Math.max(se, 1.0), 1.0, 8.0);
-					double estSL = sl + tracker.sourceLevelNoise.next(tick, rng) * slError;
+					double estSpeed = estimateTargetSpeed(source.speed(), measuredSe,
+							tracker.speedNoise.next(tick, rng));
 
 					// Update contact tracker
-					tracker.update(tick, reportedBearing, se, estSpeed, estSL, listener.x(), listener.y(),
-							listener.heading(), inBaffles, distance, source.x(), source.y(), rng);
+					tracker.update(tick, reportedBearing, measuredSe, listener.x(), listener.y(), listener.heading(),
+							inBaffles, distance, source.x(), source.y(), rng);
 					observedSourceIds.add(source.id());
 
-					passive.add(new SonarContact(reportedBearing, se, tracker.estimatedRange(), false, estSpeed,
+					double estSL = estimateSourceLevel(measuredSe, nl, tracker.estimatedRange());
+					passive.add(new SonarContact(reportedBearing, measuredSe, tracker.estimatedRange(), false, estSpeed,
 							brgStdDev, tracker.rangeUncertainty(), estSL, tracker.solutionQuality(),
-							tracker.estimatedHeading(), Double.NaN, classify(se, estSpeed, estSL, Double.NaN)));
+							tracker.estimatedHeading(), Double.NaN, classify(measuredSe, estSpeed, sl, Double.NaN)));
 				}
 
 				// --- Active sonar returns (for the listener's own ping) ---
@@ -429,14 +466,13 @@ public final class SonarModel {
 						double rangeNoise = rangeRmsNoise * rng.nextGaussian();
 						double reportedRange = Math.max(1.0, distance + rangeNoise);
 						double estSpeed = estimateTargetSpeed(source.speed(), activeSe, rng.nextGaussian());
-						double slError = Math.clamp(10.0 / Math.max(activeSe, 1.0), 1.0, 5.0);
-						double estSL = sl + rng.nextGaussian() * slError;
+						double estSL = estimateSourceLevel(measuredSe, nl, reportedRange);
 						double depthNoiseRms = Math.max(5.0, distance * 0.05);
 						double estimatedDepth = source.z() + depthNoiseRms * rng.nextGaussian();
 
 						// Update contact tracker from ping
 						var tracker = getOrCreateTracker(listener.id(), source.id());
-						tracker.updateFromPing(tick, reportedRange, activeSe);
+						tracker.updateFromPing(tick, reportedRange);
 						observedSourceIds.add(source.id());
 
 						active.add(new SonarContact(reportedBearing, activeSe, reportedRange, true, estSpeed,

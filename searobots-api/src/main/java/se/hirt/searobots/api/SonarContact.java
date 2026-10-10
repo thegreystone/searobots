@@ -34,7 +34,9 @@ package se.hirt.searobots.api;
  * @param bearing
  *            absolute bearing in radians [0, 2pi)
  * @param signalExcess
- *            dB above detection threshold (higher = stronger/closer)
+ *            measured signal strength above listener noise in dB (higher = stronger). Passive
+ *            measurements include persistent calibration uncertainty and correlated wander; they
+ *            are not the engine's exact sonar-equation value or a reliable absolute range cue.
  * @param range
  *            estimated range in meters. Precise for active returns; for passive contacts it is the
  *            engine's TMA estimate, which starts with a large bias and converges only through
@@ -52,9 +54,10 @@ package se.hirt.searobots.api;
  *            is poor. Double.MAX_VALUE means no range information at all (for example a contact
  *            heard only through the baffles).
  * @param estimatedSourceLevel
- *            estimated source level in dB, derived from the acoustic signature. Enables
- *            classification (surface ships are much louder than submarines) and more accurate
- *            SE-based ranging.
+ *            source level in dB inferred from measured passive strength and the existing range
+ *            estimate. It shares that estimate's uncertainty and supplies no independent range fix.
+ *            NaN if no range estimate or passive strength measurement is available, including
+ *            passive torpedo contacts. Use classification for acoustic identification.
  * @param solutionQuality
  *            TMA solution quality (0.0 to 1.0), equivalent to Cold Waters SOL%
  * @param estimatedHeading

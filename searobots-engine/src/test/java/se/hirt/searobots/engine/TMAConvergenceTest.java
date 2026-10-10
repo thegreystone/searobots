@@ -65,6 +65,7 @@ public class TMAConvergenceTest {
 
 		// Collected TMA data from the controller's perspective
 		volatile double lastRange, lastQuality, lastUncertainty, lastEstHeading = Double.NaN;
+		volatile double firstActiveRange = Double.NaN, firstActiveActualRange = Double.NaN;
 		volatile boolean hasContact;
 
 		ScriptedSub(List<Leg> legs, double depth, double speed, boolean pingOnce) {
@@ -123,6 +124,8 @@ public class TMAConvergenceTest {
 			var passiveContacts = input.sonarContacts();
 			if (!activeReturns.isEmpty()) {
 				var c = activeReturns.getFirst();
+				if (Double.isNaN(firstActiveRange))
+					firstActiveRange = c.range();
 				lastRange = c.range();
 				lastQuality = c.solutionQuality();
 				lastUncertainty = c.rangeUncertainty();
@@ -252,12 +255,17 @@ public class TMAConvergenceTest {
 
 		double actual = runSim(sub, target, 3000); // needs enough time for ping + return
 
-		System.out.printf("Active ping: range=%.0f actual=%.0f error=%.0f%% quality=%.2f%n", sub.lastRange, actual,
-				errorPct(sub.lastRange, actual), sub.lastQuality);
+		System.out.printf(
+				"Active ping: first range=%.0f actual=%.0f error=%.0f%%; aged fix error=%.0f%% quality=%.2f%n",
+				sub.firstActiveRange, sub.firstActiveActualRange,
+				errorPct(sub.firstActiveRange, sub.firstActiveActualRange), errorPct(sub.lastRange, actual),
+				sub.lastQuality);
 
-		assertTrue(sub.lastRange > 0, "Active ping should produce a range estimate");
-		assertTrue(errorPct(sub.lastRange, actual) < 5,
-				"Active ping should give accurate range. Error: " + errorPct(sub.lastRange, actual) + "%");
+		assertTrue(sub.firstActiveRange > 0, "Active ping should produce a range estimate");
+		assertTrue(errorPct(sub.firstActiveRange, sub.firstActiveActualRange) < 5,
+				"The first echo should give accurate range immediately");
+		assertTrue(sub.lastUncertainty >= 0.5 * Math.abs(sub.lastRange - actual),
+				"The aging range fix must account for uncertainty as the target moves");
 	}
 
 	@Test
@@ -341,6 +349,8 @@ public class TMAConvergenceTest {
 			@Override
 			public void onTick(long tick, List<SubmarineSnapshot> subs, List<TorpedoSnapshot> torps) {
 				lastActual[0] = actualDistance(subs);
+				if (!Double.isNaN(sub.firstActiveRange) && Double.isNaN(sub.firstActiveActualRange))
+					sub.firstActiveActualRange = lastActual[0];
 				if (tick >= maxTicks)
 					sim.stop();
 			}
