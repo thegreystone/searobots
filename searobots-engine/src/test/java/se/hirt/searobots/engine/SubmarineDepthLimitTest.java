@@ -45,7 +45,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Pressure-hull regression tests through the simulation loop, where match depth limits are
- * available. Flat terrain, neutral ballast and no propulsion isolate pressure from collision damage.
+ * available. Flat terrain, neutral ballast and no propulsion isolate pressure from collision
+ * damage.
  */
 class SubmarineDepthLimitTest {
 
