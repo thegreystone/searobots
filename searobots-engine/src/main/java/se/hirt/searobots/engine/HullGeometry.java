@@ -41,7 +41,8 @@ public final class HullGeometry {
 	public static final double SEMI_LENGTH = 38.0; // bow-to-stern half-length
 	public static final double SEMI_BEAM = 5.5; // port-to-starboard half-width
 	public static final double SEMI_HEIGHT = 4.5; // keel-to-deck half-height
-	public static final double AFT_OFFSET = -2.0; // center shifted slightly aft
+	public static final double AFT_OFFSET = 0.0; // forward-axis offset from the submarine pose origin
+	public static final double UP_OFFSET = 0.11; // generated hull's section axis above the pose origin
 
 	/**
 	 * Distance from a point (px, py, pz) to the nearest point on a submarine's hull ellipsoid.
@@ -73,10 +74,10 @@ public final class HullGeometry {
 		double rightX = cosH, rightY = -sinH;
 		double upX = -sinH * sinP, upY = -cosH * sinP, upZ = cosP;
 
-		// Offset sub center aft
-		double cx = subX + fwdX * AFT_OFFSET;
-		double cy = subY + fwdY * AFT_OFFSET;
-		double cz = subZ + fwdZ * AFT_OFFSET;
+		// Align with the generated hull axis; offsets rotate with heading and pitch.
+		double cx = subX + fwdX * AFT_OFFSET + upX * UP_OFFSET;
+		double cy = subY + fwdY * AFT_OFFSET + upY * UP_OFFSET;
+		double cz = subZ + fwdZ * AFT_OFFSET + upZ * UP_OFFSET;
 
 		// Delta from sub center to point
 		double dx = px - cx, dy = py - cy, dz = pz - cz;
@@ -86,19 +87,44 @@ public final class HullGeometry {
 		double localRight = dx * rightX + dy * rightY;
 		double localUp = dx * upX + dy * upY + dz * upZ;
 
-		// Normalize by ellipsoid semi-axes
+		return distanceToEllipsoid(localFwd, localRight, localUp);
+	}
+
+	private static double distanceToEllipsoid(double localFwd, double localRight, double localUp) {
+		// Normalize by ellipsoid semi-axes.
 		double normFwd = localFwd / SEMI_LENGTH;
 		double normRight = localRight / SEMI_BEAM;
 		double normUp = localUp / SEMI_HEIGHT;
-		double normDist = Math.sqrt(normFwd * normFwd + normRight * normRight + normUp * normUp);
+		double normDist = Math.hypot(Math.hypot(normFwd, normRight), normUp);
 
 		if (normDist <= 1.0)
 			return 0; // inside ellipsoid
 
-		// Distance from point to ellipsoid surface along the line from center
-		double centerDist = Math.sqrt(dx * dx + dy * dy + dz * dz);
-		double ellipsoidRadius = centerDist / normDist;
-		return centerDist - ellipsoidRadius;
+		// At the nearest surface point q, the displacement is parallel to the surface normal:
+		// q_i = p_i * a_i^2 / (a_i^2 + lambda). The ellipsoid constraint then gives one
+		// strictly decreasing equation in lambda >= 0. Scale lambda by the longest axis squared.
+		double beamRatio = SEMI_BEAM * SEMI_BEAM / (SEMI_LENGTH * SEMI_LENGTH);
+		double heightRatio = SEMI_HEIGHT * SEMI_HEIGHT / (SEMI_LENGTH * SEMI_LENGTH);
+		double lower = 0;
+		// Every normalized coordinate shrinks by at least 1 / normDist at this bound.
+		double upper = normDist - 1;
+		for (int i = 0; i < 80; i++) {
+			double lambda = lower + (upper - lower) * 0.5;
+			if (lambda == lower || lambda == upper)
+				break;
+			double fwd = normFwd / (1 + lambda);
+			double right = normRight * (beamRatio / (beamRatio + lambda));
+			double up = normUp * (heightRatio / (heightRatio + lambda));
+			if (fwd * fwd + right * right + up * up > 1)
+				lower = lambda;
+			else
+				upper = lambda;
+		}
+		double lambda = lower + (upper - lower) * 0.5;
+		double nearestFwd = localFwd / (1 + lambda);
+		double nearestRight = localRight * (beamRatio / (beamRatio + lambda));
+		double nearestUp = localUp * (heightRatio / (heightRatio + lambda));
+		return Math.hypot(Math.hypot(localFwd - nearestFwd, localRight - nearestRight), localUp - nearestUp);
 	}
 
 	/**

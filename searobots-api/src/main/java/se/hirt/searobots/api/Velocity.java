@@ -29,8 +29,9 @@
 package se.hirt.searobots.api;
 
 /**
- * Linear and angular velocity in the body frame. Linear: (surge, sway, heave) in m/s. Angular:
- * (roll rate, pitch rate, yaw rate) in rad/s.
+ * Linear velocity relative to the water, expressed along the world (x, y, z) axes in m/s. Angular
+ * components are the rates of change of the pose angles: (roll rate, pitch rate, yaw rate) in
+ * rad/s, where yaw rate is the rate of change of heading.
  */
 public record Velocity(Vec3 linear, Vec3 angular) {
 

@@ -49,6 +49,32 @@ class SubCollisionTest {
 	}
 
 	@Test
+	void staggeredBroadsideOverlapDamagesApproachingSubs() {
+		// Parallel hulls overlap along their sides, although neither centre nor bow/stern tip
+		// lies inside the other ellipsoid: (8/11)^2 + (30/76)^2 < 1.
+		var approaching = makeSub(0, new Vec3(0, 0, -200), 2, 0);
+		var stationary = makeSub(1, new Vec3(8, 30, -200), 0, 0);
+
+		SimulationLoop.checkSubCollisions(List.of(approaching, stationary));
+
+		assertTrue(approaching.hp() < 1000, "A side contact must reach the ramming damage calculation");
+		assertEquals(approaching.hp(), stationary.hp());
+		assertEquals(0.6, approaching.speed(), 1e-12, "The collision should also apply its speed reduction");
+	}
+
+	@Test
+	void nearbyButSeparatedParallelHullsDoNotCauseDamage() {
+		var approaching = makeSub(0, new Vec3(0, 0, -200), 2, 0);
+		var stationary = makeSub(1, new Vec3(12, 30, -200), 0, 0);
+
+		SimulationLoop.checkSubCollisions(List.of(approaching, stationary));
+
+		assertEquals(1000, approaching.hp());
+		assertEquals(1000, stationary.hp());
+		assertEquals(2, approaching.speed(), 1e-12);
+	}
+
+	@Test
 	void headOnRamIsMutuallyFatal() {
 		// Two subs 20m apart, heading toward each other at 10 m/s each
 		// Closing speed = 20 m/s → damage = 5 * 400 = 2000 → both dead

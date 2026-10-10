@@ -675,76 +675,9 @@ public final class SimulationLoop implements SimClock {
 		}
 	}
 
-	/**
-	 * Check whether two oriented ellipsoids overlap by testing sample points (center, bow, stern)
-	 * of each sub against the other's ellipsoid. No Minkowski expansion needed: direct
-	 * point-in-ellipsoid checks.
-	 */
+	/** Check whether the full oriented hull ellipsoids intersect, including tangent contact. */
 	static boolean ellipsoidsOverlap(SubmarineEntity a, SubmarineEntity b) {
-		// Sample 3 points on each sub: bow tip, center, stern tip
-		double[][] pointsA = hullSamplePoints(a);
-		double[][] pointsB = hullSamplePoints(b);
-
-		// Check if any point on A is inside B's ellipsoid
-		for (var pt : pointsA) {
-			if (pointInEllipsoid(pt, b))
-				return true;
-		}
-		// Check if any point on B is inside A's ellipsoid
-		for (var pt : pointsB) {
-			if (pointInEllipsoid(pt, a))
-				return true;
-		}
-		return false;
-	}
-
-	/**
-	 * Returns 3 sample points on the sub's hull: center, bow tip, stern tip.
-	 */
-	private static double[][] hullSamplePoints(SubmarineEntity sub) {
-		double cosH = Math.cos(sub.heading()), sinH = Math.sin(sub.heading());
-		double cosP = Math.cos(sub.pitch()), sinP = Math.sin(sub.pitch());
-		double fwdX = sinH * cosP, fwdY = cosH * cosP, fwdZ = sinP;
-
-		// Center (with aft offset)
-		double cx = sub.x() + fwdX * HullGeometry.AFT_OFFSET;
-		double cy = sub.y() + fwdY * HullGeometry.AFT_OFFSET;
-		double cz = sub.z() + fwdZ * HullGeometry.AFT_OFFSET;
-
-		return new double[][] {{cx, cy, cz}, // center
-				{cx + fwdX * HullGeometry.SEMI_LENGTH, cy + fwdY * HullGeometry.SEMI_LENGTH,
-						cz + fwdZ * HullGeometry.SEMI_LENGTH}, // bow
-				{cx - fwdX * HullGeometry.SEMI_LENGTH, cy - fwdY * HullGeometry.SEMI_LENGTH,
-						cz - fwdZ * HullGeometry.SEMI_LENGTH}, // stern
-		};
-	}
-
-	/**
-	 * Check if a world-space point lies inside a sub's collision ellipsoid.
-	 */
-	private static boolean pointInEllipsoid(double[] pt, SubmarineEntity sub) {
-		double cosH = Math.cos(sub.heading()), sinH = Math.sin(sub.heading());
-		double cosP = Math.cos(sub.pitch()), sinP = Math.sin(sub.pitch());
-
-		double fwdX = sinH * cosP, fwdY = cosP * cosH, fwdZ = sinP;
-		double rightX = cosH, rightY = -sinH, rightZ = 0;
-		double upX = -sinH * sinP, upY = -cosH * sinP, upZ = cosP;
-
-		// Ellipsoid center (with aft offset)
-		double cx = sub.x() + fwdX * HullGeometry.AFT_OFFSET;
-		double cy = sub.y() + fwdY * HullGeometry.AFT_OFFSET;
-		double cz = sub.z() + fwdZ * HullGeometry.AFT_OFFSET;
-
-		double dx = pt[0] - cx, dy = pt[1] - cy, dz = pt[2] - cz;
-
-		double localFwd = dx * fwdX + dy * fwdY + dz * fwdZ;
-		double localRight = dx * rightX + dy * rightY + dz * rightZ;
-		double localUp = dx * upX + dy * upY + dz * upZ;
-
-		double norm = (localFwd * localFwd) / (HullGeometry.SEMI_LENGTH * HullGeometry.SEMI_LENGTH)
-				+ (localRight * localRight) / (HullGeometry.SEMI_BEAM * HullGeometry.SEMI_BEAM)
-				+ (localUp * localUp) / (HullGeometry.SEMI_HEIGHT * HullGeometry.SEMI_HEIGHT);
-		return norm <= 1.0;
+		return HullOverlap.overlaps(a, b);
 	}
 
 	public double getSpeedMultiplier() {

@@ -64,6 +64,7 @@ import se.hirt.searobots.api.TerrainMap;
 import se.hirt.searobots.api.Vec3;
 import se.hirt.searobots.api.Waypoint;
 import se.hirt.searobots.engine.GeneratedWorld;
+import se.hirt.searobots.engine.HullGeometry;
 import se.hirt.searobots.engine.SubmarineSnapshot;
 import se.hirt.searobots.engine.TorpedoSnapshot;
 
@@ -445,7 +446,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 			modelNode.attachChild(hull);
 			// Set up pivot nodes for control surfaces (hinge at hull attachment)
 			// OBJ coords: Y=fore-aft, X=left-right, Z=up-down
-			// Scaled model: 75m x 12m (sx=0.4, sy=0.567, sz=0.4 from original)
+			// Generated model coordinates are already in metres.
 			for (TailFlap flap : TAIL_FLAPS)
 				setupPivotAt(modelNode, flap.name(), flap.hinge());
 			setupPivotAt(modelNode, "elevatorl", new Vector3f(4.3f, -10f, 0f)); // under tower center
@@ -2389,19 +2390,15 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 				Vector3f subModelPos = subNode.getLocalTranslation();
 				Quaternion subModelRot = subNode.getLocalRotation();
 
-				// Ellipsoid for hull body (excluding tower):
-				// tighter vertical, offset aft since bow is longer than stern
-				float semiLength = 38f; // covers bow to stern body
-				float semiBeam = 5.5f; // slightly tighter than hullHalfBeam
-				float semiHeight = 4.5f; // hull body only, tower excluded
-				float aftOffset = 2f; // shift center slightly aft (sub local Y)
-
+				// Hull-body envelope shared with collision and fuse geometry.
 				ellGeom.setLocalRotation(subModelRot);
-				// Offset in sub's local frame then transform to world
-				Vector3f offset = subModelRot.mult(new Vector3f(0, aftOffset, 0));
+				// OBJ +Y points aft, while the engine's longitudinal offset is along forward.
+				Vector3f offset = subModelRot
+						.mult(new Vector3f(0, (float) -HullGeometry.AFT_OFFSET, (float) HullGeometry.UP_OFFSET));
 				ellGeom.setLocalTranslation(subModelPos.add(offset));
-				// In sub's local frame: X = beam, Y = forward (length), Z = up (height)
-				ellGeom.setLocalScale(semiBeam, semiLength, semiHeight);
+				// OBJ axes: X = beam, Y = length, Z = height.
+				ellGeom.setLocalScale((float) HullGeometry.SEMI_BEAM, (float) HullGeometry.SEMI_LENGTH,
+						(float) HullGeometry.SEMI_HEIGHT);
 			}
 
 			// Terrain collision points: 7 purple spheres

@@ -77,6 +77,11 @@ public final class SubmarinePhysics {
 		// Dead subs still get physics (sinking to the bottom)
 
 		var cfg = sub.vehicleConfig();
+		double previousX = sub.x();
+		double previousY = sub.y();
+		double previousZ = sub.z();
+		double previousHeading = sub.heading();
+		double previousPitch = sub.pitch();
 
 		// ── Damage model: HP loss degrades performance ──
 		// hpRatio: 1.0 = undamaged, 0.0 = dead
@@ -266,9 +271,15 @@ public final class SubmarinePhysics {
 		double newX = sub.x() + vx * dt;
 		double newY = sub.y() + vy * dt;
 		double newZ = sub.z() + vz * dt;
+		double contactVerticalSpeed = vz;
 
 		// 6. Clamp: can't go above water
 		if (newZ > 0) {
+			// Clip a real rise from underwater, but do not count an above-water terrain
+			// correction as downward motion when restoring the surface constraint.
+			if (previousZ <= 0) {
+				contactVerticalSpeed = -previousZ / dt;
+			}
 			newZ = 0;
 		}
 
@@ -276,6 +287,7 @@ public final class SubmarinePhysics {
 		if (cfg.surfaceLocked()) {
 			newZ = 0;
 			sub.setVerticalSpeed(0);
+			contactVerticalSpeed = 0;
 		}
 
 		// Pressure applies to the deepest centre position reached this tick. Terrain correction
@@ -284,51 +296,27 @@ public final class SubmarinePhysics {
 
 		// 7. Terrain collision: check 7 hull points (pitch-aware)
 		//    center, bow, stern, port, starboard, tower top, keel
-		double sinH = Math.sin(heading);
-		double cosH = Math.cos(heading);
-		double sinPt = Math.sin(pitch);
-		double cosPt = Math.cos(pitch);
-
-		// Local frame vectors
-		double fwdX = sinH * cosPt, fwdY = cosH * cosPt, fwdZ = sinPt;
-		double rightX = cosH, rightY = -sinH;
-		double upX = -sinH * sinPt, upY = -cosH * sinPt, upZ = cosPt;
-
-		// Hull distances (tuned to match visual debug overlay)
-		double bowDist = 33.5;
-		double sternDist = 40.0;
-		double beamDist = cfg.hullHalfBeam();
-		double towerUp = 6.5;
-		double keelDown = 5.0;
-
-		// Sample terrain at each point; for each point also compute its Z offset
-		// from center so we can check clearance at the actual hull extremity
-		double[][] points = {{newX, newY, 0}, // center
-				{newX + fwdX * bowDist, newY + fwdY * bowDist, fwdZ * bowDist}, // bow
-				{newX - fwdX * sternDist, newY - fwdY * sternDist, -fwdZ * sternDist}, // stern
-				{newX + rightX * beamDist, newY + rightY * beamDist, 0}, // port
-				{newX - rightX * beamDist, newY - rightY * beamDist, 0}, // starboard
-				{newX + upX * towerUp, newY + upY * towerUp, upZ * towerUp}, // tower
-				{newX - upX * keelDown, newY - upY * keelDown, -upZ * keelDown}, // keel
-		};
+		double[][] points = hullPoints(newX, newY, heading, pitch, cfg.hullHalfBeam());
 
 		// Dead subs rest directly on the seabed (no clearance buffer).
 		// Alive subs maintain a safety margin above terrain.
 		double clearance = sub.hp() <= 0 ? 1.0 : cfg.terrainClearance();
 
-		double worstPenetration = Double.NEGATIVE_INFINITY;
-		for (var pt : points) {
-			double floorElev = terrain.elevationAt(pt[0], pt[1]);
-			double penetration = (floorElev + clearance) - (newZ + pt[2]);
-			if (penetration > worstPenetration) {
-				worstPenetration = penetration;
-			}
-		}
+		double worstPenetration = terrainPenetration(points, newZ, clearance, terrain);
 
 		double minZ = newZ + worstPenetration;
 		boolean scraping = false;
 		if (worstPenetration > 0) {
 			scraping = true;
+			// Measure the incoming motion before correcting overlap or changing the bounce pose.
+			// Rotation and currents move contact points even when the centre has no surge.
+			double closingSpeed = 0;
+			if (sub.hp() > 0) {
+				var previousPoints = hullPoints(previousX, previousY, previousHeading, previousPitch,
+						cfg.hullHalfBeam());
+				closingSpeed = terrainClosingSpeed(points, newZ, previousPoints, contactVerticalSpeed, clearance,
+						terrain, dt);
+			}
 			newZ = newZ + worstPenetration;
 
 			if (sub.hp() <= 0) {
@@ -353,9 +341,8 @@ public final class SubmarinePhysics {
 				double currentPitch = sub.pitch();
 				sub.setPitch(currentPitch + (terrainPitch - currentPitch) * 0.03);
 			} else {
-				// Alive: bounce, take damage, lose speed
-				double closingSpeed = worstPenetration / dt;
-				int damage = Math.max(1, (int) (cfg.collisionDamageFactor() * closingSpeed * closingSpeed));
+				// Alive: bounce, take damage from inward contact motion, lose speed.
+				int damage = (int) (cfg.collisionDamageFactor() * closingSpeed * closingSpeed);
 				sub.setHp(Math.max(0, sub.hp() - damage));
 				sub.setVerticalSpeed(cfg.bounceSpeed());
 				sub.setPitch(Math.max(sub.pitch(), 0));
@@ -365,6 +352,12 @@ public final class SubmarinePhysics {
 				} else {
 					sub.setSpeed(speed * 0.95);
 				}
+			}
+			// The bounce and wreck settling can change pitch. Clear the resulting hull as well;
+			// that positional correction must not be charged as another impact next tick.
+			if (sub.pitch() != pitch) {
+				var responsePoints = hullPoints(newX, newY, heading, sub.pitch(), cfg.hullHalfBeam());
+				newZ += Math.max(0, terrainPenetration(responsePoints, newZ, clearance, terrain));
 			}
 		}
 
@@ -450,5 +443,51 @@ public final class SubmarinePhysics {
 		if (!battleArea.contains(newX, newY)) {
 			sub.setForfeited(true);
 		}
+	}
+
+	/** World X/Y and centre-relative Z for the seven terrain contact points. */
+	private static double[][] hullPoints(double x, double y, double heading, double pitch, double halfBeam) {
+		double sinH = Math.sin(heading), cosH = Math.cos(heading);
+		double sinPt = Math.sin(pitch), cosPt = Math.cos(pitch);
+		double fwdX = sinH * cosPt, fwdY = cosH * cosPt;
+		double upX = -sinH * sinPt, upY = -cosH * sinPt;
+		// Keep the collision hull aligned with the visual debug overlay.
+		return new double[][] {{x, y, 0}, {x + fwdX * 33.5, y + fwdY * 33.5, sinPt * 33.5},
+				{x - fwdX * 40.0, y - fwdY * 40.0, -sinPt * 40.0}, {x + cosH * halfBeam, y - sinH * halfBeam, 0},
+				{x - cosH * halfBeam, y + sinH * halfBeam, 0}, {x + upX * 6.5, y + upY * 6.5, cosPt * 6.5},
+				{x - upX * 5.0, y - upY * 5.0, -cosPt * 5.0}};
+	}
+
+	private static double terrainPenetration(double[][] points, double z, double clearance, TerrainMap terrain) {
+		double worst = Double.NEGATIVE_INFINITY;
+		for (var point : points) {
+			worst = Math.max(worst, terrain.elevationAt(point[0], point[1]) + clearance - (z + point[2]));
+		}
+		return worst;
+	}
+
+	private static double terrainClosingSpeed(
+		double[][] points, double z, double[][] previousPoints, double centreVerticalSpeed, double clearance,
+		TerrainMap terrain, double dt) {
+		double closingSpeed = 0;
+		double sample = Math.min(1.0, terrain.getCellSize() * 0.5);
+		for (int i = 0; i < points.length; i++) {
+			var point = points[i];
+			if (terrain.elevationAt(point[0], point[1]) + clearance <= z + point[2]) {
+				continue;
+			}
+			var previous = previousPoints[i];
+			double vx = (point[0] - previous[0]) / dt;
+			double vy = (point[1] - previous[1]) / dt;
+			double vz = centreVerticalSpeed + (point[2] - previous[2]) / dt;
+			double slopeX = (terrain.elevationAt(point[0] + sample, point[1])
+					- terrain.elevationAt(point[0] - sample, point[1])) / (2 * sample);
+			double slopeY = (terrain.elevationAt(point[0], point[1] + sample)
+					- terrain.elevationAt(point[0], point[1] - sample)) / (2 * sample);
+			// Project onto the outward unit normal (-slopeX, -slopeY, 1).
+			double inwardSpeed = (slopeX * vx + slopeY * vy - vz) / Math.hypot(Math.hypot(slopeX, slopeY), 1.0);
+			closingSpeed = Math.max(closingSpeed, inwardSpeed);
+		}
+		return closingSpeed;
 	}
 }

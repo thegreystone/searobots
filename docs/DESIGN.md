@@ -1144,6 +1144,35 @@ When a submarine's HP reaches zero:
 - Collision with terrain or other submarines deals damage proportional to
   impact velocity and applies a corresponding impulse.
 
+**Hull collision geometry:**
+
+The submarine collision ellipsoid has semi-axes of 38 m along the hull,
+5.5 m across it and 4.5 m vertically. Its centre is at the pose origin
+longitudinally and 0.11 m above it, matching the generated hull's section
+axis. Heading and pitch rotate both offsets and axes into world coordinates.
+The viewer's collision wireframe reads these parameters from `HullGeometry`.
+
+This conservative envelope contains the updated model's `Body` and
+`HullPlain` mesh, whose sections have a parallel midbody and a blunt forebody.
+Moving the old ellipsoid 2 m forward and 0.11 m upward covers those sections
+without enlarging its axes. The fit excludes sail, fins and propulsor vertices.
+A regression test checks every referenced body vertex against the
+collision ellipsoid so future model changes expose alignment drift.
+
+Torpedo proximity fuses measure the shortest Euclidean distance from the
+torpedo bow to the solid hull ellipsoid. Blast damage uses the shortest
+distance from the detonation point to that hull. A point inside the hull
+has distance zero; exterior points use a convergent nearest-point solve.
+This gives accurate distances when approaching the curved hull obliquely.
+
+Submarine ramming checks the full ellipsoid volumes, including side and
+crossing contacts, using the
+[Perram-Wertheim contact function](https://doi.org/10.1016/0021-9991(85)90171-8).
+A bounding-sphere check rejects distant pairs; the contact solve accounts
+for both hull orientations. Touching hulls count as contact, with a small
+numerical tolerance. Closing velocity still controls collision damage and
+the existing bounce response.
+
 **Pressure hull and crush depth:**
 
 At or above **rated depth** (default −400 m), submarines take no
@@ -1199,7 +1228,7 @@ basis, calibration examples and verification approach.
 **Explosion model (simplified):**
 
 ```
-distance = ||detonation_point - target_position||
+distance = shortest_distance(detonation_point, target_hull_ellipsoid)
 if distance < blast_radius:
     damage = max_damage × (1 - distance / blast_radius)²
     impulse_magnitude = max_impulse × (1 - distance / blast_radius)²
