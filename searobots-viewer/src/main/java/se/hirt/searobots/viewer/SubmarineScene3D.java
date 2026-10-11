@@ -293,6 +293,11 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 	 * -XstartOnFirstThread.
 	 */
 	public static void main(String[] args) {
+		// GLFW owns the macOS event loop. Java2D is only used for offscreen images (such as
+		// name decals); letting AWT start its own AppKit loop stops rendering at the first decal.
+		if (System.getProperty("os.name", "").toLowerCase(java.util.Locale.ROOT).contains("mac"))
+			System.setProperty("java.awt.headless", "true");
+
 		// A .srl path launches straight into replay of that recorded match; otherwise the
 		// first arg (if any) is a seed for a fresh match, in hex as the viewer shows it.
 		String replayPath = (args.length > 0 && args[0].toLowerCase().endsWith(".srl")) ? args[0] : null;
