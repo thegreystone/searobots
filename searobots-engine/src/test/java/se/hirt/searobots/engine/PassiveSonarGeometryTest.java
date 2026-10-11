@@ -442,19 +442,20 @@ class PassiveSonarGeometryTest {
 
 	@Test
 	void moreLateralBaselineGivesBetterSolution() {
-		// Snapshot one lateral run at 240 m, 480 m, 960 m of baseline. Quality
+		// Snapshot one lateral run at 240 m, 360 m, 480 m of fresh baseline,
+		// before observations age out of the two-minute geometry window. Quality
 		// must rise and relative uncertainty must fall at every step. The range
 		// estimate wanders by up to a quarter of the range at low quality, so
 		// the per-seed uncertainty ratio is noisy and more seeds are needed for
 		// a stable median than in the other TMA tests.
 		var lateral = straight(0, 0, Math.toRadians(90), TMA_LISTENER_SPEED);
-		int[] checkpoints = {3000, 6000, 12000};
+		int[] checkpoints = {3000, 4500, 6000};
 		int seeds = 21;
 
 		double[][] quality = new double[checkpoints.length][seeds];
 		double[][] uncertainty = new double[checkpoints.length][seeds];
 		for (int s = 0; s < seeds; s++) {
-			var samples = track(2000 + s, TMA_TICKS, lateral, TMA_TARGET, TMA_TARGET_SPEED);
+			var samples = track(2000 + s, checkpoints[checkpoints.length - 1], lateral, TMA_TARGET, TMA_TARGET_SPEED);
 			for (int i = 0; i < checkpoints.length; i++) {
 				var sample = samples.get(checkpoints[i] - 1);
 				assertNotNull(sample.contact(), "Target must remain detected while opening laterally");

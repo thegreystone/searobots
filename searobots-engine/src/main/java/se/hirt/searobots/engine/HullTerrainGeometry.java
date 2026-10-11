@@ -50,6 +50,26 @@ final class HullTerrainGeometry {
 	static Vec3[] contactPoints(Vec3 position, double heading, double pitch, VehicleConfig config, TerrainMap terrain) {
 		var points = new ArrayList<Vec3>(Arrays.asList(HullGeometry.terrainSamplePoints(config)));
 		var shape = new Shape(position, heading, pitch, HullGeometry.envelope(config));
+		if (!addEllipsoidContacts(points, shape, position, heading, pitch, terrain)) {
+			return new Vec3[0];
+		}
+		if (!config.surfaceLocked() && terrain.getMinElevation() != terrain.getMaxElevation()) {
+			addAppendageSamples(points, position, heading, pitch, config, terrain);
+		}
+		return points.toArray(Vec3[]::new);
+	}
+
+	/** Physical ellipsoid candidates in the vehicle-origin-relative right/forward/up frame. */
+	static Vec3[] ellipsoidContactPoints(
+		Vec3 position, double heading, double pitch, HullGeometry.Envelope envelope, TerrainMap terrain) {
+		var points = new ArrayList<Vec3>(Arrays.asList(envelope.terrainSamplePoints()));
+		var shape = new Shape(position, heading, pitch, envelope);
+		return addEllipsoidContacts(points, shape, position, heading, pitch, terrain) ? points.toArray(Vec3[]::new)
+				: new Vec3[0];
+	}
+
+	private static boolean addEllipsoidContacts(
+		ArrayList<Vec3> points, Shape shape, Vec3 position, double heading, double pitch, TerrainMap terrain) {
 		var lowest = shape.support(new Vec3(0, 0, -1));
 		points.add(shape.local(lowest));
 		double lowestZ = lowest.z();
@@ -58,43 +78,24 @@ final class HullTerrainGeometry {
 		}
 		if (lowestZ >= terrain.getMaxElevation()
 				|| clearsLocalBounds(shape, points, position, heading, pitch, lowestZ, terrain)) {
-			return new Vec3[0];
+			return false;
 		}
 		if (terrain.getMinElevation() == terrain.getMaxElevation()) {
-			return points.toArray(Vec3[]::new);
+			return true;
 		}
 
-		// Align to half-cells so both lattice crests and the intervening bilinear slopes are covered.
-		// Limit work for exceptionally fine user maps; the ordinary 10 m map needs only tens of seeds.
+		// A maximum lies on a cell edge or at an interior stationary point of terrain minus
+		// hull height. Enumerate both; a normal-support iteration can leave its terrain cell
+		// and alternate between remote supports while missing an interior contact entirely.
 		double minX = Math.max(shape.center.x() - shape.extentX, terrain.getOriginX() - terrain.getCellSize());
 		double maxX = Math.min(shape.center.x() + shape.extentX,
 				terrain.getOriginX() + terrain.getCols() * terrain.getCellSize());
 		double minY = Math.max(shape.center.y() - shape.extentY, terrain.getOriginY() - terrain.getCellSize());
 		double maxY = Math.min(shape.center.y() + shape.extentY,
 				terrain.getOriginY() + terrain.getRows() * terrain.getCellSize());
-		double spacing = terrain.getCellSize() * 0.5;
-		double count = ((maxX - minX) / spacing + 2) * ((maxY - minY) / spacing + 2);
-		if (count > MAX_GRID_SAMPLES) {
-			spacing *= Math.ceil(Math.sqrt(count / MAX_GRID_SAMPLES));
-		}
-		double startX = terrain.getOriginX() + Math.ceil((minX - terrain.getOriginX()) / spacing) * spacing;
-		double startY = terrain.getOriginY() + Math.ceil((minY - terrain.getOriginY()) / spacing) * spacing;
-		for (double x = startX; x <= maxX; x += spacing) {
-			for (double y = startY; y <= maxY; y += spacing) {
-				var point = shape.lowerPoint(x, y);
-				if (point != null) {
-					points.add(shape.local(point));
-					addSupports(points, point, shape, terrain);
-				}
-			}
-		}
 		addGridLineSupports(points, shape, terrain, minX, maxX, minY, maxY);
-		// The global lower support also covers small footprints falling between lattice samples.
-		addSupports(points, lowest, shape, terrain);
-		if (!config.surfaceLocked()) {
-			addAppendageSamples(points, position, heading, pitch, config, terrain);
-		}
-		return points.toArray(Vec3[]::new);
+		addCellInteriorSupports(points, shape, terrain, minX, maxX, minY, maxY, lowest.z());
+		return true;
 	}
 
 	/** Exact normal support of each ellipsoid section along a terrain cell edge. */
@@ -105,11 +106,9 @@ final class HullTerrainGeometry {
 		int lastCol = (int) Math.floor((maxX - terrain.getOriginX()) / cell);
 		int firstRow = (int) Math.floor((minY - terrain.getOriginY()) / cell);
 		int lastRow = (int) Math.floor((maxY - terrain.getOriginY()) / cell);
-		long count = (long) (lastCol - firstCol + 2) * (lastRow - firstRow + 2);
-		int stride = count <= MAX_GRID_SAMPLES ? 1 : (int) Math.ceil(Math.sqrt((double) count / MAX_GRID_SAMPLES));
-		for (int col = firstCol; col <= lastCol; col += stride) {
+		for (int col = firstCol; col <= lastCol; col++) {
 			double x = terrain.getOriginX() + col * cell;
-			for (int row = firstRow; row <= lastRow; row += stride) {
+			for (int row = firstRow; row <= lastRow; row++) {
 				double lower = Math.max(minY, terrain.getOriginY() + row * cell);
 				double upper = Math.min(maxY, terrain.getOriginY() + (row + 1) * cell);
 				if (upper > lower) {
@@ -122,9 +121,9 @@ final class HullTerrainGeometry {
 		}
 		firstCol = (int) Math.floor((minX - terrain.getOriginX()) / cell);
 		firstRow = (int) Math.ceil((minY - terrain.getOriginY()) / cell);
-		for (int row = firstRow; row <= lastRow; row += stride) {
+		for (int row = firstRow; row <= lastRow; row++) {
 			double y = terrain.getOriginY() + row * cell;
-			for (int col = firstCol; col <= lastCol; col += stride) {
+			for (int col = firstCol; col <= lastCol; col++) {
 				double lower = Math.max(minX, terrain.getOriginX() + col * cell);
 				double upper = Math.min(maxX, terrain.getOriginX() + (col + 1) * cell);
 				if (upper > lower) {
@@ -137,16 +136,27 @@ final class HullTerrainGeometry {
 		}
 	}
 
-	private static void addSupports(ArrayList<Vec3> points, Vec3 seed, Shape shape, TerrainMap terrain) {
-		double sample = Math.min(1, terrain.getCellSize() * 0.05);
-		var point = seed;
-		for (int i = 0; i < 3; i++) {
-			double slopeX = (terrain.elevationAt(point.x() + sample, point.y())
-					- terrain.elevationAt(point.x() - sample, point.y())) / (2 * sample);
-			double slopeY = (terrain.elevationAt(point.x(), point.y() + sample)
-					- terrain.elevationAt(point.x(), point.y() - sample)) / (2 * sample);
-			point = shape.support(new Vec3(slopeX, slopeY, -1));
-			points.add(shape.local(point));
+	private static void addCellInteriorSupports(
+		ArrayList<Vec3> points, Shape shape, TerrainMap terrain, double minX, double maxX, double minY, double maxY,
+		double lowestZ) {
+		double cell = terrain.getCellSize();
+		int firstCol = (int) Math.floor((minX - terrain.getOriginX()) / cell);
+		int lastCol = (int) Math.floor((maxX - terrain.getOriginX()) / cell);
+		int firstRow = (int) Math.floor((minY - terrain.getOriginY()) / cell);
+		int lastRow = (int) Math.floor((maxY - terrain.getOriginY()) / cell);
+		for (int col = firstCol; col <= lastCol; col++) {
+			for (int row = firstRow; row <= lastRow; row++) {
+				double e00 = terrain.elevationAtGrid(col, row), e10 = terrain.elevationAtGrid(col + 1, row);
+				double e01 = terrain.elevationAtGrid(col, row + 1), e11 = terrain.elevationAtGrid(col + 1, row + 1);
+				if (Math.max(Math.max(e00, e10), Math.max(e01, e11)) < lowestZ) {
+					continue;
+				}
+				double x = terrain.getOriginX() + col * cell, y = terrain.getOriginY() + row * cell;
+				double mixed = (e11 - e10 - e01 + e00) / (cell * cell);
+				double slopeX = (e10 - e00) / cell + mixed * (shape.center.y() - y);
+				double slopeY = (e01 - e00) / cell + mixed * (shape.center.x() - x);
+				shape.interiorSupports(points, x, y, cell, slopeX, slopeY, mixed);
+			}
 		}
 	}
 
@@ -311,6 +321,8 @@ final class HullTerrainGeometry {
 		final HullGeometry.Envelope envelope;
 		final double extentX, extentY;
 		final double mxx, mxy, mxz, myy, myz, mzz;
+		Vec3 axisX, axisY, axisZ, sumAxis, differenceAxis, verticalAxis;
+		double positiveProduct, negativeProduct;
 
 		Shape(Vec3 position, double heading, double pitch, HullGeometry.Envelope envelope) {
 			this.envelope = envelope;
@@ -329,6 +341,116 @@ final class HullTerrainGeometry {
 			myy = right.y() * right.y() / a2 + forward.y() * forward.y() / b2 + up.y() * up.y() / c2;
 			myz = forward.y() * forward.z() / b2 + up.y() * up.z() / c2;
 			mzz = forward.z() * forward.z() / b2 + up.z() * up.z() / c2;
+		}
+
+		private void prepareInteriorSupport() {
+			if (axisX != null) {
+				return;
+			}
+			// Coordinates on a unit sphere map to the physical ellipsoid through these rows.
+			axisX = new Vec3(right.x() * envelope.semiBeam(), forward.x() * envelope.semiLength(),
+					up.x() * envelope.semiHeight());
+			axisY = new Vec3(right.y() * envelope.semiBeam(), forward.y() * envelope.semiLength(),
+					up.y() * envelope.semiHeight());
+			axisZ = new Vec3(right.z() * envelope.semiBeam(), forward.z() * envelope.semiLength(),
+					up.z() * envelope.semiHeight());
+			var unitX = axisX.normalize();
+			var unitY = axisY.normalize();
+			sumAxis = unitX.add(unitY).normalize();
+			differenceAxis = unitX.subtract(unitY).normalize();
+			verticalAxis = unitX.cross(unitY).normalize();
+			double product = axisX.length() * axisY.length(), dot = axisX.dot(axisY);
+			positiveProduct = (dot + product) * 0.5;
+			negativeProduct = (dot - product) * 0.5;
+		}
+
+		void interiorSupports(
+			ArrayList<Vec3> points, double cellX, double cellY, double cell, double slopeX, double slopeY,
+			double mixed) {
+			if (mixed == 0) {
+				addInterior(points, support(new Vec3(slopeX, slopeY, -1)), cellX, cellY, cell);
+				return;
+			}
+			prepareInteriorSupport();
+			// Terrain minus world Z is q^T A q + 2 c^T q on the unit sphere.
+			// A = mixed * (axisX axisY^T + axisY axisX^T) / 2 has just three
+			// eigenvalues: positive, zero, negative, with explicit orthogonal eigenvectors.
+			var positiveAxis = mixed > 0 ? sumAxis : differenceAxis;
+			var negativeAxis = mixed > 0 ? differenceAxis : sumAxis;
+			double positive = mixed * (mixed > 0 ? positiveProduct : negativeProduct);
+			double negative = mixed * (mixed > 0 ? negativeProduct : positiveProduct);
+			var halfLinear = axisX.scale(slopeX).add(axisY.scale(slopeY)).subtract(axisZ).scale(0.5);
+			double cp = halfLinear.dot(positiveAxis), cz = halfLinear.dot(verticalAxis);
+			double cn = halfLinear.dot(negativeAxis);
+			// On the lower hull the Lagrange multiplier is positive because the world-Z
+			// derivative of the objective is -1. Enumerate every positive stationary root,
+			// rather than only the global optimum (which can lie outside this cell).
+			boolean hardCase = Math.abs(cp) <= 8 * Math.ulp(halfLinear.length());
+			if (hardCase) {
+				cp = 0;
+			}
+			var secular = new Secular(positive, negative, cp, cz, cn);
+			if (hardCase && secular.value(positive) <= 1) {
+				var remainder = verticalAxis.scale(cz / positive).add(negativeAxis.scale(cn / (positive - negative)));
+				double free = Math.sqrt(Math.max(0, 1 - remainder.lengthSquared()));
+				addInteriorUnit(points, remainder.add(positiveAxis.scale(free)), cellX, cellY, cell);
+				addInteriorUnit(points, remainder.subtract(positiveAxis.scale(free)), cellX, cellY, cell);
+			} else {
+				double upper = positive + halfLinear.length();
+				double lambda = secular.root(positive, upper, false);
+				addStationary(points, secular, lambda, positiveAxis, negativeAxis, cellX, cellY, cell);
+			}
+			if (hardCase) {
+				if (secular.value(positive) < 1) {
+					addStationary(points, secular, secular.root(0, positive, false), positiveAxis, negativeAxis, cellX,
+							cellY, cell);
+				}
+				return;
+			}
+			// Between the poles cz^2/lambda^2 alone exceeds one in this common
+			// mild-curvature case, so no nonglobal stationary root can exist.
+			if (Math.abs(cz) >= positive) {
+				return;
+			}
+			// The secular function is strictly convex between its zero and positive poles.
+			// Its minimum partitions the interval into two monotone branches.
+			double lower = 0, upper = positive;
+			for (int i = 0; i < 56; i++) {
+				double middle = (lower + upper) * 0.5;
+				if (secular.derivative(middle) < 0) {
+					lower = middle;
+				} else {
+					upper = middle;
+				}
+			}
+			double minimum = (lower + upper) * 0.5;
+			if (secular.value(minimum) <= 1) {
+				addStationary(points, secular, secular.root(0, minimum, false), positiveAxis, negativeAxis, cellX,
+						cellY, cell);
+				addStationary(points, secular, secular.root(minimum, positive, true), positiveAxis, negativeAxis, cellX,
+						cellY, cell);
+			}
+		}
+
+		private void addStationary(
+			ArrayList<Vec3> points, Secular secular, double lambda, Vec3 positiveAxis, Vec3 negativeAxis, double cellX,
+			double cellY, double cell) {
+			var unit = positiveAxis.scale(secular.cp == 0 ? 0 : secular.cp / (lambda - secular.positive))
+					.add(verticalAxis.scale(secular.cz / lambda))
+					.add(negativeAxis.scale(secular.cn / (lambda - secular.negative)));
+			addInteriorUnit(points, unit.normalize(), cellX, cellY, cell);
+		}
+
+		private void addInteriorUnit(ArrayList<Vec3> points, Vec3 unit, double cellX, double cellY, double cell) {
+			var world = center.add(new Vec3(axisX.dot(unit), axisY.dot(unit), axisZ.dot(unit)));
+			addInterior(points, world, cellX, cellY, cell);
+		}
+
+		private void addInterior(ArrayList<Vec3> points, Vec3 world, double cellX, double cellY, double cell) {
+			if (world.x() >= cellX - 1e-9 && world.x() <= cellX + cell + 1e-9 && world.y() >= cellY - 1e-9
+					&& world.y() <= cellY + cell + 1e-9) {
+				points.add(local(world));
+			}
 		}
 
 		Vec3 support(Vec3 direction) {
@@ -380,6 +502,33 @@ final class HullTerrainGeometry {
 			var delta = world.subtract(center);
 			return new Vec3(delta.dot(right), delta.dot(forward) + envelope.forwardOffset(),
 					delta.dot(up) + envelope.upOffset());
+		}
+	}
+
+	private record Secular(double positive, double negative, double cp, double cz, double cn) {
+		double value(double lambda) {
+			double p = cp == 0 ? 0 : cp / (lambda - positive), z = cz / lambda, n = cn / (lambda - negative);
+			return p * p + z * z + n * n;
+		}
+
+		double derivative(double lambda) {
+			double p = cp / (lambda - positive), z = cz / lambda, n = cn / (lambda - negative);
+			return -2 * (p * p / (lambda - positive) + z * z / lambda + n * n / (lambda - negative));
+		}
+
+		double root(double lower, double upper, boolean increasing) {
+			for (int i = 0; i < 64; i++) {
+				double middle = (lower + upper) * 0.5;
+				if (middle == lower || middle == upper) {
+					break;
+				}
+				if ((value(middle) > 1) == increasing) {
+					upper = middle;
+				} else {
+					lower = middle;
+				}
+			}
+			return (lower + upper) * 0.5;
 		}
 	}
 }

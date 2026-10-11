@@ -59,7 +59,7 @@ class PassiveSonarInformationTest {
 			var candidate = new ContactTracker();
 			var candidateRandom = new Random(seed);
 			candidate.update(0, 0, 20, 0, 0, 0, false, actualDistance, 0, 1000, candidateRandom);
-			if (candidate.estimatedRange() == 100 && candidate.rangeUncertainty() > actualDistance
+			if (candidate.estimatedRange() <= 1e-6 && candidate.rangeUncertainty() > actualDistance
 					&& candidate.rangeUncertainty() < 5000) {
 				tracker = candidate;
 				random = candidateRandom;

@@ -290,6 +290,7 @@ public final class TorpedoPhysics {
 		if (clearsTerrainBounds(start, end, cfg, terrain)) {
 			return null;
 		}
+		var envelope = new HullGeometry.Envelope(cfg.hullHalfLength(), cfg.hullHalfBeam(), cfg.hullHalfBeam(), 0, 0);
 		double headingChange = Math.atan2(Math.sin(endHeading - startHeading), Math.cos(endHeading - startHeading));
 		var movement = end.subtract(start);
 		double spacing = Math.min(cfg.hullHalfLength(), terrain.getCellSize() * 0.5);
@@ -297,7 +298,7 @@ public final class TorpedoPhysics {
 		double tipTravel = movement.length() + radius * (Math.abs(headingChange) + Math.abs(endPitch - startPitch));
 		int samples = Math.max(1, (int) Math.ceil(tipTravel / spacing));
 		double previousFraction = 0;
-		if (terrainGap(start, startHeading, startPitch, cfg, terrain) < 0) {
+		if (terrainGap(start, startHeading, startPitch, envelope, terrain) < 0) {
 			return new TerrainContact(start, startHeading, startPitch);
 		}
 		for (int i = 1; i <= samples; i++) {
@@ -305,12 +306,12 @@ public final class TorpedoPhysics {
 			var position = start.add(movement.scale(fraction));
 			double heading = startHeading + headingChange * fraction;
 			double pitch = startPitch + (endPitch - startPitch) * fraction;
-			if (terrainGap(position, heading, pitch, cfg, terrain) < 0) {
+			if (terrainGap(position, heading, pitch, envelope, terrain) < 0) {
 				double lower = previousFraction, upper = fraction;
 				for (int iteration = 0; iteration < 24; iteration++) {
 					double middle = (lower + upper) * 0.5;
 					if (terrainGap(start.add(movement.scale(middle)), startHeading + headingChange * middle,
-							startPitch + (endPitch - startPitch) * middle, cfg, terrain) < 0) {
+							startPitch + (endPitch - startPitch) * middle, envelope, terrain) < 0) {
 						upper = middle;
 					} else {
 						lower = middle;
@@ -354,38 +355,15 @@ public final class TorpedoPhysics {
 		return lowestHullZ >= maximum;
 	}
 
-	/** Physical gap beneath the oriented hull, with terrain-normal support points. */
+	/**
+	 * Physical gap beneath the torpedo ellipsoid, including terrain cell edges and ridge crests.
+	 */
 	private static double terrainGap(
-		Vec3 position, double heading, double pitch, VehicleConfig cfg, TerrainMap terrain) {
-		double sinH = Math.sin(heading), cosH = Math.cos(heading);
-		double sinP = Math.sin(pitch), cosP = Math.cos(pitch);
-		var forward = new Vec3(sinH * cosP, cosH * cosP, sinP);
-		var right = new Vec3(cosH, -sinH, 0);
-		var up = new Vec3(-sinH * sinP, -cosH * sinP, cosP);
-		double length = cfg.hullHalfLength(), radius = cfg.hullHalfBeam();
-		Vec3[] offsets = {Vec3.ZERO, forward.scale(length), forward.scale(-length), right.scale(radius),
-				right.scale(-radius), up.scale(radius), up.scale(-radius)};
+		Vec3 position, double heading, double pitch, HullGeometry.Envelope envelope, TerrainMap terrain) {
 		double minimum = Double.POSITIVE_INFINITY;
-		double sample = Math.min(radius, terrain.getCellSize() * 0.25);
-		for (var offset : offsets) {
-			var point = position.add(offset);
-			minimum = Math.min(minimum, gapAt(point, terrain));
-			// On a plane this reaches the exact extremity in one iteration. Re-sampling
-			// the normal covers the changing slopes of bilinear terrain cells as well.
-			for (int iteration = 0; iteration < 3; iteration++) {
-				double slopeX = (terrain.elevationAt(point.x() + sample, point.y())
-						- terrain.elevationAt(point.x() - sample, point.y())) / (2 * sample);
-				double slopeY = (terrain.elevationAt(point.x(), point.y() + sample)
-						- terrain.elevationAt(point.x(), point.y() - sample)) / (2 * sample);
-				var inward = new Vec3(slopeX, slopeY, -1);
-				double along = inward.dot(forward), across = inward.dot(right), above = inward.dot(up);
-				double supportLength = Math
-						.sqrt(length * length * along * along + radius * radius * (across * across + above * above));
-				var support = forward.scale(length * length * along).add(right.scale(radius * radius * across))
-						.add(up.scale(radius * radius * above)).scale(1 / supportLength);
-				point = position.add(support);
-				minimum = Math.min(minimum, gapAt(point, terrain));
-			}
+		for (var local : HullTerrainGeometry.ellipsoidContactPoints(position, heading, pitch, envelope, terrain)) {
+			minimum = Math.min(minimum,
+					gapAt(HullTerrainGeometry.worldPoint(local, position, heading, pitch), terrain));
 		}
 		return minimum;
 	}

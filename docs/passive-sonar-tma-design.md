@@ -75,8 +75,9 @@ not time:
    relative to estimated range. At 2000m range, you need ~2000m
    of accumulated cross-track for maximum quality from this component.
    Capped at 0.5.
-   If an initial range guess sits on the 100 m floor, the reported
-   uncertainty supplies the baseline scale instead of hidden true range.
+   For initial range guesses at or below 100 m, the reported uncertainty
+   supplies the baseline scale instead of hidden true range. This threshold
+   does not impose a minimum returned range; close active fixes remain valid.
 
 2. **Leg count**: each own-ship course change > 15 degrees counts as
    a new leg and adds 0.12 quality (capped at 0.35). Two deliberate
@@ -92,6 +93,10 @@ not time:
    estimate using the measured range.
 
 Quality floor is 0.05 (essentially "bearing only, no range info").
+
+Cross-track and leg contributions expire individually after 120 seconds.
+New observations add their own geometry without refreshing older evidence;
+negligible continuous movement cannot preserve a mature solution indefinitely.
 
 Solution quality decays when contact is lost:
 
@@ -138,9 +143,12 @@ with geometric information, preventing wild jumps.
 
 **Range uncertainty:**
 `rangeUncertainty` is a conservative 1-sigma bound in metres for both
-active and passive contacts: the larger of the quality-and-noise term
+active and passive contacts: the largest of the quality-and-noise term
 (60% of the estimate at floor quality, never below the current noise
-level) and the remaining systematic bias. For a passive contact it can
+level), the remaining systematic bias, and uncertainty accumulated while
+the target was unobserved. A fresh passive bearing cannot remove possible
+unobserved target movement; new spatial geometry reduces that uncertainty,
+and a new active range fix clears it. For a passive contact it can
 exceed the range itself while the solution is poor. `Double.MAX_VALUE`
 means no range information at all (contact heard only through the
 baffles).

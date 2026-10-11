@@ -152,6 +152,36 @@ class SubmarineSweptTerrainTest {
 	}
 
 	@Test
+	void descendingInclinedForebodyReachesBilinearCellInteriorBeforeTheEndpoint() {
+		var terrain = new TerrainMap(new double[] {-129, -121, -87, -139}, 2, 2, 10, 10, 10);
+		var start = new Vec3(4, 0, -90);
+		var end = new Vec3(4, 0, -100);
+		double heading = 0.7, pitch = -0.55;
+		assertClear(start, heading, pitch, SUBMARINE, terrain);
+		var contact = SweptHullTerrain.firstContact(start, end, heading, heading, pitch, pitch, SUBMARINE, terrain);
+		assertNotNull(contact, "An interior body contact must also be visible to the swept pose queries");
+		assertTrue(contact.fraction() > 0 && contact.fraction() < 1);
+		var vertex = HullTerrainGeometry.worldPoint(new Vec3(-4.266573, 21.711071, -0.356215), contact.position(),
+				contact.heading(), contact.pitch());
+		assertTrue(vertex.z() >= terrain.elevationAt(vertex.x(), vertex.y()) - 1e-6);
+	}
+
+	@Test
+	void physicsAndContactProjectionClearAnExistingInteriorForebodyOverlap() {
+		var terrain = new TerrainMap(new double[] {-129, -121, -87, -139}, 2, 2, 10, 10, 10);
+		var sub = new SubmarineEntity(SUBMARINE, 0, null, new Vec3(4, 0, -100), 0.7, Color.BLUE, 1000);
+		sub.setPitch(-0.55);
+		new SubmarinePhysics(MATCH).step(sub, 0.02, terrain, STILL_WATER, MATCH.battleArea());
+		HullContactSolver.resolve(List.of(sub), STILL_WATER, terrain);
+
+		var vertex = HullTerrainGeometry.worldPoint(new Vec3(-4.266573, 21.711071, -0.356215), sub.pose().position(),
+				sub.heading(), sub.pitch());
+		assertTrue(vertex.z() >= terrain.elevationAt(vertex.x(), vertex.y()) - 1e-6,
+				"A reported clear pose must also clear the independently referenced rendered forebody");
+		assertTrue(sub.z() > -97.23, "Static contact must remove the original 2.78 m mesh overlap");
+	}
+
+	@Test
 	void physicsRespondsToTheFineCrestBeforeContinuingTheUnspentTick() {
 		var terrain = narrowCrest(0.1, -104.99, -110, 0.1);
 		for (double dt : new double[] {0.02, 0.1}) {

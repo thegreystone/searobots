@@ -169,6 +169,38 @@ class TorpedoTerrainCollisionTest {
 	}
 
 	@Test
+	void divingHullStopsAtARidgeCrestBetweenItsAxisExtrema() {
+		var ridge = middleHullRidge();
+		var torpedo = torpedo(-99.18, 0, 5, 0);
+		torpedo.setVerticalSpeed(-2);
+		assertTrue(bottomOverRidge(torpedo) > ridge.elevationAt(0, 1.25),
+				"The whole hull must start clear of the ridge crest");
+
+		new TorpedoPhysics().step(torpedo, DT, ridge, null, null);
+
+		assertTrue(torpedo.detonated(), "The ridge must trigger contact beneath the middle of the hull");
+		assertFalse(torpedo.alive());
+		assertTrue(torpedo.y() > 0 && torpedo.y() < 5 * DT,
+				"The explosion pose must stop before the hull penetrates at the tick endpoint");
+		assertEquals(ridge.elevationAt(0, 1.25), bottomOverRidge(torpedo), 1e-7,
+				"The swept collision must locate the first lower-hull contact at the crest");
+	}
+
+	@Test
+	void divingHullWithPhysicalClearanceAboveTheSameRidgeRemainsFreeSwimming() {
+		var ridge = middleHullRidge();
+		var torpedo = torpedo(-99.13, 0, 5, 0);
+		torpedo.setVerticalSpeed(-2);
+
+		new TorpedoPhysics().step(torpedo, DT, ridge, null, null);
+
+		assertTrue(torpedo.alive(), "Terrain candidates must stay on the torpedo's own physical ellipsoid");
+		assertFalse(torpedo.detonated());
+		assertEquals(5 * DT, torpedo.y(), 1e-10);
+		assertTrue(bottomOverRidge(torpedo) > ridge.elevationAt(0, 1.25));
+	}
+
+	@Test
 	void crossingARidgeStopsAtContactEvenWhenBothTickEndpointsAreClear() {
 		double[] depths = new double[21 * 21];
 		java.util.Arrays.fill(depths, FLOOR);
@@ -236,6 +268,22 @@ class TorpedoTerrainCollisionTest {
 		torpedo.setActualThrottle(throttle);
 		torpedo.createOutput().setThrottle(throttle);
 		return torpedo;
+	}
+
+	private static TerrainMap middleHullRidge() {
+		double[] depths = new double[5 * 5];
+		java.util.Arrays.fill(depths, -101.4);
+		for (int col = 0; col < 5; col++) {
+			depths[2 * 5 + col] = -99.4;
+		}
+		// The 10 m lattice crest at y=1.25 lies between the keel and bow samples.
+		return new TerrainMap(depths, 5, 5, -20, -18.75, 10);
+	}
+
+	private static double bottomOverRidge(TorpedoEntity torpedo) {
+		var cfg = torpedo.vehicleConfig();
+		double forward = (1.25 - torpedo.y()) / cfg.hullHalfLength();
+		return torpedo.z() - cfg.hullHalfBeam() * Math.sqrt(1 - forward * forward);
 	}
 
 	private static TerrainMap terrain(double slopeX, double slopeY) {

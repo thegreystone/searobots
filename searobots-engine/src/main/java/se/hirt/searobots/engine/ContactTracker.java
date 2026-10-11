@@ -69,8 +69,23 @@ final class ContactTracker {
 
 	private final Deque<BearingObs> history = new ArrayDeque<>();
 	private static final long GEOMETRY_MEMORY_TICKS = 120 * 50;
+	private static final long GEOMETRY_BUCKET_TICKS = 50;
 	private static final long MOTION_WINDOW_TICKS = 5 * 50;
 	private static final double MIN_LEG_TRAVEL = 25;
+	private static final double MIN_RANGE = 1e-6;
+
+	/** One second of geometry; new observations cannot refresh earlier buckets. */
+	private static final class GeometryObs {
+		long tick;
+		double crossTrack;
+		double legQuality;
+
+		GeometryObs(long tick) {
+			this.tick = tick;
+		}
+	}
+
+	private final Deque<GeometryObs> geometry = new ArrayDeque<>();
 
 	record TargetObs(long tick, double x, double y) {
 	}
@@ -80,7 +95,6 @@ final class ContactTracker {
 	// Cross-track displacement (accumulated perpendicular motion relative to bearing)
 	private double accumulatedCrossTrack;
 	private long lastGeometryTick = -1;
-	private long lastGeometryAgingTick = -1;
 	private double prevOwnX = Double.NaN, prevOwnY = Double.NaN;
 	private double prevOwnHeading = Double.NaN;
 	private double legTravel;
@@ -90,6 +104,9 @@ final class ContactTracker {
 	private double estimatedRange = Double.NaN;
 	private double rangeBias = Double.NaN; // systematic error, decays with geometry
 	private double rangeUncertainty = Double.MAX_VALUE;
+	// A fresh bearing cannot remove the target's possible unobserved movement.
+	// Only new spatial geometry or another active fix can repay this bound.
+	private double coastedRangeUncertainty;
 
 	// Heading estimation
 	private double estimatedHeading = Double.NaN;
@@ -152,6 +169,7 @@ final class ContactTracker {
 		history.addLast(new BearingObs(tick, bearing, ownX, ownY, se));
 		while (history.size() > 200)
 			history.removeFirst();
+		ageGeometry(tick);
 
 		// Compute cross-track displacement (motion perpendicular to bearing)
 		double crossTrack = 0;
@@ -187,20 +205,14 @@ final class ContactTracker {
 		prevOwnY = ownY;
 		prevOwnHeading = ownHeading;
 		if (newLeg || (displacement > 0 && crossTrack > displacement * 0.1)) {
-			// Permanently age the prior before adding this fresh baseline. A tiny
-			// new movement must not reset a multiplier on the whole old solution.
-			ageGeometry(tick - 1);
 			lastGeometryTick = tick;
-			lastGeometryAgingTick = tick;
-		} else {
-			ageGeometry(tick);
 		}
-		accumulatedCrossTrack += crossTrack;
-		if (newLeg)
-			legQuality = Math.min(0.35, legQuality + 0.12);
+		addGeometry(tick, crossTrack, newLeg);
 		// Missing observations reduce maturity. Only new spatial information can
 		// repay that loss; recomputing the old geometry must not undo coasting.
-		qualityDebt = Math.max(0, qualityDebt - crossTrack / (2 * rangeScale()) - (newLeg ? 0.12 : 0));
+		double newInformation = crossTrack / (2 * rangeScale()) + (newLeg ? 0.12 : 0);
+		qualityDebt = Math.max(0, qualityDebt - newInformation);
+		coastedRangeUncertainty *= Math.max(0, 1 - newInformation);
 		updateTargetMotion(tick, actualTargetX, actualTargetY);
 
 		// === Solution quality (must be computed before range, as it gates bias decay) ===
@@ -242,7 +254,9 @@ final class ContactTracker {
 		// the passive wander takes over as the fix ages.
 		noiseLevel = noiseLevel * (1.0 - fix) + PING_RANGE_NOISE * fix;
 		double noisyRange = actualDistance + rangeBias + actualDistance * rangeNoise.next(tick, rng) * noiseLevel;
-		noisyRange = Math.max(100, noisyRange);
+		// Keep estimates physical without imposing a tactical stand-off distance.
+		// In particular, passive updates must preserve active fixes below 100 m.
+		noisyRange = Math.max(MIN_RANGE, noisyRange);
 
 		if (Double.isNaN(estimatedRange)) {
 			estimatedRange = noisyRange;
@@ -259,12 +273,13 @@ final class ContactTracker {
 		// Range uncertainty: reflects both quality and remaining bias. The bias
 		// term is kept in metres on purpose: scaling it by the estimate would
 		// collapse the reported uncertainty together with the estimate when the
-		// initial guess is short and the estimate sits on the 100 m floor,
-		// telling the controller "100 m +- 60 m" about a target 500 m away.
+		// initial guess is short and the estimate sits on the positive range floor,
+		// telling the controller it knows the range of a distant target precisely.
 		// The wander passes through the smoothing largely intact, so the
 		// quality term can never drop below the current noise level.
 		double qualityFraction = Math.max((1.0 - solutionQuality) * 0.6, noiseLevel);
-		rangeUncertainty = Math.max(estimatedRange * qualityFraction, Math.abs(rangeBias));
+		rangeUncertainty = Math.max(coastedRangeUncertainty,
+				Math.max(estimatedRange * qualityFraction, Math.abs(rangeBias)));
 
 		if (solutionQuality > 0.5 && consistentMotionWindows >= 2 && tick == lastMotionSampleTick
 				&& Double.isFinite(motionHeading)) {
@@ -285,19 +300,28 @@ final class ContactTracker {
 		consistentMotionWindows = 0;
 	}
 
-	private void ageGeometry(long tick) {
-		if (lastGeometryTick < 0 || tick <= lastGeometryAgingTick)
+	private void addGeometry(long tick, double crossTrack, boolean newLeg) {
+		if (crossTrack <= 0 && !newLeg)
 			return;
-		double previousRemaining = Math.max(1, GEOMETRY_MEMORY_TICKS - (lastGeometryAgingTick - lastGeometryTick));
-		double remaining = Math.max(0, GEOMETRY_MEMORY_TICKS - (tick - lastGeometryTick));
-		double retained = Math.clamp(remaining / previousRemaining, 0, 1);
-		accumulatedCrossTrack *= retained;
-		legQuality *= retained;
-		legTravel *= retained;
-		lastGeometryAgingTick = tick;
-		if (remaining == 0) {
-			accumulatedCrossTrack = 0;
-			legQuality = 0;
+		var bucket = geometry.peekLast();
+		if (bucket == null || bucket.tick / GEOMETRY_BUCKET_TICKS != tick / GEOMETRY_BUCKET_TICKS) {
+			bucket = new GeometryObs(tick);
+			geometry.addLast(bucket);
+		}
+		bucket.tick = tick;
+		bucket.crossTrack += crossTrack;
+		bucket.legQuality += newLeg ? 0.12 : 0;
+		accumulatedCrossTrack += crossTrack;
+		legQuality += newLeg ? 0.12 : 0;
+	}
+
+	private void ageGeometry(long tick) {
+		while (!geometry.isEmpty() && tick - geometry.getFirst().tick >= GEOMETRY_MEMORY_TICKS) {
+			var old = geometry.removeFirst();
+			accumulatedCrossTrack = Math.max(0, accumulatedCrossTrack - old.crossTrack);
+			legQuality = Math.max(0, legQuality - old.legQuality);
+		}
+		if (lastGeometryTick >= 0 && tick - lastGeometryTick >= GEOMETRY_MEMORY_TICKS) {
 			legTravel = legHeadingAccumulator = 0;
 			lastGeometryTick = -1;
 		}
@@ -324,6 +348,7 @@ final class ContactTracker {
 				|| (moving && Math.abs(angleDifference(heading, motionHeading)) > Math.toRadians(30))
 				|| Math.abs(speed - motionSpeed) > 2);
 		if (changed) {
+			geometry.clear();
 			accumulatedCrossTrack = 0;
 			lastGeometryTick = -1;
 			legQuality = 0;
@@ -373,7 +398,7 @@ final class ContactTracker {
 	 */
 	private void updateSolutionQuality() {
 		// Quality is public too: never normalize a short initial guess by hidden true range.
-		// At the range floor, use the reported uncertainty as a conservative baseline scale.
+		// For short initial guesses, use the public uncertainty as a conservative baseline scale.
 		double rangeForRatio = rangeScale();
 
 		// Cross-track ratio: how much perpendicular baseline we've built
@@ -384,7 +409,7 @@ final class ContactTracker {
 
 		// Leg bonus: each deliberate course change adds independent information.
 		// Two legs gives a decent solution; three or more is very good.
-		double legBonus = legQuality;
+		double legBonus = Math.min(0.35, legQuality);
 
 		// Minimal time bonus: just rewards having some observation history.
 		// Capped at 0.05 to prevent free convergence from sitting still.
@@ -405,6 +430,7 @@ final class ContactTracker {
 		estimatedRange = range;
 		rangeBias = 0; // ping eliminates systematic error entirely
 		rangeUncertainty = range * PING_RANGE_NOISE; // 2% RMS
+		coastedRangeUncertainty = 0;
 		solutionQuality = 0.95;
 		qualityDebt = 0;
 		lastObservationTick = tick;
@@ -429,6 +455,8 @@ final class ContactTracker {
 		solutionQuality = Math.max(0, solutionQuality - 0.01 * dtSec);
 		qualityDebt = Math.min(0.95, qualityDebt + 0.01 * dtSec);
 		rangeUncertainty += maxSubSpeed * dtSec;
+		if (Double.isFinite(estimatedRange))
+			coastedRangeUncertainty = rangeUncertainty;
 		interruptObservations();
 		ageGeometry(tick);
 	}

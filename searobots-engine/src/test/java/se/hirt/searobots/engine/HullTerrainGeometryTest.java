@@ -92,6 +92,61 @@ class HullTerrainGeometryTest {
 	}
 
 	@Test
+	void bilinearCellInteriorCannotHideAnInclinedForebodyContact() {
+		var floor = new TerrainMap(new double[] {-129, -121, -87, -139}, 2, 2, 10, 10, 10);
+		var position = new Vec3(4, 0, -100);
+		double heading = 0.7, pitch = -0.55;
+		// Referenced Body vertex from submarine-hybrid.obj. Neither the former support
+		// iteration nor the exact terrain-grid edge supports reached this cell interior.
+		var vertex = new Vec3(-4.266573, 21.711071, -0.356215);
+		var embedded = HullTerrainGeometry.worldPoint(vertex, position, heading, pitch);
+		assertTrue(floor.elevationAt(embedded.x(), embedded.y()) - embedded.z() > 2.77);
+
+		double penetration = HullGeometry.terrainPenetration(position, heading, pitch, VehicleConfig.submarine(),
+				floor);
+		assertTrue(penetration > 2.77, "A real body contact inside a bilinear cell must project the hull clear");
+		var corrected = HullTerrainGeometry.worldPoint(vertex, position.add(new Vec3(0, 0, penetration)), heading,
+				pitch);
+		assertTrue(corrected.z() >= floor.elevationAt(corrected.x(), corrected.y()) - 1e-8);
+	}
+
+	@Test
+	void standaloneEllipsoidKeepsClearWaterBroadphaseAndItsOwnDimensions() {
+		var floor = terrain((x, y) -> -100, 10);
+		var torpedo = new HullGeometry.Envelope(2.5, 0.25, 0.25, 0, 0);
+		assertEquals(0,
+				HullTerrainGeometry.ellipsoidContactPoints(new Vec3(0, 0, -90), 0.7, -0.55, torpedo, floor).length);
+		var position = new Vec3(0, 0, -100);
+		double lowest = Double.POSITIVE_INFINITY;
+		for (var local : HullTerrainGeometry.ellipsoidContactPoints(position, 0, 0, torpedo, floor)) {
+			lowest = Math.min(lowest, HullTerrainGeometry.worldPoint(local, position, 0, 0).z());
+		}
+		assertEquals(-100.25, lowest, 1e-10, "The generic ellipsoid must not acquire submarine appendages or draft");
+	}
+
+	@Test
+	void symmetricBilinearSaddleFindsBothDegenerateInteriorMaxima() {
+		var sphere = new HullGeometry.Envelope(1, 1, 1, 0, 0);
+		var position = new Vec3(0, 0, -100);
+		for (double[] heights : new double[][] {{-98, -102, -102, -98}, {-102, -98, -98, -102}}) {
+			var floor = new TerrainMap(heights, 2, 2, -1, -1, 2);
+			double penetration = 0;
+			int maxima = 0;
+			for (var local : HullTerrainGeometry.ellipsoidContactPoints(position, 0, 0, sphere, floor)) {
+				var world = HullTerrainGeometry.worldPoint(local, position, 0, 0);
+				double candidate = floor.elevationAt(world.x(), world.y()) - world.z();
+				penetration = Math.max(penetration, candidate);
+				if (Math.abs(candidate - 1.25) < 1e-9) {
+					maxima++;
+				}
+			}
+			// Maximize +/-2xy-z on x^2+y^2+z^2=1: z=-1/2, xy=+/-3/8.
+			assertEquals(1.25, penetration, 1e-9);
+			assertEquals(2, maxima, "The eigenvalue hard case has two distinct physical interior maxima");
+		}
+	}
+
+	@Test
 	void contactGeometryIgnoresNavigationMargin() {
 		var floor = terrain((x, y) -> y == 20 ? -98 : -120, 10);
 		var config = VehicleConfig.submarine();

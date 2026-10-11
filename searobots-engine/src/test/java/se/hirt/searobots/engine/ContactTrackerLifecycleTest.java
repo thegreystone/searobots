@@ -377,6 +377,30 @@ class ContactTrackerLifecycleTest {
 	}
 
 	@Test
+	void continuousMillimeterDriftCannotKeepOldManeuverGeometryAlive() {
+		var drive = trainedDrive();
+		for (int index = 0; index < 6500; index++) {
+			// Only 6.5 mm of fresh cross-track displacement over 130 seconds.
+			drive.ownX += 0.000001;
+			drive.step(false, 5, 0, false);
+		}
+		assertTrue(drive.tracker.solutionQuality() <= 0.1,
+				"Fresh tiny observations cannot renew the timestamps of old translating legs");
+		assertTrue(Double.isNaN(drive.tracker.estimatedHeading()), "Expired geometry cannot keep a motion solution");
+	}
+
+	@Test
+	void continuedUsefulManeuversReplaceExpiredGeometry() {
+		var drive = trainedDrive();
+		for (int index = 0; index < 6500; index++) {
+			drive.step(true, 5, 0, false);
+		}
+		assertTrue(drive.tracker.solutionQuality() > 0.5,
+				"Fresh translating legs maintain a solution after every original observation has expired");
+		assertTrue(Double.isFinite(drive.tracker.estimatedHeading()));
+	}
+
+	@Test
 	void departingStoppedTargetCannotReuseTheStationaryMotionPrior() {
 		var drive = trainedDrive();
 		for (int index = 0; index < 6250; index++) {

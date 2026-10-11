@@ -339,7 +339,7 @@ public final class SonarModel {
 			return Double.NaN;
 		// Only the existing range solution supplies spreading loss. Unknown target depth and
 		// path losses cannot be recovered from the signature or from ground-truth coordinates.
-		return measuredSe + listenerNoiseDb + SPREADING_COEFFICIENT * Math.log10(Math.max(estimatedRange, 1.0));
+		return measuredSe + listenerNoiseDb + SPREADING_COEFFICIENT * Math.log10(estimatedRange);
 	}
 
 	private void expireSensorNoise(long tick) {
