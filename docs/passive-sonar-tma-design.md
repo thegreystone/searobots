@@ -352,6 +352,88 @@ through maneuvering) vs impatience (pinging for instant data).
 
 ## Impact on Controller Design
 
+### Optional Track Memory and Prediction
+
+The API provides `SonarTrack` for controllers that want to retain a
+selected contact across detection gaps. The engine still performs
+acoustic analysis and TMA. The controller owns contact association,
+target selection, contact-alive belief, and decisions about firing or
+abandoning a stale track. Use one helper per associated contact and
+reset it when switching targets or starting another match.
+
+```java
+// Construct after receiving the match configuration.
+private SonarTrack targetTrack;
+
+public void onMatchStart(MatchContext context) {
+    targetTrack = new SonarTrack(context.config().maxSubSpeed());
+}
+
+public void onTick(SubmarineInput input, SubmarineOutput output) {
+    SonarContact selected = selectAssociatedContact(input); // null during a gap
+    targetTrack.update(input.self().pose().position(), selected, input.deltaTimeSeconds())
+        .ifPresent(estimate -> output.publishContactEstimate(
+            estimate.toContactEstimate(contactAliveBelief, "target")));
+}
+```
+
+`lastFix()` holds the last usable ranged observation and its world
+position. `estimate()` provides the current predicted position, time
+since contact and since a ranged fix, current quality, and an uncertainty
+ellipse. Coasting does not move or replace the last fix. The helper
+extrapolates reported heading and speed during a gap; a **new** report
+with unresolved heading or speed stops that extrapolation. A zero or
+unbounded range cannot establish a Cartesian fix. All elapsed time comes
+from the caller, so prediction is independent of controller tick rate.
+
+`predict(secondsAhead)` returns a future position, uncertainty, and
+evidence ages without advancing the live clock or moving its last fix.
+Use it for approach routes and torpedo aim points; do not advance the
+tracker to a future intercept time. `observeMotion(heading, speed)` can
+apply newly associated motion evidence while preserving the position
+fix's age and its accumulated uncertainty. `observePosition()` accepts
+an explicit world-position estimate and envelope derived from public
+evidence, such as an explosion bearing and range. Such a fix has a null
+sonar observation rather than inventing a sonar return.
+
+Fresh ranged readings use the engine's current solution and reported
+uncertainty directly. Repeated correlated samples do not accumulate
+artificial confidence, and a poorer solution can reduce quality. Both
+range and bearing uncertainty contribute to the position envelope.
+Sonar range is slant range: known active depth supports horizontal
+projection; unknown depth uses a same-depth position approximation with
+additional uncertainty covering the possible vertical separation.
+
+The ellipse encloses twice the reported position errors plus a
+conservative motion allowance. `SonarTrack.MotionModel` exposes maximum
+speed, acceleration, turn rate, and initial speed/heading error
+allowances. The defaults are starter assumptions rather than exact
+physics limits; controllers may tune them, including allowances for
+currents or different vehicle types. As motion uncertainty dominates,
+the ellipse approaches a circle. This lightweight envelope is neither
+an exact reachable cone nor a calibrated probability distribution.
+Quality falls as the envelope grows, while contact-alive belief remains
+a separate controller policy. `toContactEstimate()` publishes the
+ellipse's enclosing circle through the existing viewer/replay API.
+
+`DefaultAttackSub` uses this helper as a reference integration.
+`CodexAttackSub` uses two helpers: one for selected sonar readings and
+one for independent active or confirmed-hit position evidence. New
+passive readings cannot erase a better active range anchor. It selects a
+compatible position envelope for navigation and uses the active
+hypothesis consistently for torpedo position, motion, and uncertainty.
+New motion that contradicts the confirmed trajectory revokes firing
+authorization. Codex retains contact association, active-confirmation
+policy, terrain checks, approach offsets, ping timing, and weapon policy;
+helper forecasts supply its approach, egress, interception, and torpedo
+lead positions. Other controllers can keep their own tracking models.
+
+Because a passive reading has no depth estimate, the default envelope
+can remain broad even with mature TMA. The starter's existing snapshot
+ping supplies depth and precise range before a shot; the helper does not
+shrink that envelope to satisfy a firing threshold. Controllers with
+other depth or motion assumptions can implement a different model.
+
 ### Simple Bot (Minimum Viable)
 
 ```java

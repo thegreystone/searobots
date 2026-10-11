@@ -80,11 +80,122 @@ class CodexTrackingTest {
 		}
 	}
 
+	@Test
+	void lostContactPredictionUsesTheInputElapsedTime() {
+		var world = GeneratedWorld.deepFlat();
+		var controller = startedController(world);
+		var initial = tick(controller, world, 0, 0.02, List.of(),
+				List.of(activeContact(0, 1500, 8, Math.PI / 2, -140, Math.toRadians(0.5), 30)), 0);
+		var coast = tick(controller, world, 1, 0.5, List.of(), List.of(), 0);
+		var next = tick(controller, world, 2, 0.5, List.of(), List.of(), 0);
+
+		assertEquals(0, initial.contactEstimates.getLast().x(), 1e-9);
+		assertEquals(4, coast.contactEstimates.getLast().x(), 1e-9,
+				"Half a simulation second must advance an eight-metre-per-second contact by four metres");
+		assertEquals(8, next.contactEstimates.getLast().x(), 1e-9);
+		assertEquals(1500, next.contactEstimates.getLast().y(), 1e-9);
+		assertTrue(next.contactEstimates.getLast().uncertaintyRadius() > initial.contactEstimates.getLast()
+				.uncertaintyRadius());
+	}
+
+	@Test
+	void futureTorpedoAimDoesNotMoveTheCurrentEstimateOrAdvanceItsClock() {
+		var world = GeneratedWorld.deepFlat();
+		var controller = startedController(world);
+		var output = tick(controller, world, 500, 0.02, List.of(),
+				List.of(activeContact(0, 1500, 8, 0, -140, Math.toRadians(0.5), 30)), 8);
+
+		assertEquals(1, output.launchedTorpedoCount, "A fresh, aligned active fix must exercise the launch lookahead");
+		double aimY = Double.parseDouble(output.launchedTorpedo.missionData().split(";")[1]);
+		assertTrue(aimY > 1500, "The torpedo mission must lead the northbound target");
+		assertEquals(1500, output.contactEstimates.getLast().y(), 1e-9,
+				"Computing a future aim must leave the current published contact at its observed position");
+
+		var coast = tick(controller, world, 501, 0.5, List.of(), List.of(), 0);
+		assertEquals(1504, coast.contactEstimates.getLast().y(), 1e-9,
+				"The next current estimate may advance only by the actual half-second tick");
+	}
+
+	@Test
+	void activeBearingAndDepthUncertaintyPreventAnOverconfidentShot() {
+		var world = GeneratedWorld.deepFlat();
+		var controller = startedController(world);
+		var output = tick(controller, world, 500, 0.02, List.of(), List.of(activeContact(0, 2000, 8, 0, -440, 0.2, 20)),
+				8);
+
+		assertFalse(output.contactEstimates.isEmpty());
+		var estimate = output.contactEstimates.getLast();
+		double horizontal = Math.sqrt(2000 * 2000 - 300 * 300);
+		assertEquals(horizontal, estimate.y(), 1e-6, "The active slant range must account for the target's depth");
+		assertTrue(estimate.uncertaintyRadius() >= horizontal * Math.sin(0.4),
+				"The displayed bound must include the active bearing error, rather than using a fixed eighty-metre radius");
+		assertEquals(0, output.launchedTorpedoCount,
+				"High active quality cannot bypass the shot's position-uncertainty gate");
+	}
+
+	@Test
+	void bearingOnlyAndUnboundedRangeContactsDoNotInventCartesianTargets() {
+		var world = GeneratedWorld.deepFlat();
+		var controller = startedController(world);
+		var bearingOnly = new SonarContact(0, 20, 0, false, 8, Math.toRadians(1), 0, Double.NaN, 0.8, 0, Double.NaN,
+				SonarContact.Classification.SUBMARINE);
+		var first = tick(controller, world, 500, 0.02, List.of(bearingOnly), List.of(), 8);
+		assertTrue(first.contactEstimates.isEmpty(),
+				"A bearing alone cannot put a target at an arbitrary search range");
+		assertEquals(0, first.launchedTorpedoCount);
+
+		var unbounded = new SonarContact(0, 20, 2000, false, 8, Math.toRadians(1), Double.MAX_VALUE, Double.NaN, 0.8, 0,
+				Double.NaN, SonarContact.Classification.SUBMARINE);
+		var next = tick(controller, world, 501, 0.02, List.of(unbounded), List.of(), 8);
+		assertTrue(next.contactEstimates.isEmpty(), "An unavailable range bound must not create a Cartesian fix");
+		assertEquals(0, next.launchedTorpedoCount);
+	}
+
+	@Test
+	void freshUnknownSpeedStopsThePreviousVelocityEvenWhenTheActivePositionIsRetained() {
+		var world = GeneratedWorld.deepFlat();
+		var controller = startedController(world);
+		tick(controller, world, 400, 0.02, List.of(),
+				List.of(activeContact(0, 1500, 8, 0, -140, Math.toRadians(0.5), 30)), 8);
+		var unknownSpeed = new SonarContact(0, 12, 1500, false, -1, Math.toRadians(1), 1200, Double.NaN, 0.3, 0,
+				Double.NaN, SonarContact.Classification.SUBMARINE);
+		var fresh = tick(controller, world, 500, 2.0, List.of(unknownSpeed), List.of(), 8);
+		var coast = tick(controller, world, 501, 0.5, List.of(), List.of(), 8);
+
+		assertEquals(-1, fresh.contactEstimates.getLast().estimatedSpeed());
+		assertEquals(-1, coast.contactEstimates.getLast().estimatedSpeed());
+		assertEquals(fresh.contactEstimates.getLast().x(), coast.contactEstimates.getLast().x(), 1e-9);
+		assertEquals(fresh.contactEstimates.getLast().y(), coast.contactEstimates.getLast().y(), 1e-9,
+				"Fresh unknown speed must not quietly preserve eight-metre-per-second motion in the independent active anchor");
+		assertTrue(coast.contactEstimates.getLast().uncertaintyRadius() > fresh.contactEstimates.getLast()
+				.uncertaintyRadius());
+		assertEquals(0, fresh.launchedTorpedoCount,
+				"Unresolved fresh speed contradicts the prior resolved motion and must revoke its shot authorization");
+		assertEquals(0, coast.launchedTorpedoCount, "Silence must not restore that stale shot authorization");
+	}
+
 	private static CodexAttackSub startedController(GeneratedWorld world) {
 		var controller = new CodexAttackSub();
 		controller.onMatchStart(
 				new MatchContext(world.config(), world.terrain(), world.thermalLayers(), world.currentField()));
 		return controller;
+	}
+
+	private static SonarContact activeContact(
+		double bearing, double range, double speed, double heading, double depth, double bearingError,
+		double rangeError) {
+		return new SonarContact(bearing, 20, range, true, speed, bearingError, rangeError, Double.NaN, 0.95, heading,
+				depth, SonarContact.Classification.SUBMARINE);
+	}
+
+	private static TestHelpers.CapturedOutput tick(
+		CodexAttackSub controller, GeneratedWorld world, long tick, double dt, List<SonarContact> passive,
+		List<SonarContact> active, int ammunition) {
+		var self = new SubmarineState(new Pose(new Vec3(0, 0, -140), 0, 0, 0), Velocity.ZERO, 1000, ammunition);
+		var environment = new EnvironmentSnapshot(world.terrain(), world.thermalLayers(), world.currentField());
+		var output = new TestHelpers.CapturedOutput();
+		controller.onTick(new TestHelpers.TestInput(tick, dt, self, environment, passive, active, 250), output);
+		return output;
 	}
 
 	private static TestHelpers.CapturedOutput track(

@@ -53,8 +53,8 @@ class CodexTmaConsumerTest {
 	@Test
 	void highQualityTrackLeavesChaseAfterTwentySecondsOfSilenceButStillCoasts() {
 		var fixture = new Fixture();
-		var first = fixture.tick(0L, List.of(passive(0.0, 2_000.0, 12.0, 0.85, 300.0, 0.0)), List.of(), 0);
-		assertTrue(first.status.startsWith("C"), "Fresh, high-quality passive evidence should permit pursuit.");
+		var first = fixture.tick(0L, List.of(), List.of(active(0.0, 2_000.0, 0.0)), 0);
+		assertTrue(first.status.startsWith("C"), "A fresh active position fix should permit pursuit.");
 		TestHelpers.CapturedOutput output = first;
 		for (long tick = 1L; tick <= 1_000L; tick++) {
 			output = fixture.tick(tick, List.of(), List.of(), 0);
@@ -167,16 +167,17 @@ class CodexTmaConsumerTest {
 	}
 
 	@Test
-	void passiveRangeClampDisplacementIsIncludedInThePositionBound() {
+	void passiveRangeMeanIsNotClampedToTheTacticalPlanningCorridor() {
 		var fixture = new Fixture();
 		var contact = passive(0.0, 8_000.0, 12.0, 0.85, 300.0, 0.0);
 		var output = fixture.tick(0L, List.of(contact), List.of(), 0);
 
 		assertFalse(output.contactEstimates.isEmpty());
 		var estimate = output.contactEstimates.getLast();
-		double shiftFromReportedPosition = Math.hypot(estimate.x(), estimate.y() - contact.range());
-		assertTrue(estimate.uncertaintyRadius() >= shiftFromReportedPosition + contact.rangeUncertainty(),
-				"Moving a range estimate into the tactical planning corridor must widen its published position bound.");
+		assertEquals(0.0, estimate.x(), 1.0e-9);
+		assertEquals(contact.range(), estimate.y(), 1.0e-9,
+				"Tactical navigation limits must not replace the reported target position with an invented range.");
+		assertTrue(estimate.uncertaintyRadius() >= contact.rangeUncertainty());
 	}
 
 	@Test
@@ -222,12 +223,15 @@ class CodexTmaConsumerTest {
 		var estimate = output.contactEstimates.getLast();
 		assertEquals("ping", estimate.label(),
 				"A matching active echo must correct an uncertain passive classification.");
-		assertEquals(80.0, estimate.uncertaintyRadius(), 1.0e-9);
+		double lowerHorizontal = Math.sqrt(Math.pow(2_000.0 - 2 * 30.0, 2) - Math.pow(200.0, 2));
+		assertTrue(estimate.uncertaintyRadius() >= 2_000.0 - lowerHorizontal,
+				"The independent active bound must include the reported range and depth error allowances.");
+		assertTrue(estimate.uncertaintyRadius() < 300.0, "The active echo still supplies a useful position fix.");
 		assertEquals(0.0, estimate.estimatedHeading(), 1.0e-9);
 	}
 
 	@Test
-	void independentActiveRangeBoundIncludesThePublishedPositionOffset() {
+	void recentActivePositionPrecisionIsRetainedWhenAFreshPassiveFixIsBroad() {
 		var fixture = new Fixture();
 		fixture.tick(0L, List.of(), List.of(active(0.0, 2_000.0, 0.0)), 0);
 		var output = fixture.tick(1L, List.of(passive(Math.toRadians(14.9), 2_000.0, 12.0, 0.95, 1_500.0, 0.0)),
@@ -235,11 +239,13 @@ class CodexTmaConsumerTest {
 
 		assertFalse(output.contactEstimates.isEmpty());
 		var estimate = output.contactEstimates.getLast();
-		double predictionOffset = Math.hypot(estimate.x(), estimate.y() - 2_000.16);
-		assertTrue(predictionOffset > 170.0,
-				"The observation must measurably shift the published estimate from the fix.");
-		assertTrue(estimate.uncertaintyRadius() >= 80.0 + predictionOffset,
-				"An independent active bound must be translated to cover the actual published estimate centre.");
+		assertEquals(0.0, estimate.x(), 1.0e-6);
+		assertEquals(2_000.16, estimate.y(), 1.0e-6,
+				"A broad passive range must not move a recent, independently ranged target to its noisy mean.");
+		assertTrue(estimate.uncertaintyRadius() >= 60.0,
+				"The retained fix must preserve its measured active range uncertainty.");
+		assertTrue(estimate.uncertaintyRadius() < 300.0,
+				"Continuing passive evidence must preserve the useful independent active position bound.");
 	}
 
 	@Test

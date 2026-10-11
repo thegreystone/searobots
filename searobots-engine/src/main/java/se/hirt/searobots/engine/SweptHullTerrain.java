@@ -48,6 +48,9 @@ final class SweptHullTerrain {
 	record Contact(double fraction, Vec3 position, double heading, double pitch, Vec3[] localPoints) {
 	}
 
+	private record GeometryQuery(Contact contact, double penetration) {
+	}
+
 	static Contact firstContact(
 		Vec3 start, Vec3 end, double startHeading, double endHeading, double startPitch, double endPitch,
 		VehicleConfig config, TerrainMap terrain) {
@@ -59,7 +62,7 @@ final class SweptHullTerrain {
 		}
 		// Existing penetration belongs to static projection. Truncating it to t=0 would prevent
 		// an embedded hull from moving out, and would turn position correction into an impact.
-		if (path.penetration(0) > CONTACT_TOLERANCE || path.clearsBounds(0, 1)) {
+		if (path.clearsBounds(0, 1) || path.penetration(0) > CONTACT_TOLERANCE) {
 			return null;
 		}
 
@@ -80,8 +83,11 @@ final class SweptHullTerrain {
 		double previous = 0;
 		for (int i = 1; i <= samples; i++) {
 			double fraction = upper * i / samples;
-			if (!path.clearsBounds(previous, fraction) && path.penetration(fraction) > CONTACT_TOLERANCE) {
-				return path.refine(previous, fraction);
+			if (!path.clearsBounds(previous, fraction)) {
+				var query = path.query(fraction);
+				if (query.penetration() > CONTACT_TOLERANCE) {
+					return path.refine(previous, query);
+				}
 			}
 			previous = fraction;
 		}
@@ -193,16 +199,32 @@ final class SweptHullTerrain {
 					HullGeometry.terrainContactPoints(position, h, p, config, terrain));
 		}
 
-		Contact refine(double lower, double upper) {
+		GeometryQuery query(double fraction) {
+			var contact = contact(fraction);
+			double penetration = 0;
+			for (var local : contact.localPoints()) {
+				var world = HullTerrainGeometry.worldPoint(local, contact.position(), contact.heading(),
+						contact.pitch());
+				penetration = Math.max(penetration, terrain.elevationAt(world.x(), world.y()) - world.z());
+			}
+			return new GeometryQuery(contact, penetration);
+		}
+
+		Contact refine(double lower, GeometryQuery upperQuery) {
+			double upper = upperQuery.contact().fraction();
 			for (int i = 0; i < 28; i++) {
 				double middle = (lower + upper) * 0.5;
-				if (penetration(middle) > CONTACT_TOLERANCE) {
+				var query = query(middle);
+				if (query.penetration() > CONTACT_TOLERANCE) {
 					upper = middle;
+					upperQuery = query;
 				} else {
 					lower = middle;
 				}
 			}
-			return contact(upper);
+			// The penetrating side already has exact material points at this pose. Reuse
+			// them instead of running the full ellipsoid/appendage query once more.
+			return upperQuery.contact();
 		}
 
 		/** Bounds the entire translated and rotated hull interval, including its appendages. */

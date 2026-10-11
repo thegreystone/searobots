@@ -59,7 +59,9 @@ public interface SubmarineInput {
 	}
 
 	/**
-	 * Passive sonar detections this tick (bearing + signal excess, no range).
+	 * Passive sonar detections this tick, including the engine's TMA range and motion estimates
+	 * when available. {@link SonarTrack} can retain and coast a controller-selected contact between
+	 * detections.
 	 */
 	default List<SonarContact> sonarContacts() {
 		return List.of();

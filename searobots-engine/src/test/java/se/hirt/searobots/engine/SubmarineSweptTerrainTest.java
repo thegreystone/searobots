@@ -97,6 +97,41 @@ class SubmarineSweptTerrainTest {
 	}
 
 	@Test
+	void refinedTurnReturnsTheActualSupportingMaterialPointOnASlope() {
+		var terrain = slopingFloor(1);
+		var position = new Vec3(0, 0, -90);
+		var envelope = HullGeometry.envelope(SUBMARINE);
+		assertClear(position, 0, 0, SUBMARINE, terrain);
+
+		var contact = SweptHullTerrain.firstContact(position, position, 0, Math.PI / 2, 0, 0, SUBMARINE, terrain);
+		assertNotNull(contact);
+		double beam = envelope.semiBeam(), length = envelope.semiLength(), height = envelope.semiHeight();
+		// On z = x - 100, the ellipsoid's maximum x - z is the norm of the
+		// scaled plane normal. This gives first contact independently of terrain sampling.
+		double clearance = position.z() + 100 + envelope.upOffset();
+		double expectedHeading = Math.asin(
+				Math.sqrt((clearance * clearance - beam * beam - height * height) / (length * length - beam * beam)));
+		assertEquals(expectedHeading, contact.heading(), 1e-7);
+		assertEquals(position, contact.position());
+		double sin = Math.sin(contact.heading()), cos = Math.cos(contact.heading());
+		double supportLength = Math.sqrt(beam * beam * cos * cos + length * length * sin * sin + height * height);
+		var supportingLocal = new Vec3(beam * beam * cos / supportLength,
+				envelope.forwardOffset() + length * length * sin / supportLength,
+				envelope.upOffset() - height * height / supportLength);
+		assertTrue(
+				Arrays.stream(contact.localPoints()).anyMatch(point -> point.subtract(supportingLocal).length() < 1e-8),
+				"The response must use the supporting material point at the refined attitude");
+		double penetration = 0;
+		for (var local : contact.localPoints()) {
+			double worldX = position.x() + cos * local.x() + sin * local.y();
+			double worldZ = position.z() + local.z();
+			penetration = Math.max(penetration, worldX - 100 - worldZ);
+		}
+		assertTrue(penetration > 0 && penetration < 1e-6,
+				"The returned points must describe the penetrating side of first contact, within numerical precision");
+	}
+
+	@Test
 	void pitchingHullStopsAtItsFirstPhysicalContactInsteadOfTheAttemptedAttitude() {
 		var terrain = flat(-120);
 		var position = new Vec3(0, 0, -100);
@@ -227,6 +262,30 @@ class SubmarineSweptTerrainTest {
 	}
 
 	@Test
+	void groundedSinkingWreckFollowsNonflatSupportWhileRetainingTangentialDrift() {
+		var terrain = slopingFloor(0.05);
+		var wreck = new SubmarineEntity(SUBMARINE, 0, null, new Vec3(0, 0, -95), 0, Color.BLUE, 1000);
+		wreck.setHp(0);
+		wreck.setBallast(0);
+		wreck.setActualBallast(0);
+		wreck.setSpeed(2);
+		var current = new CurrentField(List.of(new CurrentField.CurrentBand(-1000, 0, new Vec2(1, 0))));
+		var physics = new SubmarinePhysics(MATCH);
+		for (int tick = 0; tick < 50; tick++) {
+			physics.step(wreck, 0.02, terrain, current, MATCH.battleArea());
+			var keel = HullTerrainGeometry.worldPoint(new Vec3(0, 0, -5), wreck.pose().position(), wreck.heading(),
+					wreck.pitch());
+			assertEquals(terrain.elevationAt(keel.x(), keel.y()), keel.z(), 1e-6,
+					"Repeated support must follow the slope rather than retain a previous tick's contact pose");
+			assertTrue(HullGeometry.terrainPenetration(wreck.pose().position(), wreck.heading(), wreck.pitch(),
+					SUBMARINE, terrain) < 1e-6, "A supported wreck must remain physically clear each tick");
+		}
+		assertTrue(wreck.x() > 0.8, "Support must preserve drift along the sloping floor");
+		assertTrue(wreck.y() > 1.5, "Support must preserve tangential coasting");
+		assertEquals(0, wreck.hp());
+	}
+
+	@Test
 	void surfaceShipUsesItsOwnDraftForACrestCrossedBetweenTicks() {
 		var terrain = narrowCrest(1.1, -9.499999, -20, 0.01);
 		var ship = new SubmarineEntity(VehicleConfig.surfaceShip(), 0, null, Vec3.ZERO, 0, Color.BLUE, 1000);
@@ -285,6 +344,16 @@ class SubmarineSweptTerrainTest {
 	private static TerrainMap flat(double height) {
 		double[] elevations = new double[441];
 		Arrays.fill(elevations, height);
+		return new TerrainMap(elevations, 21, 21, -100, -100, 10);
+	}
+
+	private static TerrainMap slopingFloor(double slope) {
+		double[] elevations = new double[441];
+		for (int row = 0; row < 21; row++) {
+			for (int col = 0; col < 21; col++) {
+				elevations[row * 21 + col] = -100 + slope * (-100 + col * 10);
+			}
+		}
 		return new TerrainMap(elevations, 21, 21, -100, -100, 10);
 	}
 }

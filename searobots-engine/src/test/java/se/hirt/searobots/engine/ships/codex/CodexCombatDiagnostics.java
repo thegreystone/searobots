@@ -26,14 +26,20 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
-package se.hirt.searobots.engine;
+package se.hirt.searobots.engine.ships.codex;
 
 import se.hirt.searobots.api.ContactEstimate;
 import se.hirt.searobots.api.MatchConfig;
 import se.hirt.searobots.api.SubmarineController;
 import se.hirt.searobots.api.VehicleConfig;
+import se.hirt.searobots.engine.GeneratedWorld;
+import se.hirt.searobots.engine.SimulationListener;
+import se.hirt.searobots.engine.SimulationLoop;
+import se.hirt.searobots.engine.SubmarineCompetition;
+import se.hirt.searobots.engine.SubmarineSnapshot;
+import se.hirt.searobots.engine.TorpedoSnapshot;
+import se.hirt.searobots.engine.WorldGenerator;
 import se.hirt.searobots.engine.ships.claude.ClaudeAttackSub;
-import se.hirt.searobots.engine.ships.codex.CodexAttackSub;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;

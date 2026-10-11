@@ -43,6 +43,8 @@ public final class SubmarinePhysics {
 	private static final double WATER_DENSITY = 1025.0; // kg/m^3 seawater
 	private static final double CL_SLOPE = 2 * Math.PI; // thin airfoil theory
 	private final HullPressureModel hullPressure;
+	private final long worldSeed;
+	private final long correlationId;
 
 	public SubmarinePhysics() {
 		this(MatchConfig.withDefaults(0));
@@ -50,7 +52,13 @@ public final class SubmarinePhysics {
 
 	/** Creates physics with the match's depth limits and seeded pressure-hull failures. */
 	public SubmarinePhysics(MatchConfig config) {
+		this(config, 0);
+	}
+
+	SubmarinePhysics(MatchConfig config, long correlationId) {
 		hullPressure = new HullPressureModel(config);
+		worldSeed = config.worldSeed();
+		this.correlationId = correlationId;
 	}
 
 	/**
@@ -442,78 +450,103 @@ public final class SubmarinePhysics {
 		SubmarineEntity sub, double dt, Vec3 start, Vec3 end, double startHeading, double endHeading, double startPitch,
 		double endPitch, Vec3 incomingLinear, double incomingYawRate, double incomingPitchRate, TerrainMap terrain,
 		CurrentField currents) {
-		var cfg = sub.vehicleConfig();
-		double remaining = dt, deepestZ = start.z(), impactEnergy = 0;
-		boolean scraping = false;
-		// Continue the unspent tick after an impact, so support on a flat floor does not
-		// cancel tangential movement. A small cap bounds pathological repeated contacts.
-		for (int iteration = 0; iteration < 6; iteration++) {
-			var contact = SweptHullTerrain.firstContact(start, end, startHeading, endHeading, startPitch, endPitch, cfg,
-					terrain);
-			var position = contact == null ? end : contact.position();
-			double heading = contact == null ? endHeading : contact.heading();
-			double pitch = contact == null ? endPitch : contact.pitch();
-			deepestZ = Math.min(deepestZ, position.z());
-			var samples = contact == null ? HullGeometry.terrainContactPoints(position, heading, pitch, cfg, terrain)
-					: contact.localPoints();
-			double penetration = 0;
-			for (var local : samples) {
-				var world = HullTerrainGeometry.worldPoint(local, position, heading, pitch);
-				penetration = Math.max(penetration, terrain.elevationAt(world.x(), world.y()) - world.z());
-			}
-			sub.setHeading(heading);
-			sub.setPitch(pitch);
-			sub.setX(position.x());
-			sub.setY(position.y());
-			sub.setZ(position.z());
-			// Reaching absolute crush depth changes contact response immediately: an
-			// imploded hull cannot receive a living hull's restitution impulse.
-			hullPressure.step(sub, 0, deepestZ);
-			if (penetration > 0 || contact != null) {
-				scraping = true;
-				var current = currents.currentAt(position.z());
-				SubCollisionResponse.setLinearVelocity(sub,
-						incomingLinear.subtract(new Vec3(current.x(), current.y(), 0)));
-				var impact = TerrainContactResponse.apply(sub, position, samples, incomingLinear, incomingYawRate,
-						incomingPitchRate, terrain, currents);
-				impactEnergy = Math.max(impactEnergy, impact.energyJoules());
-				var groundVelocity = sub.velocity().linear().add(new Vec3(current.x(), current.y(), 0));
-				sub.setZ(position.z() + penetration);
-				var correctedCurrent = currents.currentAt(sub.z());
-				if (!correctedCurrent.equals(current)) {
-					// An artificial overlap correction must not add a current-band velocity jump.
+		var terrainEvent = SimulationJfrEvents.beginTerrainMotion();
+		var initialStart = start;
+		int hpAtStart = terrainEvent == null ? 0 : sub.hp();
+		try {
+			var cfg = sub.vehicleConfig();
+			double remaining = dt, deepestZ = start.z(), impactEnergy = 0;
+			boolean scraping = false;
+			// Continue the unspent tick after an impact, so support on a flat floor does not
+			// cancel tangential movement. A small cap bounds pathological repeated contacts.
+			for (int iteration = 0; iteration < 6; iteration++) {
+				if (terrainEvent != null) {
+					terrainEvent.iterations++;
+					terrainEvent.remainingSeconds = remaining;
+				}
+				var contact = SweptHullTerrain.firstContact(start, end, startHeading, endHeading, startPitch, endPitch,
+						cfg, terrain);
+				if (terrainEvent != null && contact != null) {
+					terrainEvent.sweptContacts++;
+					terrainEvent.lastContactFraction = contact.fraction();
+				}
+				var position = contact == null ? end : contact.position();
+				double heading = contact == null ? endHeading : contact.heading();
+				double pitch = contact == null ? endPitch : contact.pitch();
+				deepestZ = Math.min(deepestZ, position.z());
+				var samples = contact == null
+						? HullGeometry.terrainContactPoints(position, heading, pitch, cfg, terrain)
+						: contact.localPoints();
+				if (terrainEvent != null)
+					terrainEvent.contactPointCount += samples.length;
+				double penetration = 0;
+				for (var local : samples) {
+					var world = HullTerrainGeometry.worldPoint(local, position, heading, pitch);
+					penetration = Math.max(penetration, terrain.elevationAt(world.x(), world.y()) - world.z());
+				}
+				sub.setHeading(heading);
+				sub.setPitch(pitch);
+				sub.setX(position.x());
+				sub.setY(position.y());
+				sub.setZ(position.z());
+				// Reaching absolute crush depth changes contact response immediately: an
+				// imploded hull cannot receive a living hull's restitution impulse.
+				hullPressure.step(sub, 0, deepestZ);
+				if (penetration > 0 || contact != null) {
+					scraping = true;
+					var current = currents.currentAt(position.z());
 					SubCollisionResponse.setLinearVelocity(sub,
-							groundVelocity.subtract(new Vec3(correctedCurrent.x(), correctedCurrent.y(), 0)));
+							incomingLinear.subtract(new Vec3(current.x(), current.y(), 0)));
+					var impact = TerrainContactResponse.apply(sub, position, samples, incomingLinear, incomingYawRate,
+							incomingPitchRate, terrain, currents);
+					impactEnergy = Math.max(impactEnergy, impact.energyJoules());
+					var groundVelocity = sub.velocity().linear().add(new Vec3(current.x(), current.y(), 0));
+					sub.setZ(position.z() + penetration);
+					var correctedCurrent = currents.currentAt(sub.z());
+					if (!correctedCurrent.equals(current)) {
+						// An artificial overlap correction must not add a current-band velocity jump.
+						SubCollisionResponse.setLinearVelocity(sub,
+								groundVelocity.subtract(new Vec3(correctedCurrent.x(), correctedCurrent.y(), 0)));
+					}
+					if (sub.z() >= 0 && sub.verticalSpeed() > 0) {
+						sub.setVerticalSpeed(0);
+					}
 				}
-				if (sub.z() >= 0 && sub.verticalSpeed() > 0) {
-					sub.setVerticalSpeed(0);
+				if (contact == null) {
+					if (terrainEvent != null)
+						terrainEvent.remainingSeconds = 0;
+					break;
 				}
+				remaining *= 1 - contact.fraction();
+				if (terrainEvent != null)
+					terrainEvent.remainingSeconds = remaining;
+				if (remaining <= dt * 1e-9) {
+					break;
+				}
+				start = sub.pose().position();
+				startHeading = heading;
+				startPitch = pitch;
+				var current = currents.currentAt(start.z());
+				incomingLinear = sub.velocity().linear().add(new Vec3(current.x(), current.y(), 0));
+				incomingYawRate = sub.yawRate();
+				incomingPitchRate = sub.surfaceConstrained() ? 0 : sub.pitchRate();
+				end = start.add(incomingLinear.scale(remaining));
+				end = new Vec3(end.x(), end.y(),
+						sub.surfaceConstrained() ? 0 : Math.min(Math.max(0, start.z()), end.z()));
+				endHeading = heading + incomingYawRate * remaining;
+				endPitch = Math.clamp(pitch + incomingPitchRate * remaining, -Math.PI / 4, Math.PI / 4);
 			}
-			if (contact == null) {
-				break;
+			if (sub.hp() > 0) {
+				sub.setHp(
+						Math.max(0, sub.hp() - TerrainImpactEnergy.damage(impactEnergy, cfg.collisionDamageFactor())));
 			}
-			remaining *= 1 - contact.fraction();
-			if (remaining <= dt * 1e-9) {
-				break;
-			}
-			start = sub.pose().position();
-			startHeading = heading;
-			startPitch = pitch;
-			var current = currents.currentAt(start.z());
-			incomingLinear = sub.velocity().linear().add(new Vec3(current.x(), current.y(), 0));
-			incomingYawRate = sub.yawRate();
-			incomingPitchRate = sub.surfaceConstrained() ? 0 : sub.pitchRate();
-			end = start.add(incomingLinear.scale(remaining));
-			end = new Vec3(end.x(), end.y(), sub.surfaceConstrained() ? 0 : Math.min(Math.max(0, start.z()), end.z()));
-			endHeading = heading + incomingYawRate * remaining;
-			endPitch = Math.clamp(pitch + incomingPitchRate * remaining, -Math.PI / 4, Math.PI / 4);
+			double finalHeading = sub.heading() % (2 * Math.PI);
+			sub.setHeading(finalHeading < 0 ? finalHeading + 2 * Math.PI : finalHeading);
+			return new TerrainStep(scraping, deepestZ);
+		} finally {
+			SimulationJfrEvents.finishTerrainMotion(terrainEvent, correlationId, worldSeed, sub, initialStart,
+					hpAtStart);
 		}
-		if (sub.hp() > 0) {
-			sub.setHp(Math.max(0, sub.hp() - TerrainImpactEnergy.damage(impactEnergy, cfg.collisionDamageFactor())));
-		}
-		double finalHeading = sub.heading() % (2 * Math.PI);
-		sub.setHeading(finalHeading < 0 ? finalHeading + 2 * Math.PI : finalHeading);
-		return new TerrainStep(scraping, deepestZ);
 	}
 
 }

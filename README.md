@@ -227,6 +227,44 @@ is alive and no torpedo fired by a dead submarine is still running. The
 
 The final standings combine navigation and combat points.
 
+#### Codex combat diagnostics
+
+Codex-specific test utilities live in `se.hirt.searobots.engine.ships.codex`.
+After installing the API and engine, run a reproducible twenty-match batch against Claude:
+
+```bash
+mvn test-compile exec:java -pl searobots-engine \
+  -Dexec.classpathScope=test \
+  -Dexec.mainClass=se.hirt.searobots.engine.ships.codex.CodexCombatBatch \
+  -Dexec.args="--master=0xdeadbeef --count=20 --csv=/tmp/codex-combat.csv"
+```
+
+The CSV path must be new. The batch records outcomes and wall/CPU timing for each match.
+For detailed simulation and torpedo traces on one seed, use
+`se.hirt.searobots.engine.ships.codex.CodexCombatDiagnostics` with the same test classpath
+and `-Dexec.args="0xdeadbeef"`. For the controlled sonar/TMA gap scenarios, use
+`se.hirt.searobots.engine.ships.codex.CodexTmaCatAndMouseTest` with
+`-Dexec.args="--count=20"`; its main method emits checkpoint CSV diagnostics.
+
+#### Flight Recorder profiling
+
+After compiling the engine tests, record a combat run in a separate JVM:
+
+```bash
+java -XX:StartFlightRecording=filename=/tmp/searobots.jfr,settings=profile,dumponexit=true \
+  -cp searobots-api/target/classes:searobots-engine/target/classes:searobots-engine/target/test-classes \
+  se.hirt.searobots.engine.ships.codex.CodexCombatBatch 0xdeadbeef
+```
+
+The engine emits `se.hirt.searobots.SimulationTick`, `SimulationPhase`, and
+`TerrainMotion` events. Their run ID and world seed connect slow ticks to controller,
+sonar, physics, collision, and listener stages. Terrain motion adds vehicle hit points,
+contact passes, contact fractions, and the remaining tick time. Position fields use metres.
+Tick durations exclude pacing sleeps and pauses. These events default to a 1 ms threshold
+and omit stack traces; execution samples provide the code stacks. With no recording enabled,
+the hooks allocate no event objects. Use JDK Mission Control to correlate the context with
+execution samples, allocations, and GC, or inspect it with `jfr print`.
+
 #### Adding a new competitor
 
 Edit `SubmarineCompetition.main()` and add your controller to the

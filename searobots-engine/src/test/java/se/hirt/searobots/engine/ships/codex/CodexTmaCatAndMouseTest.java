@@ -26,20 +26,22 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
-package se.hirt.searobots.engine;
+package se.hirt.searobots.engine.ships.codex;
 
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 import se.hirt.searobots.api.*;
-import se.hirt.searobots.engine.ships.codex.CodexAttackSub;
+import se.hirt.searobots.engine.EngineTestAccess;
+import se.hirt.searobots.engine.GeneratedWorld;
+import se.hirt.searobots.engine.SonarModel;
+import se.hirt.searobots.engine.SubmarineEntity;
+import se.hirt.searobots.engine.TestHelpers;
 
 import java.awt.Color;
-import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
 import java.util.Random;
 import java.util.stream.Stream;
 
@@ -50,7 +52,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * engine produces every observation. Ground truth is used only to script motion and score error,
  * and internal tracker identity is never supplied to the controller. No opponent is used.
  */
-class CodexTmaCatAndMouseTest {
+public class CodexTmaCatAndMouseTest {
 
 	private static final int TICK_RATE = 50;
 	private static final double DT = 1.0 / TICK_RATE;
@@ -60,7 +62,6 @@ class CodexTmaCatAndMouseTest {
 	private static final long REACQUIRE_FIX_TICK = 240L * TICK_RATE;
 	private static final long INTERNAL_PAIR_KEY = 1L; // listener ID 0, source ID 1
 	private static final long MASTER_SEED = 0x544D41434154L;
-	private static final Field TRACKERS = trackerField();
 
 	@ParameterizedTest(name = "seed={0}, gap={1}s")
 	@MethodSource("sensorSeeds")
@@ -157,7 +158,7 @@ class CodexTmaCatAndMouseTest {
 		var entities = List.of(own, target);
 		long gapEndTick = GAP_START_TICK + gapSeconds * TICK_RATE;
 		var checkpoints = new ArrayList<Checkpoint>();
-		ContactTracker firstTracker = null;
+		Object firstTracker = null;
 		boolean sameTracker = true;
 		int pingRequests = 0, shotsBeforeGap = 0, shotsDuringGap = 0, shotsAfterPassive = 0, shotsAfterActive = 0;
 
@@ -173,13 +174,14 @@ class CodexTmaCatAndMouseTest {
 				own.setActiveSonarCooldown(0);
 				own.activeSonarPing();
 			}
-			var measurements = sonar.computeContacts(tick, entities, world.terrain(), List.of()).get(own.id());
-			var tracker = internalTracker(sonar);
+			var measurements = EngineTestAccess.computeSonarContacts(sonar, tick, entities, world.terrain(), List.of(),
+					own.id());
+			var tracker = EngineTestAccess.sonarTracker(sonar, INTERNAL_PAIR_KEY).orElse(null);
 			if (tracker != null) {
 				if (firstTracker == null) {
-					firstTracker = tracker;
+					firstTracker = tracker.identity();
 				} else {
-					sameTracker &= tracker == firstTracker;
+					sameTracker &= tracker.identity() == firstTracker;
 				}
 			} else if (firstTracker != null) {
 				sameTracker = false;
@@ -219,8 +221,9 @@ class CodexTmaCatAndMouseTest {
 	}
 
 	private static Checkpoint checkpoint(
-		String phase, long tick, SubmarineEntity own, SubmarineEntity target, SonarModel.SonarResult measurements,
-		ContactTracker tracker, TestHelpers.CapturedOutput output) {
+		String phase, long tick, SubmarineEntity own, SubmarineEntity target,
+		EngineTestAccess.SonarMeasurements measurements, EngineTestAccess.SonarTrackerProbe tracker,
+		TestHelpers.CapturedOutput output) {
 		var passive = measurements.passiveContacts();
 		var active = measurements.activeReturns();
 		SonarContact contact = !active.isEmpty() ? active.getFirst() : passive.isEmpty() ? null : passive.getFirst();
@@ -290,25 +293,6 @@ class CodexTmaCatAndMouseTest {
 		double change = heading - sub.heading();
 		sub.setYawRate(Math.atan2(Math.sin(change), Math.cos(change)) / DT);
 		sub.setHeading(heading);
-	}
-
-	private static Field trackerField() {
-		try {
-			var field = SonarModel.class.getDeclaredField("trackers");
-			field.setAccessible(true);
-			return field;
-		} catch (ReflectiveOperationException exception) {
-			throw new IllegalStateException("The shared-engine continuity probe is unavailable", exception);
-		}
-	}
-
-	@SuppressWarnings("unchecked")
-	private static ContactTracker internalTracker(SonarModel model) {
-		try {
-			return ((Map<Long, ContactTracker>) TRACKERS.get(model)).get(INTERNAL_PAIR_KEY);
-		} catch (IllegalAccessException exception) {
-			throw new IllegalStateException("The shared-engine continuity probe is unavailable", exception);
-		}
 	}
 
 	private record Checkpoint(String phase, long tick, boolean heard, boolean active, double engineQuality,

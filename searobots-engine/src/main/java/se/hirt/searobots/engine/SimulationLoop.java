@@ -33,6 +33,7 @@ import se.hirt.searobots.api.*;
 import java.awt.*;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 
 public final class SimulationLoop implements SimClock {
@@ -81,9 +82,10 @@ public final class SimulationLoop implements SimClock {
 		GeneratedWorld world, List<SubmarineController> controllers, List<VehicleConfig> vehicleConfigs,
 		List<Double> headings, SimulationListener listener) {
 		Objects.requireNonNull(vehicleConfigs, "vehicleConfigs must not be null");
+		final long correlationId = SimulationJfrEvents.nextRunId();
 		state = State.INITIALIZING;
 		var config = world.config();
-		var physics = new SubmarinePhysics(config);
+		var physics = new SubmarinePhysics(config, correlationId);
 		var sonar = new SonarModel(config.worldSeed(), config.maxSubSpeed());
 		double dt = 1.0 / config.tickRateHz();
 
@@ -137,282 +139,337 @@ public final class SimulationLoop implements SimClock {
 					break;
 				stepOnce = false;
 				state = State.RUNNING;
+				var tickEvent = SimulationJfrEvents.beginTick();
+				try {
 
-				// Notify controllers on first active tick, not during setup pause.
-				// This prevents controllers from gaining extra processing time
-				// while viewers are initializing.
-				if (!matchStarted) {
-					for (var e : entities) {
-						e.controller().onMatchStart(matchContext);
-					}
-					matchStarted = true;
-				}
-
-				final long currentTick = tick;
-
-				// Compute sonar contacts (based on current positions, before controller runs)
-				var sonarResults = sonar.computeContacts(currentTick, entities, torpedoes, world.terrain(),
-						world.thermalLayers());
-
-				// Build input, call controller, advance physics
-				for (var entity : entities) {
-					if (entity.forfeited())
-						continue;
-
-					if (entity.hp() <= 0) {
-						// Dead sub: no controller, but physics still runs for sinking.
-						// Disengage clutch (prop freewheels), flood ballast (sink).
-						entity.setThrottle(0);
-						entity.setEngineClutch(false);
-						entity.setBallast(0); // full flood = maximum negative buoyancy
-						entity.setRudder(0);
-						entity.setSternPlanes(0);
-						physics.step(entity, dt, world.terrain(), world.currentField(), config.battleArea());
-						continue;
+					// Notify controllers on first active tick, not during setup pause.
+					// This prevents controllers from gaining extra processing time
+					// while viewers are initializing.
+					if (!matchStarted) {
+						for (var e : entities) {
+							e.controller().onMatchStart(matchContext);
+						}
+						matchStarted = true;
 					}
 
-					var sr = sonarResults.getOrDefault(entity.id(),
-							new SonarModel.SonarResult(List.of(), List.of(), 0));
-					var explosionEvs = entity.drainExplosionEvents();
-					var input = new SubmarineInput() {
-						@Override
-						public long tick() {
-							return currentTick;
-						}
+					final long currentTick = tick;
 
-						@Override
-						public double deltaTimeSeconds() {
-							return dt;
-						}
-
-						@Override
-						public SubmarineState self() {
-							return entity.state();
-						}
-
-						@Override
-						public EnvironmentSnapshot environment() {
-							return envSnapshot;
-						}
-
-						@Override
-						public double recommendedTerrainClearance() {
-							return entity.vehicleConfig().terrainClearance();
-						}
-
-						@Override
-						public List<SonarContact> sonarContacts() {
-							return sr.passiveContacts();
-						}
-
-						@Override
-						public List<SonarContact> activeSonarReturns() {
-							return sr.activeReturns();
-						}
-
-						@Override
-						public int activeSonarCooldownTicks() {
-							return sr.cooldownTicks();
-						}
-
-						@Override
-						public List<ExplosionEvent> explosionEvents() {
-							return explosionEvs;
-						}
-					};
-
-					entity.controller().onTick(input, entity);
-					physics.step(entity, dt, world.terrain(), world.currentField(), config.battleArea());
-				}
-
-				// Process pending torpedo launches
-				for (var entity : entities) {
-					var cmd = entity.pendingTorpedoLaunch();
-					if (cmd != null) {
-						entity.clearPendingTorpedoLaunch();
-						// Load the torpedo into the submarine's next tube. It rides in the tube (see TorpedoTubes) and
-						// only gets its launch context, controller and physics once it has cleared the muzzle.
-						int tubeIndex = nextTube.merge(entity.id(), 1, Integer::sum) - 1;
-						var tube = TorpedoTubes.TUBES.get(tubeIndex % TorpedoTubes.TUBES.size());
-						double fuseR = Math.clamp(cmd.fuseRadius(), config.minFuseRadius(), config.maxFuseRadius());
-
-						var customCtrl = entity.controller().createTorpedoController();
-						var torpCtrl = customCtrl != null ? customCtrl
-								: new se.hirt.searobots.engine.ships.SimpleTorpedoController();
-						var torp = new TorpedoEntity(nextTorpedoId++, entity.id(), VehicleConfig.torpedo(), torpCtrl,
-								new Vec3(entity.x(), entity.y(), entity.z()), entity.heading(), entity.pitch(), fuseR,
-								entity.color());
-						torp.loadIntoTube(entity, tube, dt, cmd.missionData() != null ? cmd.missionData() : "");
-						torp.setLaunchTick(tick);
-						pendingLaunches.add(torp);
+					// Compute sonar contacts (based on current positions, before controller runs)
+					Map<Integer, SonarModel.SonarResult> sonarResults;
+					var sonarEvent = SimulationJfrEvents.beginPhase();
+					try {
+						sonarResults = sonar.computeContacts(currentTick, entities, torpedoes, world.terrain(),
+								world.thermalLayers());
+					} finally {
+						SimulationJfrEvents.finishPhase(sonarEvent, "sonar", correlationId, config.worldSeed(), tick,
+								entities.size(), torpedoes.size());
 					}
-					entity.decrementLaunchTransient();
-				}
-				torpedoes.addAll(pendingLaunches);
-				pendingLaunches.clear();
 
-				// Torpedo controller + physics
-				for (var torp : torpedoes) {
-					if (!torp.alive())
-						continue;
+					// Build input, call controller, advance physics
+					for (var entity : entities) {
+						if (entity.forfeited())
+							continue;
 
-					// Still in its tube: carried by the submarine until it has cleared the muzzle, then released
-					if (torp.inTube()) {
-						var owner = torp.tubeOwner();
-						boolean ownerGone = owner.hp() <= 0 || owner.forfeited();
-						if (torp.advanceInTube(dt) || ownerGone) {
-							torp.leaveTube();
+						if (entity.hp() <= 0) {
+							// Dead sub: no controller, but physics still runs for sinking.
+							// Disengage clutch (prop freewheels), flood ballast (sink).
+							entity.setThrottle(0);
+							entity.setEngineClutch(false);
+							entity.setBallast(0); // full flood = maximum negative buoyancy
+							entity.setRudder(0);
+							entity.setSternPlanes(0);
+							var physicsEvent = SimulationJfrEvents.beginPhase();
+							try {
+								physics.step(entity, dt, world.terrain(), world.currentField(), config.battleArea());
+							} finally {
+								SimulationJfrEvents.finishPhase(physicsEvent, "submarine physics", correlationId,
+										config.worldSeed(), tick, entity, entities.size(), torpedoes.size());
+							}
+							continue;
+						}
+
+						var sr = sonarResults.getOrDefault(entity.id(),
+								new SonarModel.SonarResult(List.of(), List.of(), 0));
+						var explosionEvs = entity.drainExplosionEvents();
+						var input = new SubmarineInput() {
+							@Override
+							public long tick() {
+								return currentTick;
+							}
+
+							@Override
+							public double deltaTimeSeconds() {
+								return dt;
+							}
+
+							@Override
+							public SubmarineState self() {
+								return entity.state();
+							}
+
+							@Override
+							public EnvironmentSnapshot environment() {
+								return envSnapshot;
+							}
+
+							@Override
+							public double recommendedTerrainClearance() {
+								return entity.vehicleConfig().terrainClearance();
+							}
+
+							@Override
+							public List<SonarContact> sonarContacts() {
+								return sr.passiveContacts();
+							}
+
+							@Override
+							public List<SonarContact> activeSonarReturns() {
+								return sr.activeReturns();
+							}
+
+							@Override
+							public int activeSonarCooldownTicks() {
+								return sr.cooldownTicks();
+							}
+
+							@Override
+							public List<ExplosionEvent> explosionEvents() {
+								return explosionEvs;
+							}
+						};
+
+						var controllerEvent = SimulationJfrEvents.beginPhase();
+						try {
+							entity.controller().onTick(input, entity);
+						} finally {
+							SimulationJfrEvents.finishPhase(controllerEvent, "submarine controller", correlationId,
+									config.worldSeed(), tick, entity, entities.size(), torpedoes.size());
+						}
+						var physicsEvent = SimulationJfrEvents.beginPhase();
+						try {
+							physics.step(entity, dt, world.terrain(), world.currentField(), config.battleArea());
+						} finally {
+							SimulationJfrEvents.finishPhase(physicsEvent, "submarine physics", correlationId,
+									config.worldSeed(), tick, entity, entities.size(), torpedoes.size());
+						}
+					}
+
+					// Process pending torpedo launches
+					for (var entity : entities) {
+						var cmd = entity.pendingTorpedoLaunch();
+						if (cmd != null) {
+							entity.clearPendingTorpedoLaunch();
+							// Load the torpedo into the submarine's next tube. It rides in the tube (see TorpedoTubes) and
+							// only gets its launch context, controller and physics once it has cleared the muzzle.
+							int tubeIndex = nextTube.merge(entity.id(), 1, Integer::sum) - 1;
+							var tube = TorpedoTubes.TUBES.get(tubeIndex % TorpedoTubes.TUBES.size());
+							double fuseR = Math.clamp(cmd.fuseRadius(), config.minFuseRadius(), config.maxFuseRadius());
+
+							var customCtrl = entity.controller().createTorpedoController();
+							var torpCtrl = customCtrl != null ? customCtrl
+									: new se.hirt.searobots.engine.ships.SimpleTorpedoController();
+							var torp = new TorpedoEntity(nextTorpedoId++, entity.id(), VehicleConfig.torpedo(),
+									torpCtrl, new Vec3(entity.x(), entity.y(), entity.z()), entity.heading(),
+									entity.pitch(), fuseR, entity.color());
+							torp.loadIntoTube(entity, tube, dt, cmd.missionData() != null ? cmd.missionData() : "");
 							torp.setLaunchTick(tick);
-							var launchPos = new Vec3(torp.x(), torp.y(), torp.z());
-							torp.controller().onLaunch(new TorpedoLaunchContext(config, world.terrain(), launchPos,
-									torp.heading(), torp.pitch(), torp.missionData()));
+							pendingLaunches.add(torp);
 						}
-						continue;
+						entity.decrementLaunchTransient();
+					}
+					torpedoes.addAll(pendingLaunches);
+					pendingLaunches.clear();
+
+					// Torpedo controller + physics
+					for (var torp : torpedoes) {
+						if (!torp.alive())
+							continue;
+
+						// Still in its tube: carried by the submarine until it has cleared the muzzle, then released
+						if (torp.inTube()) {
+							var owner = torp.tubeOwner();
+							boolean ownerGone = owner.hp() <= 0 || owner.forfeited();
+							if (torp.advanceInTube(dt) || ownerGone) {
+								torp.leaveTube();
+								torp.setLaunchTick(tick);
+								var launchPos = new Vec3(torp.x(), torp.y(), torp.z());
+								torp.controller().onLaunch(new TorpedoLaunchContext(config, world.terrain(), launchPos,
+										torp.heading(), torp.pitch(), torp.missionData()));
+							}
+							continue;
+						}
+
+						// Manual detonation request
+						if (torp.detonateRequested()) {
+							handleDetonation(torp, entities, config, false);
+							continue;
+						}
+
+						// Build torpedo input with sonar contacts
+						var torpOutput = torp.createOutput();
+						final long torpTick = tick;
+						var torpSonar = sonarResults.getOrDefault(torp.id(),
+								new SonarModel.SonarResult(List.of(), List.of(), 0));
+						var torpInput = new TorpedoInput() {
+							@Override
+							public long tick() {
+								return torpTick;
+							}
+
+							@Override
+							public double deltaTimeSeconds() {
+								return dt;
+							}
+
+							@Override
+							public Pose self() {
+								return torp.pose();
+							}
+
+							@Override
+							public Velocity velocity() {
+								return torp.velocity();
+							}
+
+							@Override
+							public Vec3 groundVelocity() {
+								var current = world.currentField().currentAt(torp.z());
+								return torp.velocity().linear().add(new Vec3(current.x(), current.y(), 0));
+							}
+
+							@Override
+							public double speed() {
+								return torp.speed();
+							}
+
+							@Override
+							public double fuelRemaining() {
+								return torp.fuelRemaining();
+							}
+
+							@Override
+							public List<SonarContact> sonarContacts() {
+								return torpSonar.passiveContacts();
+							}
+
+							@Override
+							public List<SonarContact> activeSonarReturns() {
+								return torpSonar.activeReturns();
+							}
+
+							@Override
+							public int activeSonarCooldownTicks() {
+								return torpSonar.cooldownTicks();
+							}
+						};
+						var controllerEvent = SimulationJfrEvents.beginPhase();
+						try {
+							torp.controller().onTick(torpInput, torpOutput);
+						} finally {
+							SimulationJfrEvents.finishPhase(controllerEvent, "torpedo controller", correlationId,
+									config.worldSeed(), tick, torp, entities.size(), torpedoes.size());
+						}
+
+						if (TORP_TRACE) {
+							traceTorpedoApproach(tick, torp, entities);
+						}
+
+						// Check detonation request from controller
+						if (torp.detonateRequested()) {
+							handleDetonation(torp, entities, config, false);
+							continue;
+						}
+
+						// Torpedo physics
+						var physicsEvent = SimulationJfrEvents.beginPhase();
+						try {
+							torpedoPhysics.step(torp, dt, world.terrain(), world.currentField(), config.battleArea());
+						} finally {
+							SimulationJfrEvents.finishPhase(physicsEvent, "torpedo physics", correlationId,
+									config.worldSeed(), tick, torp, entities.size(), torpedoes.size());
+						}
 					}
 
-					// Manual detonation request
-					if (torp.detonateRequested()) {
-						handleDetonation(torp, entities, config, false);
-						continue;
+					var collisionEvent = SimulationJfrEvents.beginPhase();
+					try {
+						// Proximity fuse check against sub ellipsoid (only after arming delay)
+						for (var torp : torpedoes) {
+							checkProximityFuse(torp, entities, config, tick);
+						}
+
+						// Handle detonations that weren't from proximity fuse
+						// (terrain impact, manual detonation, stall)
+						for (var t : torpedoes) {
+							if (t.detonated() && !t.explosionProcessed()) {
+								handleDetonation(t, entities, config, false);
+							}
+						}
+
+						// Sub-to-sub collision (ramming)
+						checkSubCollisions(entities, world.currentField(), world.terrain());
+						for (var entity : entities) {
+							physics.enforceCrushDepth(entity);
+						}
+					} finally {
+						SimulationJfrEvents.finishPhase(collisionEvent, "collisions", correlationId, config.worldSeed(),
+								tick, entities.size(), torpedoes.size());
 					}
 
-					// Build torpedo input with sonar contacts
-					var torpOutput = torp.createOutput();
-					final long torpTick = tick;
-					var torpSonar = sonarResults.getOrDefault(torp.id(),
-							new SonarModel.SonarResult(List.of(), List.of(), 0));
-					var torpInput = new TorpedoInput() {
-						@Override
-						public long tick() {
-							return torpTick;
-						}
+					// Snapshots BEFORE removing dead torpedoes, so the viewer sees
+					// detonated torpedoes for one tick and can create explosion effects.
+					var snapshots = entities.stream().map(SubmarineEntity::snapshot).toList();
+					var torpSnapshots = torpedoes.stream().map(TorpedoEntity::snapshot).toList();
 
-						@Override
-						public double deltaTimeSeconds() {
-							return dt;
-						}
+					// Clear per-tick published data after snapshot
+					entities.forEach(SubmarineEntity::clearContactEstimates);
+					entities.forEach(SubmarineEntity::clearWaypoints);
+					entities.forEach(SubmarineEntity::clearStrategicWaypoints);
+					entities.forEach(SubmarineEntity::clearFiringSolution);
+					// Note: torpedo pings are NOT cleared here. They're cleared by the sonar
+					// model on the next tick's computeContacts(), same as submarine pings.
 
-						@Override
-						public Pose self() {
-							return torp.pose();
-						}
+					// Post-tick: consume pings, tick cooldowns
+					sonar.postTick(entities);
+					torpedoes.forEach(TorpedoEntity::decrementSonarCooldown);
 
-						@Override
-						public Velocity velocity() {
-							return torp.velocity();
-						}
-
-						@Override
-						public Vec3 groundVelocity() {
-							var current = world.currentField().currentAt(torp.z());
-							return torp.velocity().linear().add(new Vec3(current.x(), current.y(), 0));
-						}
-
-						@Override
-						public double speed() {
-							return torp.speed();
-						}
-
-						@Override
-						public double fuelRemaining() {
-							return torp.fuelRemaining();
-						}
-
-						@Override
-						public List<SonarContact> sonarContacts() {
-							return torpSonar.passiveContacts();
-						}
-
-						@Override
-						public List<SonarContact> activeSonarReturns() {
-							return torpSonar.activeReturns();
-						}
-
-						@Override
-						public int activeSonarCooldownTicks() {
-							return torpSonar.cooldownTicks();
-						}
-					};
-					torp.controller().onTick(torpInput, torpOutput);
-
-					if (TORP_TRACE) {
-						traceTorpedoApproach(tick, torp, entities);
+					// Notify listener
+					var listenerEvent = SimulationJfrEvents.beginPhase();
+					try {
+						listener.onTick(tick, snapshots, torpSnapshots);
+					} finally {
+						SimulationJfrEvents.finishPhase(listenerEvent, "listener", correlationId, config.worldSeed(),
+								tick, entities.size(), torpedoes.size());
 					}
 
-					// Check detonation request from controller
-					if (torp.detonateRequested()) {
-						handleDetonation(torp, entities, config, false);
-						continue;
+					// Remove dead torpedoes (after snapshot and listener notification)
+					final long logTick = tick;
+					torpedoes.removeIf(t -> {
+						if (t.alive())
+							return false;
+						String fate = t.detonated() ? "DETONATED" : "LOST";
+						if (!t.detonated()) {
+							if (t.speed() < TorpedoEntity.minimumSpeed())
+								fate = "STALLED (sank)";
+							else if (t.fuelRemaining() <= 0 && t.speed() < 1)
+								fate = "FUEL DEPLETED (sank)";
+							else
+								fate = "TERRAIN/BOUNDARY";
+						}
+						System.out.printf("[Torpedo %d] %s at tick %d  pos=(%.0f,%.0f,%.0f) speed=%.1f fuel=%.1f%n",
+								t.id(), fate, logTick, t.x(), t.y(), t.z(), t.speed(), t.fuelRemaining());
+						return true;
+					});
+
+					// End the match as soon as the outcome is decided: no point simulating
+					// a lone survivor for the remaining duration.
+					if (matchDecided(entities, torpedoes)) {
+						System.out.printf("[Match] Outcome decided at tick %d (%ds): ending early%n", tick,
+								tick / config.tickRateHz());
+						break;
 					}
-
-					// Torpedo physics
-					torpedoPhysics.step(torp, dt, world.terrain(), world.currentField(), config.battleArea());
-				}
-
-				// Proximity fuse check against sub ellipsoid (only after arming delay)
-				for (var torp : torpedoes) {
-					checkProximityFuse(torp, entities, config, tick);
-				}
-
-				// Handle detonations that weren't from proximity fuse
-				// (terrain impact, manual detonation, stall)
-				for (var t : torpedoes) {
-					if (t.detonated() && !t.explosionProcessed()) {
-						handleDetonation(t, entities, config, false);
-					}
-				}
-
-				// Sub-to-sub collision (ramming)
-				checkSubCollisions(entities, world.currentField(), world.terrain());
-				for (var entity : entities) {
-					physics.enforceCrushDepth(entity);
-				}
-
-				// Snapshots BEFORE removing dead torpedoes, so the viewer sees
-				// detonated torpedoes for one tick and can create explosion effects.
-				var snapshots = entities.stream().map(SubmarineEntity::snapshot).toList();
-				var torpSnapshots = torpedoes.stream().map(TorpedoEntity::snapshot).toList();
-
-				// Clear per-tick published data after snapshot
-				entities.forEach(SubmarineEntity::clearContactEstimates);
-				entities.forEach(SubmarineEntity::clearWaypoints);
-				entities.forEach(SubmarineEntity::clearStrategicWaypoints);
-				entities.forEach(SubmarineEntity::clearFiringSolution);
-				// Note: torpedo pings are NOT cleared here. They're cleared by the sonar
-				// model on the next tick's computeContacts(), same as submarine pings.
-
-				// Post-tick: consume pings, tick cooldowns
-				sonar.postTick(entities);
-				torpedoes.forEach(TorpedoEntity::decrementSonarCooldown);
-
-				// Notify listener
-				listener.onTick(tick, snapshots, torpSnapshots);
-
-				// Remove dead torpedoes (after snapshot and listener notification)
-				final long logTick = tick;
-				torpedoes.removeIf(t -> {
-					if (t.alive())
-						return false;
-					String fate = t.detonated() ? "DETONATED" : "LOST";
-					if (!t.detonated()) {
-						if (t.speed() < TorpedoEntity.minimumSpeed())
-							fate = "STALLED (sank)";
-						else if (t.fuelRemaining() <= 0 && t.speed() < 1)
-							fate = "FUEL DEPLETED (sank)";
-						else
-							fate = "TERRAIN/BOUNDARY";
-					}
-					System.out.printf("[Torpedo %d] %s at tick %d  pos=(%.0f,%.0f,%.0f) speed=%.1f fuel=%.1f%n", t.id(),
-							fate, logTick, t.x(), t.y(), t.z(), t.speed(), t.fuelRemaining());
-					return true;
-				});
-
-				// End the match as soon as the outcome is decided: no point simulating
-				// a lone survivor for the remaining duration.
-				if (matchDecided(entities, torpedoes)) {
-					System.out.printf("[Match] Outcome decided at tick %d (%ds): ending early%n", tick,
-							tick / config.tickRateHz());
-					break;
+				} finally {
+					SimulationJfrEvents.finishTick(tickEvent, correlationId, config.worldSeed(), tick, entities.size(),
+							torpedoes.size());
 				}
 
 				// Timing

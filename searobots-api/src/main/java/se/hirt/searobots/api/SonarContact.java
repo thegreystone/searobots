@@ -38,9 +38,9 @@ package se.hirt.searobots.api;
  *            measurements include persistent calibration uncertainty and correlated wander; they
  *            are not the engine's exact sonar-equation value or a reliable absolute range cue.
  * @param range
- *            estimated range in meters. Precise for active returns; for passive contacts it is the
- *            engine's TMA estimate, which starts with a large bias and converges only through
- *            own-ship maneuvering. 0 if no estimate exists.
+ *            estimated slant range in meters (including vertical separation). Precise for active
+ *            returns; for passive contacts it is the engine's TMA estimate, which starts with a
+ *            large bias and converges only through own-ship maneuvering. 0 if no estimate exists.
  * @param isActive
  *            true if this contact came from an active sonar return
  * @param estimatedSpeed
@@ -66,7 +66,8 @@ package se.hirt.searobots.api;
  *            An accurate active range fix alone does not resolve target heading.
  * @param estimatedDepth
  *            estimated target depth in meters (negative = below surface), derived from vertical
- *            bearing angle and range for active returns. NaN if unavailable (passive contacts).
+ *            bearing angle and range for active returns. Submarine returns have 1-sigma depth error
+ *            of roughly max(5 m, 5% of range). NaN if unavailable (passive contacts).
  * @param classification
  *            acoustic classification of the contact, based on blade-rate tonals, broadband
  *            signature, and speed. Requires sufficient signal excess to classify; faint contacts
