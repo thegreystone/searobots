@@ -33,7 +33,6 @@ import se.hirt.searobots.api.CurrentField;
 import se.hirt.searobots.api.MatchConfig;
 import se.hirt.searobots.api.TerrainMap;
 import se.hirt.searobots.api.Vec3;
-import se.hirt.searobots.api.VehicleConfig;
 
 /**
  * Simplified submarine physics based on Fossen's 6-DOF formulation. See docs/physics-model.md for
@@ -86,6 +85,7 @@ public final class SubmarinePhysics {
 		// Dead subs still get physics (sinking to the bottom)
 
 		var cfg = sub.vehicleConfig();
+		double wreckForce = WreckDynamics.advance(sub, dt);
 		double previousX = sub.x();
 		double previousY = sub.y();
 		double previousZ = sub.z();
@@ -125,15 +125,32 @@ public final class SubmarinePhysics {
 			thrust = cfg.maxThrust() * cfg.reverseThrustFactor() * actualThrottle * thrustFactor;
 		}
 		double speed = sub.speed();
-		double drag = cfg.dragCoeff() * speed * Math.abs(speed);
-		// Extra drag from windmilling prop when clutch engaged at zero throttle
-		if (clutchEngaged && actualThrottle == 0) {
-			drag += cfg.dragCoeff() * cfg.propDragFactor() * speed * Math.abs(speed);
+		if (actualThrottle < 0 && speed <= -cfg.maxReverseSpeed()) {
+			// The engine cannot drive a hull farther beyond its astern operating limit.
+			// Collision-imparted drift still decays through water drag rather than a speed clamp.
+			thrust = 0;
 		}
-		speed += (thrust - drag) / cfg.massSurge() * dt;
-		// Cap reverse speed; hull form creates enormous drag going backwards
-		if (speed < -cfg.maxReverseSpeed())
-			speed = -cfg.maxReverseSpeed();
+		double freeSpeed = speed + thrust / cfg.massSurge() * dt;
+		double dragCoefficient = cfg.dragCoeff();
+		if (freeSpeed < 0 && cfg.maxReverseSpeed() > 0) {
+			// Poor stern-first streamlining sets the full-power astern equilibrium. Use the
+			// configured reverse thrust, so submarine and ship operating speeds stay familiar.
+			dragCoefficient = Math.max(dragCoefficient,
+					cfg.maxThrust() * cfg.reverseThrustFactor() / (cfg.maxReverseSpeed() * cfg.maxReverseSpeed()));
+		}
+		// Extra drag from windmilling prop when clutch engaged at zero throttle.
+		if (clutchEngaged && actualThrottle == 0) {
+			dragCoefficient *= 1 + cfg.propDragFactor();
+		}
+		if (freeSpeed < 0) {
+			// Backward Euler for quadratic drag is dissipative even after a strong collision,
+			// and its force balance cannot drive an initially slower hull past the astern limit.
+			double magnitude = -freeSpeed;
+			speed = -2 * magnitude / (1 + Math.sqrt(1 + 4 * dragCoefficient * dt * magnitude / cfg.massSurge()));
+		} else {
+			double drag = dragCoefficient * speed * Math.abs(speed);
+			speed += (thrust - drag) / cfg.massSurge() * dt;
+		}
 		sub.setSpeed(speed);
 
 		// 2b. Control surface slew: rudder and planes take time to move
@@ -171,7 +188,7 @@ public final class SubmarinePhysics {
 		// Effective inertia increases with v² (centrifugal resistance at high speed).
 		// Higher coefficient = bigger difference between slow-speed and flank-speed turning.
 		double baseInertia = cfg.massSurge() * cfg.rotationalInertia();
-		double speedDamping = baseInertia * 0.05 * speed * Math.abs(speed);
+		double speedDamping = baseInertia * 0.05 * speed * speed;
 		double effectiveInertia = baseInertia + speedDamping;
 
 		// Steady-state yaw rate: what the rudder can sustain
@@ -196,7 +213,7 @@ public final class SubmarinePhysics {
 		sub.setHeading(heading);
 
 		// 4. Pitch: first-order filter toward steady-state pitch rate (same approach as yaw)
-		if (!cfg.surfaceLocked() && cfg.planesArea() > 0) {
+		if (!sub.surfaceConstrained() && (cfg.planesArea() > 0 || sub.hp() <= 0)) {
 			double planesAngle = actualPlanes * Math.PI / 4;
 			double planesCl = liftCoefficient(planesAngle, cfg.stallAngle());
 			double pitchMoment = 0.5 * WATER_DENSITY * speed * Math.abs(speed) * cfg.planesArea() * planesCl
@@ -211,11 +228,11 @@ public final class SubmarinePhysics {
 			double lateralArea = 4.0 * cfg.hullHalfLength() * cfg.hullHalfBeam();
 			double hullPitchArm = cfg.hullHalfLength() / 3.0;
 			double hullPitchCl = 0.10;
-			restoringMoment += 0.5 * WATER_DENSITY * speed * Math.abs(speed) * lateralArea * hullPitchCl * hullPitchArm
+			restoringMoment += 0.5 * WATER_DENSITY * speed * speed * lateralArea * hullPitchCl * hullPitchArm
 					* Math.sin(sub.pitch());
 			// Effective inertia with speed-dependent resistance
 			double pitchBaseInertia = cfg.massHeave() * cfg.rotationalInertia();
-			double pitchSpeedDamping = pitchBaseInertia * 0.05 * speed * Math.abs(speed);
+			double pitchSpeedDamping = pitchBaseInertia * 0.05 * speed * speed;
 			double pitchEffectiveInertia = pitchBaseInertia + pitchSpeedDamping;
 
 			double pitchRateSteady = (pitchMoment - restoringMoment) / pitchEffectiveInertia;
@@ -240,7 +257,7 @@ public final class SubmarinePhysics {
 
 		// 4. Ballast: slew actual ballast toward commanded ballast (tanks take time to flood/blow)
 		double actual = sub.actualBallast();
-		double buoyancyForce = 0;
+		double buoyancyForce = wreckForce;
 		if (cfg.hasBallast()) {
 			double commanded = sub.ballast();
 			double maxChange = cfg.ballastSlewRate() * dt;
@@ -253,15 +270,15 @@ public final class SubmarinePhysics {
 			sub.setActualBallast(actual);
 
 			// Buoyancy force from ballast: 0.5 = neutral, <0.5 = heavy (sink), >0.5 = light (rise)
-			buoyancyForce = (actual - 0.5) * 2.0 * cfg.ballastForceMax();
+			buoyancyForce += (actual - 0.5) * 2.0 * cfg.ballastForceMax();
 		}
 
 		// Current vertical speed
 		double verticalSpeed = sub.verticalSpeed();
 
-		if (!cfg.surfaceLocked()) {
+		if (!sub.surfaceConstrained()) {
 			// Vertical drag (proportional to v^2, large cross-section)
-			double verticalDrag = cfg.verticalDragCoeff() * verticalSpeed * Math.abs(verticalSpeed);
+			double verticalDrag = WreckDynamics.verticalDragCoefficient(sub) * verticalSpeed * Math.abs(verticalSpeed);
 
 			// Vertical acceleration: buoyancy force minus drag, divided by heave mass
 			verticalSpeed += (buoyancyForce - verticalDrag) / cfg.massHeave() * dt;
@@ -307,86 +324,38 @@ public final class SubmarinePhysics {
 		}
 
 		// For surfaceLocked vehicles, force z=0 and zero vertical speed
-		if (cfg.surfaceLocked()) {
+		if (sub.surfaceConstrained()) {
 			newZ = 0;
 			sub.setVerticalSpeed(0);
 			contactVerticalSpeed = 0;
 		}
 
-		// Pressure applies to the deepest centre position reached this tick. Terrain correction
-		// must not rescue a hull that has already crossed its absolute crush depth.
-		hullPressure.step(sub, dt, Math.min(sub.z(), newZ));
-
-		// 7. Terrain collision: cover the curved hull, appendages and terrain cells beneath it.
-		var samples = HullGeometry.terrainContactPoints(new Vec3(newX, newY, newZ), heading, pitch, cfg, terrain);
-		double[][] points = hullPoints(newX, newY, heading, pitch, samples);
-
-		// Navigation margins belong to controllers. Only the physical contact samples
-		// can ground, damage or slow a hull; neither living hulls nor wrecks get an
-		// invisible safety shell that lifts them off the seabed or out of the water.
-		double worstPenetration = terrainPenetration(points, newZ, terrain);
-		boolean scraping = false;
-		if (worstPenetration > 0) {
-			scraping = true;
-			// Measure the incoming motion before correcting overlap or changing the bounce pose.
-			// Rotation and currents move contact points even when the centre has no surge.
-			var impact = new TerrainImpact(0, 0);
-			if (sub.hp() > 0) {
-				// Track the same material points in both poses. Independently querying adaptive
-				// support points at the previous pose would turn a changing sample into velocity.
-				var previousPoints = hullPoints(previousX, previousY, previousHeading, previousPitch, samples);
-				impact = terrainImpact(points, newX, newY, newZ, previousPoints, contactVerticalSpeed, heading, pitch,
-						cfg, terrain, dt);
-			}
-			newZ = newZ + worstPenetration;
-
-			if (sub.hp() <= 0) {
-				// Dead sub: settle on the bottom, no bounce, no damage.
-				// Bleed all speed, align pitch with terrain slope.
-				sub.setVerticalSpeed(0);
-				sub.setSpeed(speed * 0.90); // drag to a stop
-				sub.setYawRate(sub.yawRate() * 0.9);
-				sub.setPitchRate(sub.pitchRate() * 0.9);
-
-				// Compute terrain slope along the sub's heading to set rest pitch.
-				// Sample terrain at bow and stern to find the slope angle.
-				double halfLen = cfg.hullHalfLength();
-				double bowX = newX + Math.sin(heading) * halfLen;
-				double bowY = newY + Math.cos(heading) * halfLen;
-				double sternX = newX - Math.sin(heading) * halfLen;
-				double sternY = newY - Math.cos(heading) * halfLen;
-				double bowFloor = terrain.elevationAt(bowX, bowY);
-				double sternFloor = terrain.elevationAt(sternX, sternY);
-				double terrainPitch = Math.atan2(bowFloor - sternFloor, 2 * halfLen);
-				// Settle toward terrain pitch (not flat)
-				double currentPitch = sub.pitch();
-				sub.setPitch(currentPitch + (terrainPitch - currentPitch) * 0.03);
-			} else if (impact.closingSpeed() > 1e-9) {
-				// Alive: bounce, take damage from inward contact motion, lose speed.
-				int damage = TerrainImpactEnergy.damage(impact.energyJoules(), cfg.collisionDamageFactor());
-				sub.setHp(Math.max(0, sub.hp() - damage));
-				sub.setVerticalSpeed(cfg.bounceSpeed());
-				sub.setPitch(Math.max(sub.pitch(), 0));
-
-				if (impact.closingSpeed() > 3.0) {
-					sub.setSpeed(speed * 0.5);
-				} else {
-					sub.setSpeed(speed * 0.95);
-				}
-			}
-			// The bounce and wreck settling can change pitch. Clear the resulting hull as well;
-			// that positional correction must not be charged as another impact next tick.
-			if (sub.pitch() != pitch) {
-				newZ += Math.max(0, HullGeometry.terrainPenetration(new Vec3(newX, newY, newZ), heading, sub.pitch(),
-						cfg, terrain));
-			}
-		}
+		// Keep the incoming motion independent of the shortened path or position correction.
+		var incomingLinear = new Vec3(vx, vy, contactVerticalSpeed);
+		double incomingYawRate = Math.atan2(Math.sin(heading - previousHeading), Math.cos(heading - previousHeading))
+				/ dt;
+		double incomingPitchRate = (pitch - previousPitch) / dt;
+		var terrainStep = moveWithTerrain(sub, dt, new Vec3(previousX, previousY, previousZ),
+				new Vec3(newX, newY, newZ), previousHeading, heading, previousPitch, pitch, incomingLinear,
+				incomingYawRate, incomingPitchRate, terrain, currentField);
+		newX = sub.x();
+		newY = sub.y();
+		newZ = sub.z();
+		heading = sub.heading();
+		speed = sub.speed();
+		boolean scraping = terrainStep.scraping();
+		// Only the physically reached path counts as exposure; projection cannot rescue a hull
+		// already below the limit, but a swept seabed contact can stop it before that depth.
+		hullPressure.step(sub, dt, terrainStep.deepestZ());
 
 		// Guard against NaN/Inf from numerical issues
 		if (!Double.isFinite(newX) || !Double.isFinite(newY) || !Double.isFinite(newZ)) {
 			System.err.printf(
 					"PHYSICS NaN/Inf detected for sub %d: pos=(%.1f,%.1f,%.1f) spd=%.1f hdg=%.3f yawRate=%.3f%n",
 					sub.id(), newX, newY, newZ, speed, heading, yawRate);
+			sub.setX(previousX);
+			sub.setY(previousY);
+			sub.setZ(previousZ);
 			return; // skip this tick, keep previous position
 		}
 		sub.setX(newX);
@@ -466,63 +435,85 @@ public final class SubmarinePhysics {
 		}
 	}
 
-	/** World X/Y and centre-relative Z for local material points on the terrain contact hull. */
-	private static double[][] hullPoints(double x, double y, double heading, double pitch, Vec3[] samples) {
-		double sinH = Math.sin(heading), cosH = Math.cos(heading);
-		double sinPt = Math.sin(pitch), cosPt = Math.cos(pitch);
-		double fwdX = sinH * cosPt, fwdY = cosH * cosPt;
-		double upX = -sinH * sinPt, upY = -cosH * sinPt;
-		var points = new double[samples.length][3];
-		for (int i = 0; i < samples.length; i++) {
-			var local = samples[i];
-			points[i][0] = x + cosH * local.x() + fwdX * local.y() + upX * local.z();
-			points[i][1] = y - sinH * local.x() + fwdY * local.y() + upY * local.z();
-			points[i][2] = sinPt * local.y() + cosPt * local.z();
-		}
-		return points;
+	private record TerrainStep(boolean scraping, double deepestZ) {
 	}
 
-	private static double terrainPenetration(double[][] points, double z, TerrainMap terrain) {
-		double worst = Double.NEGATIVE_INFINITY;
-		for (var point : points) {
-			worst = Math.max(worst, terrain.elevationAt(point[0], point[1]) - (z + point[2]));
-		}
-		return worst;
-	}
-
-	private record TerrainImpact(double closingSpeed, double energyJoules) {
-	}
-
-	private static TerrainImpact terrainImpact(
-		double[][] points, double x, double y, double z, double[][] previousPoints, double centreVerticalSpeed,
-		double heading, double pitch, VehicleConfig cfg, TerrainMap terrain, double dt) {
-		double closingSpeed = 0;
-		double energyJoules = 0;
-		double sample = Math.min(1.0, terrain.getCellSize() * 0.5);
-		for (int i = 0; i < points.length; i++) {
-			var point = points[i];
-			if (terrain.elevationAt(point[0], point[1]) <= z + point[2]) {
-				continue;
+	private TerrainStep moveWithTerrain(
+		SubmarineEntity sub, double dt, Vec3 start, Vec3 end, double startHeading, double endHeading, double startPitch,
+		double endPitch, Vec3 incomingLinear, double incomingYawRate, double incomingPitchRate, TerrainMap terrain,
+		CurrentField currents) {
+		var cfg = sub.vehicleConfig();
+		double remaining = dt, deepestZ = start.z(), impactEnergy = 0;
+		boolean scraping = false;
+		// Continue the unspent tick after an impact, so support on a flat floor does not
+		// cancel tangential movement. A small cap bounds pathological repeated contacts.
+		for (int iteration = 0; iteration < 6; iteration++) {
+			var contact = SweptHullTerrain.firstContact(start, end, startHeading, endHeading, startPitch, endPitch, cfg,
+					terrain);
+			var position = contact == null ? end : contact.position();
+			double heading = contact == null ? endHeading : contact.heading();
+			double pitch = contact == null ? endPitch : contact.pitch();
+			deepestZ = Math.min(deepestZ, position.z());
+			var samples = contact == null ? HullGeometry.terrainContactPoints(position, heading, pitch, cfg, terrain)
+					: contact.localPoints();
+			double penetration = 0;
+			for (var local : samples) {
+				var world = HullTerrainGeometry.worldPoint(local, position, heading, pitch);
+				penetration = Math.max(penetration, terrain.elevationAt(world.x(), world.y()) - world.z());
 			}
-			var previous = previousPoints[i];
-			double vx = (point[0] - previous[0]) / dt;
-			double vy = (point[1] - previous[1]) / dt;
-			double vz = centreVerticalSpeed + (point[2] - previous[2]) / dt;
-			double slopeX = (terrain.elevationAt(point[0] + sample, point[1])
-					- terrain.elevationAt(point[0] - sample, point[1])) / (2 * sample);
-			double slopeY = (terrain.elevationAt(point[0], point[1] + sample)
-					- terrain.elevationAt(point[0], point[1] - sample)) / (2 * sample);
-			// Project onto the outward unit normal (-slopeX, -slopeY, 1).
-			double normalLength = Math.hypot(Math.hypot(slopeX, slopeY), 1.0);
-			var normal = new Vec3(-slopeX / normalLength, -slopeY / normalLength, 1 / normalLength);
-			double inwardSpeed = -(normal.x() * vx + normal.y() * vy + normal.z() * vz);
-			closingSpeed = Math.max(closingSpeed, inwardSpeed);
-			var offset = new Vec3(point[0] - x, point[1] - y, point[2]);
-			// Contacts can have different effective masses. Choose the greatest energy, not
-			// merely the fastest point, and do not charge the same hull seven times.
-			energyJoules = Math.max(energyJoules,
-					TerrainImpactEnergy.energyJoules(cfg, offset, normal, heading, pitch, inwardSpeed));
+			sub.setHeading(heading);
+			sub.setPitch(pitch);
+			sub.setX(position.x());
+			sub.setY(position.y());
+			sub.setZ(position.z());
+			// Reaching absolute crush depth changes contact response immediately: an
+			// imploded hull cannot receive a living hull's restitution impulse.
+			hullPressure.step(sub, 0, deepestZ);
+			if (penetration > 0 || contact != null) {
+				scraping = true;
+				var current = currents.currentAt(position.z());
+				SubCollisionResponse.setLinearVelocity(sub,
+						incomingLinear.subtract(new Vec3(current.x(), current.y(), 0)));
+				var impact = TerrainContactResponse.apply(sub, position, samples, incomingLinear, incomingYawRate,
+						incomingPitchRate, terrain, currents);
+				impactEnergy = Math.max(impactEnergy, impact.energyJoules());
+				var groundVelocity = sub.velocity().linear().add(new Vec3(current.x(), current.y(), 0));
+				sub.setZ(position.z() + penetration);
+				var correctedCurrent = currents.currentAt(sub.z());
+				if (!correctedCurrent.equals(current)) {
+					// An artificial overlap correction must not add a current-band velocity jump.
+					SubCollisionResponse.setLinearVelocity(sub,
+							groundVelocity.subtract(new Vec3(correctedCurrent.x(), correctedCurrent.y(), 0)));
+				}
+				if (sub.z() >= 0 && sub.verticalSpeed() > 0) {
+					sub.setVerticalSpeed(0);
+				}
+			}
+			if (contact == null) {
+				break;
+			}
+			remaining *= 1 - contact.fraction();
+			if (remaining <= dt * 1e-9) {
+				break;
+			}
+			start = sub.pose().position();
+			startHeading = heading;
+			startPitch = pitch;
+			var current = currents.currentAt(start.z());
+			incomingLinear = sub.velocity().linear().add(new Vec3(current.x(), current.y(), 0));
+			incomingYawRate = sub.yawRate();
+			incomingPitchRate = sub.surfaceConstrained() ? 0 : sub.pitchRate();
+			end = start.add(incomingLinear.scale(remaining));
+			end = new Vec3(end.x(), end.y(), sub.surfaceConstrained() ? 0 : Math.min(Math.max(0, start.z()), end.z()));
+			endHeading = heading + incomingYawRate * remaining;
+			endPitch = Math.clamp(pitch + incomingPitchRate * remaining, -Math.PI / 4, Math.PI / 4);
 		}
-		return new TerrainImpact(closingSpeed, energyJoules);
+		if (sub.hp() > 0) {
+			sub.setHp(Math.max(0, sub.hp() - TerrainImpactEnergy.damage(impactEnergy, cfg.collisionDamageFactor())));
+		}
+		double finalHeading = sub.heading() % (2 * Math.PI);
+		sub.setHeading(finalHeading < 0 ? finalHeading + 2 * Math.PI : finalHeading);
+		return new TerrainStep(scraping, deepestZ);
 	}
+
 }

@@ -60,6 +60,7 @@ public final class SubmarineEntity implements SubmarineOutput {
 	private double swaySpeed; // lateral water-relative velocity, including collision impulses (m/s)
 	private double yawRate; // angular velocity around vertical axis (rad/s)
 	private double pitchRate; // angular velocity around lateral axis (rad/s)
+	private double wreckFloodFraction; // fraction of lost buoyancy after a surface ship is destroyed
 
 	// sonar state
 	private boolean pingRequested;
@@ -114,6 +115,21 @@ public final class SubmarineEntity implements SubmarineOutput {
 
 	public VehicleConfig vehicleConfig() {
 		return vehicleConfig;
+	}
+
+	/**
+	 * Living surface ships stay at their waterline; wrecks retain their ship geometry but can sink.
+	 */
+	public boolean surfaceConstrained() {
+		return vehicleConfig.surfaceLocked() && hp > 0;
+	}
+
+	double wreckFloodFraction() {
+		return wreckFloodFraction;
+	}
+
+	void setWreckFloodFraction(double fraction) {
+		wreckFloodFraction = Math.clamp(fraction, 0, 1);
 	}
 
 	// ── SubmarineOutput ──
@@ -479,7 +495,7 @@ public final class SubmarineEntity implements SubmarineOutput {
 		double vy = speed * Math.cos(heading) * Math.cos(pitch) - swaySpeed * Math.sin(heading);
 		double vz = speed * Math.sin(pitch) + verticalSpeed;
 		// The surface clips upward translation while still allowing an immediate dive.
-		if (vehicleConfig.surfaceLocked()) {
+		if (surfaceConstrained()) {
 			vz = 0;
 		} else if (z >= 0) {
 			vz = Math.min(0, vz);

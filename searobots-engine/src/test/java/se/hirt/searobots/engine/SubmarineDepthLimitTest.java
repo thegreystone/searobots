@@ -116,6 +116,30 @@ class SubmarineDepthLimitTest {
 	}
 
 	@Test
+	void sweptSeabedContactPreventsPressureExposureAtADiscardedEndpoint() {
+		var config = new MatchConfig(CONFIG.worldSeed(), CONFIG.tickRateHz(), CONFIG.matchDurationTicks(),
+				CONFIG.submarineCount(), CONFIG.torpedoCount(), CONFIG.startingHp(), CONFIG.blastRadius(),
+				CONFIG.minFuseRadius(), CONFIG.maxFuseRadius(), -19.2, -19.5, CONFIG.battleArea(),
+				CONFIG.terrainMarginMeters(), CONFIG.gridCellMeters(), CONFIG.minSeaFloorZ(), CONFIG.maxSeaFloorZ(),
+				CONFIG.maxSubSpeed(), CONFIG.startTime());
+		var grounded = movingSub(-19, -0.1);
+		var unobstructed = movingSub(-19, -0.1);
+		double[] elevations = new double[9];
+		// The keel reaches this floor at centre z=-19.1, above both pressure limits.
+		// An unobstructed ten-second descent would finish below absolute crush depth.
+		Arrays.fill(elevations, -24.1);
+		var floor = new TerrainMap(elevations, 3, 3, -100, -100, 100);
+		new SubmarinePhysics(config).step(grounded, 10, floor, NO_CURRENT, config.battleArea());
+		new SubmarinePhysics(config).step(unobstructed, 10, TERRAIN, NO_CURRENT, config.battleArea());
+
+		assertTrue(unobstructed.z() < config.crushDepth(), "The discarded endpoint would cross the crush limit.");
+		assertEquals(0, unobstructed.hp());
+		assertTrue(grounded.z() >= -19.1 - 1e-6, "Swept contact must stop the actual hull before either limit.");
+		assertEquals(CONFIG.startingHp(), grounded.hp(),
+				"Neither pressure damage nor implosion may use a depth prevented by the swept seabed contact.");
+	}
+
+	@Test
 	void startingBeyondCrushDepthCannotEscapeInTheSameTick() {
 		var sub = movingSub(CONFIG.crushDepth() - 0.01, 2);
 		new SubmarinePhysics(CONFIG).step(sub, 1.0 / CONFIG.tickRateHz(), TERRAIN, NO_CURRENT, CONFIG.battleArea());

@@ -147,7 +147,7 @@ final class HullOverlap {
 		double width = Double.POSITIVE_INFINITY;
 		// A surface-locked hull cannot move down, and a surfaced submarine cannot move up.
 		// Horizontal separation remains feasible for either ordering of a mixed pair.
-		int axisCount = a.vehicleConfig().surfaceLocked() || b.vehicleConfig().surfaceLocked() ? 2 : axes.length;
+		int axisCount = a.surfaceConstrained() || b.surfaceConstrained() ? 2 : axes.length;
 		for (int i = 0; i < axisCount; i++) {
 			Vec3 axis = axes[i];
 			double candidate = Math.sqrt(hullA.shape.quadratic(axis)) + Math.sqrt(hullB.shape.quadratic(axis));

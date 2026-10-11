@@ -218,7 +218,8 @@ class SubmarineTerrainCollisionTest {
 		int damage = 1000 - sub.hp();
 		assertTrue(damage >= 40 && damage <= 46,
 				"A real 2 m/s descent must still cause about 45 HP of damage after terrain lift: " + damage);
-		assertTrue(sub.verticalSpeed() > 0, "The collision must still turn downward movement into an upward bounce.");
+		assertEquals(0, sub.velocity().linear().z(), 1e-8,
+				"The water surface must absorb upward rebound when the hull has been lifted onto shore.");
 	}
 
 	@Test
@@ -241,18 +242,21 @@ class SubmarineTerrainCollisionTest {
 	void highSpeedGroundingStillCausesSubstantialDamage() {
 		var slow = submarine(-95, -2);
 		var fast = submarine(-95, -8);
+		var clearWater = submarine(-95, 0);
 		slow.setSpeed(6);
 		fast.setSpeed(6);
+		clearWater.setSpeed(6);
 		step(slow, DT, FLAT);
 		step(fast, DT, FLAT);
+		step(clearWater, DT, flat(-1000));
 
 		assertTrue(fast.hp() > 0 && fast.hp() < 350,
 				"An 8 m/s impact must remove at least 650 HP while remaining finite.");
 		assertTrue(1000 - fast.hp() > 10 * (1000 - slow.hp()));
 		assertTrue(fast.verticalSpeed() > 0, "A downward impact must still produce an upward bounce.");
-		assertTrue(fast.speed() > 0 && fast.speed() < 4,
-				"A hard impact must substantially reduce surge while retaining forward movement.");
-		assertTrue(slow.speed() > fast.speed(), "A hard impact must slow the submarine more than a gentle contact.");
+		assertEquals(clearWater.speed(), fast.speed(), 1e-8,
+				"A flat floor's normal impulse must preserve tangential surge after ordinary water drag.");
+		assertEquals(slow.speed(), fast.speed(), 1e-8);
 	}
 
 	@Test
@@ -285,7 +289,7 @@ class SubmarineTerrainCollisionTest {
 
 		assertTrue(sub.hp() >= 800 && sub.hp() <= 860,
 				"An 8 m/s bow-only descent must remove substantial HP despite rotational relief: " + sub.hp());
-		assertTrue(sub.verticalSpeed() > 0);
+		assertTrue(sub.pitchRate() > 0, "A bow strike must rotate the bow away from the floor.");
 	}
 
 	@Test
@@ -308,7 +312,7 @@ class SubmarineTerrainCollisionTest {
 		var ridge = terrain((x, y) -> y >= 30 && y <= 40 ? -100 + x : -140);
 		step(sub, DT, ridge);
 
-		assertEquals(0, sub.speed(), 1e-9);
+		assertTrue(Math.abs(sub.speed()) > 0, "An inclined bow contact can exchange yaw motion for linear drift.");
 		assertTrue(sub.hp() > 900 && sub.hp() < 1000, "Bow rotation is real contact motion even without surge.");
 	}
 
@@ -327,24 +331,57 @@ class SubmarineTerrainCollisionTest {
 		assertEquals(1000, level.hp(), "A level, stationary hull must remain clear of the ridge.");
 		assertEquals(-100, level.z(), 1e-9);
 		assertEquals(0, sub.x(), 1e-9);
-		assertEquals(0, sub.y(), 1e-9);
+		assertEquals(0, sub.y(), 1e-8);
 		assertEquals(0, sub.speed(), 1e-9);
 		assertTrue(sub.hp() > 900 && sub.hp() < 1000,
 				"Pitch moves the bow into terrain even when the centre has no incoming linear motion.");
 	}
 
 	@Test
-	void bouncePitchCorrectionLeavesTheHullClearOnTheNextTick() {
+	void bowImpactChangesPitchRateWithoutSnappingTheHullLevel() {
 		var sub = submarine(-95.03, -2);
 		sub.setPitch(-0.08);
 		step(sub, DT, FLAT);
 
-		assertEquals(0, sub.pitch(), 1e-9);
-		assertTrue(sub.verticalSpeed() > 0, "Pitch correction must preserve the upward collision response.");
-		assertTrue(sub.z() - 5 >= -100 - 1e-9, "Changing pitch during the bounce must not leave the keel embedded.");
+		assertTrue(sub.pitch() < -0.07,
+				"The hull's attitude must change continuously rather than instantly levelling.");
+		assertTrue(Math.abs(sub.pitchRate()) < 1e-6,
+				"The extended floor contact should support the pitched hull without artificial rotation.");
+		assertEquals(0, HullGeometry.terrainPenetration(sub.pose().position(), sub.heading(), sub.pitch(),
+				sub.vehicleConfig(), FLAT), 1e-6);
 		int hpAfterContact = sub.hp();
 		step(sub, DT, FLAT);
 		assertEquals(hpAfterContact, sub.hp(), "The previous geometric correction must not cause another impact.");
+	}
+
+	@Test
+	void endpointGroundingAcrossACurrentBandKeepsDamageAndImpulseConsistent() {
+		var sub = submarine(-94, -2);
+		var still = submarine(-94, -2);
+		var currents = new CurrentField(List.of(new CurrentField.CurrentBand(-100, -94.01, new Vec2(10, 0))));
+		var slope = terrain((x, y) -> -100 + x);
+		new SubmarinePhysics(CONFIG).step(sub, DT, slope, currents, CONFIG.battleArea());
+		step(still, DT, slope);
+		assertEquals(still.hp(), sub.hp(), "Both hulls have the same incoming ground motion.");
+		assertEquals(still.z(), sub.z(), 1e-9);
+		assertTrue(sub.velocity().linear().subtract(still.velocity().linear()).length() < 1e-8,
+				"Terrain projection across a current band must not add horizontal momentum.");
+		assertEquals(still.pitchRate(), sub.pitchRate(), 1e-9);
+	}
+
+	@Test
+	void gentleKeelContactHasProportionallySmallReboundAndRetainsTangentialMotion() {
+		var sub = submarine(-95, -0.01);
+		var clearWater = submarine(-95, -0.01);
+		sub.setSpeed(5);
+		clearWater.setSpeed(5);
+		step(sub, DT, FLAT);
+		step(clearWater, DT, flat(-1000));
+		assertEquals(1000, sub.hp());
+		assertTrue(sub.verticalSpeed() >= 0 && sub.verticalSpeed() < 0.001,
+				"A one-centimetre-per-second touch must not cause a half-metre-per-second bounce.");
+		assertEquals(clearWater.speed(), sub.speed(), 1e-8);
+		assertTrue(sub.y() > 0.09, "The remaining tick must retain movement along the floor.");
 	}
 
 	@Test

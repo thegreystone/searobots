@@ -44,27 +44,88 @@ final class SubCollisionResponse {
 	private SubCollisionResponse() {
 	}
 
-	static void impact(SubmarineEntity a, SubmarineEntity b, HullOverlap.Contact contact, CurrentField currents) {
-		var normal = contact.normal();
+	static ContactImpulse prepare(
+		SubmarineEntity a, SubmarineEntity b, HullOverlap.Contact contact, CurrentField currents) {
 		// Separate support points would add spurious torque when the hulls overlap;
 		// apply the opposite impulses at one shared physical contact point.
 		var point = contact.pointA().add(contact.pointB()).scale(0.5);
 		var offsetA = point.subtract(a.pose().position());
 		var offsetB = point.subtract(b.pose().position());
-		double closingSpeed = contactVelocity(a, offsetA, currents).subtract(contactVelocity(b, offsetB, currents))
-				.dot(normal);
-		double inverseMass = inverseContactMass(a, offsetA, normal) + inverseContactMass(b, offsetB, normal);
-		if (closingSpeed > 1e-9 && inverseMass > 0) {
-			double magnitude = (1 + RESTITUTION) * closingSpeed / inverseMass;
+		return new ContactImpulse(a, b, offsetA, offsetB, contact.normal(), currents);
+	}
+
+	/** Accumulated impulses prevent every solver iteration from becoming another impact. */
+	static final class ContactImpulse {
+		private final SubmarineEntity a, b;
+		private final Vec3 offsetA, offsetB, normal;
+		private final CurrentField currents;
+		private final double inverseMass;
+		private double compressionImpulse;
+		private double restitutionImpulse;
+		private double recoveryImpulse;
+
+		private ContactImpulse(SubmarineEntity a, SubmarineEntity b, Vec3 offsetA, Vec3 offsetB, Vec3 normal,
+				CurrentField currents) {
+			this.a = a;
+			this.b = b;
+			this.offsetA = offsetA;
+			this.offsetB = offsetB;
+			this.normal = normal;
+			this.currents = currents;
+			inverseMass = inverseContactMass(a, offsetA, normal) + inverseContactMass(b, offsetB, normal);
+		}
+
+		/** Returns the residual normal velocity, measured before this constraint is projected. */
+		double compress(boolean recovery) {
+			double closing = contactVelocity(a, offsetA, currents).subtract(contactVelocity(b, offsetB, currents))
+					.dot(normal);
+			if (inverseMass <= 0) {
+				return 0;
+			}
+			double accumulated = recovery ? recoveryImpulse : compressionImpulse;
+			double next = Math.max(0, accumulated + closing / inverseMass);
+			apply(next - accumulated);
+			if (recovery) {
+				recoveryImpulse = next;
+			} else {
+				compressionImpulse = next;
+			}
+			// A separating contact with no impulse is already satisfied.
+			return accumulated > 0 || next > 0 ? Math.abs(closing) : Math.max(0, closing);
+		}
+
+		void rebound() {
+			// Poisson restitution scales the fully converged compression impulse. Unlike
+			// independent per-contact velocity targets, this cannot add net impact energy.
+			restitutionImpulse = RESTITUTION * compressionImpulse;
+			apply(restitutionImpulse);
+		}
+
+		void damage() {
+			// Convert the final contact load back to the isolated-impact closing speed.
+			// This retains 5*v^2 damage for two hulls and also counts loads transmitted
+			// through an initially stationary hull in a simultaneous contact chain.
+			double speed = (compressionImpulse + restitutionImpulse + recoveryImpulse) * inverseMass
+					/ (1 + RESTITUTION);
+			if (speed <= 1e-9) {
+				return;
+			}
+			int damage = Math.max(1, (int) (DAMAGE_FACTOR * speed * speed + 1e-8));
+			if (a.hp() > 0) {
+				a.setHp(Math.max(0, a.hp() - damage));
+			}
+			if (b.hp() > 0) {
+				b.setHp(Math.max(0, b.hp() - damage));
+			}
+		}
+
+		private void apply(double magnitude) {
+			if (magnitude == 0) {
+				return;
+			}
 			var impulse = normal.scale(magnitude);
 			applyImpulse(a, offsetA, impulse.scale(-1));
 			applyImpulse(b, offsetB, impulse);
-
-			// Retain the game's ramming damage calibration, but use the actual normal
-			// closing speed at the contact instead of centre-line or tangential speed.
-			int damage = Math.max(1, (int) (DAMAGE_FACTOR * closingSpeed * closingSpeed));
-			a.setHp(Math.max(0, a.hp() - damage));
-			b.setHp(Math.max(0, b.hp() - damage));
 		}
 	}
 
@@ -104,14 +165,14 @@ final class SubCollisionResponse {
 		return new Vec3(Math.cos(sub.heading()), -Math.sin(sub.heading()), 0);
 	}
 
-	private static Vec3 contactVelocity(SubmarineEntity sub, Vec3 offset, CurrentField currents) {
+	static Vec3 contactVelocity(SubmarineEntity sub, Vec3 offset, CurrentField currents) {
 		var current = currents.currentAt(sub.z());
 		var linear = sub.velocity().linear();
-		if (sub.vehicleConfig().surfaceLocked()) {
+		if (sub.surfaceConstrained()) {
 			linear = new Vec3(linear.x(), linear.y(), 0);
 		}
 		// Heading increases clockwise from north; physical world-Z rotation has the opposite sign.
-		var angular = right(sub).scale(sub.vehicleConfig().surfaceLocked() ? 0 : sub.pitchRate())
+		var angular = right(sub).scale(sub.surfaceConstrained() ? 0 : sub.pitchRate())
 				.add(new Vec3(0, 0, -sub.yawRate()));
 		return linear.add(new Vec3(current.x(), current.y(), 0)).add(angular.cross(offset));
 	}
@@ -120,7 +181,7 @@ final class SubCollisionResponse {
 		// Impacts exchange physical vessel momentum. Hydrodynamic added masses remain
 		// in the subsequent thrust/drag integration, rather than creating direction-dependent
 		// unequal impulses between the two hulls.
-		return new Vec3(direction.x(), direction.y(), sub.vehicleConfig().surfaceLocked() ? 0 : direction.z())
+		return new Vec3(direction.x(), direction.y(), sub.surfaceConstrained() ? 0 : direction.z())
 				.scale(1 / sub.vehicleConfig().dryMass());
 	}
 
@@ -146,34 +207,43 @@ final class SubCollisionResponse {
 		return result;
 	}
 
-	private static double inverseContactMass(SubmarineEntity sub, Vec3 offset, Vec3 normal) {
+	static double inverseContactMass(SubmarineEntity sub, Vec3 offset, Vec3 normal) {
 		var lever = offset.cross(normal);
 		double result = linearMobility(sub, normal).dot(normal) + lever.z() * lever.z() / yawInertia(sub);
-		if (!sub.vehicleConfig().surfaceLocked()) {
+		if (!sub.surfaceConstrained()) {
 			double pitchLever = lever.dot(right(sub));
 			result += pitchLever * pitchLever / sub.vehicleConfig().collisionPitchInertia();
 		}
 		return result;
 	}
 
-	private static void applyImpulse(SubmarineEntity sub, Vec3 offset, Vec3 impulse) {
-		var velocity = sub.velocity().linear().add(linearMobility(sub, impulse));
+	static void applyImpulse(SubmarineEntity sub, Vec3 offset, Vec3 impulse) {
+		setLinearVelocity(sub, sub.velocity().linear().add(linearMobility(sub, impulse)));
+		var torque = offset.cross(impulse);
+		sub.setYawRate(sub.yawRate() - torque.z() / yawInertia(sub));
+		if (!sub.surfaceConstrained()) {
+			sub.setPitchRate(sub.pitchRate() + torque.dot(right(sub)) / sub.vehicleConfig().collisionPitchInertia());
+		}
+	}
+
+	/** Retains world velocity when collision detection rewinds the hull's orientation. */
+	static void setLinearVelocity(SubmarineEntity sub, Vec3 velocity) {
+		if (sub.z() >= 0 && velocity.z() > 0) {
+			// The surface reaction removes upward motion instead of leaving hidden
+			// heave in the actuator state to reappear when the hull dives next tick.
+			velocity = new Vec3(velocity.x(), velocity.y(), 0);
+		}
 		double sinH = Math.sin(sub.heading()), cosH = Math.cos(sub.heading());
 		double speed = (velocity.x() * sinH + velocity.y() * cosH) / Math.cos(sub.pitch());
 		sub.setSpeed(speed);
 		sub.setSwaySpeed(velocity.x() * cosH - velocity.y() * sinH);
-		sub.setVerticalSpeed(sub.vehicleConfig().surfaceLocked() ? 0 : velocity.z() - speed * Math.sin(sub.pitch()));
-		var torque = offset.cross(impulse);
-		sub.setYawRate(sub.yawRate() - torque.z() / yawInertia(sub));
-		if (!sub.vehicleConfig().surfaceLocked()) {
-			sub.setPitchRate(sub.pitchRate() + torque.dot(right(sub)) / sub.vehicleConfig().collisionPitchInertia());
-		}
+		sub.setVerticalSpeed(sub.surfaceConstrained() ? 0 : velocity.z() - speed * Math.sin(sub.pitch()));
 	}
 
 	private static void translate(SubmarineEntity sub, Vec3 displacement, TerrainMap terrain) {
 		sub.setX(sub.x() + displacement.x());
 		sub.setY(sub.y() + displacement.y());
-		sub.setZ(sub.vehicleConfig().surfaceLocked() ? 0 : Math.min(Math.max(0, sub.z()), sub.z() + displacement.z()));
+		sub.setZ(sub.surfaceConstrained() ? 0 : Math.min(Math.max(0, sub.z()), sub.z() + displacement.z()));
 		if (terrain != null) {
 			sub.setZ(sub.z() + Math.max(0, HullGeometry.terrainPenetration(sub.pose().position(), sub.heading(),
 					sub.pitch(), sub.vehicleConfig(), terrain)));

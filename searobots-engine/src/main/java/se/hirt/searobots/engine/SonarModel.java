@@ -190,7 +190,8 @@ public final class SonarModel {
 			// Torpedo active sonar returns
 			if (isPinging(torp)) {
 				for (var source : entities) {
-					if (source.forfeited() || source.hp() <= 0)
+					// A wreck's machinery is silent, but its solid hull still reflects a ping.
+					if (source.forfeited())
 						continue;
 					var ret = activeDetect(tick, sensorNoiseFor(tick, torp.id(), source.id()), torp.x(), torp.y(),
 							torp.z(), torp.sourceLevelDb(), torpSonarOffset, 0, source.x(), source.y(), source.z(),
@@ -420,7 +421,7 @@ public final class SonarModel {
 			for (var source : entities) {
 				if (source.id() == listener.id())
 					continue;
-				if (source.forfeited() || source.hp() <= 0)
+				if (source.forfeited())
 					continue;
 
 				var sourcePos = new Vec3(source.x(), source.y(), source.z());
@@ -454,7 +455,8 @@ public final class SonarModel {
 
 				double se = sl - tl - nl;
 				double measuredSe = Double.NaN;
-				if (se > DETECTION_THRESHOLD_DB) {
+				// Keep wrecks silent to passive sonar without suppressing their physical echo.
+				if (source.hp() > 0 && se > DETECTION_THRESHOLD_DB) {
 					// Measurement errors are drawn from the tracker's correlated
 					// noise processes so consecutive ticks share most of their error.
 					var tracker = getOrCreateTracker(listener.id(), source.id());

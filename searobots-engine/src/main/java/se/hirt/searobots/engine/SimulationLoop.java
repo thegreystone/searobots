@@ -351,27 +351,7 @@ public final class SimulationLoop implements SimClock {
 
 				// Proximity fuse check against sub ellipsoid (only after arming delay)
 				for (var torp : torpedoes) {
-					if (!torp.alive() || torp.inTube())
-						continue;
-					torp.decrementArmingDelay();
-					if (!torp.fuseArmed())
-						continue;
-					for (var sub : entities) {
-						if (sub.hp() <= 0 || sub.forfeited())
-							continue;
-						// Skip owner during first 5 seconds (250 ticks) to let torpedo clear
-						if (sub.id() == torp.ownerId() && tick - torp.launchTick() < 250)
-							continue;
-						// Use torpedo bow (nose) point: warhead is in the front
-						double hullDist = HullGeometry.bowDistanceToHull(torp, sub);
-						if (hullDist < torp.fuseRadius()) {
-							System.out.printf(
-									"[Torpedo %d] PROXIMITY FUSE at tick %d, hull dist=%.1fm to sub %d (%s)%n",
-									torp.id(), tick, hullDist, sub.id(), sub.controller().name());
-							handleDetonation(torp, entities, config, true);
-							break;
-						}
-					}
+					checkProximityFuse(torp, entities, config, tick);
 				}
 
 				// Handle detonations that weren't from proximity fuse
@@ -559,6 +539,30 @@ public final class SimulationLoop implements SimClock {
 
 	private static final int EXPLOSION_BASE_DAMAGE = 1200; // instant kill at point blank, heavy damage at close range
 	private static final double EXPLOSION_IMPULSE = 15.0; // m/s velocity change at zero range (before mass division)
+
+	/** Armed warheads respond to physical hulls, including wrecks with no remaining HP. */
+	static void checkProximityFuse(TorpedoEntity torp, List<SubmarineEntity> subs, MatchConfig config, long tick) {
+		if (!torp.alive() || torp.inTube())
+			return;
+		torp.decrementArmingDelay();
+		if (!torp.fuseArmed())
+			return;
+		for (var sub : subs) {
+			if (sub.forfeited())
+				continue;
+			// Preserve launch clearance while the torpedo moves away from its owner.
+			if (sub.id() == torp.ownerId() && tick - torp.launchTick() < 250)
+				continue;
+			// Use the warhead's bow point, with the same physical hull geometry as a living vessel.
+			double hullDist = HullGeometry.bowDistanceToHull(torp, sub);
+			if (hullDist < torp.fuseRadius()) {
+				System.out.printf("[Torpedo %d] PROXIMITY FUSE at tick %d, hull dist=%.1fm to sub %d (%s)%n", torp.id(),
+						tick, hullDist, sub.id(), sub.controller().name());
+				handleDetonation(torp, subs, config, true);
+				break;
+			}
+		}
+	}
 
 	static void handleDetonation(
 		TorpedoEntity torp, List<SubmarineEntity> subs, MatchConfig config, boolean submarineHit) {

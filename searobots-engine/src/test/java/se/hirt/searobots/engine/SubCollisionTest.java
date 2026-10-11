@@ -162,6 +162,28 @@ class SubCollisionTest {
 	}
 
 	@Test
+	void simultaneousUnequalMassContactsConserveMomentumAndLeaveAllHullsSeparating() {
+		var a = makeSub(0, new Vec3(0, 0, -200), 0, 0);
+		var b = makeSub(withDryMass(submarine(), 5_000_000), 1, new Vec3(10, 0, -200), 0, 0);
+		var c = makeSub(2, new Vec3(20, 0, -200), 0, 0);
+		a.setSwaySpeed(3);
+		b.setSwaySpeed(1);
+		c.setSwaySpeed(-2);
+		var momentumBefore = totalMomentum(a, b).add(c.velocity().linear().scale(c.vehicleConfig().dryMass()));
+		double energyBefore = kineticEnergy(a) + kineticEnergy(b) + kineticEnergy(c);
+
+		SimulationLoop.checkSubCollisions(List.of(c, a, b));
+
+		assertTrue(a.swaySpeed() <= b.swaySpeed() && b.swaySpeed() <= c.swaySpeed(),
+				"Every hull must leave the simultaneous contacts separating.");
+		assertVectorEquals(momentumBefore,
+				totalMomentum(a, b).add(c.velocity().linear().scale(c.vehicleConfig().dryMass())), 1e-6);
+		assertTrue(kineticEnergy(a) + kineticEnergy(b) + kineticEnergy(c) < energyBefore);
+		assertFalse(HullOverlap.overlaps(a, b));
+		assertFalse(HullOverlap.overlaps(b, c));
+	}
+
+	@Test
 	void rotationOnlyContactChangesAngularAndLinearMotion() {
 		var rotating = makeSub(0, new Vec3(0, 0, -200), 0, 0.75);
 		var stationary = makeSub(1, new Vec3(30, 0, -200), 0, 0);
@@ -242,6 +264,22 @@ class SubCollisionTest {
 		assertEquals(0, surface.pitchRate(), 1e-12);
 		assertTrue(rising.velocity().linear().z() < 0, "The mobile hull must rebound from the surface-locked hull");
 		assertFalse(SimulationLoop.ellipsoidsOverlap(surface, rising));
+	}
+
+	@Test
+	void surfacedSubmarineImpactDoesNotLeaveHiddenUpwardHeave() {
+		var surfaced = makeSub(0, Vec3.ZERO, 0, 0);
+		var rising = makeSub(1, new Vec3(0, 0, -8.99), 0, 0);
+		rising.setVerticalSpeed(2);
+
+		SimulationLoop.checkSubCollisions(List.of(surfaced, rising));
+
+		assertEquals(0, surfaced.z(), 1e-12);
+		assertEquals(0, surfaced.verticalSpeed(), 1e-12,
+				"The surface must remove the impulse from physical heave as well as reported velocity.");
+		assertEquals(0, surfaced.velocity().linear().z(), 1e-12);
+		assertTrue(rising.velocity().linear().z() < 0);
+		assertFalse(HullOverlap.overlaps(surfaced, rising));
 	}
 
 	@Test

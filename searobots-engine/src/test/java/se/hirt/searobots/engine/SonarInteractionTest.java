@@ -156,7 +156,7 @@ class SonarInteractionTest {
 	}
 
 	@Test
-	void destroyedAndForfeitedVehiclesAreNeitherSourcesNorListeners() {
+	void wrecksReflectWithoutOperatingSensorsAndForfeitedEntitiesAreAbsent() {
 		var sonar = new SonarModel(42);
 		var listener = submarine(0, new Vec3(0, 0, -200), 0);
 		var destroyed = submarine(1, new Vec3(0, 100, -200), Math.PI);
@@ -173,7 +173,8 @@ class SonarInteractionTest {
 		var results = sonar.computeContacts(0, List.of(listener, destroyed, forfeited), List.of(weapon), TERRAIN,
 				List.of());
 		assertTrue(results.get(listener.id()).passiveContacts().isEmpty());
-		assertTrue(results.get(listener.id()).activeReturns().isEmpty());
+		assertEquals(1, results.get(listener.id()).activeReturns().size(), "Only the wreck's hull reflects the ping");
+		assertEquals(100, results.get(listener.id()).activeReturns().getFirst().range(), 10);
 		assertTrue(results.get(destroyed.id()).passiveContacts().isEmpty());
 		assertTrue(results.get(destroyed.id()).activeReturns().isEmpty());
 		assertTrue(results.get(forfeited.id()).passiveContacts().isEmpty());
