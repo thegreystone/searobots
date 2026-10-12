@@ -186,7 +186,7 @@ public final class ClaudeAttackSub implements SubmarineController {
 
 	@Override
 	public String name() {
-		return "Claude Sub";
+		return "Claude";
 	}
 
 	@Override

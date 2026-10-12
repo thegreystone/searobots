@@ -33,12 +33,36 @@ import se.hirt.searobots.api.*;
 import java.awt.*;
 import java.util.List;
 
-public record SubmarineSnapshot(int id, String name, Pose pose, Velocity velocity, double speed, Color color,
-		boolean forfeited, int hp, double noiseLevel, double sourceLevelDb, double throttle, double rudder,
+public record SubmarineSnapshot(int id, String name, String shortName, Pose pose, Velocity velocity, double speed,
+		Color color, boolean forfeited, int hp, double noiseLevel, double sourceLevelDb, double throttle, double rudder,
 		double sternPlanes, String status, boolean pingRequested, int torpedoesRemaining,
 		List<ContactEstimate> contactEstimates, List<Waypoint> waypoints, List<StrategicWaypointViz> strategicWaypoints,
 		FiringSolution firingSolution, boolean surfaceLocked) {
 
 	public record StrategicWaypointViz(Waypoint waypoint, Purpose purpose) {
+	}
+
+	/**
+	 * The two-letter code painted on the sail: the first two letters or digits of {@code requested}
+	 * (see {@link SubmarineController#shortName()}), upper-cased, or of {@code name} if
+	 * {@code requested} has fewer than two, padded with X if neither has.
+	 */
+	public static String toShortName(String requested, String name) {
+		for (String candidate : new String[] {requested, name}) {
+			String code = codeLetters(candidate);
+			if (code.length() >= 2)
+				return code.substring(0, 2);
+		}
+		return (codeLetters(name) + "XX").substring(0, 2);
+	}
+
+	private static String codeLetters(String s) {
+		if (s == null)
+			return "";
+		StringBuilder sb = new StringBuilder();
+		for (char c : s.toUpperCase(java.util.Locale.ROOT).toCharArray())
+			if (c >= 'A' && c <= 'Z' || c >= '0' && c <= '9')
+				sb.append(c);
+		return sb.toString();
 	}
 }

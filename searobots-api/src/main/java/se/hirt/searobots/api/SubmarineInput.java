@@ -40,7 +40,28 @@ public interface SubmarineInput {
 	EnvironmentSnapshot environment();
 
 	/**
-	 * Passive sonar detections this tick (bearing + signal excess, no range).
+	 * Recommended navigation clearance between the hull's lowest point and the seabed, in metres.
+	 * Controllers may use this safety margin when planning routes and depths. Physical grounding
+	 * occurs at hull contact and does not enforce this advisory margin.
+	 */
+	default double recommendedTerrainClearance() {
+		return VehicleConfig.submarine().terrainClearance();
+	}
+
+	/**
+	 * Linear velocity over the seabed in world (x, y, z) axes, in m/s. Includes the ocean current
+	 * at the submarine's depth. Use {@code self().velocity()} for motion relative to the water.
+	 */
+	default Vec3 groundVelocity() {
+		var state = self();
+		var current = environment().currentField().currentAt(state.pose().position().z());
+		return state.velocity().linear().add(new Vec3(current.x(), current.y(), 0));
+	}
+
+	/**
+	 * Passive sonar detections this tick, including the engine's TMA range and motion estimates
+	 * when available. {@link SonarTrack} can retain and coast a controller-selected contact between
+	 * detections.
 	 */
 	default List<SonarContact> sonarContacts() {
 		return List.of();

@@ -292,6 +292,7 @@ public interface SubmarineInput {
     long deadlineNanos();
 
     SubmarineState self();              // pose, velocity, HP, torpedoes remaining
+    Vec3 groundVelocity();              // linear velocity including current drift
     SonarSnapshot sonar();              // no FFI
     List<TorpedoPosition> ownTorpedoes(); // exact positions, no control
     EnvironmentSnapshot environment();
@@ -302,6 +303,21 @@ The submarine always knows the exact position of its own active
 torpedoes via `ownTorpedoes()`, but has no control over them. This is
 telemetry only, useful for evasive action if your own torpedo starts
 heading back toward you.
+
+The current engine reports `self().velocity().linear()` relative to the
+water, in world axes (x east, y north, z up), including vertical heave.
+`velocity().speed()` is the magnitude of that vector; `self().surgeSpeed()`
+is the signed forward speed through the water. `groundVelocity()` adds
+the horizontal ocean current at the submarine's current depth, giving
+linear velocity over the seabed for navigation and motion prediction.
+
+`velocity().angular()` contains pose-angle rates in radians per second:
+(roll rate, pitch rate, heading rate). The engine does not simulate roll,
+so its rate is zero. Pitch and heading rates remain meaningful when the
+vessel is tilted or its heading wraps through zero. Pitch stops remove
+outward pitch rate at the submarine's ±45° and torpedo's ±60° limits.
+These rates describe ongoing motion; instantaneous collision pose
+corrections are not converted into angular rates.
 
 ### SubmarineOutput
 
@@ -456,7 +472,8 @@ consequences:
 
 Torpedoes are **fire-and-forget**: there is no communication link
 between the submarine and its launched torpedoes. The submarine can
-only track its own torpedoes through passive sonar (they are loud).
+track its own torpedoes through passive sonar (they are loud) or active
+sonar echoes.
 This means:
 
 - You hear your own torpedoes just like the enemy does.
@@ -571,11 +588,17 @@ practice.
 
 **Sensors received:**
 
-- Pose and velocity
+- Pose, water-relative velocity, and `groundVelocity()` including current drift
 - Sonar contacts (no FFI: cannot distinguish friend from foe)
 - Status (fuel remaining, armed state, fuse radius, speed)
 - Terrain map (received via `TorpedoLaunchContext` at launch, same
   heightmap as the submarine)
+
+Torpedo linear and angular velocity use the same world-axis and pose-rate
+conventions as submarine telemetry. `speed()` remains forward speed
+through the water. The simulation supplies current-inclusive
+`groundVelocity()` without exposing the whole current field to torpedoes;
+the interface default assumes still water for existing input providers.
 
 **Actuators:**
 
@@ -858,9 +881,12 @@ Where:
 - **g(η)**: gravitational and buoyancy restoring forces
 - **τ**: external forces: propulsion, control surfaces, currents, explosions
 
-This is a system of 12 first-order ODEs integrated at each tick using
-fixed-timestep **RK4** (4th-order Runge-Kutta) for determinism and
-stability.
+This formulation is the reference model. The current game engine uses
+fixed-step force updates for surge and heave and first-order filters
+toward steady-state pitch and yaw rates. It rotates surge into world
+axes and adds the depth-dependent horizontal current when advancing
+position. Controller `Velocity` telemetry follows the conventions
+described under `SubmarineInput`, rather than the body-frame ν above.
 
 ### Simplifications for the Game
 
@@ -904,6 +930,25 @@ Torpedoes use the same framework with different coefficients
 surfaces are only effective when there is sufficient water flow, and control
 authority is proportional to speed squared, so a slow or stalled torpedo
 cannot steer.
+
+Torpedo fin stall peaks at the configured angle (30 degrees by default).
+Below that angle, the existing `2 * pi * sin(angle)` lift coefficient is
+retained. Beyond it, a continuous smoothstep rolloff reduces lift to 60%
+of the peak at the maximum 45-degree deflection. Both rudder and stern
+planes use this curve. The 60% retention is game calibration: flow
+separation still penalizes excessive deflection, while crossing the stall
+angle no longer produces an instantaneous 86% loss of steering force.
+The force still follows `0.5 * density * speed^2 * area * liftCoefficient`;
+see [NASA's lift equation](https://www1.grc.nasa.gov/beginners-guide-to-aeronautics/lift-equation/)
+and [inclination effects](https://www.grc.nasa.gov/WWW/k-12/VirtualAero/BottleRocket/airplane/incline.html).
+
+Speed-dependent yaw and pitch resistance and actuator slew remain in effect.
+At 23 m/s, near-stall rudder gives about a 184 m steady turning radius,
+and full rudder about 306 m. At 5 m/s these are about 44 m and 73 m.
+Pitch responds faster by design, but its best radius at 23 m/s is still
+about 84 m. Tests hold the commanded speed and deflection, allow angular
+rates to settle, and check these limits as well as continuity, symmetry,
+low-speed authority, and recovery from excessive deflection.
 
 ### Numerical Integration
 
@@ -1035,6 +1080,15 @@ powerful but costly action:
 Active pings from torpedoes are **indistinguishable** from submarine
 pings, and this is what makes torpedo decoys work.
 
+Submarine pings can also return echoes from free-swimming torpedoes,
+including their own weapons. These provide noisy range and depth
+estimates; classification still depends on the measured signature.
+Weapons still inside launch tubes do not produce separate contacts.
+Every eligible listener processes a ping in the same sonar tick before
+the request is consumed. Submarines then have a 250-tick (5-second)
+cooldown; torpedoes have a 50-tick (1-second) cooldown. Requests during
+cooldown produce neither another pulse nor another set of echoes.
+
 ### Terrain Occlusion
 
 Sound does not travel through solid rock. The engine performs an acoustic
@@ -1144,80 +1198,91 @@ When a submarine's HP reaches zero:
 - Collision with terrain or other submarines deals damage proportional to
   impact velocity and applies a corresponding impulse.
 
-**Crush depth:**
+**Hull collision geometry:**
 
-Submarines have a pressure hull with a **rated depth** and an
-**absolute crush depth**. The zone between them is survivable but
-increasingly dangerous: the longer and deeper you stay, the worse
-it gets.
+The submarine collision ellipsoid has semi-axes of 38 m along the hull,
+5.5 m across it and 4.5 m vertically. Its centre is at the pose origin
+longitudinally and 0.11 m above it, matching the generated hull's section
+axis. Heading and pitch rotate both offsets and axes into world coordinates.
+The viewer's collision wireframe reads these parameters from `HullGeometry`.
 
-- **Rated depth** (e.g. −400 m): the submarine's design limit. Above
-  this, no depth-related effects. Below this, things start going wrong.
-- **Between rated depth and crush depth** (−400 m to −700 m):
-    - **Hull stress damage:** the submarine takes HP damage each tick,
-      proportional to how far past rated depth it is. Mild near the
-      boundary, severe deeper down.
-    - **Implosion risk:** each tick below rated depth has a probability
-      of **catastrophic implosion** (instant destruction). The
-      probability increases with both **excess depth** and
-      **accumulated time** below rated depth. A quick dive to −450 m
-      and back up is a calculated risk. Lingering at −600 m is playing
-      Russian roulette.
-    - The engine tracks accumulated hull stress per submarine. Stress
-      builds while below rated depth and slowly recovers above it.
-      Multiple deep dives without recovery between them are cumulative.
-- **Crush depth** (e.g. −700 m): **instant destruction**, no chance of
-  survival. The hull implodes regardless of HP or stress history.
-- **Terrain goes deeper** than crush depth (e.g. −900 m). Deep
-  trenches and canyons on the map are absolute no-go zones for
-  submarines, lethal terrain features that constrain navigation.
-- **Torpedoes are unaffected**: their smaller hulls are rated for
-  the full ocean depth. A submarine cannot escape a torpedo by diving
-  to its own death.
-- All depth parameters are in `MatchConfig` and communicated to
-  controllers at match start.
+This conservative envelope contains the updated model's `Body` and
+`HullPlain` mesh, whose sections have a parallel midbody and a blunt forebody.
+Moving the old ellipsoid 2 m forward and 0.11 m upward covers those sections
+without enlarging its axes. The fit excludes sail, fins and propulsor vertices.
+A regression test checks every referenced body vertex against the
+collision ellipsoid so future model changes expose alignment drift.
 
-**Implosion model:**
+Torpedo proximity fuses measure the shortest Euclidean distance from the
+torpedo bow to the solid hull ellipsoid. Blast damage uses the shortest
+distance from the detonation point to that hull. A point inside the hull
+has distance zero; exterior points use a convergent nearest-point solve.
+This gives accurate distances when approaching the curved hull obliquely.
 
+Submarine ramming checks the full ellipsoid volumes, including side and
+crossing contacts, using the
+[Perram-Wertheim contact function](https://doi.org/10.1016/0021-9991(85)90171-8).
+A bounding-sphere check rejects distant pairs; the contact solve accounts
+for both hull orientations. Touching hulls count as contact, with a small
+numerical tolerance. Closing velocity still controls collision damage and
+the existing bounce response.
+
+**Pressure hull and crush depth:**
+
+At or above **rated depth** (default −400 m), submarines take no
+pressure damage and accumulate no implosion risk. Below it, damage
+starts gradually and catastrophic failure becomes increasingly likely.
+Combat damage and pressure damage both weaken the remaining hull margin.
+**Absolute crush depth** (default −700 m) destroys the submarine
+immediately, regardless of HP or exposure history.
+
+Use positive depths `d = -z`, `R = -ratedDepth`, `C = -crushDepth`:
+
+```text
+effectiveHP = max(0, HP - fractionalPressureDamage)
+damageFraction = clamp(1 - effectiveHP / maxHP, 0, 1)
+collapseScale = R + (C - R) * (1 - 0.35 * damageFraction)
+stress = max(0, (d - R) / (collapseScale - R))
+
+pressureDamageRate = maxHP * 0.01 * stress^2     # HP/second
+implosionHazard = (ln(2) / 5) * stress^8         # inverse seconds
+accumulatedHazard += implosionHazard * dt
 ```
-excess = rated_depth - current_depth          (positive when below rated)
-ratio = excess / (rated_depth - crush_depth)  (0.0 at rated, 1.0 at crush)
 
-hull_stress_damage_per_tick = max_stress_dmg × ratio²
-accumulated_stress += ratio × dt              (builds while below rated)
-accumulated_stress -= recovery_rate × dt      (decays while above rated)
-accumulated_stress = clamp(0, max_stress)
+`collapseScale` controls the hazard curve; crossing it is not an
+instant-death boundary. With default limits it is 700 m when healthy
+and 647.5 m at half HP. At `stress = 1` and constant hull condition,
+median time to implosion is five seconds. The steep eighth-power
+hazard makes shallow excursions practical and near-crush dives risky.
 
-implosion_probability = base_rate × ratio² × (1 + accumulated_stress)
-if random() < implosion_probability:
-    submarine is destroyed (implosion)
+Each submarine draws one exponential failure threshold `-ln(U)` from
+a dedicated deterministic seed derived from the match seed and entity
+ID. It implodes when integrated hazard reaches that threshold. Fractional
+damage accumulates until whole HP can be deducted. Both accumulators
+persist across dives: ascending stops further exposure but does not
+repair damage or erase previous exposure. Pressure randomness does
+not consume the world or sonar random streams.
 
-if current_depth <= crush_depth:
-    submarine is destroyed (implosion)
-```
+The engine-side `HullPressureModel` is owned by `SubmarinePhysics`.
+`SimulationLoop` supplies `MatchConfig`; a directly constructed
+`SubmarinePhysics` uses default depth limits and seed zero. Each step
+uses the deeper of the starting and proposed centre depths before
+terrain correction, so terrain repositioning cannot hide a crush-depth
+crossing. Dead and forfeited entities, surface-locked vehicles and
+vehicles without ballast are excluded. Torpedo physics is unaffected.
 
-This creates layered tactical choices:
-
-- **Brief deep dives** are viable: duck below rated depth to dodge a
-  torpedo or cross below a thermocline, then climb back quickly.
-  Costs some HP and stress but manageable.
-- **Extended deep operations** are a gamble. You might survive, you
-  might implode. The accumulated stress mechanic means you can't
-  repeatedly yo-yo below rated depth without consequence.
-- **Deep canyons are death traps**: a submarine chased into a canyon
-  that descends past crush depth has nowhere to go.
-- **Damaged submarines are fragile**: with low HP, even mild hull
-  stress damage becomes critical. Depth management gets harder as
-  the match progresses.
-- **Depth as a match parameter**: a shallow rated depth (e.g. −250 m)
-  compresses the vertical play space, making sonar more effective.
-  A deep rated depth (e.g. −500 m) opens up more evasion room but
-  pushes crush depth closer to the deepest terrain.
+A brief 450–500 m dive costs a healthy submarine little HP; lingering
+at 600 m or diving near 700 m is a serious gamble, especially after
+damage. Trenches below crush depth constrain navigation even where
+the terrain permits deeper travel. Depth limits are configured in
+`MatchConfig` and communicated to controllers at match start.
+See [Pressure-hull model](pressure-hull-model.md) for the physical
+basis, calibration examples and verification approach.
 
 **Explosion model (simplified):**
 
 ```
-distance = ||detonation_point - target_position||
+distance = shortest_distance(detonation_point, target_hull_ellipsoid)
 if distance < blast_radius:
     damage = max_damage × (1 - distance / blast_radius)²
     impulse_magnitude = max_impulse × (1 - distance / blast_radius)²

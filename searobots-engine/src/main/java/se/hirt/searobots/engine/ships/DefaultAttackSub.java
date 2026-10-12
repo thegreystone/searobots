@@ -37,7 +37,7 @@ import java.util.List;
  * A smart submarine captain AI that behaves realistically:
  * <ul>
  * <li>Sprint-drift patrol below the thermocline (sprint deep, drift up to listen)</li>
- * <li>Passive-only TMA: builds firing solutions through maneuvering, never pings</li>
+ * <li>Builds passive TMA through maneuvering, with a snapshot ping before firing</li>
  * <li>Stalks targets from their stern quarter (baffles)</li>
  * <li>Fires torpedoes from concealment, then goes silent</li>
  * <li>Evades incoming torpedoes by turning toward them, crossing the thermocline, and ducking
@@ -48,7 +48,7 @@ public final class DefaultAttackSub implements SubmarineController {
 
 	@Override
 	public String name() {
-		return "Default Sub";
+		return "Default";
 	}
 
 	// ── State machine ──
@@ -79,7 +79,6 @@ public final class DefaultAttackSub implements SubmarineController {
 	private static final long TORPEDO_COOLDOWN = 750; // 15 seconds between launches
 
 	// Torpedo classification
-	private static final double TORPEDO_SL_THRESHOLD = 105; // dB, above = torpedo
 
 	// Evasion and repositioning
 	private static final int REPOSITION_TICKS = 2000; // 40 seconds silent after attack
@@ -114,6 +113,8 @@ public final class DefaultAttackSub implements SubmarineController {
 	private boolean preferAboveThermocline = false; // which side to hide on
 
 	// Contact tracking
+	private SonarTrack sonarTrack;
+	private SonarTrack.Estimate trackEstimate;
 	private boolean hasTrackedContact;
 	private double trackedX = Double.NaN, trackedY = Double.NaN;
 	private double trackedHeading = Double.NaN, trackedSpeed = 5;
@@ -209,6 +210,8 @@ public final class DefaultAttackSub implements SubmarineController {
 	@Override
 	public void onMatchStart(MatchContext context) {
 		config = context.config();
+		sonarTrack = new SonarTrack(config.maxSubSpeed());
+		clearTrack();
 		terrain = context.terrain();
 		battleArea = config.battleArea();
 		thermalLayers = context.thermalLayers();
@@ -240,7 +243,7 @@ public final class DefaultAttackSub implements SubmarineController {
 		// Step 1: Process sonar contacts
 		SonarContact bestContact = pickBestSubContact(input.sonarContacts(), input.activeSonarReturns());
 		torpedoThreat = detectTorpedoThreat(input.sonarContacts());
-		updateTrackedContact(bestContact, pos, tick);
+		updateTrackedContact(bestContact, pos, tick, input.deltaTimeSeconds());
 
 		// Step 2: Detect if we've been pinged (active return means someone pinged us)
 		wasPinged = false;
@@ -329,10 +332,10 @@ public final class DefaultAttackSub implements SubmarineController {
 		output.setStatus(String.format("%s %s", state.name().substring(0, Math.min(4, state.name().length())),
 				inSprintPhase && state == State.PATROL ? "SPR" : ""));
 
-		if (hasTrackedContact) {
-			double confidence = Math.max(0, contactAlive * (1 - uncertaintyRadius / 3000));
-			output.publishContactEstimate(new ContactEstimate(trackedX, trackedY, confidence, contactAlive,
-					uncertaintyRadius, trackedHeading, trackedSpeed, "passive"));
+		if (trackEstimate != null) {
+			String label = trackEstimate.secondsSinceFix() > 0 ? "coast"
+					: sonarTrack.lastFix().orElseThrow().observation().isActive() ? "ping" : "passive";
+			output.publishContactEstimate(trackEstimate.toContactEstimate(contactAlive, label));
 		}
 
 		// Publish strategic waypoints for viewer
@@ -373,87 +376,68 @@ public final class DefaultAttackSub implements SubmarineController {
 	}
 
 	/**
-	 * A confirmed torpedo: loud AND fast. Loud but slow = surface ship or sprinting sub.
+	 * A torpedo's high-speed tonal signature can be classified without a range or source level.
 	 */
 	private boolean isConfirmedTorpedo(SonarContact c) {
-		return c.estimatedSourceLevel() > TORPEDO_SL_THRESHOLD && c.estimatedSpeed() > 20;
+		return c.classification() == SonarContact.Classification.TORPEDO;
 	}
 
 	private SonarContact detectTorpedoThreat(List<SonarContact> contacts) {
 		for (var c : contacts) {
-			// Torpedo signature: very loud (>105 dB) AND fast (>20 m/s).
-			// Surface ships and sprinting subs are loud but not 20+ m/s.
-			// Torpedoes cruise at 25 m/s, clearly distinct.
-			if (c.estimatedSourceLevel() > TORPEDO_SL_THRESHOLD && c.estimatedSpeed() > 20) {
+			if (isConfirmedTorpedo(c)) {
 				return c;
 			}
 		}
 		return null;
 	}
 
-	private void updateTrackedContact(SonarContact contact, Vec3 pos, long tick) {
-		double dt = 1.0 / 50;
+	private void updateTrackedContact(SonarContact contact, Vec3 pos, long tick, double dt) {
 		if (hasTrackedContact) {
-			if (!Double.isNaN(trackedHeading)) {
-				trackedX += trackedSpeed * Math.sin(trackedHeading) * dt;
-				trackedY += trackedSpeed * Math.cos(trackedHeading) * dt;
-			}
-			uncertaintyRadius += config.maxSubSpeed() * dt;
-			contactAlive *= 0.9985;
+			contactAlive *= Math.pow(0.9985, dt * 50);
 		}
-
 		if (contact == null) {
 			consecutiveContactTicks = 0;
-			if (hasTrackedContact && uncertaintyRadius > 5000)
-				clearTrack();
+		} else {
+			lastContactBearing = contact.bearing();
+			lastContactTick = tick;
+			consecutiveContactTicks++;
+			contactAlive = 1.0;
+		}
+		trackEstimate = sonarTrack.update(pos, contact, dt).orElse(null);
+		hasTrackedContact = trackEstimate != null;
+		if (!hasTrackedContact) {
+			trackedX = trackedY = trackedHeading = Double.NaN;
+			trackedSpeed = -1;
+			uncertaintyRadius = 0;
+			estimatedRange = Double.POSITIVE_INFINITY;
+			bestSolutionQuality = 0;
 			return;
 		}
-
-		lastContactBearing = contact.bearing();
-		lastContactTick = tick;
-		consecutiveContactTicks++;
-		contactAlive = 1.0;
-		bestSolutionQuality = Math.max(bestSolutionQuality, contact.solutionQuality());
-
-		if (contact.estimatedSpeed() >= 0) {
-			double q = contact.isActive() ? 0.8 : Math.clamp(contact.signalExcess() / 25, 0.1, 0.4);
-			trackedSpeed = hasTrackedContact ? trackedSpeed * (1 - q) + contact.estimatedSpeed() * q
-					: contact.estimatedSpeed();
-		}
-		if (!Double.isNaN(contact.estimatedHeading()))
-			trackedHeading = contact.estimatedHeading();
-
-		double range = contact.range() > 50 ? contact.range() : 2000;
-		double tx = pos.x() + range * Math.sin(contact.bearing());
-		double ty = pos.y() + range * Math.cos(contact.bearing());
-
-		if (hasTrackedContact) {
-			double blend = contact.isActive() ? 0.8 : 0.2;
-			trackedX = trackedX * (1 - blend) + tx * blend;
-			trackedY = trackedY * (1 - blend) + ty * blend;
-		} else {
-			trackedX = tx;
-			trackedY = ty;
-			hasTrackedContact = true;
-		}
-
+		trackedX = trackEstimate.x();
+		trackedY = trackEstimate.y();
+		trackedHeading = trackEstimate.estimatedHeading();
+		trackedSpeed = trackEstimate.estimatedSpeed();
+		uncertaintyRadius = trackEstimate.uncertainty().uncertaintyRadius();
+		bestSolutionQuality = trackEstimate.solutionQuality();
 		estimatedRange = hdist(pos.x(), pos.y(), trackedX, trackedY);
-
-		if (contact.rangeUncertainty() > 0) {
-			uncertaintyRadius = contact.isActive() ? contact.rangeUncertainty() * 2
-					: Math.min(uncertaintyRadius, range * 0.4);
-		}
+		if (contact == null && uncertaintyRadius > 5000)
+			clearTrack();
 	}
 
 	private void clearTrack() {
+		if (sonarTrack != null)
+			sonarTrack.reset();
+		trackEstimate = null;
 		hasTrackedContact = false;
 		trackedX = trackedY = trackedHeading = Double.NaN;
-		trackedSpeed = 5;
+		trackedSpeed = -1;
 		contactAlive = 0;
 		uncertaintyRadius = 0;
 		estimatedRange = Double.POSITIVE_INFINITY;
 		bestSolutionQuality = 0;
 		consecutiveContactTicks = 0;
+		lastContactTick = Long.MIN_VALUE / 4;
+		lastContactBearing = Double.NaN;
 	}
 
 	// ── State transitions ──
@@ -492,11 +476,11 @@ public final class DefaultAttackSub implements SubmarineController {
 			}
 		}
 		case TRACKING -> {
-			if (!hasTrackedContact) {
+			if (!hasTrackedContact && consecutiveContactTicks < CONTACT_CONFIRM_TICKS) {
 				state = State.PATROL;
 				return;
 			}
-			if (bestSolutionQuality >= TMA_TRACKING_QUALITY && !Double.isNaN(trackedHeading)) {
+			if (bestSolutionQuality >= TMA_TRACKING_QUALITY && hasResolvedMotion()) {
 				state = State.STALKING;
 			}
 		}
@@ -505,7 +489,7 @@ public final class DefaultAttackSub implements SubmarineController {
 				state = State.PATROL;
 				return;
 			}
-			if (bestSolutionQuality < TMA_TRACKING_QUALITY * 0.5) {
+			if (bestSolutionQuality < TMA_TRACKING_QUALITY * 0.5 || !hasResolvedMotion()) {
 				state = State.TRACKING;
 				return;
 			}
@@ -517,6 +501,9 @@ public final class DefaultAttackSub implements SubmarineController {
 			}
 		}
 		case ATTACKING -> {
+			if (!hasResolvedMotion()) {
+				state = State.TRACKING;
+			}
 			// Transition handled in launchTorpedoIfReady
 		}
 		case EVADING -> {
@@ -764,6 +751,8 @@ public final class DefaultAttackSub implements SubmarineController {
 			return;
 		if (!hasTrackedContact || contactAlive < 0.4)
 			return;
+		if (!hasResolvedMotion())
+			return;
 		if (bestSolutionQuality < TMA_FIRING_QUALITY)
 			return;
 
@@ -797,8 +786,8 @@ public final class DefaultAttackSub implements SubmarineController {
 		// If we're below the thermocline and can hear them, they're likely
 		// near our depth or above the layer. Use a reasonable estimate.
 		double targetDepth = Math.max(thermoclineDepth + 20, -150);
-		String missionData = String.format("%.0f,%.0f,%.0f,%.4f,%.1f", leadX, leadY, targetDepth,
-				Double.isNaN(trackedHeading) ? 0 : trackedHeading, trackedSpeed > 0.5 ? trackedSpeed : 5.0);
+		String missionData = String.format("%.0f,%.0f,%.0f,%.4f,%.1f", leadX, leadY, targetDepth, trackedHeading,
+				trackedSpeed);
 
 		output.launchTorpedo(new TorpedoLaunchCommand(bearing, 0, 20.0, missionData));
 		lastTorpedoLaunchTick = tick;
@@ -845,6 +834,10 @@ public final class DefaultAttackSub implements SubmarineController {
 	private static double hdist(double x1, double y1, double x2, double y2) {
 		double dx = x2 - x1, dy = y2 - y1;
 		return Math.sqrt(dx * dx + dy * dy);
+	}
+
+	private boolean hasResolvedMotion() {
+		return Double.isFinite(trackedHeading) && Double.isFinite(trackedSpeed) && trackedSpeed >= 0;
 	}
 
 	/**

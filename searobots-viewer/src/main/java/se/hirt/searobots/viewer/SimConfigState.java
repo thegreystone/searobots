@@ -63,9 +63,9 @@ final class SimConfigState extends BaseAppState {
 	}
 
 	private static final List<ShipOption> SHIP_OPTIONS = List.of(new ShipOption("(empty)", null, null),
-			new ShipOption("Codex Sub", CodexAttackSub::new, VehicleConfig.submarine()),
-			new ShipOption("Claude Sub", ClaudeAttackSub::new, VehicleConfig.submarine()),
-			new ShipOption("Default Sub", DefaultAttackSub::new, VehicleConfig.submarine()),
+			new ShipOption("Codex", CodexAttackSub::new, VehicleConfig.submarine()),
+			new ShipOption("Claude", ClaudeAttackSub::new, VehicleConfig.submarine()),
+			new ShipOption("Default", DefaultAttackSub::new, VehicleConfig.submarine()),
 			new ShipOption("Sub Drone", SubmarineDrone::new, VehicleConfig.submarine()),
 			new ShipOption("Ship Drone (surface)", TargetDrone::new, VehicleConfig.surfaceShip()));
 
@@ -73,8 +73,8 @@ final class SimConfigState extends BaseAppState {
 	private static final String[] SPEED_OPTIONS = {"1x", "2x", "4x", "8x", "16x"};
 
 	// Persistent selections (survive dialog close/reopen)
-	// Defaults: Claude Sub vs Codex Sub. Overridable from the command line for
-	// development, e.g. -Dsearobots.ship1="Ship Drone" -Dsearobots.ship2="Claude Sub"
+	// Defaults: Claude vs Codex. Overridable from the command line for
+	// development, e.g. -Dsearobots.ship1="Ship Drone" -Dsearobots.ship2="Claude"
 	// (case-insensitive substring of the display name, or a numeric index).
 	static int selectedShip1Index = shipIndexFromProperty("searobots.ship1", 2);
 	static int selectedShip2Index = shipIndexFromProperty("searobots.ship2", 1);
@@ -245,15 +245,9 @@ final class SimConfigState extends BaseAppState {
 			String text = seedField.getText().trim();
 			if (!text.isEmpty()) {
 				try {
-					long seed = Long.parseUnsignedLong(text, 16);
-					onSeedChanged.accept(seed);
+					onSeedChanged.accept(parseSeed(text));
 				} catch (NumberFormatException e) {
-					try {
-						long seed = Long.parseLong(text);
-						onSeedChanged.accept(seed);
-					} catch (NumberFormatException e2) {
-						System.out.println("Invalid seed: " + text);
-					}
+					System.out.println("Invalid seed: " + text);
 				}
 			}
 		}
@@ -261,6 +255,21 @@ final class SimConfigState extends BaseAppState {
 		close();
 		if (onConfirm != null)
 			onConfirm.run();
+	}
+
+	/**
+	 * A seed as typed by the user: hexadecimal, as the viewer shows seeds (title bar, this dialog),
+	 * or failing that a signed decimal number.
+	 *
+	 * @throws NumberFormatException
+	 *             if the text is neither
+	 */
+	static long parseSeed(String text) {
+		try {
+			return Long.parseUnsignedLong(text.trim(), 16);
+		} catch (NumberFormatException e) {
+			return Long.parseLong(text.trim());
+		}
 	}
 
 	private void close() {

@@ -59,7 +59,7 @@ class CodexTorpedoGuidanceTest {
 
 		assertTrue(output.publishedTargetZ < -220.0,
 				"A close deep active fix should move the target depth deep, got " + output.publishedTargetZ);
-		assertTrue(output.sternPlanes < -0.8,
+		assertTrue(output.sternPlanes < -0.5,
 				"A close deep active fix should command a strong dive, got " + output.sternPlanes);
 		assertTrue(output.throttle <= 0.55,
 				"A close deep active fix with a large vertical intercept error should slow down, got "
@@ -114,6 +114,141 @@ class CodexTorpedoGuidanceTest {
 		assertTrue(Math.abs(output.publishedTargetX) < 80.0 && output.publishedTargetY > 900.0,
 				"The torpedo should keep the submarine as target, got (" + output.publishedTargetX + ", "
 						+ output.publishedTargetY + ")");
+	}
+
+	@Test
+	void activeSlantRangeDoesNotOvershootHorizontalTargetPosition() {
+		var controller = new CodexTorpedoController();
+		var world = GeneratedWorld.deepFlat();
+		controller.onLaunch(new TorpedoLaunchContext(MatchConfig.withDefaults(0L), world.terrain(),
+				new Vec3(0.0, -600.0, -120.0), 0.0, 0.0, "0;400;-280;0;0"));
+		controller.onTick(new FixedInput(0L, new Pose(new Vec3(0.0, -600.0, -120.0), 0.0, 0.0, 0.0), Velocity.ZERO,
+				25.0, 120.0, List.of(), List.of(), 0), new CapturingOutput());
+
+		var output = new CapturingOutput();
+		controller.onTick(new FixedInput(400L, new Pose(new Vec3(0.0, 100.0, -120.0), 0.0, 0.0, 0.0), Velocity.ZERO,
+				25.0, 120.0, List.of(), List.of(activeContact(0.0, Math.hypot(300.0, 160.0), -280.0)), 0), output);
+
+		assertTrue(Math.abs(output.publishedTargetY - 400.0) < 1.0,
+				"Active slant range and depth should recover the horizontal target, got " + output.publishedTargetY);
+	}
+
+	@Test
+	void shortRangeShotPingsBeforePassingTarget() {
+		var controller = new CodexTorpedoController();
+		var world = GeneratedWorld.deepFlat();
+		controller.onLaunch(new TorpedoLaunchContext(MatchConfig.withDefaults(0L), world.terrain(),
+				new Vec3(0.0, -600.0, -120.0), 0.0, 0.0, "0;100;-120;0;0"));
+		controller.onTick(new FixedInput(0L, new Pose(new Vec3(0.0, -600.0, -120.0), 0.0, 0.0, 0.0), Velocity.ZERO,
+				25.0, 120.0, List.of(), List.of(), 0), new CapturingOutput());
+
+		var output = new CapturingOutput();
+		controller.onTick(new FixedInput(400L, new Pose(new Vec3(0.0, -100.0, -120.0), 0.0, 0.0, 0.0), Velocity.ZERO,
+				25.0, 120.0, List.of(), List.of(), 0), output);
+
+		assertTrue(output.pingRequested, "A 700m shot needs to acquire its target before the old 850m arming distance");
+	}
+
+	@Test
+	void acquiredEnemyDoesNotSwitchToLaunchingSubmarine() {
+		var controller = new CodexTorpedoController();
+		var world = GeneratedWorld.deepFlat();
+		controller.onLaunch(new TorpedoLaunchContext(MatchConfig.withDefaults(0L), world.terrain(),
+				new Vec3(0.0, -600.0, -120.0), 0.0, 0.0, "0;700;-120;0;0"));
+		controller.onTick(new FixedInput(0L, new Pose(new Vec3(0.0, -600.0, -120.0), 0.0, 0.0, 0.0), Velocity.ZERO,
+				25.0, 120.0, List.of(), List.of(), 0), new CapturingOutput());
+		controller.onTick(new FixedInput(400L, new Pose(new Vec3(0.0, 100.0, -120.0), 0.0, 0.0, 0.0), Velocity.ZERO,
+				25.0, 120.0, List.of(),
+				List.of(activeContact(0.0, 600.0, -120.0, SonarContact.Classification.SUBMARINE, 0.0, 35.0)), 0),
+				new CapturingOutput());
+
+		var output = new CapturingOutput();
+		controller.onTick(new FixedInput(450L, new Pose(new Vec3(0.0, 100.0, -120.0), 0.0, 0.0, 0.0), Velocity.ZERO,
+				25.0, 120.0, List.of(),
+				List.of(activeContact(Math.PI, 500.0, -120.0, SonarContact.Classification.SUBMARINE, 0.0, 70.0)), 0),
+				output);
+
+		assertTrue(Math.abs(output.publishedTargetY - 700.0) < 1.0,
+				"A stronger owner return behind the weapon must not replace the acquired enemy: "
+						+ output.publishedTargetY);
+	}
+
+	@Test
+	void expiredEnemyLockScuttlesBeforeReacquiringDistantOwner() {
+		var controller = acquiredStationaryTarget();
+		var output = new CapturingOutput();
+		controller.onTick(new FixedInput(1_250L, new Pose(new Vec3(0.0, 1_200.0, -120.0), 0.0, 0.0, 0.0), Velocity.ZERO,
+				25.0, 120.0, List.of(),
+				List.of(activeContact(Math.PI, 900.0, -120.0, SonarContact.Classification.SUBMARINE, 0.0, 70.0)), 50),
+				output);
+		assertTrue(output.detonationRequested,
+				"An expired enemy solution must not broaden until it accepts the distant owner");
+	}
+
+	@Test
+	void expiredEnemyLockDoesNotScuttleNearSubmarineOrWithoutClearanceEvidence() {
+		for (List<SonarContact> returns : List.of(List.<SonarContact> of(),
+				List.of(activeContact(0.0, 100.0, -120.0, SonarContact.Classification.SUBMARINE, 0.0, 70.0)))) {
+			var controller = acquiredStationaryTarget();
+			var output = new CapturingOutput();
+			controller.onTick(new FixedInput(1_250L, new Pose(new Vec3(0.0, 1_200.0, -120.0), 0.0, 0.0, 0.0),
+					Velocity.ZERO, 25.0, 120.0, List.of(), returns, 50), output);
+			assertTrue(!output.detonationRequested,
+					"Scuttling requires fresh echoes placing all detected submarines beyond the safety margin");
+		}
+	}
+
+	private CodexTorpedoController acquiredStationaryTarget() {
+		var controller = new CodexTorpedoController();
+		var world = GeneratedWorld.deepFlat();
+		controller.onLaunch(new TorpedoLaunchContext(MatchConfig.withDefaults(0L), world.terrain(),
+				new Vec3(0.0, -600.0, -120.0), 0.0, 0.0, "0;700;-120;0;0"));
+		controller.onTick(new FixedInput(0L, new Pose(new Vec3(0.0, -600.0, -120.0), 0.0, 0.0, 0.0), Velocity.ZERO,
+				25.0, 120.0, List.of(), List.of(), 0), new CapturingOutput());
+		controller.onTick(new FixedInput(400L, new Pose(new Vec3(0.0, 100.0, -120.0), 0.0, 0.0, 0.0), Velocity.ZERO,
+				25.0, 120.0, List.of(),
+				List.of(activeContact(0.0, 600.0, -120.0, SonarContact.Classification.SUBMARINE, 0.0, 35.0)), 0),
+				new CapturingOutput());
+		return controller;
+	}
+
+	@Test
+	void noisyCrossingTargetIsInterceptedOnFirstPass() {
+		var outcome = CodexTorpedoGuidanceExperiment.simulate(1_200.0, -280.0, 7.0, 0.0, true);
+		assertTrue(outcome.firstPassDistance() < 35.0,
+				"One-second active fixes and correlated passive bias should still intercept a moving deep target: "
+						+ outcome);
+	}
+
+	@Test
+	void risingSeabedIsClearedBeforeReturningToTargetDepth() {
+		double[] elevations = new double[3 * 41];
+		for (int row = 0; row < 41; row++) {
+			for (int col = 0; col < 3; col++) {
+				elevations[row * 3 + col] = row >= 7 && row <= 10 ? -100.0 : -500.0;
+			}
+		}
+		var terrain = new TerrainMap(elevations, 3, 41, -100.0, 0.0, 100.0);
+		var target = new Vec3(0.0, 2_200.0, -280.0);
+		var controller = new CodexTorpedoController();
+		var torpedo = new TorpedoEntity(1, 0, VehicleConfig.torpedo(), controller, new Vec3(0.0, 0.0, -250.0), 0.0, 0.0,
+				30.0, Color.GREEN);
+		torpedo.setSpeed(23.0);
+		controller.onLaunch(new TorpedoLaunchContext(MatchConfig.withDefaults(0L), terrain, new Vec3(0.0, 0.0, -250.0),
+				0.0, 0.0, "0;2200;-280;0;0"));
+		var physics = new TorpedoPhysics();
+		double bestDistance = Double.POSITIVE_INFINITY;
+		for (int tick = 0; tick < 7_000 && torpedo.alive() && bestDistance > 35.0; tick++) {
+			var pos = torpedo.pose().position();
+			List<SonarContact> fixes = tick % 50 == 0
+					? List.of(activeContact(bearingTo(pos, target), pos.distanceTo(target), target.z())) : List.of();
+			controller.onTick(new FixedInput(tick, torpedo.pose(), torpedo.velocity(), torpedo.speed(),
+					torpedo.fuelRemaining(), List.of(), fixes, 0), torpedo.createOutput());
+			physics.step(torpedo, DT, terrain, null, null);
+			bestDistance = Math.min(bestDistance, torpedo.pose().position().distanceTo(target));
+		}
+		assertTrue(torpedo.alive(), "The weapon should climb over the ridge before reaching it");
+		assertTrue(bestDistance <= 35.0, "The weapon must resume its deep intercept after the ridge: " + bestDistance);
 	}
 
 	private TerminalOutcome runTerminalApproach(
@@ -204,6 +339,8 @@ class CodexTorpedoGuidanceTest {
 	}
 
 	private static final class CapturingOutput implements TorpedoOutput {
+		private boolean pingRequested;
+		private boolean detonationRequested;
 		private double sternPlanes;
 		private double throttle = Double.NaN;
 		private double publishedTargetX = Double.NaN;
@@ -222,6 +359,16 @@ class CodexTorpedoGuidanceTest {
 		@Override
 		public void setThrottle(double value) {
 			throttle = value;
+		}
+
+		@Override
+		public void activeSonarPing() {
+			pingRequested = true;
+		}
+
+		@Override
+		public void detonate() {
+			detonationRequested = true;
 		}
 
 		@Override

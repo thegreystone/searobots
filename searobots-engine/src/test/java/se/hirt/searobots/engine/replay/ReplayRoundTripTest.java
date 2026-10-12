@@ -181,7 +181,7 @@ class ReplayRoundTripTest {
 		MatchConfig config = shortMatch(7L, 1);
 		Path file = dir.resolve("synthetic.srl");
 
-		var sub = new SubmarineSnapshot(0, "Claude Sub", new Pose(new Vec3(123.5, -456.25, -200.0), 1.5, -0.25, 0.0),
+		var sub = new SubmarineSnapshot(0, "Claude", "CL", new Pose(new Vec3(123.5, -456.25, -200.0), 1.5, -0.25, 0.0),
 				new Velocity(new Vec3(6.5, 0.0, -1.25), new Vec3(0.0, 0.0, 0.125)), 6.5, new Color(60, 220, 120), false,
 				875, 1.5, 102.5, 0.8, -0.25, 0.1, "CHASE", true, 6,
 				List.of(new ContactEstimate(1000.0, 2000.0, 0.7, 0.9, 150.0, 2.5, 7.0, "passive"),
@@ -191,9 +191,9 @@ class ReplayRoundTripTest {
 				List.of(), new FiringSolution(1234.5, -678.25, 2.1, 8.5, 0.85), true);
 
 		var torp = new TorpedoSnapshot(1001, 0, new Pose(new Vec3(200.0, 300.0, -180.0), 0.75, 0.05, 0.0),
-				new Velocity(new Vec3(23.0, 0.0, 0.5), Vec3.ZERO), 23.0, new Color(255, 80, 80), 220.5, false, true,
-				140.0, false, 1000.0, 2000.0, -200.0, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN,
-				1100.0, 2100.0, -195.0, "TERMINAL");
+				new Velocity(new Vec3(23.0, 0.0, 0.5), new Vec3(0, 0.04, -0.07)), 23.0, new Color(255, 80, 80), 220.5,
+				false, true, 140.0, false, 1000.0, 2000.0, -200.0, Double.NaN, Double.NaN, Double.NaN, Double.NaN,
+				Double.NaN, 1100.0, 2100.0, -195.0, "TERMINAL");
 
 		var live = new CaptureListener();
 		try (var writer = new ReplayWriter(config, List.of(new Vec3(0, 0, -100)), file)) {
@@ -224,16 +224,16 @@ class ReplayRoundTripTest {
 		MatchConfig config = shortMatch(7L, 1);
 		Path v2File = dir.resolve("v2.srl");
 
-		var sub = new SubmarineSnapshot(0, "Claude Sub", new Pose(new Vec3(123.5, -456.25, -200.0), 1.5, -0.25, 0.0),
+		var sub = new SubmarineSnapshot(0, "Claude", "CL", new Pose(new Vec3(123.5, -456.25, -200.0), 1.5, -0.25, 0.0),
 				new Velocity(new Vec3(6.5, 0.0, -1.25), new Vec3(0.0, 0.0, 0.125)), 6.5, new Color(60, 220, 120), false,
 				875, 1.5, 102.5, 0.8, -0.25, 0.1, "CHASE", true, 6,
 				List.of(new ContactEstimate(1000.0, 2000.0, 0.7, 0.9, 150.0, 2.5, 7.0, "passive")),
 				List.of(new Waypoint(500.0, 600.0, -250.0, true, false)), List.of(),
 				new FiringSolution(1234.5, -678.25, 2.1, 8.5, 0.85), false);
 		var torp = new TorpedoSnapshot(1001, 0, new Pose(new Vec3(200.0, 300.0, -180.0), 0.75, 0.05, 0.0),
-				new Velocity(new Vec3(23.0, 0.0, 0.5), Vec3.ZERO), 23.0, new Color(255, 80, 80), 220.5, false, true,
-				140.0, false, 1000.0, 2000.0, -200.0, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN,
-				1100.0, 2100.0, -195.0, "TERMINAL");
+				new Velocity(new Vec3(23.0, 0.0, 0.5), new Vec3(0, 0.04, -0.07)), 23.0, new Color(255, 80, 80), 220.5,
+				false, true, 140.0, false, 1000.0, 2000.0, -200.0, Double.NaN, Double.NaN, Double.NaN, Double.NaN,
+				Double.NaN, 1100.0, 2100.0, -195.0, "TERMINAL");
 
 		try (var writer = new ReplayWriter(config, List.of(new Vec3(0, 0, -100)), v2File)) {
 			writer.onTick(0, List.of(sub), List.of(torp));
@@ -265,10 +265,11 @@ class ReplayRoundTripTest {
 		SubmarineSnapshot got = replayed.frames.get(0).subs().get(0);
 		assertNull(got.firingSolution(), "v1 cannot carry a firing solution; must reconstruct as null");
 		// Everything else must round-trip exactly as if it had been a v2 file.
-		var expected = new SubmarineSnapshot(sub.id(), sub.name(), sub.pose(), sub.velocity(), sub.speed(), sub.color(),
-				sub.forfeited(), sub.hp(), sub.noiseLevel(), sub.sourceLevelDb(), sub.throttle(), sub.rudder(),
-				sub.sternPlanes(), sub.status(), sub.pingRequested(), sub.torpedoesRemaining(), sub.contactEstimates(),
-				sub.waypoints(), sub.strategicWaypoints(), null, sub.surfaceLocked());
+		var expected = new SubmarineSnapshot(sub.id(), sub.name(), sub.shortName(), sub.pose(), sub.velocity(),
+				sub.speed(), sub.color(), sub.forfeited(), sub.hp(), sub.noiseLevel(), sub.sourceLevelDb(),
+				sub.throttle(), sub.rudder(), sub.sternPlanes(), sub.status(), sub.pingRequested(),
+				sub.torpedoesRemaining(), sub.contactEstimates(), sub.waypoints(), sub.strategicWaypoints(), null,
+				sub.surfaceLocked());
 		assertSubEquals(expected, got, "v1 sub");
 		assertTorpedoEquals(torp, replayed.frames.get(0).torps().get(0), "v1 torp");
 	}
@@ -301,8 +302,9 @@ class ReplayRoundTripTest {
 	}
 
 	private static SubmarineSnapshot emptySub(int id) {
-		return new SubmarineSnapshot(id, "Sub" + id, Pose.at(Vec3.ZERO), Velocity.ZERO, 0, new Color(60, 220, 120),
-				false, 1000, 0, 90, 0, 0, 0, "PATROL", false, 8, List.of(), List.of(), List.of(), null, false);
+		return new SubmarineSnapshot(id, "Sub" + id, "SU", Pose.at(Vec3.ZERO), Velocity.ZERO, 0,
+				new Color(60, 220, 120), false, 1000, 0, 90, 0, 0, 0, "PATROL", false, 8, List.of(), List.of(),
+				List.of(), null, false);
 	}
 
 	private static void assertSubEquals(SubmarineSnapshot a, SubmarineSnapshot b, String ctx) {

@@ -45,6 +45,7 @@ import com.jme3.math.FastMath;
 import com.jme3.math.Quaternion;
 import com.jme3.math.Vector3f;
 import com.jme3.post.FilterPostProcessor;
+import com.jme3.post.filters.BloomFilter;
 import com.jme3.post.filters.FogFilter;
 import com.jme3.post.filters.LightScatteringFilter;
 import com.jme3.renderer.queue.RenderQueue;
@@ -61,9 +62,11 @@ import com.jme3.util.BufferUtils;
 import com.jme3.util.SkyFactory;
 import com.jme3.water.WaterFilter;
 import se.hirt.searobots.api.TerrainMap;
+import se.hirt.searobots.api.VehicleConfig;
 import se.hirt.searobots.api.Vec3;
 import se.hirt.searobots.api.Waypoint;
 import se.hirt.searobots.engine.GeneratedWorld;
+import se.hirt.searobots.engine.HullGeometry;
 import se.hirt.searobots.engine.SubmarineSnapshot;
 import se.hirt.searobots.engine.TorpedoSnapshot;
 
@@ -86,10 +89,40 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 	private static final Vector3f SHIP_PROP_LOCAL = new Vector3f(0f, 67.9f, -5.0f);
 	// Ship rudder stock (hinge axis is vertical, so only X and Y matter)
 	private static final Vector3f SHIP_RUDDER_LOCAL = new Vector3f(0f, 71.6f, -3.9f);
-	// Control-surface group names: the submarine has upper/lower rudders, the ship a single one
-	private static final String[] RUDDER_GROUPS = {"rudderu", "rudderl", "Rudder"};
+
+	// Submarine X-tail: four fins at 45 degrees, each with a flap hinged behind it, swinging about a swept hinge line
+	// (a point on the line and its direction from root to tip). Values from SubmarineModelGenerator, which prints them.
+	private record TailFlap(String name, Vector3f hinge, Vector3f axis) {
+	}
+
+	private static final List<TailFlap> TAIL_FLAPS = List.of(
+			new TailFlap("tailflap_pu", new Vector3f(0.177f, 33.559f, 0.287f), new Vector3f(0.6678f, 0.3289f, 0.6678f)),
+			new TailFlap("tailflap_su", new Vector3f(-0.177f, 33.559f, 0.287f),
+					new Vector3f(-0.6678f, 0.3289f, 0.6678f)),
+			new TailFlap("tailflap_sl", new Vector3f(-0.177f, 33.559f, -0.067f),
+					new Vector3f(-0.6678f, 0.3289f, -0.6678f)),
+			new TailFlap("tailflap_pl", new Vector3f(0.177f, 33.559f, -0.067f),
+					new Vector3f(0.6678f, 0.3289f, -0.6678f)));
+	// Full rudder and full stern planes swing a flap this far (radians); mixed, a flap goes no further than the limit
+	private static final float RUDDER_THROW = 0.4f, PLANES_THROW = 0.3f, FLAP_LIMIT = 0.5f;
+	// Torpedo tube doors (TubeDoor1..4: port upper, starboard upper, port lower, starboard lower) are shutters that
+	// open by turning about the hull's centreline, sliding under the skin. Pivot on the centreline at the muzzle and
+	// signed opening angle about the model's +Y axis, from SubmarineModelGenerator; each tube's offset in the
+	// submarine's frame (to starboard, up) as in the engine's TorpedoTubes, to tell which tube a new torpedo is in
+	private static final String[] TUBE_DOORS = {"TubeDoor1", "TubeDoor2", "TubeDoor3", "TubeDoor4"};
+	private static final Vector3f[] TUBE_DOOR_PIVOTS = {new Vector3f(0f, -33.161f, 0.11f),
+			new Vector3f(0f, -33.161f, 0.11f), new Vector3f(0f, -32.601f, 0.11f), new Vector3f(0f, -32.601f, 0.11f)};
+	private static final float[] TUBE_DOOR_OPEN_ANGLES = {-0.3840f, 0.3840f, -0.8639f, 0.8639f};
+	private static final double[][] TUBE_OFFSETS = {{-1.7, -0.6}, {1.7, -0.6}, {-1.25, -1.45}, {1.25, -1.45}};
+	// Doors take this long to slide open or shut, and stay open this long after the torpedo appears, which covers
+	// its time in the tube (TorpedoTubes) with a little to spare
+	private static final float TUBE_DOOR_SLIDE_SECONDS = 0.8f, TUBE_DOOR_HOLD_SECONDS = 4.5f;
+	private final java.util.Set<Integer> seenTorpedoes = new java.util.HashSet<>();
+	private final Map<Integer, float[]> tubeDoorOpenUntil = new HashMap<>(), tubeDoorAngle = new HashMap<>();
+	private float tubeDoorClock;
 	private Spatial terrainGeometry;
 	private com.jme3.terrain.geomipmap.TerrainQuad terrainQuad;
+	private TerrainMap displayedTerrain;
 	private Spatial sky;
 	private Geometry sunBillboard;
 	private volatile GeneratedWorld pendingWorld;
@@ -116,25 +149,39 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 	private final Map<Integer, Geometry> torpedoCollisionGeoms = new HashMap<>();
 	private volatile List<TorpedoSnapshot> latestTorpedoSnapshots = List.of();
 
-	// 3D explosion effects
-	private record Explosion3D(int id, Vector3f position, float startTime, ColorRGBA color) {
+	// 3D explosion effects (torpedo detonations)
+	private ExplosionEffects explosions;
+	// A detonation this close (metres) to a submarine counts as a hit on it, as in CinematicDirector
+	private static final double EXPLOSION_HIT_RANGE = 80;
+
+	// Torpedo detonations from the sim thread, with the submarines as they were on that tick
+	private record Detonation(long tick, TorpedoSnapshot torpedo, List<SubmarineSnapshot> submarines) {
 	}
 
-	private final java.util.List<Explosion3D> activeExplosions = new java.util.ArrayList<>();
-	private final Map<Integer, Geometry> explosionGeoms = new HashMap<>(); // fireball sphere
-	private final Map<Integer, ParticleEmitter> debrisEmitters = new HashMap<>(); // debris particles
-	private final Map<Integer, ParticleEmitter> deathBubbles = new HashMap<>(); // sub death bubbles
+	private final java.util.Queue<Detonation> pendingDetonations = new java.util.concurrent.ConcurrentLinkedQueue<>();
+	private static final long DETONATION_MAX_AGE_TICKS = 150; // 3 s of sim time
+	// Above this speed (fast-forward), detonations older than that are skipped rather than shown late
+	private static final double DETONATION_SKIP_SPEED = 100;
+	// Scripted screenshots of explosions, when started with -Dsearobots.capture.dir (see ExplosionCapture)
+	private ExplosionCapture capture;
+	// With -Dsearobots.fastForwardTo=TICK, the match runs fast until that tick, then at normal speed (0: done)
+	private volatile long fastForwardTo = Long.getLong("searobots.fastForwardTo", 0L);
+	private WreckEmissions wrecks; // oil and bubbles from dead submarines
 	private final Map<Integer, ParticleEmitter> torpedoBubbles = new HashMap<>(); // torpedo wake
 	private final Map<Integer, Float> deathPropSpin = new HashMap<>(); // decaying prop spin rate
-	private float appTime = 0; // running time for animations
-	private static final float EXPLOSION_DURATION = 3.5f; // seconds
-	private static final float EXPLOSION_MAX_RADIUS = 80f;
+	// Team lights: the row of small lights along each flank (model group TeamLights) shine in the submarine's colour,
+	// at this fraction of it so they stay discreet, with this much of it again as glow for the bloom filter. They
+	// go out when the submarine dies.
+	private static final float TEAM_LIGHT_LEVEL = 0.85f, TEAM_LIGHT_GLOW = 1.0f;
+	// Torpedoes carry a band of light in the team colour, lit like the team lights, between these stations along the
+	// torpedo model's body (nose at -11.6, cylindrical from -10 to 4): mid-body
+	private static final float[] TORPEDO_RING = {-3.6f, -2.4f};
+	private final java.util.Set<Integer> teamLightsOut = new java.util.HashSet<>();
 
 	// Torpedo collision cylinder dimensions (visual, shrunk from physical hull)
 	// Torpedo visual cylinder matches physics: VehicleConfig.torpedo() hullHalfLength/hullHalfBeam
 	private static final float TORP_HALF_LENGTH = 2.5f; // 5m total (matches physics)
 	private static final float TORP_RADIUS = 0.25f; // 0.5m diameter (matches physics)
-	private final java.util.Set<Integer> knownTorpedoIds3D = new java.util.HashSet<>();
 	// Torpedo intercept marker (3D diamond at published target)
 	private Geometry interceptMarker;
 
@@ -263,8 +310,13 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 	 * -XstartOnFirstThread.
 	 */
 	public static void main(String[] args) {
+		// GLFW owns the macOS event loop. Java2D is only used for offscreen images (such as
+		// name decals); letting AWT start its own AppKit loop stops rendering at the first decal.
+		if (System.getProperty("os.name", "").toLowerCase(java.util.Locale.ROOT).contains("mac"))
+			System.setProperty("java.awt.headless", "true");
+
 		// A .srl path launches straight into replay of that recorded match; otherwise the
-		// first arg (if any) is a seed for a fresh match.
+		// first arg (if any) is a seed for a fresh match, in hex as the viewer shows it.
 		String replayPath = (args.length > 0 && args[0].toLowerCase().endsWith(".srl")) ? args[0] : null;
 		long seed;
 		if (replayPath != null) {
@@ -276,7 +328,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 				return;
 			}
 		} else {
-			seed = args.length > 0 ? Long.parseLong(args[0])
+			seed = args.length > 0 ? SimConfigState.parseSeed(args[0])
 					: java.util.concurrent.ThreadLocalRandom.current().nextLong();
 		}
 
@@ -399,6 +451,13 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 		fpp.addFilter(fogFilter);
 
 		fpp.addFilter(waterFilter);
+		// Underwater effects (ExplosionEffects.UNDERWATER) draw here, after the water and fog filters
+		fpp.addFilter(new com.jme3.post.filters.TranslucentBucketFilter());
+		// Bloom on glowing objects only (the team lights), so the rest of the scene keeps its look
+		var bloom = new BloomFilter(BloomFilter.GlowMode.Objects);
+		bloom.setBloomIntensity(2.5f);
+		bloom.setBlurScale(1.6f);
+		fpp.addFilter(bloom);
 		viewPort.addProcessor(fpp);
 
 		// Load submarine model
@@ -406,16 +465,19 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 		try {
 			Spatial hull = assetManager.loadModel("models/submarine-hybrid.obj");
 			generateSmoothNormals(hull);
+			SubmarineModelSupport.prepare(assetManager, hull);
 			disableBackFaceCulling(hull);
 			modelNode.attachChild(hull);
 			// Set up pivot nodes for control surfaces (hinge at hull attachment)
 			// OBJ coords: Y=fore-aft, X=left-right, Z=up-down
-			// Scaled model: 75m x 12m (sx=0.4, sy=0.567, sz=0.4 from original)
-			setupPivotAt(modelNode, "rudderl", new Vector3f(0f, 34f, 0.13f));
-			setupPivotAt(modelNode, "rudderu", new Vector3f(0f, 34f, 0.09f));
+			// Generated model coordinates are already in metres.
+			for (TailFlap flap : TAIL_FLAPS)
+				setupPivotAt(modelNode, flap.name(), flap.hinge());
 			setupPivotAt(modelNode, "elevatorl", new Vector3f(4.3f, -10f, 0f)); // under tower center
 			setupPivotAt(modelNode, "elevatorr", new Vector3f(-4.4f, -10f, 0f)); // under tower center
 			setupPivotAt(modelNode, "Propeller", SUB_PROP_LOCAL);
+			for (int i = 0; i < TUBE_DOORS.length; i++)
+				setupPivotAt(modelNode, TUBE_DOORS[i], TUBE_DOOR_PIVOTS[i]);
 			System.out.println("Loaded submarine-hybrid.obj");
 		} catch (Exception e) {
 			System.err.println("Failed to load submarine model: " + e.getMessage());
@@ -469,7 +531,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 				}
 			});
 			torpedoModelNode.attachChild(torpHull);
-			System.out.println("Loaded torpedo.obj (scale 0.07)");
+			System.out.println("Loaded torpedo.obj (scale 0.19)");
 		} catch (Exception e) {
 			// Fallback: small yellow elongated sphere
 			var cyl = new com.jme3.scene.shape.Sphere(8, 8, 1f);
@@ -626,6 +688,16 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 			interceptMarker.setQueueBucket(RenderQueue.Bucket.Transparent);
 			interceptMarker.setCullHint(Spatial.CullHint.Always);
 			rootNode.attachChild(interceptMarker);
+		}
+		explosions = new ExplosionEffects(assetManager, rootNode, guiNode, cam);
+		explosions.preload(renderManager);
+		wrecks = new WreckEmissions(assetManager, rootNode, cam);
+		capture = ExplosionCapture.fromSystemProperties(stateManager, guiNode, this::getActiveSim,
+				() -> latestTorpedoSnapshots, () -> latestSnapshots, this::stop);
+		if (capture != null) {
+			capture.waitFor(() -> terrainGeometry != null);
+			setDisplayFps(false);
+			setDisplayStatView(false);
 		}
 
 		cam.setLocation(new Vector3f(0, 15, 60));
@@ -1300,6 +1372,33 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 	// Fast-forward-to-next-event: boost the active clock to max speed, then restore the
 	// prior speed once a pause-on-event trigger (or end of match) halts it.
 	private static final double FFW_MAX_SPEED = 1_000_000;
+	private static final double FAST_FORWARD_TO_SPEED = 40;
+
+	/**
+	 * Runs the match fast, once the terrain is in, until the tick asked for with
+	 * -Dsearobots.fastForwardTo; {@link #endFastForwardTo} brings it back to normal speed there.
+	 */
+	private void updateFastForwardTo() {
+		var sim = getActiveSim();
+		if (fastForwardTo > 0 && sim != null && terrainGeometry != null
+				&& sim.getSpeedMultiplier() != FAST_FORWARD_TO_SPEED)
+			sim.setSpeedMultiplier(FAST_FORWARD_TO_SPEED);
+	}
+
+	/**
+	 * Back to normal speed once the fast-forward reaches its tick. Called on the simulation thread,
+	 * for every tick, as frames can be seconds apart while the scene loads.
+	 */
+	private void endFastForwardTo(long tick) {
+		if (fastForwardTo <= 0 || tick < fastForwardTo)
+			return;
+		fastForwardTo = 0;
+		var sim = getActiveSim();
+		if (sim != null)
+			sim.setSpeedMultiplier(1);
+		System.out.println("Fast-forwarded to tick " + tick + ", now at normal speed");
+	}
+
 	private volatile boolean ffwActive;
 	private volatile double ffwRestoreSpeed = 1.0;
 
@@ -1439,6 +1538,9 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 			updateOverlays();
 			updateFastForward();
 			updateReplayLabel(tpf);
+			if (capture != null)
+				capture.update(tpf);
+			updateFastForwardTo();
 			// Loading indicator
 			if (loadingText != null) {
 				var simSt = simStateSupplier.get();
@@ -1559,8 +1661,13 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 	@Override
 	public void onTick(
 		long tick, List<SubmarineSnapshot> submarines, List<se.hirt.searobots.engine.TorpedoSnapshot> torpedoes) {
+		endFastForwardTo(tick);
 		updateSubmarines(tick, submarines);
 		latestTorpedoSnapshots = torpedoes != null ? torpedoes : List.of();
+		if (torpedoes != null)
+			for (var t : torpedoes)
+				if (t.detonated())
+					pendingDetonations.add(new Detonation(tick, t, submarines));
 	}
 
 	@Override
@@ -1587,6 +1694,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 		}
 
 		TerrainMap terrain = world.terrain();
+		displayedTerrain = terrain;
 		terrainQuad = TerrainQuadBuilder.build(terrain, assetManager, cam);
 		terrainGeometry = terrainQuad;
 		rootNode.attachChild(terrainGeometry);
@@ -1598,6 +1706,8 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 		for (Node n : subNodes.values())
 			n.removeFromParent();
 		subNodes.clear();
+		teamLightsOut.clear();
+		deathPropSpin.clear();
 		for (Node n : trailNodes.values())
 			n.removeFromParent();
 		trailNodes.clear();
@@ -2307,6 +2417,9 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 				Node template = snap.surfaceLocked() ? shipModelNode : modelNode;
 				subNode = (Node) template.deepClone();
 				subNode.setName("sub-" + snap.id());
+				setTeamLights(subNode, snap.color(), true);
+				SubmarineDecals.paint(assetManager, subNode, SubmarineDecals.code(snap.shortName(), snap.id()),
+						snap.name());
 				subNodes.put(snap.id(), subNode);
 				rootNode.attachChild(subNode);
 				// Snap to position on first appearance
@@ -2319,14 +2432,14 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 				Vector3f currentPos = subNode.getLocalTranslation();
 				subNode.setLocalTranslation(currentPos.interpolateLocal(targetPos, lerpFactor));
 
-				Quaternion currentRot = subNode.getLocalRotation();
-				currentRot.slerp(targetRot, lerpFactor);
-				subNode.setLocalRotation(currentRot);
+				turnToward(subNode, targetRot, lerpFactor);
 			}
 
 			// Spin propeller: based on throttle when alive, free-spinning when dead
 			Spatial prop = findChild(subNode, "Propeller");
 			if (prop != null) {
+				if (snap.hp() <= 0 && teamLightsOut.add(snap.id()))
+					setTeamLights(subNode, snap.color(), false);
 				if (snap.hp() > 0) {
 					float spinRate = (float) snap.throttle() * tpf * 8f;
 					prop.rotate(0, spinRate, 0);
@@ -2341,64 +2454,48 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 				}
 			}
 
-			// Death bubbles: stream of bubbles from a sinking sub
+			// Wreck: oil, bubbles and belches of air from a dead submarine
 			if (snap.hp() <= 0) {
-				ParticleEmitter db = deathBubbles.get(snap.id());
-				if (db == null) {
-					db = new ParticleEmitter("deathBubbles-" + snap.id(), ParticleMesh.Type.Triangle, 100);
-					Material dbMat = new Material(assetManager, "Common/MatDefs/Misc/Particle.j3md");
-					dbMat.setTexture("Texture", assetManager.loadTexture("Effects/Explosion/smoketrail.png"));
-					dbMat.getAdditionalRenderState().setBlendMode(RenderState.BlendMode.Alpha);
-					db.setMaterial(dbMat);
-					db.setImagesX(1);
-					db.setImagesY(3);
-					db.setStartColor(new ColorRGBA(0.8f, 0.9f, 1f, 0.6f));
-					db.setEndColor(new ColorRGBA(0.9f, 0.95f, 1f, 0f));
-					db.setStartSize(0.5f);
-					db.setEndSize(3f);
-					db.setGravity(0, 5f, 0); // bubbles float up (JME Y = up)
-					db.setLowLife(2f);
-					db.setHighLife(5f);
-					db.getParticleInfluencer().setInitialVelocity(new Vector3f(0, 8f, 0));
-					db.getParticleInfluencer().setVelocityVariation(0.5f);
-					db.setParticlesPerSec(15);
-					rootNode.attachChild(db);
-					deathBubbles.put(snap.id(), db);
-				}
-				db.setLocalTranslation(targetPos);
-				// Reduce bubbles as the sub settles (less motion = fewer air leaks)
-				float sinkSpeed = Math.abs((float) snap.speed()) + 0.5f;
-				var simLp = getActiveSim();
-				db.setParticlesPerSec(simLp != null && simLp.isPaused() ? 0 : Math.max(2, (int) (sinkSpeed * 3)));
+				var simW = getActiveSim();
+				wrecks.update(snap.id(), subNode, tpf, simW != null && simW.isPaused());
 			}
 
 			// Animate control surfaces with inertia (slerp toward target)
 			// ~3 deg/s actuator rate: full throw in ~8 seconds
 			float surfaceLerp = Math.min(1f, tpf * SURFACE_SPEED);
 
-			float rudderAngle = (float) snap.rudder() * 0.4f; // +/- 0.4 rad (~23 deg)
+			float rudderAngle = (float) snap.rudder() * RUDDER_THROW; // +/- 0.4 rad (~23 deg)
 			float elevAngle = (float) -snap.sternPlanes() * 0.3f; // +/- 0.3 rad (~17 deg)
-			var targetRudder = new Quaternion().fromAngles(0, 0, rudderAngle);
 			var targetElev = new Quaternion().fromAngles(elevAngle, 0, 0);
 
-			for (String rudderGroup : RUDDER_GROUPS) {
-				Spatial rudder = findChild(subNode, rudderGroup);
-				if (rudder != null) {
-					rudder.getLocalRotation().slerp(targetRudder, surfaceLerp);
-				}
+			for (TailFlap flap : TAIL_FLAPS) {
+				Spatial s = findChild(subNode, flap.name());
+				if (s != null)
+					turnToward(s,
+							new Quaternion().fromAngleAxis(
+									flapAngle(flap.axis(), (float) snap.rudder(), (float) snap.sternPlanes()),
+									flap.axis()),
+							surfaceLerp);
 			}
+			Spatial shipRudder = findChild(subNode, "Rudder"); // a surface ship's, on a vertical stock
+			if (shipRudder != null)
+				turnToward(shipRudder, new Quaternion().fromAngleAxis(rudderAngle, Vector3f.UNIT_Z), surfaceLerp);
 
 			Spatial el = findChild(subNode, "elevatorl");
 			Spatial er = findChild(subNode, "elevatorr");
-			if (el != null) {
-				el.getLocalRotation().slerp(targetElev, surfaceLerp);
-			}
-			if (er != null) {
-				er.getLocalRotation().slerp(targetElev, surfaceLerp);
-			}
+			if (el != null)
+				turnToward(el, targetElev, surfaceLerp);
+			if (er != null)
+				turnToward(er, targetElev, surfaceLerp);
 
 			// Bubble emitter: cavitation noise visualization
+			// The cache is by submarine id, which a new match (the same seed, say) reuses for new models: an emitter
+			// on a model since replaced is stale
 			ParticleEmitter bubbles = bubbleEmitters.get(snap.id());
+			if (bubbles != null && bubbles.getParent() != subNode) {
+				bubbles.removeFromParent();
+				bubbles = null;
+			}
 			if (bubbles == null) {
 				bubbles = new ParticleEmitter("bubbles-" + snap.id(), ParticleMesh.Type.Triangle, 200);
 				Material bubbleMat = new Material(assetManager, "Common/MatDefs/Misc/Particle.j3md");
@@ -2452,31 +2549,40 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 				Vector3f subModelPos = subNode.getLocalTranslation();
 				Quaternion subModelRot = subNode.getLocalRotation();
 
-				// Ellipsoid for hull body (excluding tower):
-				// tighter vertical, offset aft since bow is longer than stern
-				float semiLength = 38f; // covers bow to stern body
-				float semiBeam = 5.5f; // slightly tighter than hullHalfBeam
-				float semiHeight = 4.5f; // hull body only, tower excluded
-				float aftOffset = 2f; // shift center slightly aft (sub local Y)
-
+				// Hull-body envelope shared with collision and fuse geometry.
+				var envelope = HullGeometry.envelope(snap);
 				ellGeom.setLocalRotation(subModelRot);
-				// Offset in sub's local frame then transform to world
-				Vector3f offset = subModelRot.mult(new Vector3f(0, aftOffset, 0));
+				// OBJ +Y points aft, while the engine's longitudinal offset is along forward.
+				Vector3f offset = subModelRot
+						.mult(new Vector3f(0, (float) -envelope.forwardOffset(), (float) envelope.upOffset()));
 				ellGeom.setLocalTranslation(subModelPos.add(offset));
-				// In sub's local frame: X = beam, Y = forward (length), Z = up (height)
-				ellGeom.setLocalScale(semiBeam, semiLength, semiHeight);
+				// OBJ axes: X = beam, Y = length, Z = height.
+				ellGeom.setLocalScale((float) envelope.semiBeam(), (float) envelope.semiLength(),
+						(float) envelope.semiHeight());
 			}
 
-			// Terrain collision points: 7 purple spheres
-			// center, bow, stern, port, starboard, tower top, keel
+			// Purple markers show the same adaptive terrain contact hull used by physics.
+			var contactConfig = snap.surfaceLocked() ? VehicleConfig.surfaceShip() : VehicleConfig.submarine();
+			var terrainPoints = showCollisionEllipsoids && displayedTerrain != null
+					? HullGeometry.terrainContactPoints(snap.pose().position(), snap.pose().heading(),
+							snap.pose().pitch(), contactConfig, displayedTerrain)
+					: HullGeometry.terrainSamplePoints(contactConfig);
+			if (terrainPoints.length == 0) {
+				terrainPoints = HullGeometry.terrainSamplePoints(contactConfig);
+			}
 			Geometry[] tpGeoms = terrainPointGeoms.get(snap.id());
-			if (tpGeoms == null) {
-				tpGeoms = new Geometry[7];
-				var tpSphere = new com.jme3.scene.shape.Sphere(8, 8, 0.75f);
+			if (tpGeoms == null || tpGeoms.length != terrainPoints.length) {
+				if (tpGeoms != null) {
+					for (var marker : tpGeoms) {
+						marker.removeFromParent();
+					}
+				}
+				tpGeoms = new Geometry[terrainPoints.length];
+				var tpSphere = new com.jme3.scene.shape.Sphere(8, 8, 0.25f);
 				Material tpMat = new Material(assetManager, "Common/MatDefs/Misc/Unshaded.j3md");
 				tpMat.setColor("Color", new ColorRGBA(0.7f, 0.2f, 0.9f, 0.8f));
 				tpMat.getAdditionalRenderState().setBlendMode(RenderState.BlendMode.Alpha);
-				for (int tp = 0; tp < 7; tp++) {
+				for (int tp = 0; tp < tpGeoms.length; tp++) {
 					tpGeoms[tp] = new Geometry("tp-" + snap.id() + "-" + tp, tpSphere);
 					tpGeoms[tp].setMaterial(tpMat);
 					tpGeoms[tp].setQueueBucket(RenderQueue.Bucket.Transparent);
@@ -2504,31 +2610,20 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 				// Up: cross(fwd, right)
 				double upX = -sinH * sinP, upY = -cosH * sinP, upZ = cosP;
 
-				double bowDist = 33.5;
-				double sternDist = 40.0;
-				double beamDist = 6.0;
-				double towerHeight = 6.5;
-				double keelDepth = 5.0;
-
-				// Offsets in local frame -> world coords
-				double[][] pts = {{simX, simY, simZ}, // center
-						{simX + fwdX * bowDist, simY + fwdY * bowDist, simZ + fwdZ * bowDist}, // bow
-						{simX - fwdX * sternDist, simY - fwdY * sternDist, simZ - fwdZ * sternDist}, // stern
-						{simX + rightX * beamDist, simY + rightY * beamDist, simZ + rightZ * beamDist},
-						// port (actually starboard, sign doesn't matter for collision)
-						{simX - rightX * beamDist, simY - rightY * beamDist, simZ - rightZ * beamDist}, // starboard
-						{simX + upX * towerHeight, simY + upY * towerHeight, simZ + upZ * towerHeight}, // tower top
-						{simX - upX * keelDepth, simY - upY * keelDepth, simZ - upZ * keelDepth}, // keel
-				};
-				for (int tp = 0; tp < 7; tp++) {
+				for (int tp = 0; tp < tpGeoms.length; tp++) {
+					var point = terrainPoints[tp];
+					double x = simX + rightX * point.x() + fwdX * point.y() + upX * point.z();
+					double y = simY + rightY * point.x() + fwdY * point.y() + upY * point.z();
+					double z = simZ + rightZ * point.x() + fwdZ * point.y() + upZ * point.z();
 					// sim (X,Y,Z) -> JME (X, Z, -Y)
-					tpGeoms[tp].setLocalTranslation((float) pts[tp][0], (float) pts[tp][2], (float) -pts[tp][1]);
+					tpGeoms[tp].setLocalTranslation((float) x, (float) z, (float) -y);
 				}
 			}
 		}
 
 		// ── Torpedo 3D rendering ──
 		var torpSnapshots = latestTorpedoSnapshots;
+		updateTubeDoors(snapshots, torpSnapshots, tpf);
 		// Remove nodes for torpedoes that no longer exist
 		var activeTorpIds = torpSnapshots.stream().mapToInt(TorpedoSnapshot::id).boxed()
 				.collect(java.util.stream.Collectors.toSet());
@@ -2557,6 +2652,9 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 			if (torpNode == null) {
 				torpNode = (Node) torpedoModelNode.deepClone();
 				torpNode.setName("torpedo-" + ts.id());
+				if (!torpNode.getChildren().isEmpty() && torpNode.getChild(0) instanceof Node torpHull)
+					TorpedoRing.attach(assetManager, torpHull, ts.color(), TORPEDO_RING[0], TORPEDO_RING[1],
+							TEAM_LIGHT_LEVEL, TEAM_LIGHT_GLOW);
 				torpedoNodes.put(ts.id(), torpNode);
 				rootNode.attachChild(torpNode);
 				torpNode.setLocalTranslation(targetPos);
@@ -2565,14 +2663,16 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 				// Smooth interpolation (same lerpFactor as subs)
 				Vector3f currentPos = torpNode.getLocalTranslation();
 				torpNode.setLocalTranslation(currentPos.interpolateLocal(targetPos, lerpFactor));
-				Quaternion currentRot = torpNode.getLocalRotation();
-				currentRot.slerp(targetRot, lerpFactor);
-				torpNode.setLocalRotation(currentRot);
+				turnToward(torpNode, targetRot, lerpFactor);
 			}
-			// Spin torpedo propeller proportional to speed
-			Spatial torpProp = findChild(torpNode, "g_Propeller_Plane");
-			if (torpProp != null && ts.speed() > 1) {
-				torpProp.rotate(0, tpf * (float) ts.speed() * 0.4f, 0);
+			// Spin the torpedo's contra-rotating propellers in proportion to speed, the aft one the other way
+			if (ts.speed() > 1) {
+				float spin = tpf * (float) ts.speed() * 0.4f;
+				Spatial torpProp = findChild(torpNode, "Propeller"), torpPropAft = findChild(torpNode, "PropellerAft");
+				if (torpProp != null)
+					torpProp.rotate(0, spin, 0);
+				if (torpPropAft != null)
+					torpPropAft.rotate(0, -spin, 0);
 			}
 
 			// Torpedo wake bubbles (much more than sub: torpedo is loud and fast)
@@ -2684,137 +2784,30 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 			}
 		}
 
-		// Detect detonations: torpedoes that disappeared and were detonated
-		for (var ts : torpSnapshots) {
-			if (ts.detonated() && !knownTorpedoIds3D.contains(-ts.id())) { // use negative to mark seen
-				knownTorpedoIds3D.add(-ts.id());
-				var tPos = ts.pose().position();
-				float jx = (float) tPos.x();
-				float jy = (float) tPos.z();
-				float jz = (float) -tPos.y();
-				var ec = ts.color();
-				activeExplosions.add(new Explosion3D(ts.id(), new Vector3f(jx, jy, jz), appTime,
-						new ColorRGBA(ec.getRed() / 255f, ec.getGreen() / 255f, ec.getBlue() / 255f, 1f)));
-			}
-		}
-		knownTorpedoIds3D.retainAll(activeTorpIds.stream().map(i -> -i).collect(java.util.stream.Collectors.toSet()));
-
-		// Render 3D explosions: fireball + shockwave ring + debris particles
-		appTime += tpf;
-		var explosionIter = activeExplosions.iterator();
-		while (explosionIter.hasNext()) {
-			var exp = explosionIter.next();
-			float elapsed = appTime - exp.startTime();
-			float t = elapsed / EXPLOSION_DURATION;
-
-			if (t > 1.0f) {
-				// Expired: clean up all effect geometries
-				var geom = explosionGeoms.remove(exp.id());
-				if (geom != null)
-					geom.removeFromParent();
-				var debris = debrisEmitters.remove(exp.id());
-				if (debris != null)
-					debris.removeFromParent();
-				explosionIter.remove();
+		// Detonations queued by onTick: the sim reports a detonated torpedo for one tick only, which a frame can
+		// easily miss at speed. During fast-forward, ones the clock has already left behind are skipped.
+		var simNow = getActiveSim();
+		boolean skipStale = simNow != null && simNow.getSpeedMultiplier() > DETONATION_SKIP_SPEED;
+		for (Detonation d; (d = pendingDetonations.poll()) != null;) {
+			if (skipStale && d.tick() < latestTick - DETONATION_MAX_AGE_TICKS)
 				continue;
-			}
-
-			// === Fireball (expanding hot sphere) ===
-			Geometry geom = explosionGeoms.get(exp.id());
-			if (geom == null) {
-				var sphere = new com.jme3.scene.shape.Sphere(16, 16, 1f);
-				geom = new Geometry("explosion-" + exp.id(), sphere);
-				Material mat = new Material(assetManager, "Common/MatDefs/Misc/Unshaded.j3md");
-				mat.getAdditionalRenderState().setBlendMode(RenderState.BlendMode.Additive);
-				mat.getAdditionalRenderState().setDepthWrite(false);
-				geom.setMaterial(mat);
-				geom.setQueueBucket(RenderQueue.Bucket.Transparent);
-				rootNode.attachChild(geom);
-				explosionGeoms.put(exp.id(), geom);
-			}
-
-			float fireRadius;
-			float fade = (1.0f - t) * (1.0f - t);
-			float r, g, b, a;
-			if (elapsed < 0.15f) {
-				// Intense white flash (very bright, visible through water)
-				float flashT = elapsed / 0.15f;
-				r = 2f;
-				g = 2f;
-				b = 1.5f; // >1 for extra glow with additive blending
-				a = (1 - flashT * 0.3f);
-				fireRadius = EXPLOSION_MAX_RADIUS * 0.5f * (0.5f + flashT);
-			} else if (elapsed < 0.8f) {
-				// Hot orange-yellow fireball expanding
-				float phase = (elapsed - 0.15f) / 0.65f;
-				r = 2f - phase * 0.5f;
-				g = 1.2f - phase * 0.6f;
-				b = 0.4f - phase * 0.3f;
-				a = (1 - phase * 0.4f) * 0.9f;
-				fireRadius = EXPLOSION_MAX_RADIUS * (0.5f + phase * 0.3f);
-			} else {
-				// Cooling dark cloud, expanding, fading
-				r = 1.0f * fade + exp.color().r * (1 - fade);
-				g = 0.4f * fade + exp.color().g * (1 - fade);
-				b = 0.1f * fade;
-				a = fade * 0.7f;
-				fireRadius = EXPLOSION_MAX_RADIUS * (float) Math.sqrt(t);
-			}
-
-			geom.getMaterial().setColor("Color", new ColorRGBA(r, g, b, a));
-			geom.setLocalTranslation(exp.position());
-			geom.setLocalScale(fireRadius);
-
-			// === Fire/smoke particles (flame texture, animated) ===
-			ParticleEmitter fireEmitter = debrisEmitters.get(exp.id());
-			if (fireEmitter == null) {
-				fireEmitter = new ParticleEmitter("fire-" + exp.id(), ParticleMesh.Type.Triangle, 50);
-				Material fireMat = new Material(assetManager, "Common/MatDefs/Misc/Particle.j3md");
-				fireMat.setTexture("Texture", assetManager.loadTexture("Effects/Explosion/flame.png"));
-				fireMat.getAdditionalRenderState().setBlendMode(RenderState.BlendMode.Additive);
-				fireEmitter.setMaterial(fireMat);
-				fireEmitter.setImagesX(2);
-				fireEmitter.setImagesY(2);
-				fireEmitter.setStartColor(new ColorRGBA(1f, 0.9f, 0.3f, 1f));
-				fireEmitter.setEndColor(new ColorRGBA(1f, 0.2f, 0f, 0f));
-				fireEmitter.setStartSize(5f);
-				fireEmitter.setEndSize(20f);
-				fireEmitter.setGravity(0, 2f, 0); // slight upward drift (hot gas rises)
-				fireEmitter.setLowLife(0.5f);
-				fireEmitter.setHighLife(1.5f);
-				fireEmitter.getParticleInfluencer().setInitialVelocity(new Vector3f(0, 12f, 0));
-				fireEmitter.getParticleInfluencer().setVelocityVariation(1f);
-				fireEmitter.setLocalTranslation(exp.position());
-				fireEmitter.setParticlesPerSec(0); // burst mode
-				fireEmitter.emitAllParticles();
-				rootNode.attachChild(fireEmitter);
-				debrisEmitters.put(exp.id(), fireEmitter);
-
-				// Also spawn debris chunks
-				var debrisEmitter = new ParticleEmitter("debris-" + exp.id(), ParticleMesh.Type.Triangle, 15);
-				Material debrisMat = new Material(assetManager, "Common/MatDefs/Misc/Particle.j3md");
-				debrisMat.setTexture("Texture", assetManager.loadTexture("Effects/Explosion/Debris.png"));
-				debrisEmitter.setMaterial(debrisMat);
-				debrisEmitter.setImagesX(3);
-				debrisEmitter.setImagesY(3);
-				debrisEmitter.setSelectRandomImage(true);
-				debrisEmitter.setRotateSpeed(4);
-				debrisEmitter.setStartColor(ColorRGBA.White);
-				debrisEmitter.setEndColor(new ColorRGBA(0.5f, 0.5f, 0.5f, 0f));
-				debrisEmitter.setStartSize(2f);
-				debrisEmitter.setEndSize(4f);
-				debrisEmitter.setGravity(0, -3f, 0); // debris sinks in water
-				debrisEmitter.setLowLife(1f);
-				debrisEmitter.setHighLife(3f);
-				debrisEmitter.getParticleInfluencer().setInitialVelocity(new Vector3f(0, 15f, 0));
-				debrisEmitter.getParticleInfluencer().setVelocityVariation(0.8f);
-				debrisEmitter.setLocalTranslation(exp.position());
-				debrisEmitter.setParticlesPerSec(0);
-				debrisEmitter.emitAllParticles();
-				rootNode.attachChild(debrisEmitter);
-				// Note: debris emitter is not tracked separately; it self-cleans when particles die
-			}
+			var tPos = d.torpedo().pose().position();
+			var ec = d.torpedo().color();
+			boolean subHit = false;
+			for (var s : d.submarines())
+				subHit |= s.pose().position().distanceTo(tPos) < EXPLOSION_HIT_RANGE;
+			var blast = explosions.spawn(new Vector3f((float) tPos.x(), (float) tPos.z(), (float) -tPos.y()),
+					new ColorRGBA(ec.getRed() / 255f, ec.getGreen() / 255f, ec.getBlue() / 255f, 1f), subHit);
+			if (capture != null)
+				capture.onDetonation(blast, subHit);
 		}
+
+		wrecks.retain(snapshots.stream().map(SubmarineSnapshot::id).collect(java.util.stream.Collectors.toSet()));
+
+		// Animate the explosions; they hold still while the simulation is paused
+		var simForExplosions = getActiveSim();
+		explosions.update(tpf,
+				(simForExplosions != null && simForExplosions.isPaused()) || (capture != null && capture.freezing()));
 
 		// Update orbit center tracking (skip for island orbit - stays on island peak)
 		if (cameraMode == CameraMode.ISLAND_ORBIT && islandOrbitState != null) {
@@ -3123,6 +3116,9 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 			camPos = desiredPos;
 			lookAt = desiredLookAt;
 		}
+		if (capture != null)
+			capture.overrideCamera(camPos, lookAt);
+		explosions.applyShake(camPos, lookAt);
 		cam.setLocation(camPos);
 		// If camera is mostly above the lookAt point, use north as up to avoid gimbal flicker
 		Vector3f toLook = lookAt.subtract(camPos);
@@ -3323,6 +3319,75 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 	 * Reparent a named child under a pivot node at a fixed hinge position. The pivot keeps the
 	 * original child name so findChild() still finds it.
 	 */
+	/**
+	 * Opens the torpedo tube door a newly launched torpedo is in, and slides every door towards
+	 * open or closed. The engine starts each torpedo in one of its submarine's tubes
+	 * (TorpedoTubes); which one follows from the torpedo's offset in the submarine's frame when it
+	 * first appears.
+	 */
+	private void updateTubeDoors(List<SubmarineSnapshot> snapshots, List<TorpedoSnapshot> torpSnapshots, float tpf) {
+		tubeDoorClock += tpf;
+		for (var ts : torpSnapshots) {
+			if (!ts.alive() || !seenTorpedoes.add(ts.id()))
+				continue;
+			for (var sub : snapshots) {
+				if (sub.id() != ts.ownerId())
+					continue;
+				var d = ts.pose().position().subtract(sub.pose().position());
+				double h = sub.pose().heading(), p = sub.pose().pitch();
+				double right = d.x() * Math.cos(h) - d.y() * Math.sin(h);
+				double up = -d.x() * Math.sin(h) * Math.sin(p) - d.y() * Math.cos(h) * Math.sin(p)
+						+ d.z() * Math.cos(p);
+				int nearest = 0;
+				for (int i = 1; i < TUBE_OFFSETS.length; i++)
+					if (Math.hypot(right - TUBE_OFFSETS[i][0], up - TUBE_OFFSETS[i][1]) < Math
+							.hypot(right - TUBE_OFFSETS[nearest][0], up - TUBE_OFFSETS[nearest][1]))
+						nearest = i;
+				tubeDoorOpenUntil.computeIfAbsent(sub.id(), k -> new float[TUBE_DOORS.length])[nearest] = tubeDoorClock
+						+ TUBE_DOOR_HOLD_SECONDS;
+			}
+		}
+		for (var e : subNodes.entrySet()) {
+			float[] until = tubeDoorOpenUntil.get(e.getKey());
+			float[] angle = tubeDoorAngle.computeIfAbsent(e.getKey(), k -> new float[TUBE_DOORS.length]);
+			for (int i = 0; i < TUBE_DOORS.length; i++) {
+				float target = until != null && tubeDoorClock < until[i] ? TUBE_DOOR_OPEN_ANGLES[i] : 0f;
+				float step = Math.abs(TUBE_DOOR_OPEN_ANGLES[i]) / TUBE_DOOR_SLIDE_SECONDS * tpf;
+				angle[i] += Math.max(-step, Math.min(step, target - angle[i]));
+				Spatial door = findChild(e.getValue(), TUBE_DOORS[i]);
+				if (door != null)
+					door.setLocalRotation(new Quaternion().fromAngleAxis(angle[i], Vector3f.UNIT_Y));
+			}
+		}
+	}
+
+	/**
+	 * How far a tail flap swings about its hinge axis (root to tip) for the given rudder and stern
+	 * plane commands. Turning about that axis moves the flap's trailing edge round the hull, so
+	 * each command contributes in proportion to how much of that motion is sideways (rudder: the
+	 * trailing edge goes to starboard for positive rudder) or vertical (stern planes: up for
+	 * positive, nose-up, planes). Scaled so that full rudder alone swings every flap by
+	 * {@link #RUDDER_THROW}, and full stern planes alone by {@link #PLANES_THROW}.
+	 */
+	private static float flapAngle(Vector3f axis, float rudder, float planes) {
+		float across = FastMath.sqrt(axis.x * axis.x + axis.z * axis.z);
+		float up = axis.z / across, side = axis.x / across, norm = Math.max(Math.abs(up), Math.abs(side));
+		float angle = (RUDDER_THROW * rudder * up + PLANES_THROW * planes * side) / norm;
+		return FastMath.clamp(angle, -FLAP_LIMIT, FLAP_LIMIT);
+	}
+
+	/**
+	 * Turns {@code s} a fraction {@code t} of the way towards {@code target}. jME's in-place slerp
+	 * falls back to an unnormalised linear blend for nearby rotations, and the shortened quaternion
+	 * scales the offsets of everything below the spatial (rudders and planes pop out of their
+	 * sockets), so the result is normalised. The target is left untouched.
+	 */
+	private static void turnToward(Spatial s, Quaternion target, float t) {
+		Quaternion q = s.getLocalRotation().clone();
+		q.slerp(target.clone(), t);
+		s.setLocalRotation(q.normalizeLocal());
+	}
+
 	private void setupPivotAt(Node root, String childName, Vector3f hingePos) {
 		Spatial part = findChild(root, childName);
 		if (part == null) {
@@ -3393,6 +3458,21 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 			for (Spatial child : node.getChildren())
 				generateSmoothNormals(child);
 		}
+	}
+
+	/**
+	 * Lights the submarine's team lights in its colour (or puts them out): an unshaded material, so
+	 * they show whatever the light, with a glow for the bloom filter.
+	 */
+	private void setTeamLights(Node sub, java.awt.Color color, boolean on) {
+		Spatial lights = findChild(sub, "TeamLights");
+		if (lights == null)
+			return;
+		ColorRGBA c = new ColorRGBA(color.getRed() / 255f, color.getGreen() / 255f, color.getBlue() / 255f, 1f);
+		Material m = new Material(assetManager, "Common/MatDefs/Misc/Unshaded.j3md");
+		m.setColor("Color", on ? c.mult(TEAM_LIGHT_LEVEL) : c.mult(0.08f));
+		m.setColor("GlowColor", on ? c.mult(TEAM_LIGHT_GLOW) : ColorRGBA.Black);
+		lights.setMaterial(m);
 	}
 
 	private void disableBackFaceCulling(Spatial spatial) {

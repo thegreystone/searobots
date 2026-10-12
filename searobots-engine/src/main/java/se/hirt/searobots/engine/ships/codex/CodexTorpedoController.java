@@ -56,6 +56,8 @@ public final class CodexTorpedoController implements TorpedoController {
 	private static final double OWNER_AVOIDANCE_RADIUS = 850.0;
 	private static final double OWNER_REJECTION_RUN_DISTANCE = 1_200.0;
 	private static final double TARGET_GATE_RADIUS = 1_400.0;
+	// Fins stall above 30 degrees; outputs are mapped to +/-45 degrees by the vehicle.
+	private static final double MAX_FIN_COMMAND = 0.65;
 
 	private TerrainMap terrain;
 	private boolean hasTarget;
@@ -72,14 +74,21 @@ public final class CodexTorpedoController implements TorpedoController {
 	private double launchY = Double.NaN;
 	private double launchHeading = Double.NaN;
 	private long launchTick = Long.MIN_VALUE / 4;
+	private double straightRunDistance = STRAIGHT_RUN_DISTANCE;
+	private double initialTargetRange = Double.POSITIVE_INFINITY;
+	private long currentTick;
+	private long targetStateTick = Long.MIN_VALUE / 4;
 	private double pitchErrorIntegral = 0.0;
 	private double lastPitch = 0.0;
 	private boolean hasLastPitchSample;
 	private double detonationRange = 12.0;
+	private double safeScuttleRange = 200.0;
 
 	@Override
 	public void onLaunch(TorpedoLaunchContext context) {
 		this.terrain = context.terrain();
+		this.safeScuttleRange = Math.max(200.0,
+				context.config().blastRadius() + VehicleConfig.submarine().hullHalfLength() + 80.0);
 		this.launchX = context.launchPosition().x();
 		this.launchY = context.launchPosition().y();
 		this.launchHeading = context.launchHeading();
@@ -109,6 +118,8 @@ public final class CodexTorpedoController implements TorpedoController {
 					detonationRange = Math.clamp(Double.parseDouble(parts[5].trim()), 5.0, 20.0);
 				}
 				hasTarget = true;
+				initialTargetRange = Math.hypot(targetX - launchX, targetY - launchY);
+				straightRunDistance = Math.clamp(initialTargetRange * 0.15, 180.0, STRAIGHT_RUN_DISTANCE);
 			}
 		} catch (NumberFormatException ignored) {
 			hasTarget = false;
@@ -117,6 +128,13 @@ public final class CodexTorpedoController implements TorpedoController {
 
 	@Override
 	public void onTick(TorpedoInput input, TorpedoOutput output) {
+		currentTick = input.tick();
+		if (hasTarget && targetStateTick > Long.MIN_VALUE / 8) {
+			double elapsed = Math.max(0.0, (input.tick() - targetStateTick) / 50.0);
+			targetX += estVelX * elapsed;
+			targetY += estVelY * elapsed;
+		}
+		targetStateTick = input.tick();
 		var pos = input.self().position();
 		double heading = input.self().heading();
 		if (launchTick <= Long.MIN_VALUE / 8) {
@@ -124,14 +142,25 @@ public final class CodexTorpedoController implements TorpedoController {
 		}
 		double runDistance = Math.hypot(pos.x() - launchX, pos.y() - launchY);
 		boolean straightRun = inStraightRun(runDistance, input.tick());
-		if (input.activeSonarCooldownTicks() == 0 && !straightRun && runDistance >= ACTIVE_SONAR_ARM_DISTANCE) {
+		double missionRange = hasTarget ? Math.hypot(targetX - pos.x(), targetY - pos.y()) : Double.POSITIVE_INFINITY;
+		if (input.activeSonarCooldownTicks() == 0 && !straightRun
+				&& (runDistance >= ACTIVE_SONAR_ARM_DISTANCE || missionRange < LONG_RANGE_DEPTH_BLEND_START)) {
 			output.activeSonarPing();
 		}
-
+		boolean lostAcquiredTarget = prevFixTick > Long.MIN_VALUE / 8
+				&& input.tick() - prevFixTick > ACTIVE_FIX_STALE_TICKS;
+		boolean freshPing = !input.activeSonarReturns().isEmpty() || input.activeSonarCooldownTicks() >= 49;
 		SonarContact fix = pickForwardContact(input.activeSonarReturns(), pos, heading);
+		if (fix == null && lostAcquiredTarget && freshPing && runDistance > safeScuttleRange
+				&& !input.activeSonarReturns().isEmpty()
+				&& input.activeSonarReturns().stream().noneMatch(contact -> contact.range() < safeScuttleRange)) {
+			output.detonate();
+			return;
+		}
+
 		if (fix != null) {
 			applyActiveFix(input.tick(), pos, fix);
-		} else if (hasTarget) {
+		} else if (hasTarget && input.tick() - prevFixTick > 100L) {
 			SonarContact passive = pickForwardContact(input.sonarContacts(), pos, heading);
 			if (passive != null) {
 				applyPassiveContact(pos, passive);
@@ -149,14 +178,10 @@ public final class CodexTorpedoController implements TorpedoController {
 		double[] intercept = predictedIntercept(pos.x(), pos.y(), speed, input.tick());
 		double interceptX = intercept[0];
 		double interceptY = intercept[1];
-		double guidanceBlend = guidanceBlend(targetDist);
-		double filteredGuidanceX = targetX + (interceptX - targetX) * guidanceBlend;
-		double filteredGuidanceY = targetY + (interceptY - targetY) * guidanceBlend;
-		double guidanceX = straightRun ? launchX + Math.sin(launchHeading) * STRAIGHT_RUN_DISTANCE : filteredGuidanceX;
-		double guidanceY = straightRun ? launchY + Math.cos(launchHeading) * STRAIGHT_RUN_DISTANCE : filteredGuidanceY;
+		double guidanceX = straightRun ? launchX + Math.sin(launchHeading) * straightRunDistance : interceptX;
+		double guidanceY = straightRun ? launchY + Math.cos(launchHeading) * straightRunDistance : interceptY;
 		double dx = guidanceX - pos.x();
 		double dy = guidanceY - pos.y();
-		double guidanceDist = Math.hypot(dx, dy);
 		double bearingToIntercept = normalize(Math.atan2(dx, dy));
 
 		double headingError = bearingToIntercept - heading;
@@ -168,7 +193,7 @@ public final class CodexTorpedoController implements TorpedoController {
 		}
 		double rudderGain = straightRun ? 1.2
 				: targetDist < TERMINAL_COMMIT_RANGE ? 1.2 : targetDist < TERMINAL_TRACK_RANGE ? 1.45 : 1.5;
-		double rudderLimit = straightRun ? STRAIGHT_RUN_RUDDER_LIMIT : targetDist < TERMINAL_COMMIT_RANGE ? 0.55 : 1.0;
+		double rudderLimit = straightRun ? STRAIGHT_RUN_RUDDER_LIMIT : MAX_FIN_COMMAND;
 		output.setRudder(Math.clamp(headingError * rudderGain, -rudderLimit, rudderLimit));
 
 		double missionDepth = Math.clamp(targetZ, MAX_TARGET_DEPTH, MAX_CRUISE_DEPTH);
@@ -177,21 +202,28 @@ public final class CodexTorpedoController implements TorpedoController {
 			desiredZ = pos.z();
 		}
 
-		if (terrain != null && guidanceDist > 120.0) {
+		double depthControlRange = targetDist;
+		if (terrain != null) {
 			double floor = terrain.elevationAt(pos.x(), pos.y());
 			double safeZ = floor + MIN_TERRAIN_CLEARANCE;
-			double lookAhead = Math.max(input.speed(), 5.0) * 4.0;
-			double aheadFloor = terrain.elevationAt(pos.x() + Math.sin(bearingToIntercept) * lookAhead,
-					pos.y() + Math.cos(bearingToIntercept) * lookAhead);
-			safeZ = Math.max(safeZ, aheadFloor + MIN_TERRAIN_CLEARANCE + 10.0);
+			double lookAhead = Math.max(input.speed(), 5.0) * 15.0;
+			for (int sample = 1; sample <= 6; sample++) {
+				double sampleRange = lookAhead * sample / 6.0;
+				double aheadFloor = terrain.elevationAt(pos.x() + Math.sin(heading) * sampleRange,
+						pos.y() + Math.cos(heading) * sampleRange);
+				double guidanceFloor = terrain.elevationAt(pos.x() + Math.sin(bearingToIntercept) * sampleRange,
+						pos.y() + Math.cos(bearingToIntercept) * sampleRange);
+				safeZ = Math.max(safeZ, Math.max(aheadFloor, guidanceFloor) + MIN_TERRAIN_CLEARANCE + 10.0);
+			}
 			if (desiredZ < safeZ) {
 				desiredZ = safeZ;
+				depthControlRange = Math.min(targetDist, lookAhead);
 			}
 		}
 
 		desiredZ = Math.min(desiredZ, MAX_CRUISE_DEPTH);
 		output.setThrottle(computeThrottle(input, targetDist, headingError, desiredZ, straightRun));
-		output.setSternPlanes(computeSternPlanes(input, desiredZ, targetDist));
+		output.setSternPlanes(computeSternPlanes(input, desiredZ, depthControlRange));
 
 		if (fix != null && fix.range() < detonationRange) {
 			output.detonate();
@@ -200,15 +232,16 @@ public final class CodexTorpedoController implements TorpedoController {
 	}
 
 	private void applyActiveFix(long tick, se.hirt.searobots.api.Vec3 pos, SonarContact fix) {
-		double fixX = pos.x() + Math.sin(fix.bearing()) * fix.range();
-		double fixY = pos.y() + Math.cos(fix.bearing()) * fix.range();
+		double horizontalRange = horizontalRange(fix, pos);
+		double fixX = pos.x() + Math.sin(fix.bearing()) * horizontalRange;
+		double fixY = pos.y() + Math.cos(fix.bearing()) * horizontalRange;
 		double acceptedX = fixX;
 		double acceptedY = fixY;
 
 		if (hasTarget && prevFixTick > Long.MIN_VALUE / 8) {
 			double dt = Math.max(0.02, (tick - prevFixTick) / 50.0);
-			double projectedX = targetX + estVelX * dt;
-			double projectedY = targetY + estVelY * dt;
+			double projectedX = targetX;
+			double projectedY = targetY;
 			double jump = Math.hypot(fixX - projectedX, fixY - projectedY);
 			double allowedJump = allowedFixJump(fix.range(), dt);
 			double blend = activeFixBlend(fix.range(), jump, allowedJump);
@@ -219,7 +252,7 @@ public final class CodexTorpedoController implements TorpedoController {
 		updateVelocityEstimate(tick, acceptedX, acceptedY, fix.range());
 		targetX = acceptedX;
 		targetY = acceptedY;
-		passiveRangeEstimate = fix.range();
+		passiveRangeEstimate = horizontalRange;
 		if (!Double.isNaN(fix.estimatedDepth())) {
 			double fixDepth = Math.clamp(fix.estimatedDepth(), MAX_TARGET_DEPTH, MAX_CRUISE_DEPTH);
 			double depthBlend = fix.range() < TERMINAL_HOLD_RANGE ? 1.0
@@ -231,17 +264,14 @@ public final class CodexTorpedoController implements TorpedoController {
 
 	private void applyPassiveContact(se.hirt.searobots.api.Vec3 pos, SonarContact passive) {
 		double currentRange = Math.hypot(targetX - pos.x(), targetY - pos.y());
-		double rangeGuess = Double.isNaN(passiveRangeEstimate) ? Math.max(currentRange, 450.0)
-				: Math.max(passiveRangeEstimate * 0.9, 250.0);
 		if (!Double.isFinite(currentRange) || currentRange < 100.0) {
-			currentRange = rangeGuess;
+			return;
 		}
 
-		double passiveRange = currentRange < TERMINAL_TRACK_RANGE ? currentRange : rangeGuess;
+		double passiveRange = currentRange;
 		double passiveX = pos.x() + Math.sin(passive.bearing()) * passiveRange;
 		double passiveY = pos.y() + Math.cos(passive.bearing()) * passiveRange;
-		double passiveBlend = currentRange < TERMINAL_HOLD_RANGE ? 0.42
-				: currentRange < TERMINAL_COMMIT_RANGE ? 0.26 : currentRange < TERMINAL_TRACK_RANGE ? 0.14 : 0.16;
+		double passiveBlend = 0.03;
 		targetX = targetX + (passiveX - targetX) * passiveBlend;
 		targetY = targetY + (passiveY - targetY) * passiveBlend;
 		passiveRangeEstimate = passiveRange;
@@ -313,7 +343,8 @@ public final class CodexTorpedoController implements TorpedoController {
 			}
 			double score = forwardness * 100.0 + contact.signalExcess() - rangePenalty + targetClassBias(contact);
 			if (hasTarget) {
-				double contactRange = contact.range() > 0.0 ? contact.range() : Math.max(passiveRangeEstimate, 450.0);
+				double contactRange = contact.range() > 0.0 ? horizontalRange(contact, pos)
+						: Math.max(passiveRangeEstimate, 450.0);
 				double cx = targetX;
 				double cy = targetY;
 				if (!Double.isNaN(contactRange)) {
@@ -341,36 +372,29 @@ public final class CodexTorpedoController implements TorpedoController {
 	}
 
 	private double[] predictedIntercept(double ownX, double ownY, double ownSpeed, long tick) {
-		double dist = Math.hypot(targetX - ownX, targetY - ownY);
-		double timeToIntercept = Math.clamp(dist / ownSpeed, 1.0, 35.0);
-		double leadScale;
-		if (dist < TERMINAL_HOLD_RANGE) {
-			leadScale = 0.0;
-		} else if (dist < TERMINAL_COMMIT_RANGE) {
-			leadScale = 0.18;
-		} else if (dist < TERMINAL_TRACK_RANGE) {
-			leadScale = 0.45;
-		} else {
-			leadScale = 0.85;
+		double rx = targetX - ownX;
+		double ry = targetY - ownY;
+		double a = estVelX * estVelX + estVelY * estVelY - ownSpeed * ownSpeed;
+		double b = 2.0 * (rx * estVelX + ry * estVelY);
+		double c = rx * rx + ry * ry;
+		double timeToIntercept = Math.sqrt(c) / ownSpeed;
+		double discriminant = b * b - 4.0 * a * c;
+		if (Math.abs(a) > 0.01 && discriminant >= 0.0) {
+			double root = Math.sqrt(discriminant);
+			double first = (-b - root) / (2.0 * a);
+			double second = (-b + root) / (2.0 * a);
+			if (first > 0.0) {
+				timeToIntercept = first;
+			}
+			if (second > 0.0 && (first <= 0.0 || second < first)) {
+				timeToIntercept = second;
+			}
 		}
+		timeToIntercept = Math.clamp(timeToIntercept, 0.0, 60.0);
 		if (tick - prevFixTick > ACTIVE_FIX_STALE_TICKS) {
-			leadScale *= 0.5;
+			timeToIntercept *= 0.5;
 		}
-		return new double[] {targetX + estVelX * timeToIntercept * leadScale,
-				targetY + estVelY * timeToIntercept * leadScale};
-	}
-
-	private double guidanceBlend(double dist) {
-		if (dist < TERMINAL_HOLD_RANGE) {
-			return 0.0;
-		}
-		if (dist < TERMINAL_COMMIT_RANGE) {
-			return 0.22;
-		}
-		if (dist < TERMINAL_TRACK_RANGE) {
-			return 0.55;
-		}
-		return 1.0;
+		return new double[] {targetX + estVelX * timeToIntercept, targetY + estVelY * timeToIntercept};
 	}
 
 	private double allowedFixJump(double range, double dtSeconds) {
@@ -433,7 +457,7 @@ public final class CodexTorpedoController implements TorpedoController {
 						: Math.clamp(depthError / 260.0, -0.10, 0.10);
 		double output = pitchError * proportionalGain + pitchErrorIntegral * integralGain
 				- measuredPitchRate * derivativeGain + feedForward;
-		double outputLimit = targetDist < TERMINAL_COMMIT_RANGE ? 1.0 : targetDist < TERMINAL_TRACK_RANGE ? 0.95 : 0.60;
+		double outputLimit = MAX_FIN_COMMAND;
 		return Math.clamp(output, -outputLimit, outputLimit);
 	}
 
@@ -478,13 +502,37 @@ public final class CodexTorpedoController implements TorpedoController {
 		if (!hasTarget) {
 			return true;
 		}
-		double rangeGuess = contact.range() > 0.0 ? contact.range()
+		double rangeGuess = contact.range() > 0.0 ? horizontalRange(contact, pos)
 				: Double.isNaN(passiveRangeEstimate) ? 500.0 : Math.max(passiveRangeEstimate, 300.0);
 		double cx = pos.x() + Math.sin(contact.bearing()) * rangeGuess;
 		double cy = pos.y() + Math.cos(contact.bearing()) * rangeGuess;
 		double fromLaunch = Math.hypot(cx - launchX, cy - launchY);
 		double fromTarget = Math.hypot(cx - targetX, cy - targetY);
 		double runDistance = Math.hypot(pos.x() - launchX, pos.y() - launchY);
+		double ownerExclusion = Math.min(OWNER_AVOIDANCE_RADIUS, initialTargetRange * 0.35);
+		if (contact.isActive() && prevFixTick <= Long.MIN_VALUE / 8 && fromLaunch < ownerExclusion) {
+			return false;
+		}
+		if (prevFixTick > Long.MIN_VALUE / 8) {
+			double age = Math.max(0.0, (currentTick - prevFixTick) / 50.0);
+			double expectedX = prevFixX + estVelX * age;
+			double expectedY = prevFixY + estVelY * age;
+			if (contact.isActive()) {
+				double gateRadius = Math.min(600.0,
+						Math.max(150.0, contact.range() * 0.10 + Math.min(age, 3.0) * MAX_ESTIMATED_TARGET_SPEED));
+				if (Math.hypot(cx - expectedX, cy - expectedY) > gateRadius) {
+					return false;
+				}
+			} else {
+				double expectedBearing = Math.atan2(expectedX - pos.x(), expectedY - pos.y());
+				double bearingError = Math.atan2(Math.sin(contact.bearing() - expectedBearing),
+						Math.cos(contact.bearing() - expectedBearing));
+				double gateAngle = Math.max(Math.toRadians(20.0), contact.bearingUncertainty() * 3.0);
+				if (Math.abs(bearingError) > gateAngle) {
+					return false;
+				}
+			}
+		}
 		double headingDiff = heading - launchHeading;
 		while (headingDiff > Math.PI)
 			headingDiff -= 2.0 * Math.PI;
@@ -499,7 +547,15 @@ public final class CodexTorpedoController implements TorpedoController {
 	}
 
 	private boolean inStraightRun(double runDistance, long tick) {
-		return tick - launchTick < STRAIGHT_RUN_TICKS || runDistance < STRAIGHT_RUN_DISTANCE;
+		return tick - launchTick < STRAIGHT_RUN_TICKS || runDistance < straightRunDistance;
+	}
+
+	private double horizontalRange(SonarContact contact, se.hirt.searobots.api.Vec3 pos) {
+		if (!contact.isActive() || !Double.isFinite(contact.estimatedDepth())) {
+			return contact.range();
+		}
+		double depthDifference = contact.estimatedDepth() - pos.z();
+		return Math.sqrt(Math.max(0.0, contact.range() * contact.range() - depthDifference * depthDifference));
 	}
 
 	private double normalize(double bearing) {

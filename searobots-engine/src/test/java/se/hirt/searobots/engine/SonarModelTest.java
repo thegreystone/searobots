@@ -79,14 +79,14 @@ class SonarModelTest {
 		// Listener SL 80: self-noise = 80-30 = 50, NL = max(60, 50) = 60
 		// SL 100 at 1000m: TL = 30, SE = 100-30-60 = 10 -> detected
 		// SL 100 at 2000m: TL = 33, SE = 100-33-60 = 7 -> detected
-		var sonar = new SonarModel(42);
 		var listener = makeSub(0, new Vec3(0, 0, -200), 0, 80);
 
 		var farSource = makeSub(1, new Vec3(0, 2000, -200), Math.PI, 100);
-		var nearSource = makeSub(2, new Vec3(0, 1000, -200), Math.PI, 100);
+		var nearSource = makeSub(1, new Vec3(0, 1000, -200), Math.PI, 100);
 
-		var resultsFar = sonar.computeContacts(0L, List.of(listener, farSource), TERRAIN, NO_LAYERS);
-		var resultsNear = sonar.computeContacts(0L, List.of(listener, nearSource), TERRAIN, NO_LAYERS);
+		// Paired observations share the calibration error; different targets need not.
+		var resultsFar = new SonarModel(42).computeContacts(0L, List.of(listener, farSource), TERRAIN, NO_LAYERS);
+		var resultsNear = new SonarModel(42).computeContacts(0L, List.of(listener, nearSource), TERRAIN, NO_LAYERS);
 
 		var farContacts = resultsFar.get(0).passiveContacts();
 		var nearContacts = resultsNear.get(0).passiveContacts();

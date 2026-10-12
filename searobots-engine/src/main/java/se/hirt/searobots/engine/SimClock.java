@@ -48,19 +48,22 @@ public interface SimClock {
 	boolean isPaused();
 
 	/**
-	 * Wall-clock speed multiplier: {@code 1.0} is real time, higher is faster; very large means "as
-	 * fast as possible".
+	 * Finite, positive wall-clock speed multiplier: {@code 1.0} is real time, higher is faster;
+	 * very large means "as fast as possible". Changing speed wakes any pacing wait.
+	 *
+	 * @throws IllegalArgumentException
+	 *             if the multiplier is not finite and positive
 	 */
 	void setSpeedMultiplier(double multiplier);
 
 	double getSpeedMultiplier();
 
-	/** While paused, advance exactly one frame. */
+	/** While paused, queue exactly one frame. Calls while running are ignored. */
 	void stepOnce();
 
 	/**
 	 * Stop for good; the clock transitions to {@link SimulationLoop.State#STOPPED} and cannot be
-	 * restarted.
+	 * restarted. Wakes a worker waiting for pause or pacing to end.
 	 */
 	void stop();
 

@@ -65,6 +65,9 @@ public record ReplayHeader(int formatVersion, long seed, int tickRateHz, long du
 	 *            engine id
 	 * @param name
 	 *            display name
+	 * @param shortName
+	 *            two-letter code painted on the sail; in files written before the column existed,
+	 *            taken from the name
 	 * @param colorRgb
 	 *            ARGB color (as from {@link java.awt.Color#getRGB()})
 	 * @param spawnX
@@ -77,8 +80,8 @@ public record ReplayHeader(int formatVersion, long seed, int tickRateHz, long du
 	 *            true for a surface vessel (rendered with the ship model); absent in files written
 	 *            before the column existed
 	 */
-	public record SubDef(int id, String name, int colorRgb, double spawnX, double spawnY, double spawnZ,
-			boolean surfaceLocked) {
+	public record SubDef(int id, String name, String shortName, int colorRgb, double spawnX, double spawnY,
+			double spawnZ, boolean surfaceLocked) {
 	}
 
 	/**

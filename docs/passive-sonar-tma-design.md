@@ -36,9 +36,9 @@ Each `SonarContact` provides:
 | rangeUncertainty     | Engine TMA          | 1-sigma bound in metres; can exceed range while solution is poor |
 | estimatedSpeed       | Blade-rate analysis | Good at high SE (close range)                                    |
 | estimatedHeading     | Engine TMA          | Requires quality > 0.5 (deliberate maneuvering)                  |
-| estimatedSourceLevel | Signal analysis     | For classification                                               |
+| estimatedSourceLevel | Strength + TMA range | Shares the range solution's uncertainty; NaN without ranging support |
 | estimatedDepth       | Active sonar only   | From vertical angle + range (5% noise, min 5m). NaN for passive. |
-| signalExcess         | Direct measurement  | Instantaneous                                                    |
+| signalExcess         | Strength measurement | Persistent calibration error plus slow wander; not exact range |
 | solutionQuality      | Engine TMA          | 0.0 (no data) to 1.0 (fire-quality solution)                     |
 
 The `solutionQuality` field is the equivalent of Cold Waters' SOL%.
@@ -75,6 +75,9 @@ not time:
    relative to estimated range. At 2000m range, you need ~2000m
    of accumulated cross-track for maximum quality from this component.
    Capped at 0.5.
+   For initial range guesses at or below 100 m, the reported uncertainty
+   supplies the baseline scale instead of hidden true range. This threshold
+   does not impose a minimum returned range; close active fixes remain valid.
 
 2. **Leg count**: each own-ship course change > 15 degrees counts as
    a new leg and adds 0.12 quality (capped at 0.35). Two deliberate
@@ -86,9 +89,14 @@ not time:
    resolving range: you must maneuver.
 
 4. **Active ping**: immediately sets quality to 0.95 (known range).
-   Calibrates the SL for subsequent passive ranging.
+   A simultaneous passive measurement can then support a source-level
+   estimate using the measured range.
 
 Quality floor is 0.05 (essentially "bearing only, no range info").
+
+Cross-track and leg contributions expire individually after 120 seconds.
+New observations add their own geometry without refreshing older evidence;
+negligible continuous movement cannot preserve a mature solution indefinitely.
 
 Solution quality decays when contact is lost:
 
@@ -135,9 +143,12 @@ with geometric information, preventing wild jumps.
 
 **Range uncertainty:**
 `rangeUncertainty` is a conservative 1-sigma bound in metres for both
-active and passive contacts: the larger of the quality-and-noise term
+active and passive contacts: the largest of the quality-and-noise term
 (60% of the estimate at floor quality, never below the current noise
-level) and the remaining systematic bias. For a passive contact it can
+level), the remaining systematic bias, and uncertainty accumulated while
+the target was unobserved. A fresh passive bearing cannot remove possible
+unobserved target movement; new spatial geometry reduces that uncertainty,
+and a new active range fix clears it. For a passive contact it can
 exceed the range itself while the solution is poor. `Double.MAX_VALUE`
 means no range information at all (contact heard only through the
 baffles).
@@ -155,7 +166,7 @@ honest, but consecutive samples share most of their error.
 |--------------------------|------------------|----------------|
 | Bearing                  | 20 s             | 20%            |
 | Blade-rate speed         | 10 s             | 20%            |
-| Estimated source level   | 30 s             | 20%            |
+| Passive signal strength  | 30 s             | 20%            |
 | TMA range wander         | 20 s             | 0%             |
 | TMA heading              | 60 s             | 0%             |
 
@@ -170,6 +181,32 @@ processes since they have no `ContactTracker`.
 
 The array-and-environment wander is the realistic part; the small
 white fraction is what keeps a bearing display from looking frozen.
+
+### Passive Strength and Source-Level Ambiguity
+
+Detection uses the internal sonar equation below, retaining the game's
+existing detection ranges. Controllers receive a strength measurement
+with a fixed listener/source calibration error (6 dB RMS) plus correlated
+wander (2 dB RMS, 30-second time constant). Detected contacts report at
+least the detection threshold. The fixed error survives contact loss
+and reacquisition, so long averages cannot remove it. The 6 dB setting
+is game tuning: with cylindrical spreading it corresponds to roughly
+a factor of four uncertainty in amplitude-derived range.
+
+Bearing uncertainty, bearing-error variance and blade-rate speed
+precision use this same measured strength. They do not expose the
+exact internal signal excess through another field or through sample
+variance. Stronger measured signals still give better measurements.
+
+Absolute source level requires a transmission-loss estimate. For
+submarine tracks, `estimatedSourceLevel` is reconstructed from measured
+strength, listener noise and spreading at the **reported TMA range**.
+Inverting that value with the sonar equation simply reproduces the
+existing uncertain range solution. It cannot bypass maneuvering.
+Thermal layers and terrain make this spreading-only reconstruction
+less reliable still. Contacts without a range solution, including
+passive torpedo contacts and contacts heard only through the baffles,
+report `NaN`. Acoustic classification remains a separate signature cue.
 
 ### Heading Estimation
 
@@ -295,10 +332,12 @@ When the listener pings:
 
 1. Active returns give precise range (2% RMS noise) and estimated
    depth (from vertical bearing angle, 5% RMS noise, min 5m).
-2. The tracker calibrates the source level: `SL = SE + TL + NL`
-   where TL uses the known range.
-3. Subsequent passive observations use the calibrated SL for more
-   accurate SE-based ranging.
+2. If the target is also heard passively, its source-level estimate is
+   `SL = measured passive SE + spreading at measured range + listener NL`.
+   An echo alone does not reveal the target's radiated noise level.
+3. Subsequent passive observations retain the active range fix while
+   it is recent, improving source-level estimates alongside the TMA
+   range estimate.
 4. Solution quality jumps to 0.95 and then fades with a 60 second time
    constant (0.35 after one minute, 0.13 after two) unless passive
    geometry keeps it up. The range wander fades in from the 2% active
@@ -312,6 +351,88 @@ position. The game rewards patience (building a passive solution
 through maneuvering) vs impatience (pinging for instant data).
 
 ## Impact on Controller Design
+
+### Optional Track Memory and Prediction
+
+The API provides `SonarTrack` for controllers that want to retain a
+selected contact across detection gaps. The engine still performs
+acoustic analysis and TMA. The controller owns contact association,
+target selection, contact-alive belief, and decisions about firing or
+abandoning a stale track. Use one helper per associated contact and
+reset it when switching targets or starting another match.
+
+```java
+// Construct after receiving the match configuration.
+private SonarTrack targetTrack;
+
+public void onMatchStart(MatchContext context) {
+    targetTrack = new SonarTrack(context.config().maxSubSpeed());
+}
+
+public void onTick(SubmarineInput input, SubmarineOutput output) {
+    SonarContact selected = selectAssociatedContact(input); // null during a gap
+    targetTrack.update(input.self().pose().position(), selected, input.deltaTimeSeconds())
+        .ifPresent(estimate -> output.publishContactEstimate(
+            estimate.toContactEstimate(contactAliveBelief, "target")));
+}
+```
+
+`lastFix()` holds the last usable ranged observation and its world
+position. `estimate()` provides the current predicted position, time
+since contact and since a ranged fix, current quality, and an uncertainty
+ellipse. Coasting does not move or replace the last fix. The helper
+extrapolates reported heading and speed during a gap; a **new** report
+with unresolved heading or speed stops that extrapolation. A zero or
+unbounded range cannot establish a Cartesian fix. All elapsed time comes
+from the caller, so prediction is independent of controller tick rate.
+
+`predict(secondsAhead)` returns a future position, uncertainty, and
+evidence ages without advancing the live clock or moving its last fix.
+Use it for approach routes and torpedo aim points; do not advance the
+tracker to a future intercept time. `observeMotion(heading, speed)` can
+apply newly associated motion evidence while preserving the position
+fix's age and its accumulated uncertainty. `observePosition()` accepts
+an explicit world-position estimate and envelope derived from public
+evidence, such as an explosion bearing and range. Such a fix has a null
+sonar observation rather than inventing a sonar return.
+
+Fresh ranged readings use the engine's current solution and reported
+uncertainty directly. Repeated correlated samples do not accumulate
+artificial confidence, and a poorer solution can reduce quality. Both
+range and bearing uncertainty contribute to the position envelope.
+Sonar range is slant range: known active depth supports horizontal
+projection; unknown depth uses a same-depth position approximation with
+additional uncertainty covering the possible vertical separation.
+
+The ellipse encloses twice the reported position errors plus a
+conservative motion allowance. `SonarTrack.MotionModel` exposes maximum
+speed, acceleration, turn rate, and initial speed/heading error
+allowances. The defaults are starter assumptions rather than exact
+physics limits; controllers may tune them, including allowances for
+currents or different vehicle types. As motion uncertainty dominates,
+the ellipse approaches a circle. This lightweight envelope is neither
+an exact reachable cone nor a calibrated probability distribution.
+Quality falls as the envelope grows, while contact-alive belief remains
+a separate controller policy. `toContactEstimate()` publishes the
+ellipse's enclosing circle through the existing viewer/replay API.
+
+`DefaultAttackSub` uses this helper as a reference integration.
+`CodexAttackSub` uses two helpers: one for selected sonar readings and
+one for independent active or confirmed-hit position evidence. New
+passive readings cannot erase a better active range anchor. It selects a
+compatible position envelope for navigation and uses the active
+hypothesis consistently for torpedo position, motion, and uncertainty.
+New motion that contradicts the confirmed trajectory revokes firing
+authorization. Codex retains contact association, active-confirmation
+policy, terrain checks, approach offsets, ping timing, and weapon policy;
+helper forecasts supply its approach, egress, interception, and torpedo
+lead positions. Other controllers can keep their own tracking models.
+
+Because a passive reading has no depth estimate, the default envelope
+can remain broad even with mature TMA. The starter's existing snapshot
+ping supplies depth and precise range before a shot; the helper does not
+shrink that envelope to satisfy a firing threshold. Controllers with
+other depth or motion assumptions can implement a different model.
 
 ### Simple Bot (Minimum Viable)
 
@@ -361,12 +482,14 @@ trackers.
 
 **TMA Reset:**
 When a contact is lost for more than ~30 seconds, the tracker is
-discarded. A new detection starts fresh. However, if a ping was
-previously used to calibrate SL for a contact in a similar bearing,
-the calibration data can be reused.
+discarded. A new detection starts a fresh TMA solution. Passive
+strength calibration uncertainty persists across reacquisition.
 
 ## References
 
+- National Research Council, [Ocean Noise and Marine Mammals](https://www.ncbi.nlm.nih.gov/books/NBK221259/?report=printable),
+  applications of the sonar equation: received level depends on source
+  level and propagation loss, which varies with geometry and environment.
 - Cold Waters: automatic TMA with SOL%, crew builds solution in
   background, quality depends on signal strength and maneuvering.
 - Dangerous Waters: fully manual TMA, bearing-only from passive,

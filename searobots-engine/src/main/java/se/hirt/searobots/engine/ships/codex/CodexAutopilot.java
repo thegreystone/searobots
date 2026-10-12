@@ -48,6 +48,9 @@ final class CodexAutopilot {
 	private static final double MAX_LOOKAHEAD = 560.0;
 	private static final double MAX_RUDDER = 0.55;
 	private static final double MAX_PLANES = 0.55;
+	private static final double HULL_BOW_LENGTH = 33.5;
+	private static final double HULL_STERN_LENGTH = 40.0;
+	private static final double HULL_HALF_BEAM = VehicleConfig.submarine().hullHalfBeam();
 
 	static final double[] TURN_RADIUS = {0, 405, 254, 218, 213, 219, 233, 250, 268, 289, 310, 332, 354, 377, 400, 424};
 	static final double[] DEPTH_RATE = {0, 0.02, 0.09, 0.21, 0.37, 0.59, 0.87, 1.21, 1.58, 1.99, 2.42, 2.86, 3.30, 3.75,
@@ -67,6 +70,8 @@ final class CodexAutopilot {
 	private boolean arrived;
 	private boolean blocked;
 	private String lastStatus = "";
+	private double lastHeading = Double.NaN;
+	private long lastHeadingTick;
 
 	CodexAutopilot(MatchContext context) {
 		this.terrain = context.terrain();
@@ -98,6 +103,13 @@ final class CodexAutopilot {
 		double speed = self.velocity().speed();
 		double verticalSpeed = self.velocity().linear().z();
 		double depth = pos.z();
+		double measuredYawRate = 0.0;
+		if (!Double.isNaN(lastHeading) && input.tick() > lastHeadingTick) {
+			double elapsed = (input.tick() - lastHeadingTick) * input.deltaTimeSeconds();
+			measuredYawRate = Math.clamp(adiff(heading, lastHeading) / Math.max(elapsed, 0.001), -0.15, 0.15);
+		}
+		lastHeading = heading;
+		lastHeadingTick = input.tick();
 
 		StrategicWaypoint current = strategicWaypoints.isEmpty() ? null
 				: strategicWaypoints.get(strategicWaypointIndex);
@@ -152,7 +164,9 @@ final class CodexAutopilot {
 			lastStatus = "TRACK";
 		}
 
-		double routeWorstFloor = worstFloorAhead(pos.x(), pos.y(), lookahead + 700.0);
+		TerrainForecast forecast = forecastTerrain(pos, heading, pitch, self.surgeSpeed() * Math.cos(pitch),
+				verticalSpeed, measuredYawRate, rudder);
+		double routeWorstFloor = Math.max(worstFloorAhead(pos.x(), pos.y(), lookahead + 700.0), forecast.worstFloor());
 		double targetDepth = depthTarget(current, target, routeWorstFloor);
 		double depthErr = targetDepth - depth;
 		double desiredPitch = Math.clamp(depthErr * 0.012 - verticalSpeed * 0.25, -0.30, 0.30);
@@ -161,13 +175,16 @@ final class CodexAutopilot {
 		double throttle = throttle(desiredSpeed);
 
 		double floorBelow = terrain.elevationAt(pos.x(), pos.y());
-		double gap = depth - floorBelow;
-		if (gap < EMERGENCY_GAP || gap < WARNING_GAP) {
+		double gap = forecast.hullClearance();
+		if (gap < WARNING_GAP || forecast.recoveryClearance() < WARNING_GAP) {
 			sternPlanes = MAX_PLANES;
 			ballast = 0.95;
-			throttle = gap < EMERGENCY_GAP ? -0.3 : Math.min(throttle, 0.15);
-			rudder = Math.clamp(rudder, -0.3, 0.3);
-			lastStatus = "PULL UP";
+			throttle = gap < EMERGENCY_GAP || forecast.recoveryClearance() < EMERGENCY_GAP ? -0.3
+					: Math.min(throttle, 0.15);
+			if (gap < WARNING_GAP) {
+				rudder = Math.clamp(rudder, -0.3, 0.3);
+			}
+			lastStatus = gap < WARNING_GAP ? "PULL UP" : "TERRAIN";
 			blocked = floorBelow > -30.0;
 		} else {
 			blocked = route.isEmpty();
@@ -434,6 +451,61 @@ final class CodexAutopilot {
 		return worst;
 	}
 
+	private record TerrainForecast(double worstFloor, double hullClearance, double recoveryClearance) {
+	}
+
+	private TerrainForecast forecastTerrain(
+		Vec3 position, double heading, double pitch, double speed, double verticalSpeed, double yawRate,
+		double rudder) {
+		double x = position.x();
+		double y = position.y();
+		double worstFloor = hullFloor(x, y, heading, pitch);
+		double hullClearance = position.z() - worstFloor;
+		double recoveryClearance = hullClearance;
+		double horizontalSpeed = Math.abs(speed);
+		double horizon = Math.clamp(12.0 + horizontalSpeed, 12.0, 24.0);
+		double step = Math.min(2.0, 20.0 / Math.max(horizontalSpeed, 1.0));
+		double radius = turnRadiusAtSpeed(horizontalSpeed);
+		double steadyYawRate = speed / Math.max(radius, 100.0) * rudder / MAX_RUDDER;
+		double climbRate = Math.max(0.7, depthChangeRatio(horizontalSpeed) * horizontalSpeed);
+
+		// The hull continues along its current course while the rudder, yaw and pitch respond.
+		// Sample that narrow swept path rather than assuming an immediate turn onto the planned route.
+		for (double seconds = step; seconds <= horizon + 1.0e-9; seconds += step) {
+			yawRate += (steadyYawRate - yawRate) * (1.0 - Math.exp(-step / 8.0));
+			heading = norm(heading + yawRate * step);
+			x += Math.sin(heading) * speed * step;
+			y += Math.cos(heading) * speed * step;
+			double floor = hullFloor(x, y, heading, pitch);
+			worstFloor = Math.max(worstFloor, floor);
+			// Allow a delayed climb under full planes and ballast; an existing descent persists initially.
+			double recoveryDepth = Math.min(MIN_DEPTH - 5.0, position.z() + climbRate * Math.max(0.0, seconds - 5.0)
+					+ Math.min(verticalSpeed, 0.0) * Math.min(seconds, 5.0));
+			recoveryClearance = Math.min(recoveryClearance, recoveryDepth - floor);
+		}
+		return new TerrainForecast(worstFloor, hullClearance, recoveryClearance);
+	}
+
+	private double hullFloor(double x, double y, double heading, double pitch) {
+		double forwardX = Math.sin(heading) * Math.cos(pitch);
+		double forwardY = Math.cos(heading) * Math.cos(pitch);
+		double sinPitch = Math.sin(pitch);
+		double worst = terrain.elevationAt(x, y);
+		// Match the pitch-aware hull extremities used by SubmarinePhysics.
+		worst = Math.max(worst, terrain.elevationAt(x + forwardX * HULL_BOW_LENGTH, y + forwardY * HULL_BOW_LENGTH)
+				- sinPitch * HULL_BOW_LENGTH);
+		worst = Math.max(worst, terrain.elevationAt(x - forwardX * HULL_STERN_LENGTH, y - forwardY * HULL_STERN_LENGTH)
+				+ sinPitch * HULL_STERN_LENGTH);
+		double rightX = Math.cos(heading) * HULL_HALF_BEAM;
+		double rightY = -Math.sin(heading) * HULL_HALF_BEAM;
+		worst = Math.max(worst, terrain.elevationAt(x + rightX, y + rightY));
+		worst = Math.max(worst, terrain.elevationAt(x - rightX, y - rightY));
+		double tiltX = Math.sin(heading) * sinPitch;
+		double tiltY = Math.cos(heading) * sinPitch;
+		worst = Math.max(worst, terrain.elevationAt(x + tiltX * 5.0, y + tiltY * 5.0) + Math.cos(pitch) * 5.0);
+		return Math.max(worst, terrain.elevationAt(x - tiltX * 6.5, y - tiltY * 6.5) - Math.cos(pitch) * 6.5);
+	}
+
 	private double approachSpeedLimit(
 		StrategicWaypoint current, double navDistance, double strategicDistance, double limitedSpeed) {
 		double limited = limitedSpeed;
@@ -461,6 +533,9 @@ final class CodexAutopilot {
 	}
 
 	private double throttle(double speed) {
+		if (speed < 0.0) {
+			return -throttle(-speed);
+		}
 		double s = Math.clamp(speed, 0.0, maxSubSpeed);
 		if (s <= 4.5)
 			return lerp(0.08, 0.16, s / 4.5);

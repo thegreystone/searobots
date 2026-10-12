@@ -37,6 +37,16 @@ public interface SubmarineController {
 		return getClass().getSimpleName();
 	}
 
+	/**
+	 * Two-letter code for this controller, painted on the submarine's sail together with a
+	 * two-digit number (for example "CL 01"). Letters A-Z and digits only; anything else is
+	 * dropped, and if fewer than two remain the code is taken from {@link #name()} instead.
+	 * Defaults to the first two letters of the name.
+	 */
+	default String shortName() {
+		return name();
+	}
+
 	default void onMatchStart(MatchContext context) {
 	}
 
