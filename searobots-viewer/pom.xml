@@ -64,6 +64,11 @@
             <artifactId>lemur-proto</artifactId>
             <version>1.13.0</version>
         </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <profiles>
@@ -101,6 +106,8 @@
                     <executable>java</executable>
                     <arguments>
                         <argument>${exec.jvmArgs}</argument>
+                        <argument>-XX:+UseZGC</argument>
+                        <argument>-Xmx2g</argument>
                         <argument>-cp</argument>
                         <classpath/>
                         <argument>se.hirt.searobots.viewer.SubmarineScene3D</argument>

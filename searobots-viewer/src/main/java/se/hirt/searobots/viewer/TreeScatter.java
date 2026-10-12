@@ -40,7 +40,6 @@ import com.jme3.scene.Mesh;
 import com.jme3.scene.Node;
 import com.jme3.scene.VertexBuffer;
 import com.jme3.terrain.geomipmap.TerrainQuad;
-import com.jme3.texture.Texture;
 import com.jme3.util.BufferUtils;
 import se.hirt.searobots.api.TerrainMap;
 
@@ -50,17 +49,17 @@ import java.util.Random;
 
 /**
  * Scatters cutout trees across vegetated terrain in natural-looking clusters. Every tree is two
- * crossed vertical quads (the side cutout) plus one horizontal quad near the top of the crown (the
- * top-down cutout), so trees still read as crowns when the camera looks down at an island instead
- * of dissolving into crossed cards.
+ * crossed vertical quads (the side cutout) plus a low dome near the top of the crown (the top-down
+ * cutout), so trees still read as crowns when the camera looks down at an island instead of
+ * dissolving into crossed cards.
  * <p>
- * All quads of one tree type share a mesh and a lit material, so the whole forest is eight draw
- * calls regardless of tree count. The material is {@code Lighting.j3md} with alpha testing: trees
- * darken with the sun and at night like the terrain does. Vertex normals are "puffed" (up plus a
- * little outwards from the trunk) rather than the card's face normal, so a tree shades like a
- * rounded crown lit from above and the two crossed quads never disagree. Vertex colours carry a
- * per-tree tint, which breaks up the repetition of four textures, and darken the base of each tree
- * to fake the occlusion under the canopy.
+ * Each tree type shares two meshes and lit materials: eight foliage geometries plus one batch of
+ * contact shadows. Lighting and reflections can draw them more than once. The foliage material is
+ * {@code Lighting.j3md} with alpha testing: trees darken with the sun and at night like the terrain
+ * does. Vertex normals are "puffed" (up plus a little outwards from the trunk) rather than the
+ * card's face normal, so a tree shades like a rounded crown lit from above and the two crossed
+ * quads never disagree. Vertex colours carry a per-tree tint, which breaks up the repetition of
+ * four textures, and darken the base of each tree to fake the occlusion under the canopy.
  */
 public final class TreeScatter {
 
@@ -190,8 +189,12 @@ public final class TreeScatter {
 					createTopMaterial(assetManager, type.topPath())));
 		}
 
+		Geometry contactShadows = TreeContactShadows.create(perType, terrainQuad, assetManager);
+		if (contactShadows != null)
+			treeNode.attachChild(contactShadows);
+
 		long elapsed = System.currentTimeMillis() - startTime;
-		System.out.printf("TreeScatter: placed %d trees in %dms (%d draw calls, direct mesh)%n", placed, elapsed,
+		System.out.printf("TreeScatter: placed %d trees in %dms (%d geometries, direct mesh)%n", placed, elapsed,
 				treeNode.getQuantity());
 		return treeNode;
 	}
@@ -203,7 +206,7 @@ public final class TreeScatter {
 	public static TreeInstance instance(Type type, Random rng, float x, float y, float z, float heightScale) {
 		float height = (type.minHeight + rng.nextFloat() * (type.maxHeight - type.minHeight)) * heightScale;
 		float width = height * type.widthRatio * (0.88f + rng.nextFloat() * 0.24f);
-		float rotation = rng.nextFloat() * FastMath.PI;
+		float rotation = rng.nextFloat() * FastMath.TWO_PI;
 		// Tint: mostly brightness, with a little hue drift towards yellow or blue-green
 		float bright = 0.78f + rng.nextFloat() * 0.34f;
 		float warm = (rng.nextFloat() - 0.5f) * 0.2f;
@@ -233,7 +236,7 @@ public final class TreeScatter {
 					// Puffed normal: up, leaning outwards from the trunk
 					float nx = rx / hw * 0.5f, nz = rz / hw * 0.5f;
 					float nl = FastMath.sqrt(nx * nx + 1 + nz * nz);
-					float ao = dy[i] > 0 ? 1f : 0.55f;
+					float ao = dy[i] > 0 ? 1f : 0.72f;
 					b.vertex(tree.x + rx, tree.y + dy[i], tree.z + rz, nx / nl, 1 / nl, nz / nl, u[i], v[i],
 							tree.r * ao, tree.g * ao, tree.b * ao);
 				}
@@ -256,16 +259,18 @@ public final class TreeScatter {
 		for (var tree : trees) {
 			float hw = tree.w / 2 * type.topScale;
 			float rimY = tree.y + tree.h * (type.topHeight - 0.14f), apexY = tree.y + tree.h * (type.topHeight + 0.06f);
-			float apexShade = 0.95f, rimShade = 0.72f; // darker towards the rim, like the shaded underside of a crown
+			float apexShade = 1f, rimShade = 0.86f; // soft canopy occlusion instead of a conspicuous dark skirt
 			int apex = b.vertex(tree.x, apexY, tree.z, 0, 1, 0, 0.5f, 0.5f, tree.r * apexShade, tree.g * apexShade,
 					tree.b * apexShade);
 			int[] rim = new int[sides];
 			for (int i = 0; i < sides; i++) {
-				float a = tree.rot + i * FastMath.TWO_PI / sides;
+				float localAngle = i * FastMath.TWO_PI / sides;
+				float a = tree.rot + localAngle;
 				float cx = FastMath.cos(a), cz = FastMath.sin(a);
 				float nl = FastMath.sqrt(0.6f * 0.6f + 1f);
 				rim[i] = b.vertex(tree.x + cx * hw, rimY, tree.z + cz * hw, cx * 0.6f / nl, 1f / nl, cz * 0.6f / nl,
-						0.5f + 0.5f * cx, 0.5f - 0.5f * cz, tree.r * rimShade, tree.g * rimShade, tree.b * rimShade);
+						0.5f + 0.5f * FastMath.cos(localAngle), 0.5f - 0.5f * FastMath.sin(localAngle),
+						tree.r * rimShade, tree.g * rimShade, tree.b * rimShade);
 			}
 			for (int i = 0; i < sides; i++)
 				b.tri(apex, rim[(i + 1) % sides], rim[i]);
@@ -286,17 +291,14 @@ public final class TreeScatter {
 	 */
 	public static Material createTreeMaterial(AssetManager am, String texturePath) {
 		Material mat = new Material(am, "Common/MatDefs/Light/Lighting.j3md");
-		Texture tex = am.loadTexture(texturePath);
-		tex.setMinFilter(Texture.MinFilter.Trilinear);
-		tex.setAnisotropicFilter(4);
-		mat.setTexture("DiffuseMap", tex);
+		mat.setTexture("DiffuseMap", FoliageMipmaps.load(am, texturePath));
 		mat.setBoolean("UseMaterialColors", true);
 		mat.setColor("Diffuse", ColorRGBA.White);
 		mat.setColor("Ambient", ColorRGBA.White);
 		mat.setColor("Specular", ColorRGBA.Black);
 		mat.setFloat("Shininess", 1f);
 		mat.setBoolean("UseVertexColor", true);
-		mat.setFloat("AlphaDiscardThreshold", 0.45f);
+		mat.setFloat("AlphaDiscardThreshold", FoliageMipmaps.ALPHA_DISCARD);
 		mat.getAdditionalRenderState().setFaceCullMode(RenderState.FaceCullMode.Off);
 		return mat;
 	}

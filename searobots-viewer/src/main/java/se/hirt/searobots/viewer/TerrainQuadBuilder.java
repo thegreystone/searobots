@@ -47,13 +47,11 @@ import java.nio.ByteBuffer;
  * Builds a jMonkeyEngine {@link TerrainQuad} from a {@link TerrainMap}, with LOD, lit texture
  * splatting via procedural alpha maps, normal maps, and tri-planar texturing for steep slopes.
  * <p>
- * Five terrain layers are blended by elevation and slope:
+ * Three surface materials are blended by elevation and slope:
  * <ol>
- * <li>Deep ocean floor (dark sediment)</li>
- * <li>Continental shelf (rocky)</li>
+ * <li>Rock for the seabed and exposed cliffs</li>
  * <li>Beach / coastal sand</li>
  * <li>Forest / vegetation</li>
- * <li>Cliff rock (steep slopes, any elevation)</li>
  * </ol>
  * <p>
  * TerrainQuad requires a (2^n + 1) square heightmap. The simulation's 1600x1600 grid is resampled
@@ -82,15 +80,10 @@ final class TerrainQuadBuilder {
 	 */
 	static TerrainQuad build(TerrainMap terrain, AssetManager assetManager, Camera camera) {
 		float[] heightmap = resample(terrain);
-
-		TerrainQuad quad = new TerrainQuad("terrain", PATCH_SIZE, QUAD_SIZE, heightmap);
-		quad.setMaterial(createMaterial(terrain, assetManager, heightmap));
-
-		// Scale: TerrainQuad spans [-size/2, +size/2] in local X and Z,
-		// with (QUAD_SIZE - 1) cells. We need it to cover the world extent.
 		double worldW = terrain.worldWidth();
 		float scaleXZ = (float) (worldW / (QUAD_SIZE - 1));
-		quad.setLocalScale(scaleXZ, 1f, scaleXZ);
+		TerrainQuad quad = createGeometry(heightmap, PATCH_SIZE, QUAD_SIZE, scaleXZ);
+		quad.setMaterial(createMaterial(assetManager, heightmap, scaleXZ));
 
 		// Position: TerrainQuad is centred at origin. The sim terrain has
 		// its origin at (originX, originY). We need to shift so the centre
@@ -115,6 +108,21 @@ final class TerrainQuadBuilder {
 				QUAD_SIZE, QUAD_SIZE, terrain.getCols(), terrain.getRows(), scaleXZ, worldW, worldH,
 				terrain.getMinElevation(), terrain.getMaxElevation());
 
+		return quad;
+	}
+
+	/**
+	 * jME's terrain tri-planar shader samples patch-local positions and normals. Use the same unit
+	 * on every local axis so vertical projections have the same physical tile size as horizontal
+	 * projections, and the normals describe the actual slope. Uniform scaling restores metres.
+	 */
+	static TerrainQuad createGeometry(float[] heightmap, int patchSize, int quadSize, float cellSize) {
+		float[] localHeights = new float[heightmap.length];
+		for (int i = 0; i < heightmap.length; i++) {
+			localHeights[i] = heightmap[i] / cellSize;
+		}
+		TerrainQuad quad = new TerrainQuad("terrain", patchSize, quadSize, localHeights);
+		quad.setLocalScale(cellSize);
 		return quad;
 	}
 
@@ -146,174 +154,109 @@ final class TerrainQuadBuilder {
 	// ── Material and alpha maps ────────────────────────────────────────
 
 	/**
-	 * Create a lit terrain material with 5 texture layers blended by procedural alpha maps derived
+	 * Create a lit terrain material with 3 texture layers blended by procedural coverage derived
 	 * from elevation and slope.
 	 */
-	private static Material createMaterial(TerrainMap terrain, AssetManager assetManager, float[] heightmap) {
+	private static Material createMaterial(AssetManager assetManager, float[] heightmap, float cellSize) {
 		Material mat = new Material(assetManager, "Common/MatDefs/Terrain/TerrainLighting.j3md");
+		mat.setBoolean("useTriPlanarMapping", true);
 
 		// No specular: avoids washed-out highlights from strong sun
 		mat.setFloat("Shininess", 0f);
 
-		// Generate procedural alpha maps from elevation + slope
-		Texture2D[] alphaMaps = generateAlphaMaps(heightmap, (float) terrain.worldWidth() / (QUAD_SIZE - 1));
-		mat.setTexture("AlphaMap", alphaMaps[0]);
-		mat.setTexture("AlphaMap_1", alphaMaps[1]);
+		mat.setTexture("AlphaMap", generateAlphaMap(heightmap, QUAD_SIZE, cellSize));
 
-		// Texture scale: TerrainQuad UVs go 0..1 across the terrain.
-		// The scale multiplier controls how many times a texture repeats.
-		// At 256x the terrain is ~17km, so each tile covers ~66m.
-
-		// Layer 1 (AlphaMap.R): underwater seabed (all depths)
-		// Single texture for all underwater terrain avoids blocky transitions.
-		// The water filter and fog naturally darken deeper areas.
+		// Tri-planar scales are repeats per local grid unit, not UV repeats across the whole terrain.
+		// These preserve the previous horizontal tile sizes (~66m rock, 44m sand, 53m vegetation
+		// on the 17km map) on vertical faces too. Every 64-cell patch contains an integer number of
+		// tiles, keeping patch-local projections continuous across patch boundaries.
+		// Base rock covers all depths and exposed cliffs; water and fog darken the deep seabed.
 		mat.setTexture("DiffuseMap", loadWrap(assetManager, "Textures/Terrain/PBR/Gravel015_1K_Color.png"));
 		mat.setTexture("NormalMap", loadWrap(assetManager, "Textures/Terrain/PBR/Gravel015_1K_Normal.png"));
-		mat.setFloat("DiffuseMap_0_scale", 256f);
+		mat.setFloat("DiffuseMap_0_scale", 256f / (QUAD_SIZE - 1));
 
-		// Layer 2 (AlphaMap.G): same as layer 1 (unified underwater)
-		mat.setTexture("DiffuseMap_1", loadWrap(assetManager, "Textures/Terrain/PBR/Gravel015_1K_Color.png"));
-		mat.setTexture("NormalMap_1", loadWrap(assetManager, "Textures/Terrain/PBR/Gravel015_1K_Normal.png"));
-		mat.setFloat("DiffuseMap_1_scale", 256f);
+		// First overlay (AlphaMap.G): beach sand.
+		mat.setTexture("DiffuseMap_1", loadWrap(assetManager, "Textures/Terrain/PBR/Ground037_1K_Color.png"));
+		mat.setTexture("NormalMap_1", loadWrap(assetManager, "Textures/Terrain/PBR/Ground037_1K_Normal.png"));
+		mat.setFloat("DiffuseMap_1_scale", 384f / (QUAD_SIZE - 1));
 
-		// Layer 3 (AlphaMap.B): beach sand
-		mat.setTexture("DiffuseMap_2", loadWrap(assetManager, "Textures/Terrain/PBR/Ground037_1K_Color.png"));
-		mat.setTexture("NormalMap_2", loadWrap(assetManager, "Textures/Terrain/PBR/Ground037_1K_Normal.png"));
-		mat.setFloat("DiffuseMap_2_scale", 384f);
-
-		// Layer 4 (AlphaMap.A): lush green vegetation
-		mat.setTexture("DiffuseMap_3", loadWrap(assetManager, "Textures/Terrain/custom/vegetation.png"));
-		mat.setTexture("NormalMap_3", loadWrap(assetManager, "Textures/Terrain/custom/vegetation_normal.png"));
-		mat.setFloat("DiffuseMap_3_scale", 320f);
-
-		// Layer 5 (AlphaMap_1.R): above-water cliff rock (gray gravel)
-		mat.setTexture("DiffuseMap_4", loadWrap(assetManager, "Textures/Terrain/PBR/Gravel015_1K_Color.png"));
-		mat.setTexture("NormalMap_4", loadWrap(assetManager, "Textures/Terrain/PBR/Gravel015_1K_Normal.png"));
-		mat.setFloat("DiffuseMap_4_scale", 256f);
+		// Second overlay (AlphaMap.B): lush green vegetation.
+		mat.setTexture("DiffuseMap_2", loadWrap(assetManager, "Textures/Terrain/custom/vegetation.png"));
+		mat.setTexture("NormalMap_2", loadWrap(assetManager, "Textures/Terrain/custom/vegetation_normal.png"));
+		mat.setFloat("DiffuseMap_2_scale", 320f / (QUAD_SIZE - 1));
 
 		return mat;
 	}
 
 	/**
-	 * Generate two RGBA alpha maps from the heightmap data. Each pixel's channels encode the blend
-	 * weight for one terrain layer:
+	 * Generate an RGBA map for jME's ordered layer blending:
 	 *
 	 * <pre>
-	 * AlphaMap[0]: R=deep sediment, G=shelf rock, B=sand, A=forest
-	 * AlphaMap[1]: R=cliff rock (steep slopes), G/B/A=unused
+	 * R = 1 (full base rock), G = sand coverage before vegetation, B = vegetation coverage, A = 0
 	 * </pre>
 	 *
-	 * Weights are computed from elevation zones with smooth transitions, overridden by slope angle
-	 * for steep cliff faces.
+	 * TerrainLighting multiplies the base by R, then mixes each later layer over the result. Its
+	 * channels are therefore coverages, not normalized weights. A fully covered base prevents dark
+	 * seams, including when the map is filtered between biomes.
 	 */
-	private static Texture2D[] generateAlphaMaps(float[] heightmap, float cellSize) {
-		ByteBuffer buf0 = BufferUtils.createByteBuffer(QUAD_SIZE * QUAD_SIZE * 4);
-		ByteBuffer buf1 = BufferUtils.createByteBuffer(QUAD_SIZE * QUAD_SIZE * 4);
+	static Texture2D generateAlphaMap(float[] heightmap, int size, float cellSize) {
+		ByteBuffer buf = BufferUtils.createByteBuffer(size * size * 4);
 
-		for (int row = 0; row < QUAD_SIZE; row++) {
+		for (int row = 0; row < size; row++) {
 			// TerrainQuad UV (0,0) is at the bottom of the alpha map texture,
 			// but our heightmap row 0 is the top (north). Flip vertically.
-			int hRow = QUAD_SIZE - 1 - row;
-			for (int col = 0; col < QUAD_SIZE; col++) {
-				float elev = heightmap[hRow * QUAD_SIZE + col];
+			int hRow = size - 1 - row;
+			for (int col = 0; col < size; col++) {
+				float elev = heightmap[hRow * size + col];
 
 				// Slope from central finite differences
 				int cl = Math.max(0, col - 1);
-				int cr = Math.min(QUAD_SIZE - 1, col + 1);
+				int cr = Math.min(size - 1, col + 1);
 				int ru = Math.max(0, hRow - 1);
-				int rd = Math.min(QUAD_SIZE - 1, hRow + 1);
-				float dzdx = (heightmap[hRow * QUAD_SIZE + cr] - heightmap[hRow * QUAD_SIZE + cl])
-						/ ((cr - cl) * cellSize);
-				float dzdy = (heightmap[rd * QUAD_SIZE + col] - heightmap[ru * QUAD_SIZE + col])
-						/ ((rd - ru) * cellSize);
+				int rd = Math.min(size - 1, hRow + 1);
+				float dzdx = (heightmap[hRow * size + cr] - heightmap[hRow * size + cl]) / ((cr - cl) * cellSize);
+				float dzdy = (heightmap[rd * size + col] - heightmap[ru * size + col]) / ((rd - ru) * cellSize);
 				float slopeDeg = (float) Math.toDegrees(Math.atan(Math.sqrt(dzdx * dzdx + dzdy * dzdy)));
 
-				// Elevation-based biome weights for tropical island terrain:
-				// < -200m: deep sediment
-				// -200 to -20m: rocky shelf
-				// -20 to +10m: sandy shallows and wide beach
-				// > +10m: vegetation/forest
-				float wDeep = 0, wShelf = 0, wSand = 0, wForest = 0;
-
-				if (elev < -300) {
-					wDeep = 1;
-				} else if (elev < -150) {
-					float t = smoothstep(-300, -150, elev);
-					wDeep = 1 - t;
-					wShelf = t;
-				} else if (elev < -20) {
-					wShelf = 1;
-				} else if (elev < 10) {
-					// Wide sandy zone: underwater sandy shelf through beach
-					// Gradual transition from rock to sand starting at -20m
-					float t = smoothstep(-20, -5, elev);
-					wShelf = 1 - t;
-					wSand = t;
-				} else if (elev < 13) {
-					// Sharp treeline: sand to forest over just 3m
-					float t = smoothstep(10, 13, elev);
-					wSand = 1 - t;
-					wForest = t;
-				} else {
-					wForest = 1;
-				}
-
-				// Sand only on flat ground (beaches are flat, cliffs are rocky)
-				if (slopeDeg > 8 && wSand > 0) {
-					float slopeReduce = smoothstep(8, 25, slopeDeg);
-					float removed = wSand * slopeReduce;
-					wSand -= removed;
-					if (elev < 0)
-						wShelf += removed;
-					else
-						wForest += removed;
-				}
-
-				// Underwater slopes: redistribute to shelf rock
-				if (elev < 0 && slopeDeg > 15) {
-					float slopeToShelf = smoothstep(15, 35, slopeDeg);
-					float moved = wDeep * slopeToShelf;
-					wDeep -= moved;
-					wShelf += moved;
-				}
-
-				// Above water: cliff rock only on very steep faces (layer 5)
-				// Vegetation clings to slopes up to ~50 degrees
-				float wCliff = 0;
-				if (elev > 0) {
-					wCliff = smoothstep(50, 70, slopeDeg);
-
-					// Mountain peaks: slight rock exposure above 100m
-					if (elev > 100) {
-						float peakExposure = smoothstep(100, 150, elev) * 0.3f;
-						wCliff = Math.max(wCliff, peakExposure);
-					}
-
-					float biomeScale = 1 - wCliff;
-					wSand *= biomeScale;
-					wForest *= biomeScale;
-				}
-
-				// jME RGBA8 ByteBuffer: R, G, B, A bytes per pixel.
-				// AlphaMap channels: R->DiffuseMap, G->DiffuseMap_1, B->DiffuseMap_2, A->DiffuseMap_3
-				// Ensure exactly one dominant weight to avoid washed-out blending.
-				buf0.put((byte) Math.min(255, (int) (wDeep * 255))).put((byte) Math.min(255, (int) (wShelf * 255)))
-						.put((byte) Math.min(255, (int) (wSand * 255)))
-						.put((byte) Math.min(255, (int) (wForest * 255)));
-
-				buf1.put((byte) Math.min(255, (int) (wCliff * 255))).put((byte) 0).put((byte) 0).put((byte) 0);
+				writeCoverage(buf, elev, slopeDeg);
 			}
 		}
-		buf0.flip();
-		buf1.flip();
-
-		Texture2D tex0 = bufferToTexture(buf0);
-		Texture2D tex1 = bufferToTexture(buf1);
-		return new Texture2D[] {tex0, tex1};
+		buf.flip();
+		return bufferToTexture(buf, size);
 	}
 
-	private static Texture2D bufferToTexture(ByteBuffer buf) {
-		Image img = new Image(Image.Format.RGBA8, QUAD_SIZE, QUAD_SIZE, buf, ColorSpace.Linear);
+	private static void writeCoverage(ByteBuffer buf, float elev, float slopeDeg) {
+		float forest = smoothstep(10, 13, elev);
+		float sand = smoothstep(-20, -5, elev) * (1 - forest);
+
+		// Sandy shallows and beaches remain flat; vegetation grows on steeper land.
+		float removedSand = sand * smoothstep(8, 25, slopeDeg);
+		sand -= removedSand;
+		if (elev >= 0) {
+			forest += removedSand;
+		}
+
+		if (elev > 0) {
+			// Vegetation clings to slopes up to 50 degrees, with exposed rock on steep cliffs.
+			float cliff = smoothstep(50, 70, slopeDeg);
+			float peakExposure = smoothstep(100, 150, elev) * 0.3f;
+			float biomeScale = 1 - Math.max(cliff, peakExposure);
+			sand *= biomeScale;
+			forest *= biomeScale;
+		}
+
+		// mix(mix(rock, sand, G), forest, B) has final sand weight G * (1 - B).
+		// Invert that equation rather than writing normalized weights into the coverage map.
+		float sandCoverage = forest < 1 ? sand / (1 - forest) : 0;
+		buf.put((byte) 255).put(toByte(sandCoverage)).put(toByte(forest)).put((byte) 0);
+	}
+
+	private static byte toByte(float coverage) {
+		return (byte) Math.round(Math.max(0, Math.min(1, coverage)) * 255);
+	}
+
+	private static Texture2D bufferToTexture(ByteBuffer buf, int size) {
+		Image img = new Image(Image.Format.RGBA8, size, size, buf, ColorSpace.Linear);
 		Texture2D tex = new Texture2D(img);
 		tex.setMinFilter(Texture.MinFilter.BilinearNearestMipMap);
 		tex.setMagFilter(Texture.MagFilter.Bilinear);

@@ -30,6 +30,7 @@ package se.hirt.searobots.viewer;
 
 import com.jme3.app.SimpleApplication;
 import com.jme3.app.state.ScreenshotAppState;
+import com.jme3.asset.AssetManager;
 import com.jme3.effect.ParticleEmitter;
 import com.jme3.effect.ParticleMesh;
 import com.jme3.font.BitmapText;
@@ -40,6 +41,7 @@ import com.jme3.light.AmbientLight;
 import com.jme3.light.DirectionalLight;
 import com.jme3.material.Material;
 import com.jme3.material.RenderState;
+import com.jme3.material.TechniqueDef;
 import com.jme3.math.ColorRGBA;
 import com.jme3.math.FastMath;
 import com.jme3.math.Quaternion;
@@ -47,7 +49,10 @@ import com.jme3.math.Vector3f;
 import com.jme3.post.FilterPostProcessor;
 import com.jme3.post.filters.BloomFilter;
 import com.jme3.post.filters.FogFilter;
+import com.jme3.post.filters.FXAAFilter;
 import com.jme3.post.filters.LightScatteringFilter;
+import com.jme3.renderer.Caps;
+import com.jme3.renderer.Renderer;
 import com.jme3.renderer.queue.RenderQueue;
 import com.jme3.scene.*;
 import com.jme3.scene.control.BillboardControl;
@@ -121,6 +126,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 	private final Map<Integer, float[]> tubeDoorOpenUntil = new HashMap<>(), tubeDoorAngle = new HashMap<>();
 	private float tubeDoorClock;
 	private Spatial terrainGeometry;
+	private Node trees;
 	private com.jme3.terrain.geomipmap.TerrainQuad terrainQuad;
 	private TerrainMap displayedTerrain;
 	private Spatial sky;
@@ -213,7 +219,10 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 	private final Map<Integer, java.util.Deque<Vector3f>> trailBuffers = new HashMap<>();
 	private final Map<Integer, Node> trailNodes = new HashMap<>();
 	private final Map<Integer, Node> waypointNodes = new HashMap<>(); // A* nav waypoints
+	private final Map<Integer, List<Waypoint>> renderedWaypoints = new HashMap<>();
+	private final Map<Integer, java.awt.Color> renderedWaypointColors = new HashMap<>();
 	private final Map<Integer, Node> strategicNodes = new HashMap<>(); // strategic waypoints
+	private final Map<Integer, List<SubmarineSnapshot.StrategicWaypointViz>> renderedStrategicWaypoints = new HashMap<>();
 	private final Map<Integer, Node> routeNodes = new HashMap<>();
 	private static final int MAX_TRAIL_POINTS = 750; // ~30 seconds at 25 samples/sec
 	private static final int TRAIL_SAMPLE_INTERVAL = 2; // every 2 ticks (25 Hz)
@@ -343,6 +352,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 				: "SeaRobots [seed: " + Long.toHexString(seed) + "]");
 		settings.setFrameRate(TRACK_FPS ? -1 : 60);
 		settings.setVSync(!TRACK_FPS);
+		settings.setSamples(4);
 		settings.setResizable(true);
 		loadIcons(settings);
 		app.setSettings(settings);
@@ -370,6 +380,17 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 	private volatile GeneratedWorld standaloneWorld;
 	private SimulationManager standaloneSimManager;
 
+	static FilterPostProcessor createFilterPostProcessor(AssetManager assets, Renderer renderer, int samples) {
+		var processor = new FilterPostProcessor(assets);
+		var caps = renderer.getCaps();
+		// jME 3.8 can leave the scene texture null on core-profile renderers missing MSAA caps.
+		// Use FXAA alone unless both multisampled framebuffer and texture support are reported.
+		boolean multisampling = caps.contains(Caps.OpenGL32) && caps.contains(Caps.FrameBufferMultisample)
+				&& caps.contains(Caps.TextureMultisample);
+		processor.setNumSamples(multisampling ? Math.max(1, samples) : 1);
+		return processor;
+	}
+
 	@Override
 	public void simpleInitApp() {
 		System.out.println("simpleInitApp: PHASE 1 - submarine model only");
@@ -377,6 +398,9 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 		setDisplayFps(TRACK_FPS);
 		flyCam.setEnabled(false);
 		viewPort.setBackgroundColor(new ColorRGBA(0.02f, 0.04f, 0.12f, 1f));
+		// Select before loading materials: jME caches their lighting techniques on first use.
+		renderManager.setPreferredLightMode(TechniqueDef.LightMode.SinglePass);
+		renderManager.setSinglePassLightBatchSize(2);
 		setupInput();
 
 		// Initialize Lemur GUI (must happen before any Lemur widget creation)
@@ -422,7 +446,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 		rootNode.attachChild(sunBillboard);
 
 		// Water surface (after sky so reflections pick it up)
-		fpp = new FilterPostProcessor(assetManager);
+		fpp = createFilterPostProcessor(assetManager, renderer, settings.getSamples());
 		waterFilter = new WaterFilter(rootNode, sun.getDirection().mult(-1));
 		waterFilter.setWaterHeight(0f);
 		waterFilter.setSpeed(0.8f);
@@ -435,11 +459,9 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 		waterFilter.setSunScale(3f);
 		waterFilter.setLightDirection(sun.getDirection());
 		waterFilter.setLightColor(ColorRGBA.White);
-		waterFilter.setFoamExistence(new Vector3f(0.8f, 3f, 0.5f));
-		waterFilter.setFoamHardness(50f);
 		waterFilter.setCausticsIntensity(0.3f);
 		waterFilter.setShininess(14f);
-		waterFilter.setReflectionMapSize(512);
+		WaterQualitySettings.configure(waterFilter);
 		waterFilter.setUseRipples(true);
 		waterFilter.setUseSpecular(true);
 		waterFilter.setUseRefraction(true);
@@ -458,6 +480,10 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 		bloom.setBloomIntensity(2.5f);
 		bloom.setBlurScale(1.6f);
 		fpp.addFilter(bloom);
+		// FXAA softens foliage silhouettes and provides antialiasing when filter MSAA is unavailable.
+		var antialiasing = new FXAAFilter();
+		antialiasing.setSubPixelShift(0f);
+		fpp.addFilter(antialiasing);
 		viewPort.addProcessor(fpp);
 
 		// Load submarine model
@@ -1692,6 +1718,10 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 			terrainGeometry = null;
 			terrainQuad = null;
 		}
+		if (trees != null) {
+			trees.removeFromParent();
+			trees = null;
+		}
 
 		TerrainMap terrain = world.terrain();
 		displayedTerrain = terrain;
@@ -1715,9 +1745,12 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 		for (Node n : waypointNodes.values())
 			n.removeFromParent();
 		waypointNodes.clear();
+		renderedWaypoints.clear();
+		renderedWaypointColors.clear();
 		for (Node n : strategicNodes.values())
 			n.removeFromParent();
 		strategicNodes.clear();
+		renderedStrategicWaypoints.clear();
 		for (Node n : routeNodes.values())
 			n.removeFromParent();
 		routeNodes.clear();
@@ -1736,7 +1769,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 		orbitElevation = 0.4f;
 
 		// Scatter trees on vegetated terrain
-		Node trees = TreeScatter.create(terrain, terrainQuad, assetManager, world.config().worldSeed());
+		trees = TreeScatter.create(terrain, terrainQuad, assetManager, world.config().worldSeed());
 		rootNode.attachChild(trees);
 
 		System.out.println("attachTerrain: done, worldWidth=" + worldW);
@@ -2096,6 +2129,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 	private void updateOverlays() {
 		var snapshots = latestSnapshots;
 		long tick = latestTick;
+		boolean historyChanged = lastTrailTick < 0 || tick / 10 != lastTrailTick / 10;
 
 		for (var snap : snapshots) {
 			int id = snap.id();
@@ -2124,7 +2158,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 			}
 			trailNode.setCullHint(overlayConfig.trails ? Spatial.CullHint.Never : Spatial.CullHint.Always);
 
-			if (overlayConfig.trails && trail.size() >= 2 && tick % 10 == 0) {
+			if (overlayConfig.trails && trail.size() >= 2 && (historyChanged || trailNode.getQuantity() == 0)) {
 				trailNode.detachAllChildren();
 				float[] positions = new float[trail.size() * 3];
 				float[] colors = new float[trail.size() * 4];
@@ -2169,9 +2203,12 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 			}
 			wpNode.setCullHint(overlayConfig.waypoints ? Spatial.CullHint.Never : Spatial.CullHint.Always);
 
-			if (overlayConfig.waypoints) {
+			var waypoints = snap.waypoints();
+			if (overlayConfig.waypoints && (!waypoints.equals(renderedWaypoints.get(id))
+					|| !awtColor.equals(renderedWaypointColors.get(id)))) {
 				wpNode.detachAllChildren();
-				var waypoints = snap.waypoints();
+				renderedWaypoints.put(id, List.copyOf(waypoints));
+				renderedWaypointColors.put(id, awtColor);
 				if (!waypoints.isEmpty()) {
 					// Solid ribbon connecting waypoints (triangle strip tube)
 					if (waypoints.size() >= 2) {
@@ -2270,10 +2307,12 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 			}
 			stNode.setCullHint(overlayConfig.strategicWaypoints ? Spatial.CullHint.Never : Spatial.CullHint.Always);
 
-			if (overlayConfig.strategicWaypoints) {
+			var stratWps = snap.strategicWaypoints() != null ? snap.strategicWaypoints()
+					: List.<SubmarineSnapshot.StrategicWaypointViz> of();
+			if (overlayConfig.strategicWaypoints && !stratWps.equals(renderedStrategicWaypoints.get(id))) {
 				stNode.detachAllChildren();
-				var stratWps = snap.strategicWaypoints();
-				if (stratWps != null && !stratWps.isEmpty()) {
+				renderedStrategicWaypoints.put(id, List.copyOf(stratWps));
+				if (!stratWps.isEmpty()) {
 					int circSegs = 24;
 					for (var sw : stratWps) {
 						var wp = sw.waypoint();
@@ -2340,7 +2379,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 				route.add(jmePos.clone());
 			}
 
-			if (overlayConfig.route && route.size() >= 2 && tick % 10 == 0) {
+			if (overlayConfig.route && route.size() >= 2 && (historyChanged || rtNode.getQuantity() == 0)) {
 				rtNode.detachAllChildren();
 				int n = route.size();
 				float w = 2f; // half-width of the route duct
