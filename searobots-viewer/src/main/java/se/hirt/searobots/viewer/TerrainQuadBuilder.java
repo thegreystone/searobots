@@ -167,23 +167,23 @@ final class TerrainQuadBuilder {
 		mat.setTexture("AlphaMap", generateAlphaMap(heightmap, QUAD_SIZE, cellSize));
 
 		// Tri-planar scales are repeats per local grid unit, not UV repeats across the whole terrain.
-		// These preserve the previous horizontal tile sizes (~66m rock, 44m sand, 53m vegetation
-		// on the 17km map) on vertical faces too. Every 64-cell patch contains an integer number of
+		// Keep ground detail at believable scales (~17m rock, 11m sand, 27m vegetation on the
+		// 17km map) on vertical faces too. Every 64-cell patch contains an integer number of
 		// tiles, keeping patch-local projections continuous across patch boundaries.
 		// Base rock covers all depths and exposed cliffs; water and fog darken the deep seabed.
 		mat.setTexture("DiffuseMap", loadWrap(assetManager, "Textures/Terrain/PBR/Gravel015_1K_Color.png"));
 		mat.setTexture("NormalMap", loadWrap(assetManager, "Textures/Terrain/PBR/Gravel015_1K_Normal.png"));
-		mat.setFloat("DiffuseMap_0_scale", 256f / (QUAD_SIZE - 1));
+		mat.setFloat("DiffuseMap_0_scale", 1024f / (QUAD_SIZE - 1));
 
 		// First overlay (AlphaMap.G): beach sand.
 		mat.setTexture("DiffuseMap_1", loadWrap(assetManager, "Textures/Terrain/PBR/Ground037_1K_Color.png"));
 		mat.setTexture("NormalMap_1", loadWrap(assetManager, "Textures/Terrain/PBR/Ground037_1K_Normal.png"));
-		mat.setFloat("DiffuseMap_1_scale", 384f / (QUAD_SIZE - 1));
+		mat.setFloat("DiffuseMap_1_scale", 1536f / (QUAD_SIZE - 1));
 
 		// Second overlay (AlphaMap.B): lush green vegetation.
 		mat.setTexture("DiffuseMap_2", loadWrap(assetManager, "Textures/Terrain/custom/vegetation.png"));
 		mat.setTexture("NormalMap_2", loadWrap(assetManager, "Textures/Terrain/custom/vegetation_normal.png"));
-		mat.setFloat("DiffuseMap_2_scale", 320f / (QUAD_SIZE - 1));
+		mat.setFloat("DiffuseMap_2_scale", 640f / (QUAD_SIZE - 1));
 
 		return mat;
 	}
@@ -272,6 +272,9 @@ final class TerrainQuadBuilder {
 	private static Texture loadWrap(AssetManager am, String path) {
 		Texture t = am.loadTexture(path);
 		t.setWrap(Texture.WrapMode.Repeat);
+		t.setMinFilter(Texture.MinFilter.Trilinear);
+		t.setMagFilter(Texture.MagFilter.Bilinear);
+		t.setAnisotropicFilter(8);
 		return t;
 	}
 }

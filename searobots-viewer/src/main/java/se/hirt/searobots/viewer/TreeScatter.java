@@ -70,24 +70,30 @@ public final class TreeScatter {
 
 	/**
 	 * Tree archetypes. {@code widthRatio} must match the aspect ratio of the side cutout painted by
-	 * {@code TextureGenerator}; {@code topHeight} is where the horizontal crown quad sits as a
-	 * fraction of tree height.
+	 * {@code TextureGenerator}. Crown rim and apex heights are fractions of tree height; the
+	 * conifer uses a taller, narrower cap to stay within its tapered side silhouette.
 	 */
 	public enum Type {
 		BROADLEAF("tree1", 8f, 15f, 0.75f, 0.74f, 0.9f),
-		CONIFER("tree2", 10f, 18f, 0.45f, 0.62f, 0.8f),
+		CONIFER("tree2", 10f, 18f, 0.45f, 0.32f, 0.92f, 0.7f),
 		PALM("tree3", 10f, 20f, 0.62f, 0.86f, 0.9f),
 		BUSH("tree4", 3f, 7f, 1.1f, 0.7f, 0.9f);
 
 		final String texture;
-		final float minHeight, maxHeight, widthRatio, topHeight, topScale;
+		final float minHeight, maxHeight, widthRatio, rimHeight, apexHeight, topScale;
 
 		Type(String texture, float minHeight, float maxHeight, float widthRatio, float topHeight, float topScale) {
+			this(texture, minHeight, maxHeight, widthRatio, topHeight - 0.14f, topHeight + 0.06f, topScale);
+		}
+
+		Type(String texture, float minHeight, float maxHeight, float widthRatio, float rimHeight, float apexHeight,
+				float topScale) {
 			this.texture = texture;
 			this.minHeight = minHeight;
 			this.maxHeight = maxHeight;
 			this.widthRatio = widthRatio;
-			this.topHeight = topHeight;
+			this.rimHeight = rimHeight;
+			this.apexHeight = apexHeight;
 			this.topScale = topScale;
 		}
 
@@ -247,18 +253,21 @@ public final class TreeScatter {
 	}
 
 	/**
-	 * One low eight-sided dome per tree over the upper crown, textured with the top-down cutout.
-	 * From above it reads as a full crown; from the side its sloped faces sit inside the silhouette
-	 * of the crossed quads instead of cutting across them like a flat plate would. Wound so the
-	 * face normals point up and out: the material culls back faces, so nothing renders when the
-	 * camera is below the rim.
+	 * One eight-sided cap per tree, textured with the top-down cutout: a tall cone for conifers and
+	 * a low dome for the other crowns. From above it reads as a full crown; from the side its
+	 * sloped faces sit inside the silhouette of the crossed quads instead of cutting across them
+	 * like a flat plate would. Wound so the face normals point up and out: the material culls back
+	 * faces, so nothing renders when the camera is below the rim.
 	 */
 	public static Mesh buildTopMesh(List<TreeInstance> trees, Type type) {
 		int sides = 8;
 		var b = new MeshBuffers(trees.size() * (sides + 1), trees.size() * sides);
 		for (var tree : trees) {
 			float hw = tree.w / 2 * type.topScale;
-			float rimY = tree.y + tree.h * (type.topHeight - 0.14f), apexY = tree.y + tree.h * (type.topHeight + 0.06f);
+			float rimY = tree.y + tree.h * type.rimHeight, apexY = tree.y + tree.h * type.apexHeight;
+			// Follow the conifer's cone slope; keep the softer existing dome lighting for other trees.
+			float normalSlope = type == Type.CONIFER ? (apexY - rimY) / hw : 0.6f;
+			float nl = FastMath.sqrt(normalSlope * normalSlope + 1f);
 			float apexShade = 1f, rimShade = 0.86f; // soft canopy occlusion instead of a conspicuous dark skirt
 			int apex = b.vertex(tree.x, apexY, tree.z, 0, 1, 0, 0.5f, 0.5f, tree.r * apexShade, tree.g * apexShade,
 					tree.b * apexShade);
@@ -267,10 +276,10 @@ public final class TreeScatter {
 				float localAngle = i * FastMath.TWO_PI / sides;
 				float a = tree.rot + localAngle;
 				float cx = FastMath.cos(a), cz = FastMath.sin(a);
-				float nl = FastMath.sqrt(0.6f * 0.6f + 1f);
-				rim[i] = b.vertex(tree.x + cx * hw, rimY, tree.z + cz * hw, cx * 0.6f / nl, 1f / nl, cz * 0.6f / nl,
-						0.5f + 0.5f * FastMath.cos(localAngle), 0.5f - 0.5f * FastMath.sin(localAngle),
-						tree.r * rimShade, tree.g * rimShade, tree.b * rimShade);
+				rim[i] = b.vertex(tree.x + cx * hw, rimY, tree.z + cz * hw, cx * normalSlope / nl, 1f / nl,
+						cz * normalSlope / nl, 0.5f + 0.5f * FastMath.cos(localAngle),
+						0.5f - 0.5f * FastMath.sin(localAngle), tree.r * rimShade, tree.g * rimShade,
+						tree.b * rimShade);
 			}
 			for (int i = 0; i < sides; i++)
 				b.tri(apex, rim[(i + 1) % sides], rim[i]);

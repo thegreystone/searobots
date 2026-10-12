@@ -51,7 +51,7 @@ final class WaterSettingsState extends BaseAppState {
 
 	// Track slider refs for polling in update()
 	private record SliderBinding(com.simsilica.lemur.core.VersionedReference<Double> ref, Slider slider, Label label,
-			String name, IntConsumer onChange) {
+			String name, int scale, IntConsumer onChange) {
 	}
 
 	private final java.util.List<SliderBinding> sliderBindings = new java.util.ArrayList<>();
@@ -134,7 +134,8 @@ final class WaterSettingsState extends BaseAppState {
 		window.addChild(new Label("-- Sun/Light --"));
 		addSlider(window, "Sun Scale", 1, 100, (int) (waterFilter.getSunScale() * 10),
 				v -> waterFilter.setSunScale(v / 10f));
-		addSlider(window, "Shininess", 1, 200, (int) waterFilter.getShininess(), v -> waterFilter.setShininess(v));
+		addSlider(window, "Shininess", 1, 2000, Math.round(waterFilter.getShininess() * 100), 100,
+				v -> waterFilter.setShininess(v / 100f));
 
 		// Caustics
 		window.addChild(new Label("-- Caustics --"));
@@ -177,7 +178,7 @@ final class WaterSettingsState extends BaseAppState {
 			System.out.printf("normalScale: %.1f%n", waterFilter.getNormalScale());
 			System.out.printf("speed: %.1f%n", waterFilter.getSpeed());
 			System.out.printf("sunScale: %.1f%n", waterFilter.getSunScale());
-			System.out.printf("shininess: %.0f%n", waterFilter.getShininess());
+			System.out.printf("shininess: %.2f%n", waterFilter.getShininess());
 			System.out.printf("causticsIntensity: %.2f%n", waterFilter.getCausticsIntensity());
 			System.out.printf("underWaterFogDistance: %.0f%n", waterFilter.getUnderWaterFogDistance());
 			System.out.printf("colorExtinction: (%.0f, %.0f, %.0f)%n", ext.x, ext.y, ext.z);
@@ -199,7 +200,7 @@ final class WaterSettingsState extends BaseAppState {
 		for (var binding : sliderBindings) {
 			if (binding.ref.update()) {
 				int v = (int) binding.slider.getModel().getValue();
-				binding.label.setText(String.format("%-16s %d", binding.name, v));
+				binding.label.setText(sliderText(binding.name, v, binding.scale));
 				binding.onChange.accept(v);
 			}
 		}
@@ -217,8 +218,18 @@ final class WaterSettingsState extends BaseAppState {
 	}
 
 	private void addSlider(Container parent, String name, int min, int max, int initial, IntConsumer onChange) {
+		addSlider(parent, name, min, max, initial, 1, onChange);
+	}
+
+	private static String sliderText(String name, int value, int scale) {
+		String text = scale == 1 ? Integer.toString(value) : String.format("%.2f", value / (float) scale);
+		return String.format("%-16s %s", name, text);
+	}
+
+	private void addSlider(
+		Container parent, String name, int min, int max, int initial, int scale, IntConsumer onChange) {
 		var row = parent.addChild(new Container(new SpringGridLayout(Axis.X, Axis.Y, FillMode.None, FillMode.Last)));
-		var label = row.addChild(new Label(String.format("%-16s %d", name, initial)));
+		var label = row.addChild(new Label(sliderText(name, initial, scale)));
 		label.setPreferredSize(new com.jme3.math.Vector3f(160, 20, 0));
 
 		var slider = row.addChild(new Slider(Axis.X));
@@ -227,7 +238,7 @@ final class WaterSettingsState extends BaseAppState {
 		slider.getModel().setMaximum(max);
 		slider.getModel().setValue(Math.max(min, Math.min(max, initial)));
 		var ref = slider.getModel().createReference();
-		sliderBindings.add(new SliderBinding(ref, slider, label, name, onChange));
+		sliderBindings.add(new SliderBinding(ref, slider, label, name, scale, onChange));
 	}
 
 	@Override

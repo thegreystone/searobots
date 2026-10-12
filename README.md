@@ -84,10 +84,11 @@ To start on a specific seed, pass it in hex (as the viewer shows it in its title
 dialog), e.g. `java -jar searobots-viewer-<version>.jar 2c`. A `.srl` file instead replays a
 recorded match.
 
-The viewer uses 4x multisampling where the renderer supports it and a final antialiasing pass,
-sharper water reflections, and soft vegetation contact shadows. Generational ZGC keeps garbage collection pauses short;
-on Java 25 it is enabled with `-XX:+UseZGC`. Source launches below select it automatically
-with a 2 GB maximum heap.
+The viewer uses 4x multisampling where the renderer supports it and a final antialiasing
+pass, finer terrain textures, angle-dependent water reflections, and soft vegetation
+contact shadows. F3 opens the render settings, including fine control over water highlights.
+Generational ZGC keeps garbage collection pauses short; on Java 25 it is enabled with
+`-XX:+UseZGC`. Source launches below select it automatically with a 2 GB maximum heap.
 
 **From source:**
 

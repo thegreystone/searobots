@@ -460,7 +460,6 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 		waterFilter.setLightDirection(sun.getDirection());
 		waterFilter.setLightColor(ColorRGBA.White);
 		waterFilter.setCausticsIntensity(0.3f);
-		waterFilter.setShininess(14f);
 		WaterQualitySettings.configure(waterFilter);
 		waterFilter.setUseRipples(true);
 		waterFilter.setUseSpecular(true);

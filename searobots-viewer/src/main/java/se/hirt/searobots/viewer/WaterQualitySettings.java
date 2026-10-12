@@ -52,6 +52,9 @@ final class WaterQualitySettings {
 
 	static void configure(WaterFilter water) {
 		water.setReflectionMapSize(1024);
+		// Keep overhead views transparent while retaining strong reflections at grazing angles.
+		water.setRefractionConstant(0.035f);
+		water.setShininess(0.85f);
 		water.setUseHQShoreline(true);
 		water.setFoamTexture(foamTexture());
 		water.setFoamIntensity(0.45f);
