@@ -257,13 +257,63 @@ java -XX:StartFlightRecording=filename=/tmp/searobots.jfr,settings=profile,dumpo
 ```
 
 The engine emits `se.hirt.searobots.SimulationTick`, `SimulationPhase`, and
-`TerrainMotion` events. Their run ID and world seed connect slow ticks to controller,
-sonar, physics, collision, and listener stages. Terrain motion adds vehicle hit points,
-contact passes, contact fractions, and the remaining tick time. Position fields use metres.
+`TerrainMotion` events. Their run ID, world seed, and tick index connect slow ticks to
+controller, sonar, physics, collision, and listener stages. Terrain motion adds vehicle
+hit points, contact and support passes, contact fractions, attempted tick duration, and
+the remaining tick time. Position fields use metres. Standalone physics callers can
+supply a tick index; omitted indices are -1.
 Tick durations exclude pacing sleeps and pauses. These events default to a 1 ms threshold
 and omit stack traces; execution samples provide the code stacks. With no recording enabled,
 the hooks allocate no event objects. Use JDK Mission Control to correlate the context with
 execution samples, allocations, and GC, or inspect it with `jfr print`.
+
+To capture every context event, including fast ticks, configure zero thresholds:
+
+```bash
+jfr configure --input profile.jfc --output /tmp/searobots-context.jfc \
+  '+se.hirt.searobots.SimulationTick#enabled=true' \
+  '+se.hirt.searobots.SimulationTick#threshold=0ns' \
+  '+se.hirt.searobots.SimulationPhase#enabled=true' \
+  '+se.hirt.searobots.SimulationPhase#threshold=0ns' \
+  '+se.hirt.searobots.TerrainMotion#enabled=true' \
+  '+se.hirt.searobots.TerrainMotion#threshold=0ns'
+java -Xms256m -Xmx2g \
+  -XX:StartFlightRecording=filename=/tmp/searobots-support.jfr,settings=/tmp/searobots-context.jfc,dumponexit=true \
+  -cp searobots-api/target/classes:searobots-engine/target/classes:searobots-engine/target/test-classes \
+  se.hirt.searobots.engine.ships.codex.CodexCombatBatch \
+  --phase=support --csv=/tmp/searobots-support.csv \
+  6437323593578695347 -451325398205793679
+```
+
+These two seeds reproduce the slow wreck-support workload. On Java 25.0.4, separate
+unprofiled JVM runs with the heap settings above measured:
+
+| Engine | Seed | Ticks | Wall time | Process CPU time |
+|--------|------|-------|-----------|------------------|
+| Before support fix (`de6ae8d`) | `6437323593578695347` | 29,741 | 25.711 s | 31.761 s |
+| Stable support | `6437323593578695347` | 29,920 | 5.960 s | 13.164 s |
+| Before support fix (`de6ae8d`) | `-451325398205793679` | 21,311 | 52.534 s | 53.691 s |
+| Stable support | `-451325398205793679` | 16,963 | 3.681 s | 4.465 s |
+
+The combined wall time fell from 78.244 s to 9.641 s and process CPU time from
+85.452 s to 17.628 s. Both match outcomes were unchanged, but corrected wreck motion
+changed tick counts. Results are limited to two diagnostic seeds and include JVM
+warm-up and timing variation. For comparable timing, omit `-XX:StartFlightRecording`
+and use a fresh CSV path for each run.
+
+A zero-threshold recording of the final support solver contained 93,766 terrain
+motions: every event reported zero unspent time and none reached the six-contact
+safety cap. All 662,133 custom events correlated with their enclosing simulation
+tick using run ID and tick index. JMC and the JDK recording reader agreed on these
+counts. This validation covers these two seeds.
+
+`WreckTerrainSupportTest` preserves a cropped seabed fixture from the second seed.
+Before the fix, its six contact passes discarded 18.145 ms of a 20 ms tick. The
+regression checks full tick consumption, hull clearance, drift, yaw, and pitch; a
+grid-seam fixture from the first seed covers a supporting point shared by adjacent
+cells. Further cases check that a supported wreck still sweeps into a newly
+encountered ridge, and that a swept contact in the last microseconds of a tick
+cannot turn the support margin into a velocity kick.
 
 #### Adding a new competitor
 
@@ -330,7 +380,10 @@ void mySubVsDefault() {
 
 Key points for headless testing:
 
-- `setSpeedMultiplier(1_000_000)` removes the real-time throttle
+- `setSpeedMultiplier(1_000_000)` removes the real-time throttle. Any other
+  multiplier paces each tick against a wall-clock budget of
+  `1 / (tickRateHz * multiplier)` that includes the tick's own work, so 1x runs
+  at the nominal tick rate. Multipliers must be finite and positive.
 - `MatchConfig.withDefaults(seed)` gives each sub 8 torpedoes, 1000 HP,
   50m blast radius
 - Matches are fully deterministic for a given seed (assuming controllers

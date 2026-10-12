@@ -100,6 +100,11 @@ class SimulationJfrEventsTest {
 		for (var event : events) {
 			assertEquals(SEED, event.getLong("worldSeed"));
 			assertTrue(runs.containsKey(event.getLong("correlationId")));
+			var matchingTick = runs.get(event.getLong("correlationId")).stream()
+					.filter(tick -> tick.getLong("tick") == event.getLong("tick")).findFirst().orElseThrow();
+			assertFalse(event.getStartTime().isBefore(matchingTick.getStartTime()),
+					"Tick correlation must identify the enclosing tick, including terrain motion");
+			assertFalse(event.getEndTime().isAfter(matchingTick.getEndTime()));
 			assertFalse(event.getDuration().isNegative());
 			assertNull(event.getStackTrace(), "Frequent timing events should not capture redundant stacks");
 		}
@@ -155,6 +160,7 @@ class SimulationJfrEventsTest {
 		assertEquals(LIVE_TICKS + WRECK_TICKS, terrainEvents.size());
 		for (var event : terrainEvents) {
 			assertEquals(0, event.getInt("entityId"));
+			assertEquals(0.02, event.getDouble("tickDurationSeconds"), 1e-12);
 			assertTrue(event.getInt("iterations") >= 1 && event.getInt("iterations") <= 6);
 			assertFinitePosition(event, "startX", "startY", "startZ");
 			assertFinitePosition(event, "endX", "endY", "endZ");
@@ -189,6 +195,8 @@ class SimulationJfrEventsTest {
 		var event = events.getFirst();
 		assertEquals(SimulationJfrEvents.TERRAIN_EVENT_NAME, event.getEventType().getName());
 		assertEquals(0, event.getLong("correlationId"));
+		assertEquals(-1, event.getLong("tick"), "Standalone physics without a supplied tick must report unknown");
+		assertEquals(0.02, event.getDouble("tickDurationSeconds"), 1e-12);
 		assertEquals(SEED, event.getLong("worldSeed"));
 		assertEquals(7, event.getInt("entityId"));
 		assertEquals(1000, event.getInt("hpAtStart"));
@@ -201,6 +209,26 @@ class SimulationJfrEventsTest {
 		assertTrue(event.getInt("contactPointCount") > 0);
 		assertTrue(event.getDouble("lastContactFraction") >= 0 && event.getDouble("lastContactFraction") <= 1);
 		assertTrue(event.getDouble("remainingSeconds") >= 0 && event.getDouble("remainingSeconds") <= 0.02);
+	}
+
+	@Test
+	void standalonePhysicsCanSupplyItsTickIndex(@TempDir
+	Path directory) throws IOException {
+		var config = MatchConfig.withDefaults(SEED);
+		var submarine = new SubmarineEntity(VehicleConfig.submarine(), 7, null, new Vec3(0, 0, -100), 0, Color.BLUE,
+				1000);
+		Path file = directory.resolve("explicit-tick.jfr");
+		try (var recording = recording(true)) {
+			recording.start();
+			new SubmarinePhysics(config).step(submarine, 0.04, flatTerrain(-1000), new CurrentField(List.of()),
+					config.battleArea(), 83);
+			recording.stop();
+			recording.dump(file);
+		}
+		var events = engineEvents(file);
+		assertEquals(1, events.size());
+		assertEquals(83, events.getFirst().getLong("tick"));
+		assertEquals(0.04, events.getFirst().getDouble("tickDurationSeconds"), 1e-12);
 	}
 
 	@Test

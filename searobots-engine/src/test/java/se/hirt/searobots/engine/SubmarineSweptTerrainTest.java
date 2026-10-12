@@ -240,6 +240,27 @@ class SubmarineSweptTerrainTest {
 	}
 
 	@Test
+	void wreckStillRespondsToANewFineCrestBetweenClearEndpointPoses() {
+		var terrain = narrowCrest(0.1, -104.99, -110, 0.1);
+		for (double dt : new double[] {0.02, 0.1}) {
+			var wreck = new SubmarineEntity(SUBMARINE, 0, null, new Vec3(0, 0.02, -100), 0, Color.BLUE, 1000);
+			var clearWater = new SubmarineEntity(SUBMARINE, 1, null, new Vec3(0, 0.02, -100), 0, Color.BLUE, 1000);
+			wreck.setHp(0);
+			clearWater.setHp(0);
+			wreck.setSpeed(15);
+			clearWater.setSpeed(15);
+			new SubmarinePhysics(MATCH).step(wreck, dt, terrain, STILL_WATER, MATCH.battleArea());
+			new SubmarinePhysics(MATCH).step(clearWater, dt, flat(-110), STILL_WATER, MATCH.battleArea());
+
+			assertTrue(wreck.y() < clearWater.y() - 1e-4,
+					"Support must retain swept impacts with new crests, even when the endpoint is clear");
+			assertTrue(wreck.velocity().linear().length() < clearWater.velocity().linear().length());
+			assertClear(wreck.pose().position(), wreck.heading(), wreck.pitch(), SUBMARINE, terrain);
+			assertEquals(0, wreck.hp());
+		}
+	}
+
+	@Test
 	void groundedSinkingWreckRetainsTangentialCoastingAndCurrentDrift() {
 		var terrain = flat(-100);
 		var wreck = new SubmarineEntity(SUBMARINE, 0, null, new Vec3(0, 0, -95), 0, Color.BLUE, 1000);

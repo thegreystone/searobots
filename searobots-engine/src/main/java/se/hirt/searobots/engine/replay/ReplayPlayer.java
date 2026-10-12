@@ -28,6 +28,7 @@
  */
 package se.hirt.searobots.engine.replay;
 
+import se.hirt.searobots.engine.ClockControl;
 import se.hirt.searobots.engine.SimClock;
 import se.hirt.searobots.engine.SimulationListener;
 import se.hirt.searobots.engine.SimulationLoop;
@@ -53,18 +54,19 @@ public final class ReplayPlayer implements SimClock {
 	private final int tickRateHz;
 	private final SimulationListener listener;
 
-	private volatile double speedMultiplier = 1.0;
-	private volatile boolean paused;
-	private volatile boolean stepOnce;
-	private volatile boolean stopped;
-	private volatile SimulationLoop.State state = SimulationLoop.State.CREATED;
+	private final ClockControl clockControl;
 	private volatile int index; // next frame to emit
 	private volatile long currentTick; // tick of the most recently emitted frame
 
 	public ReplayPlayer(List<ReplayFrame> frames, int tickRateHz, SimulationListener listener) {
+		this(frames, tickRateHz, listener, new ClockControl());
+	}
+
+	ReplayPlayer(List<ReplayFrame> frames, int tickRateHz, SimulationListener listener, ClockControl clockControl) {
 		this.frames = List.copyOf(frames);
 		this.tickRateHz = tickRateHz > 0 ? tickRateHz : 50;
 		this.listener = Objects.requireNonNull(listener, "listener");
+		this.clockControl = Objects.requireNonNull(clockControl, "clockControl");
 	}
 
 	/**
@@ -74,25 +76,14 @@ public final class ReplayPlayer implements SimClock {
 	 * mirroring {@link SimulationLoop}.
 	 */
 	public void run() {
-		state = SimulationLoop.State.INITIALIZING;
+		clockControl.initialize();
 		try {
-			while (index < frames.size() && !stopped) {
-				// Honour pause (playback may start paused so viewers can register first).
-				if (paused) {
-					state = SimulationLoop.State.PAUSED;
-				}
-				while (paused && !stepOnce && !stopped) {
-					try {
-						Thread.sleep(50);
-					} catch (InterruptedException ex) {
-						break;
-					}
-				}
-				if (stopped) {
+			while (index < frames.size()) {
+				// Playback may start paused so viewers can register before frames flow.
+				if (!clockControl.awaitFrame()) {
 					break;
 				}
-				stepOnce = false;
-				state = SimulationLoop.State.RUNNING;
+				long frameStartNanos = clockControl.frameStartNanos();
 
 				ReplayFrame frame = frames.get(index);
 				currentTick = frame.tick();
@@ -101,17 +92,12 @@ public final class ReplayPlayer implements SimClock {
 				frame.emit(listener);
 				index++;
 
-				long sleepMs = (long) (1000.0 / tickRateHz / speedMultiplier);
-				if (sleepMs > 0 && !paused && !stopped) {
-					try {
-						Thread.sleep(sleepMs);
-					} catch (InterruptedException ex) {
-						break;
-					}
+				if (index < frames.size() && !clockControl.pace(frameStartNanos, tickRateHz)) {
+					break;
 				}
 			}
 		} finally {
-			state = SimulationLoop.State.STOPPED;
+			clockControl.stop();
 			listener.onMatchEnd();
 		}
 	}
@@ -130,36 +116,36 @@ public final class ReplayPlayer implements SimClock {
 
 	@Override
 	public void setPaused(boolean paused) {
-		this.paused = paused;
+		clockControl.setPaused(paused);
 	}
 
 	@Override
 	public boolean isPaused() {
-		return paused;
+		return clockControl.isPaused();
 	}
 
 	@Override
 	public void setSpeedMultiplier(double multiplier) {
-		this.speedMultiplier = multiplier;
+		clockControl.setSpeedMultiplier(multiplier);
 	}
 
 	@Override
 	public double getSpeedMultiplier() {
-		return speedMultiplier;
+		return clockControl.getSpeedMultiplier();
 	}
 
 	@Override
 	public void stepOnce() {
-		this.stepOnce = true;
+		clockControl.stepOnce();
 	}
 
 	@Override
 	public void stop() {
-		this.stopped = true;
+		clockControl.stop();
 	}
 
 	@Override
 	public SimulationLoop.State getState() {
-		return state;
+		return clockControl.getState();
 	}
 }

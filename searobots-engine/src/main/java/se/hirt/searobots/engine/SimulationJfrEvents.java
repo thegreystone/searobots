@@ -66,6 +66,7 @@ final class SimulationJfrEvents {
 		@Label("World Seed")
 		long worldSeed;
 		@Description("Zero-based simulation tick index")
+		@Label("Tick")
 		@Unsigned
 		long tick;
 		@Description("Number of participating vehicles, including wrecks")
@@ -90,6 +91,7 @@ final class SimulationJfrEvents {
 		@Label("World Seed")
 		long worldSeed;
 		@Description("Zero-based simulation tick index")
+		@Label("Tick")
 		@Unsigned
 		long tick;
 		@Description("Number of participating vehicles, including wrecks")
@@ -127,6 +129,12 @@ final class SimulationJfrEvents {
 		@Description("Enclosing SimulationLoop run ID; zero for standalone SubmarinePhysics")
 		long correlationId;
 		long worldSeed;
+		@Label("Tick")
+		@Description("Zero-based simulation tick index; -1 when a standalone physics caller supplies no tick")
+		long tick;
+		@Label("Tick Duration (s)")
+		@Description("Simulated interval the physics step attempted, in seconds; remainingSeconds is the unspent part")
+		double tickDurationSeconds;
 		int entityId;
 		@Description("Submarine hit points before the terrain sweep")
 		int hpAtStart;
@@ -156,6 +164,10 @@ final class SimulationJfrEvents {
 		@Unsigned
 		@Description("Number of swept first-contact results, excluding static overlap projection")
 		int sweptContacts;
+		@Unsigned
+		@Label("Support Projection Iterations")
+		@Description("Finite-motion velocity projection passes for established seabed support")
+		int supportIterations;
 		@Unsigned
 		@Description("Sum of material contact candidates examined over the response iterations")
 		int contactPointCount;
@@ -198,7 +210,8 @@ final class SimulationJfrEvents {
 	}
 
 	static void finishTerrainMotion(
-		TerrainMotion event, long correlationId, long worldSeed, SubmarineEntity entity, Vec3 start, int hpAtStart) {
+		TerrainMotion event, long correlationId, long worldSeed, long tick, double tickDurationSeconds,
+		SubmarineEntity entity, Vec3 start, int hpAtStart) {
 		if (event == null)
 			return;
 		event.end();
@@ -206,6 +219,8 @@ final class SimulationJfrEvents {
 			return;
 		event.correlationId = correlationId;
 		event.worldSeed = worldSeed;
+		event.tick = tick;
+		event.tickDurationSeconds = tickDurationSeconds;
 		event.entityId = entity.id();
 		event.hpAtStart = hpAtStart;
 		event.hpAtEnd = entity.hp();

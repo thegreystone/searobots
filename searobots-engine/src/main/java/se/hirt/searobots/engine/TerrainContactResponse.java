@@ -33,7 +33,9 @@ import se.hirt.searobots.api.TerrainMap;
 import se.hirt.searobots.api.Vec3;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 /** Frictionless terrain impulses; position projection is deliberately a separate operation. */
 final class TerrainContactResponse {
@@ -42,6 +44,7 @@ final class TerrainContactResponse {
 	private static final double CONTACT_SLOP = 1e-6;
 	private static final double SPEED_TOLERANCE = 1e-8;
 	private static final int MAX_ITERATIONS = 96;
+	private static final int MAX_SUPPORT_ITERATIONS = 8;
 
 	private TerrainContactResponse() {
 	}
@@ -52,6 +55,7 @@ final class TerrainContactResponse {
 	private static final class Contact {
 		final Vec3 offset, normal;
 		final double inverseMass;
+		double targetSpeed;
 		double impulse;
 
 		Contact(SubmarineEntity sub, Vec3 offset, Vec3 normal) {
@@ -104,6 +108,93 @@ final class TerrainContactResponse {
 		return compress(sub, contacts(sub, position, points, terrain), currents);
 	}
 
+	/**
+	 * Supports an already-contacting wreck over a finite interval. A tangent velocity at the
+	 * current pose can still intersect the seabed as its curved hull rotates or the terrain normal
+	 * changes. Speculative endpoint contacts supply only the separating impulse needed by that
+	 * interval within terrain cells already supporting the hull. The caller still sweeps the
+	 * resulting path for newly reached terrain and intervening obstacles.
+	 */
+	static int projectSupportVelocity(
+		SubmarineEntity sub, Vec3[] supportedPoints, double seconds, TerrainMap terrain, CurrentField currents) {
+		var position = sub.pose().position();
+		double heading = sub.heading(), pitch = sub.pitch();
+		var current = currents.currentAt(position.z());
+		var supportedCells = new HashSet<TerrainCell>();
+		for (var local : supportedPoints) {
+			var world = HullTerrainGeometry.worldPoint(local, position, heading, pitch);
+			if (world.z() - terrain.elevationAt(world.x(), world.y()) <= CONTACT_SLOP) {
+				var cells = terrainCells(world, terrain);
+				// An edge or corner already supports the hull on every adjacent face.
+				for (int c = cells.firstColumn(); c <= cells.lastColumn(); c++) {
+					for (int r = cells.firstRow(); r <= cells.lastRow(); r++) {
+						supportedCells.add(new TerrainCell(c, r));
+					}
+				}
+			}
+		}
+		int iterations = 0;
+		for (int iteration = 0; iteration < MAX_SUPPORT_ITERATIONS; iteration++) {
+			iterations++;
+			var linear = sub.velocity().linear().add(new Vec3(current.x(), current.y(), 0));
+			var end = position.add(linear.scale(seconds));
+			double endHeading = heading + sub.yawRate() * seconds;
+			double endPitch = Math.clamp(pitch + sub.pitchRate() * seconds, -Math.PI / 4, Math.PI / 4);
+			var points = HullGeometry.terrainContactPoints(end, endHeading, endPitch, sub.vehicleConfig(), terrain);
+			var contacts = new ArrayList<Contact>();
+			double maximumPenetration = 0;
+			for (var local : points) {
+				var world = HullTerrainGeometry.worldPoint(local, end, endHeading, endPitch);
+				var normals = normals(world, terrain, supportedCells);
+				if (normals.isEmpty()) {
+					continue;
+				}
+				double penetration = terrain.elevationAt(world.x(), world.y()) - world.z();
+				maximumPenetration = Math.max(maximumPenetration, penetration);
+				if (penetration < -CONTACT_SLOP) {
+					continue;
+				}
+				var offset = HullTerrainGeometry.worldPoint(local, position, heading, pitch).subtract(position);
+				for (var normal : normals) {
+					var contact = new Contact(sub, offset, normal);
+					if (contact.inverseMass > 0) {
+						// The slop only widens contact detection. A late swept contact can leave an
+						// interval of nanoseconds; dividing a position margin by it would turn the
+						// margin into an unbounded impulse. The predicted penetration itself is
+						// bounded by the closing speed over the interval.
+						contact.targetSpeed = SubCollisionResponse.contactVelocity(sub, offset, currents).dot(normal)
+								+ Math.max(0, penetration) * normal.z() / seconds;
+						contacts.add(contact);
+					}
+				}
+			}
+			if (maximumPenetration <= 0) {
+				break;
+			}
+			compress(sub, contacts, currents);
+		}
+		return iterations;
+	}
+
+	private record TerrainCell(int column, int row) {
+	}
+
+	private record TerrainCells(int firstColumn, int lastColumn, int firstRow, int lastRow) {
+	}
+
+	private static TerrainCells terrainCells(Vec3 point, TerrainMap terrain) {
+		double cell = terrain.getCellSize();
+		double gx = (point.x() - terrain.getOriginX()) / cell;
+		double gy = (point.y() - terrain.getOriginY()) / cell;
+		int col = (int) Math.floor(gx), row = (int) Math.floor(gy);
+		int edgeCol = (int) Math.rint(gx), edgeRow = (int) Math.rint(gy);
+		boolean onColumnEdge = Math.abs(gx - edgeCol) < 1e-9;
+		boolean onRowEdge = Math.abs(gy - edgeRow) < 1e-9;
+		// Shape transforms can round an exact grid edge to either side of its integer.
+		return new TerrainCells(onColumnEdge ? edgeCol - 1 : col, onColumnEdge ? edgeCol : col,
+				onRowEdge ? edgeRow - 1 : row, onRowEdge ? edgeRow : row);
+	}
+
 	private static List<Contact> contacts(SubmarineEntity sub, Vec3 position, Vec3[] points, TerrainMap terrain) {
 		var contacts = new ArrayList<Contact>();
 		for (var local : points) {
@@ -122,17 +213,22 @@ final class TerrainContactResponse {
 	}
 
 	private static List<Vec3> normals(Vec3 point, TerrainMap terrain) {
+		return normals(point, terrain, null);
+	}
+
+	private static List<Vec3> normals(Vec3 point, TerrainMap terrain, Set<TerrainCell> supportedCells) {
 		double cell = terrain.getCellSize();
 		double gx = (point.x() - terrain.getOriginX()) / cell;
 		double gy = (point.y() - terrain.getOriginY()) / cell;
-		int col = (int) Math.floor(gx), row = (int) Math.floor(gy);
-		int otherCol = gx - col < 1e-9 ? col - 1 : col;
-		int otherRow = gy - row < 1e-9 ? row - 1 : row;
+		var cells = terrainCells(point, terrain);
 		var normals = new ArrayList<Vec3>(4);
 		// Bilinear cells have exact gradients. At a grid edge both adjacent faces can
 		// support the hull; averaging across a sharp crest would erase its steep flank.
-		for (int c = otherCol; c <= col; c++) {
-			for (int r = otherRow; r <= row; r++) {
+		for (int c = cells.firstColumn(); c <= cells.lastColumn(); c++) {
+			for (int r = cells.firstRow(); r <= cells.lastRow(); r++) {
+				if (supportedCells != null && !supportedCells.contains(new TerrainCell(c, r))) {
+					continue;
+				}
 				double fx = Math.clamp(gx - c, 0, 1), fy = Math.clamp(gy - r, 0, 1);
 				double e00 = terrain.elevationAtGrid(c, r), e10 = terrain.elevationAtGrid(c + 1, r);
 				double e01 = terrain.elevationAtGrid(c, r + 1), e11 = terrain.elevationAtGrid(c + 1, r + 1);
@@ -152,8 +248,8 @@ final class TerrainContactResponse {
 		for (int iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
 			double maximum = 0;
 			for (var contact : contacts) {
-				double inward = -SubCollisionResponse.contactVelocity(sub, contact.offset, currents)
-						.dot(contact.normal);
+				double inward = contact.targetSpeed
+						- SubCollisionResponse.contactVelocity(sub, contact.offset, currents).dot(contact.normal);
 				double next = Math.max(0, contact.impulse + inward / contact.inverseMass);
 				if (contact.impulse > 0 || next > 0) {
 					maximum = Math.max(maximum, Math.abs(inward));

@@ -88,6 +88,13 @@ public final class SubmarinePhysics {
 
 	public void step(
 		SubmarineEntity sub, double dt, TerrainMap terrain, CurrentField currentField, BattleArea battleArea) {
+		step(sub, dt, terrain, currentField, battleArea, -1);
+	}
+
+	/** Advances a simulation tick, carrying its index into physics diagnostics. */
+	public void step(
+		SubmarineEntity sub, double dt, TerrainMap terrain, CurrentField currentField, BattleArea battleArea,
+		long tick) {
 		if (sub.forfeited())
 			return;
 		// Dead subs still get physics (sinking to the bottom)
@@ -345,7 +352,7 @@ public final class SubmarinePhysics {
 		double incomingPitchRate = (pitch - previousPitch) / dt;
 		var terrainStep = moveWithTerrain(sub, dt, new Vec3(previousX, previousY, previousZ),
 				new Vec3(newX, newY, newZ), previousHeading, heading, previousPitch, pitch, incomingLinear,
-				incomingYawRate, incomingPitchRate, terrain, currentField);
+				incomingYawRate, incomingPitchRate, terrain, currentField, tick);
 		newX = sub.x();
 		newY = sub.y();
 		newZ = sub.z();
@@ -449,7 +456,7 @@ public final class SubmarinePhysics {
 	private TerrainStep moveWithTerrain(
 		SubmarineEntity sub, double dt, Vec3 start, Vec3 end, double startHeading, double endHeading, double startPitch,
 		double endPitch, Vec3 incomingLinear, double incomingYawRate, double incomingPitchRate, TerrainMap terrain,
-		CurrentField currents) {
+		CurrentField currents, long tick) {
 		var terrainEvent = SimulationJfrEvents.beginTerrainMotion();
 		var initialStart = start;
 		int hpAtStart = terrainEvent == null ? 0 : sub.hp();
@@ -457,8 +464,9 @@ public final class SubmarinePhysics {
 			var cfg = sub.vehicleConfig();
 			double remaining = dt, deepestZ = start.z(), impactEnergy = 0;
 			boolean scraping = false;
-			// Continue the unspent tick after an impact, so support on a flat floor does not
-			// cancel tangential movement. A small cap bounds pathological repeated contacts.
+			// Continue the unspent tick after an impact. Wrecks use finite-interval support
+			// instead of repeatedly clipping tangent motion against the same curved surface.
+			// Keep the impact bound as a safeguard against pathological contact sequences.
 			for (int iteration = 0; iteration < 6; iteration++) {
 				if (terrainEvent != null) {
 					terrainEvent.iterations++;
@@ -526,6 +534,12 @@ public final class SubmarinePhysics {
 				start = sub.pose().position();
 				startHeading = heading;
 				startPitch = pitch;
+				if (sub.hp() <= 0) {
+					int supportIterations = TerrainContactResponse.projectSupportVelocity(sub, samples, remaining,
+							terrain, currents);
+					if (terrainEvent != null)
+						terrainEvent.supportIterations += supportIterations;
+				}
 				var current = currents.currentAt(start.z());
 				incomingLinear = sub.velocity().linear().add(new Vec3(current.x(), current.y(), 0));
 				incomingYawRate = sub.yawRate();
@@ -544,7 +558,7 @@ public final class SubmarinePhysics {
 			sub.setHeading(finalHeading < 0 ? finalHeading + 2 * Math.PI : finalHeading);
 			return new TerrainStep(scraping, deepestZ);
 		} finally {
-			SimulationJfrEvents.finishTerrainMotion(terrainEvent, correlationId, worldSeed, sub, initialStart,
+			SimulationJfrEvents.finishTerrainMotion(terrainEvent, correlationId, worldSeed, tick, dt, sub, initialStart,
 					hpAtStart);
 		}
 	}

@@ -51,11 +51,7 @@ public final class SimulationLoop implements SimClock {
 	private static final boolean TORP_TRACE = Boolean.getBoolean("torp.trace");
 	private static final double TORP_TRACE_RANGE = 500.0; // only trace inside this true range
 
-	private volatile double speedMultiplier = 1.0;
-	private volatile boolean paused;
-	private volatile boolean stepOnce;
-	private volatile boolean stopped;
-	private volatile State state = State.CREATED;
+	private final ClockControl clockControl;
 
 	private final List<SubmarineEntity> entities = new ArrayList<>();
 	private final List<TorpedoEntity> torpedoes = new ArrayList<>();
@@ -63,6 +59,14 @@ public final class SimulationLoop implements SimClock {
 	private int nextTorpedoId = 1000; // torpedo IDs start at 1000 to avoid conflict with sub IDs
 	private final java.util.Map<Integer, Integer> nextTube = new java.util.HashMap<>(); // per submarine: tubes fired
 	private final TorpedoPhysics torpedoPhysics = new TorpedoPhysics();
+
+	public SimulationLoop() {
+		this(new ClockControl());
+	}
+
+	SimulationLoop(ClockControl clockControl) {
+		this.clockControl = Objects.requireNonNull(clockControl, "clockControl");
+	}
 
 	public void run(
 		GeneratedWorld world, List<SubmarineController> controllers, List<VehicleConfig> vehicleConfigs,
@@ -83,7 +87,7 @@ public final class SimulationLoop implements SimClock {
 		List<Double> headings, SimulationListener listener) {
 		Objects.requireNonNull(vehicleConfigs, "vehicleConfigs must not be null");
 		final long correlationId = SimulationJfrEvents.nextRunId();
-		state = State.INITIALIZING;
+		clockControl.initialize();
 		var config = world.config();
 		var physics = new SubmarinePhysics(config, correlationId);
 		var sonar = new SonarModel(config.worldSeed(), config.maxSubSpeed());
@@ -121,24 +125,14 @@ public final class SimulationLoop implements SimClock {
 		}
 
 		// Main loop (try-finally ensures onMatchEnd always fires,
-		// even if the thread is interrupted during sleep)
+		// even if the thread is interrupted during a control wait)
 		boolean matchStarted = false;
 		try {
-			for (long tick = 0; tick < config.matchDurationTicks() && !stopped; tick++) {
-				// Handle pause (sim may start paused to let viewers register)
-				if (paused)
-					state = State.PAUSED;
-				while (paused && !stepOnce && !stopped) {
-					try {
-						Thread.sleep(50);
-					} catch (InterruptedException ex) {
-						break;
-					}
-				}
-				if (stopped)
+			for (long tick = 0; tick < config.matchDurationTicks(); tick++) {
+				// The simulation may start paused so viewers can register before the first tick.
+				if (!clockControl.awaitFrame())
 					break;
-				stepOnce = false;
-				state = State.RUNNING;
+				long frameStartNanos = clockControl.frameStartNanos();
 				var tickEvent = SimulationJfrEvents.beginTick();
 				try {
 
@@ -180,7 +174,8 @@ public final class SimulationLoop implements SimClock {
 							entity.setSternPlanes(0);
 							var physicsEvent = SimulationJfrEvents.beginPhase();
 							try {
-								physics.step(entity, dt, world.terrain(), world.currentField(), config.battleArea());
+								physics.step(entity, dt, world.terrain(), world.currentField(), config.battleArea(),
+										tick);
 							} finally {
 								SimulationJfrEvents.finishPhase(physicsEvent, "submarine physics", correlationId,
 										config.worldSeed(), tick, entity, entities.size(), torpedoes.size());
@@ -247,7 +242,7 @@ public final class SimulationLoop implements SimClock {
 						}
 						var physicsEvent = SimulationJfrEvents.beginPhase();
 						try {
-							physics.step(entity, dt, world.terrain(), world.currentField(), config.battleArea());
+							physics.step(entity, dt, world.terrain(), world.currentField(), config.battleArea(), tick);
 						} finally {
 							SimulationJfrEvents.finishPhase(physicsEvent, "submarine physics", correlationId,
 									config.worldSeed(), tick, entity, entities.size(), torpedoes.size());
@@ -472,18 +467,11 @@ public final class SimulationLoop implements SimClock {
 							torpedoes.size());
 				}
 
-				// Timing
-				long sleepMs = (long) (1000.0 / config.tickRateHz() / speedMultiplier);
-				if (sleepMs > 0 && !paused) {
-					try {
-						Thread.sleep(sleepMs);
-					} catch (InterruptedException ex) {
-						break;
-					}
-				}
+				if (tick + 1 < config.matchDurationTicks() && !clockControl.pace(frameStartNanos, config.tickRateHz()))
+					break;
 			}
 		} finally {
-			state = State.STOPPED;
+			clockControl.stop();
 			// Match end: always called regardless of how the loop exits
 			for (var e : entities) {
 				e.controller().onMatchEnd(new MatchResult(e.forfeited()));
@@ -715,34 +703,34 @@ public final class SimulationLoop implements SimClock {
 	}
 
 	public double getSpeedMultiplier() {
-		return speedMultiplier;
+		return clockControl.getSpeedMultiplier();
 	}
 
 	public void setSpeedMultiplier(double m) {
-		this.speedMultiplier = m;
+		clockControl.setSpeedMultiplier(m);
 	}
 
 	public State getState() {
-		return state;
+		return clockControl.getState();
 	}
 
 	public void setPaused(boolean p) {
-		this.paused = p;
+		clockControl.setPaused(p);
 	}
 
 	public boolean isPaused() {
-		return paused;
+		return clockControl.isPaused();
 	}
 
 	public void stepOnce() {
-		this.stepOnce = true;
+		clockControl.stepOnce();
 	}
 
 	public void stop() {
-		this.stopped = true;
+		clockControl.stop();
 	}
 
 	public boolean isStopped() {
-		return stopped;
+		return clockControl.isStopped();
 	}
 }
