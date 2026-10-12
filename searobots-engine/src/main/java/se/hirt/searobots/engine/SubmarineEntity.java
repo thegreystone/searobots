@@ -57,9 +57,10 @@ public final class SubmarineEntity implements SubmarineOutput {
 	private double actualBallast = 0.5; // physical ballast state (lags behind commanded)
 	private double previousActualBallast = 0.5; // for tracking ballast change rate
 	private double actualThrottle; // physical engine state (lags behind commanded)
-	private double swaySpeed; // lateral velocity from turning (m/s)
+	private double swaySpeed; // lateral water-relative velocity, including collision impulses (m/s)
 	private double yawRate; // angular velocity around vertical axis (rad/s)
 	private double pitchRate; // angular velocity around lateral axis (rad/s)
+	private double wreckFloodFraction; // fraction of lost buoyancy after a surface ship is destroyed
 
 	// sonar state
 	private boolean pingRequested;
@@ -114,6 +115,21 @@ public final class SubmarineEntity implements SubmarineOutput {
 
 	public VehicleConfig vehicleConfig() {
 		return vehicleConfig;
+	}
+
+	/**
+	 * Living surface ships stay at their waterline; wrecks retain their ship geometry but can sink.
+	 */
+	public boolean surfaceConstrained() {
+		return vehicleConfig.surfaceLocked() && hp > 0;
+	}
+
+	double wreckFloodFraction() {
+		return wreckFloodFraction;
+	}
+
+	void setWreckFloodFraction(double fraction) {
+		wreckFloodFraction = Math.clamp(fraction, 0, 1);
 	}
 
 	// ── SubmarineOutput ──
@@ -475,10 +491,16 @@ public final class SubmarineEntity implements SubmarineOutput {
 	}
 
 	public Velocity velocity() {
-		double vx = speed * Math.sin(heading) * Math.cos(pitch);
-		double vy = speed * Math.cos(heading) * Math.cos(pitch);
+		double vx = speed * Math.sin(heading) * Math.cos(pitch) + swaySpeed * Math.cos(heading);
+		double vy = speed * Math.cos(heading) * Math.cos(pitch) - swaySpeed * Math.sin(heading);
 		double vz = speed * Math.sin(pitch) + verticalSpeed;
-		return new Velocity(new Vec3(vx, vy, vz), new Vec3(0, pitch, 0));
+		// The surface clips upward translation while still allowing an immediate dive.
+		if (surfaceConstrained()) {
+			vz = 0;
+		} else if (z >= 0) {
+			vz = Math.min(0, vz);
+		}
+		return new Velocity(new Vec3(vx, vy, vz), new Vec3(0, pitchRate, yawRate));
 	}
 
 	public SubmarineSnapshot snapshot() {

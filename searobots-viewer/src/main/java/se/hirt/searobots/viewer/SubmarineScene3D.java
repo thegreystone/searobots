@@ -61,9 +61,11 @@ import com.jme3.util.BufferUtils;
 import com.jme3.util.SkyFactory;
 import com.jme3.water.WaterFilter;
 import se.hirt.searobots.api.TerrainMap;
+import se.hirt.searobots.api.VehicleConfig;
 import se.hirt.searobots.api.Vec3;
 import se.hirt.searobots.api.Waypoint;
 import se.hirt.searobots.engine.GeneratedWorld;
+import se.hirt.searobots.engine.HullGeometry;
 import se.hirt.searobots.engine.SubmarineSnapshot;
 import se.hirt.searobots.engine.TorpedoSnapshot;
 
@@ -118,6 +120,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 	private final Map<Integer, float[]> tubeDoorOpenUntil = new HashMap<>(), tubeDoorAngle = new HashMap<>();
 	private float tubeDoorClock;
 	private Geometry terrainGeometry;
+	private TerrainMap displayedTerrain;
 	private Spatial sky;
 	private Geometry sunBillboard;
 	private volatile GeneratedWorld pendingWorld;
@@ -290,6 +293,11 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 	 * -XstartOnFirstThread.
 	 */
 	public static void main(String[] args) {
+		// GLFW owns the macOS event loop. Java2D is only used for offscreen images (such as
+		// name decals); letting AWT start its own AppKit loop stops rendering at the first decal.
+		if (System.getProperty("os.name", "").toLowerCase(java.util.Locale.ROOT).contains("mac"))
+			System.setProperty("java.awt.headless", "true");
+
 		// A .srl path launches straight into replay of that recorded match; otherwise the
 		// first arg (if any) is a seed for a fresh match, in hex as the viewer shows it.
 		String replayPath = (args.length > 0 && args[0].toLowerCase().endsWith(".srl")) ? args[0] : null;
@@ -445,7 +453,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 			modelNode.attachChild(hull);
 			// Set up pivot nodes for control surfaces (hinge at hull attachment)
 			// OBJ coords: Y=fore-aft, X=left-right, Z=up-down
-			// Scaled model: 75m x 12m (sx=0.4, sy=0.567, sz=0.4 from original)
+			// Generated model coordinates are already in metres.
 			for (TailFlap flap : TAIL_FLAPS)
 				setupPivotAt(modelNode, flap.name(), flap.hinge());
 			setupPivotAt(modelNode, "elevatorl", new Vector3f(4.3f, -10f, 0f)); // under tower center
@@ -1560,6 +1568,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 		}
 
 		TerrainMap terrain = world.terrain();
+		displayedTerrain = terrain;
 		Mesh mesh = TerrainMeshBuilder.build(terrain, 2);
 
 		terrainGeometry = new Geometry("terrain", mesh);
@@ -2389,31 +2398,40 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 				Vector3f subModelPos = subNode.getLocalTranslation();
 				Quaternion subModelRot = subNode.getLocalRotation();
 
-				// Ellipsoid for hull body (excluding tower):
-				// tighter vertical, offset aft since bow is longer than stern
-				float semiLength = 38f; // covers bow to stern body
-				float semiBeam = 5.5f; // slightly tighter than hullHalfBeam
-				float semiHeight = 4.5f; // hull body only, tower excluded
-				float aftOffset = 2f; // shift center slightly aft (sub local Y)
-
+				// Hull-body envelope shared with collision and fuse geometry.
+				var envelope = HullGeometry.envelope(snap);
 				ellGeom.setLocalRotation(subModelRot);
-				// Offset in sub's local frame then transform to world
-				Vector3f offset = subModelRot.mult(new Vector3f(0, aftOffset, 0));
+				// OBJ +Y points aft, while the engine's longitudinal offset is along forward.
+				Vector3f offset = subModelRot
+						.mult(new Vector3f(0, (float) -envelope.forwardOffset(), (float) envelope.upOffset()));
 				ellGeom.setLocalTranslation(subModelPos.add(offset));
-				// In sub's local frame: X = beam, Y = forward (length), Z = up (height)
-				ellGeom.setLocalScale(semiBeam, semiLength, semiHeight);
+				// OBJ axes: X = beam, Y = length, Z = height.
+				ellGeom.setLocalScale((float) envelope.semiBeam(), (float) envelope.semiLength(),
+						(float) envelope.semiHeight());
 			}
 
-			// Terrain collision points: 7 purple spheres
-			// center, bow, stern, port, starboard, tower top, keel
+			// Purple markers show the same adaptive terrain contact hull used by physics.
+			var contactConfig = snap.surfaceLocked() ? VehicleConfig.surfaceShip() : VehicleConfig.submarine();
+			var terrainPoints = showCollisionEllipsoids && displayedTerrain != null
+					? HullGeometry.terrainContactPoints(snap.pose().position(), snap.pose().heading(),
+							snap.pose().pitch(), contactConfig, displayedTerrain)
+					: HullGeometry.terrainSamplePoints(contactConfig);
+			if (terrainPoints.length == 0) {
+				terrainPoints = HullGeometry.terrainSamplePoints(contactConfig);
+			}
 			Geometry[] tpGeoms = terrainPointGeoms.get(snap.id());
-			if (tpGeoms == null) {
-				tpGeoms = new Geometry[7];
-				var tpSphere = new com.jme3.scene.shape.Sphere(8, 8, 0.75f);
+			if (tpGeoms == null || tpGeoms.length != terrainPoints.length) {
+				if (tpGeoms != null) {
+					for (var marker : tpGeoms) {
+						marker.removeFromParent();
+					}
+				}
+				tpGeoms = new Geometry[terrainPoints.length];
+				var tpSphere = new com.jme3.scene.shape.Sphere(8, 8, 0.25f);
 				Material tpMat = new Material(assetManager, "Common/MatDefs/Misc/Unshaded.j3md");
 				tpMat.setColor("Color", new ColorRGBA(0.7f, 0.2f, 0.9f, 0.8f));
 				tpMat.getAdditionalRenderState().setBlendMode(RenderState.BlendMode.Alpha);
-				for (int tp = 0; tp < 7; tp++) {
+				for (int tp = 0; tp < tpGeoms.length; tp++) {
 					tpGeoms[tp] = new Geometry("tp-" + snap.id() + "-" + tp, tpSphere);
 					tpGeoms[tp].setMaterial(tpMat);
 					tpGeoms[tp].setQueueBucket(RenderQueue.Bucket.Transparent);
@@ -2441,25 +2459,13 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 				// Up: cross(fwd, right)
 				double upX = -sinH * sinP, upY = -cosH * sinP, upZ = cosP;
 
-				double bowDist = 33.5;
-				double sternDist = 40.0;
-				double beamDist = 6.0;
-				double towerHeight = 6.5;
-				double keelDepth = 5.0;
-
-				// Offsets in local frame -> world coords
-				double[][] pts = {{simX, simY, simZ}, // center
-						{simX + fwdX * bowDist, simY + fwdY * bowDist, simZ + fwdZ * bowDist}, // bow
-						{simX - fwdX * sternDist, simY - fwdY * sternDist, simZ - fwdZ * sternDist}, // stern
-						{simX + rightX * beamDist, simY + rightY * beamDist, simZ + rightZ * beamDist},
-						// port (actually starboard, sign doesn't matter for collision)
-						{simX - rightX * beamDist, simY - rightY * beamDist, simZ - rightZ * beamDist}, // starboard
-						{simX + upX * towerHeight, simY + upY * towerHeight, simZ + upZ * towerHeight}, // tower top
-						{simX - upX * keelDepth, simY - upY * keelDepth, simZ - upZ * keelDepth}, // keel
-				};
-				for (int tp = 0; tp < 7; tp++) {
+				for (int tp = 0; tp < tpGeoms.length; tp++) {
+					var point = terrainPoints[tp];
+					double x = simX + rightX * point.x() + fwdX * point.y() + upX * point.z();
+					double y = simY + rightY * point.x() + fwdY * point.y() + upY * point.z();
+					double z = simZ + rightZ * point.x() + fwdZ * point.y() + upZ * point.z();
 					// sim (X,Y,Z) -> JME (X, Z, -Y)
-					tpGeoms[tp].setLocalTranslation((float) pts[tp][0], (float) pts[tp][2], (float) -pts[tp][1]);
+					tpGeoms[tp].setLocalTranslation((float) x, (float) z, (float) -y);
 				}
 			}
 		}

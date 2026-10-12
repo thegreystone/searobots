@@ -34,120 +34,106 @@ import se.hirt.searobots.api.VehicleConfig;
 
 import java.awt.*;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
 /**
- * Measures torpedo turn radius and pitch rate at different speeds. Used to calibrate the torpedo
- * controller's throttle management and understand maneuverability at different speeds.
+ * Guards maneuverability at stable speed, including the smallest radius available near stall. Pitch
+ * rates are measured directly because accumulated pitch saturates at the 60-degree limit.
  */
 class TorpedoTurnRadiusTest {
 
-	static final double DT = 1.0 / 50;
-	static final GeneratedWorld world = GeneratedWorld.deepFlat();
+	private static final double DT = 1.0 / 50;
+	private static final double[] FAST_CONTROL_ANGLES = {15, 25, 29.9, 30, 30.1, 35, 40, 45};
 
 	@Test
-	void measureTurnRadiusAtSpeeds() {
-		System.out.println("=== Torpedo Turn Radius / Pitch Rate Table ===");
-		System.out.printf("%-8s %-12s %-12s %-12s %-12s%n", "Speed", "Yaw Radius", "Yaw Rate", "Pitch Rate",
-				"Pitch Radius");
-		System.out.println("-".repeat(60));
+	void optimumRudderTurnRadiusIncreasesWithSpeed() {
+		double slow = yawRadius(settled(5, 30, 0));
+		double fast = yawRadius(settled(20, 30, 0));
+		double maximum = yawRadius(settled(23, 30, 0));
+		assertTrue(slow >= 40 && slow <= 50, "5 m/s should permit a roughly 44 m turn, got " + slow);
+		assertTrue(fast >= 150 && fast <= 170, "20 m/s should need roughly 160 m to turn, got " + fast);
+		assertTrue(maximum >= 175 && maximum <= 195, "23 m/s should need roughly 184 m to turn, got " + maximum);
+		assertTrue(slow < fast && fast < maximum, "Higher speed must require a wider turn");
+	}
 
-		for (int speed = 5; speed <= 23; speed += 5) {
-			double[] yawResult = measureYawTurn(speed);
-			double[] pitchResult = measurePitchTurn(speed);
-			System.out.printf("%4d m/s  %8.0fm     %6.2f°/s    %6.2f°/s     %8.0fm%n", speed, yawResult[0],
-					yawResult[1], pitchResult[1], pitchResult[0]);
-		}
-
-		// Also test intermediate speeds for the controller
-		System.out.println("\n=== Fine-grained yaw turn radius ===");
-		System.out.printf("%-8s %-12s %-12s%n", "Speed", "Yaw Radius", "Yaw Rate");
-		for (int speed = 3; speed <= 23; speed++) {
-			double[] r = measureYawTurn(speed);
-			System.out.printf("%4d m/s  %8.0fm     %6.2f°/s%n", speed, r[0], r[1]);
+	@Test
+	void fullRudderTurnRadiusIncreasesWithSpeedAndExceedsOptimum() {
+		double previous = 0;
+		for (double speed : new double[] {5, 20, 23}) {
+			double optimum = yawRadius(settled(speed, 30, 0));
+			double full = yawRadius(settled(speed, 45, 0));
+			assertTrue(full > optimum * 1.5 && full < optimum * 1.85,
+					"Stalled full rudder must still turn, but need a wider radius at " + speed + " m/s");
+			assertTrue(full > previous, "Full-rudder turns must also widen with speed");
+			previous = full;
 		}
 	}
 
-	/**
-	 * Measure steady-state yaw turn radius at full rudder.
-	 */
-	private double[] measureYawTurn(int targetSpeed) {
-		var cfg = VehicleConfig.torpedo();
-		var torp = createTorpedo(cfg, targetSpeed);
-
-		// Apply full rudder and run until yaw rate stabilizes
-		TorpedoPhysics physics = new TorpedoPhysics();
-		double startHeading = 0;
-		double totalAngle = 0;
-		double steadyYawRate = 0;
-		int settleTime = 500; // 10 seconds to reach steady state
-
-		for (int tick = 0; tick < settleTime + 500; tick++) {
-			torp.applyCommands(); // no-op, we set directly
-			// Full rudder, no stern planes, throttle to maintain speed
-			double speedError = targetSpeed - torp.speed();
-			double throttle = Math.clamp(speedError * 0.5 + 0.5, 0, 1);
-			torp.setActualRudder(1.0);
-			torp.setActualSternPlanes(0);
-			torp.setActualThrottle(throttle);
-
-			double prevHeading = torp.heading();
-			physics.step(torp, DT, world.terrain(), null, null);
-
-			if (tick >= settleTime) {
-				double dh = torp.heading() - prevHeading;
-				while (dh > Math.PI)
-					dh -= 2 * Math.PI;
-				while (dh < -Math.PI)
-					dh += 2 * Math.PI;
-				totalAngle += Math.abs(dh);
-				steadyYawRate = Math.abs(dh) / DT;
-			}
+	@Test
+	void fastTorpedoCannotTurnTightlyByChoosingAnotherRudderAngle() {
+		for (double angle : FAST_CONTROL_ANGLES) {
+			double radius = yawRadius(settled(23, angle, 0));
+			assertTrue(radius >= 175,
+					"23 m/s needs at least a 175 m yaw radius at " + angle + " degrees, got " + radius);
 		}
-
-		double avgYawRate = totalAngle / (500 * DT); // rad/s over measurement window
-		double speed = torp.speed();
-		double radius = speed > 0.1 && avgYawRate > 0.001 ? speed / avgYawRate : Double.POSITIVE_INFINITY;
-
-		return new double[] {radius, Math.toDegrees(avgYawRate)};
 	}
 
-	/**
-	 * Measure steady-state pitch rate at full stern planes.
-	 */
-	private double[] measurePitchTurn(int targetSpeed) {
-		var cfg = VehicleConfig.torpedo();
-		var torp = createTorpedo(cfg, targetSpeed);
-
-		TorpedoPhysics physics = new TorpedoPhysics();
-		double totalAngle = 0;
-		int settleTime = 500;
-
-		for (int tick = 0; tick < settleTime + 500; tick++) {
-			double speedError = targetSpeed - torp.speed();
-			double throttle = Math.clamp(speedError * 0.5 + 0.5, 0, 1);
-			torp.setActualRudder(0);
-			torp.setActualSternPlanes(1.0); // full dive
-			torp.setActualThrottle(throttle);
-
-			double prevPitch = torp.pitch();
-			physics.step(torp, DT, world.terrain(), null, null);
-
-			if (tick >= settleTime) {
-				double dp = torp.pitch() - prevPitch;
-				totalAngle += Math.abs(dp);
-			}
+	@Test
+	void fasterPitchResponseStillHasAWideRadiusAtMaximumSpeed() {
+		for (double angle : FAST_CONTROL_ANGLES) {
+			var torpedo = settled(23, 0, angle);
+			assertTrue(Double.isFinite(torpedo.pitchRate()) && torpedo.pitchRate() > 0,
+					"The fixture must measure active pitch authority before the pitch stop");
+			double radius = torpedo.speed() / Math.abs(torpedo.pitchRate());
+			assertTrue(Double.isFinite(radius), "An infinite radius must not satisfy the pitch safety bound");
+			assertTrue(radius >= 80,
+					"23 m/s needs at least an 80 m pitch radius at " + angle + " degrees, got " + radius);
 		}
-
-		double avgPitchRate = totalAngle / (500 * DT);
-		double speed = torp.speed();
-		double radius = speed > 0.1 && avgPitchRate > 0.001 ? speed / avgPitchRate : Double.POSITIVE_INFINITY;
-
-		return new double[] {radius, Math.toDegrees(avgPitchRate)};
 	}
 
-	private TorpedoEntity createTorpedo(VehicleConfig cfg, double initialSpeed) {
-		var torp = new TorpedoEntity(9000, 0, cfg, null, new Vec3(0, 0, -200), 0, 0, 20.0, Color.RED);
-		torp.setSpeed(initialSpeed);
-		torp.setActualThrottle(0.5);
-		return torp;
+	@Test
+	void combiningYawAndPitchCannotProduceAnInstantTurnAtMaximumSpeed() {
+		for (double angle : FAST_CONTROL_ANGLES) {
+			var torpedo = settled(23, angle, angle);
+			assertTrue(
+					Double.isFinite(torpedo.yawRate()) && torpedo.yawRate() > 0 && Double.isFinite(torpedo.pitchRate())
+							&& torpedo.pitchRate() > 0,
+					"The fixture must exercise both steering axes before the pitch stop");
+			// Omitting the cos(pitch) factor overestimates yaw curvature, so this is a conservative bound.
+			double radius = torpedo.speed() / Math.hypot(torpedo.yawRate(), torpedo.pitchRate());
+			assertTrue(Double.isFinite(radius), "The combined radius must be a finite steering measurement");
+			assertTrue(radius >= 70, "Combined steering at 23 m/s needs at least a 70 m radius, got " + radius);
+		}
+	}
+
+	private static double yawRadius(TorpedoEntity torpedo) {
+		return torpedo.speed() / Math.abs(torpedo.yawRate());
+	}
+
+	private static TorpedoEntity settled(double speed, double rudderDegrees, double planesDegrees) {
+		var config = VehicleConfig.torpedo();
+		var torpedo = new TorpedoEntity(9000, 0, config, null, new Vec3(0, 0, -5000), 0, 0, 20, Color.RED);
+		double throttle = config.dragCoeff() * speed * speed / config.maxThrust();
+		double rudder = rudderDegrees / 45;
+		double planes = planesDegrees / 45;
+		var output = torpedo.createOutput();
+		output.setThrottle(throttle);
+		output.setRudder(rudder);
+		output.setSternPlanes(planes);
+		torpedo.setSpeed(speed);
+		torpedo.setActualThrottle(throttle);
+		torpedo.setActualRudder(rudder);
+		torpedo.setActualSternPlanes(planes);
+		var physics = new TorpedoPhysics();
+		for (int tick = 0; tick < Math.round(60 / DT); tick++) {
+			// Hold orientation away from its stop while preserving the angular-rate response.
+			torpedo.setPitch(0);
+			physics.step(torpedo, DT, null, null, null);
+		}
+		assertEquals(speed, torpedo.speed(), 1e-10, "The fixture must maintain the requested speed");
+		assertTrue(torpedo.alive() && torpedo.fuelRemaining() > 0,
+				"The fixture must measure a powered torpedo rather than a stopped or destroyed one");
+		return torpedo;
 	}
 }

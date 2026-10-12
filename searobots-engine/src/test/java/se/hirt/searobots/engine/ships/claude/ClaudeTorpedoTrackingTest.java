@@ -49,6 +49,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 public class ClaudeTorpedoTrackingTest {
 
+	private long scenarioSeed = 0;
+
 	private static final long MAX_TICKS = 30_000; // 10 min max
 
 	record TrackResult(boolean hit, int damage, double closestApproach, long endTick) {
@@ -59,8 +61,8 @@ public class ClaudeTorpedoTrackingTest {
 	/**
 	 * Flat 1000m ocean with two spawn points at specified positions.
 	 */
-	private static GeneratedWorld controlledWorld(Vec3 launcherPos, Vec3 targetPos) {
-		var config = MatchConfig.withDefaults(0);
+	private static GeneratedWorld controlledWorld(Vec3 launcherPos, Vec3 targetPos, long seed) {
+		var config = MatchConfig.withDefaults(seed);
 		double halfSize = config.battleArea() instanceof BattleArea.Circular c ? c.radius() : 7000;
 		double margin = config.terrainMarginMeters();
 		double totalSize = (halfSize + margin) * 2;
@@ -220,7 +222,7 @@ public class ClaudeTorpedoTrackingTest {
 	private TrackResult runScenario(
 		Vec3 launcherPos, double launcherHeading, Vec3 targetPos, double targetHeading, SubmarineController launcher,
 		SubmarineController target, VehicleConfig targetConfig) {
-		var world = controlledWorld(launcherPos, targetPos);
+		var world = controlledWorld(launcherPos, targetPos, scenarioSeed);
 		var sim = new SimulationLoop();
 		sim.setSpeedMultiplier(1_000_000);
 
@@ -397,8 +399,23 @@ public class ClaudeTorpedoTrackingTest {
 
 	@Test
 	void hitsBafflesSameDepthSlow() {
-		var r = bafflesShot(1500, -100, -100, 5, 0, false);
-		assertTrue(r.hit, "Should hit 5m/s target from baffles at 1500m, closest=" + r.closestApproach);
+		// Noisy sonar can cause occasional misses even in this favorable geometry.
+		// Keep seeds 0–19 fixed and require at least 90% success, rather than
+		// requiring a lucky noise realization from one particular seed.
+		int hits = 0;
+		var misses = new StringBuilder();
+		for (int seed = 0; seed < 20; seed++) {
+			scenarioSeed = seed;
+			var r = bafflesShot(1500, -100, -100, 5, 0, false);
+			if (r.hit) {
+				hits++;
+			} else {
+				misses.append(" seed=").append(seed).append(" closest=").append(r.closestApproach).append(" m;");
+			}
+		}
+		System.out.printf("Slow baffles shot: %d/20 hits; misses:%s%n", hits, misses);
+		assertTrue(hits >= 18, "Should hit 5m/s target from baffles at 1500m in at least 18/20 seeds, got " + hits
+				+ "; misses:" + misses);
 	}
 
 	@Test

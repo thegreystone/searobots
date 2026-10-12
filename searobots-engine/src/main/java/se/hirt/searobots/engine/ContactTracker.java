@@ -28,8 +28,8 @@
  */
 package se.hirt.searobots.engine;
 
-import java.util.ArrayList;
-import java.util.List;
+import java.util.ArrayDeque;
+import java.util.Deque;
 import java.util.Random;
 
 /**
@@ -51,16 +51,12 @@ import java.util.Random;
  */
 final class ContactTracker {
 	// Constants
-	private static final double AMBIENT_NOISE_DB = 60.0;
-	private static final double SPREADING_COEFFICIENT = 10.0;
-
 	// Correlation times of the measurement errors (seconds). Bearing wander from
 	// array and multipath effects persists for tens of seconds; blade-rate
 	// speed tracking re-locks faster; the TMA range and heading estimates are
 	// filter outputs and drift slowly.
 	static final double BEARING_CORRELATION_S = 20.0;
 	static final double SPEED_CORRELATION_S = 10.0;
-	static final double SOURCE_LEVEL_CORRELATION_S = 30.0;
 	static final double RANGE_CORRELATION_S = 20.0;
 	static final double HEADING_CORRELATION_S = 60.0;
 	// Fraction of sensor error variance that is slow wander; the rest is
@@ -71,17 +67,46 @@ final class ContactTracker {
 	record BearingObs(long tick, double bearing, double ownX, double ownY, double se) {
 	}
 
-	private final List<BearingObs> history = new ArrayList<>();
+	private final Deque<BearingObs> history = new ArrayDeque<>();
+	private static final long GEOMETRY_MEMORY_TICKS = 120 * 50;
+	private static final long GEOMETRY_BUCKET_TICKS = 50;
+	private static final long MOTION_WINDOW_TICKS = 5 * 50;
+	private static final double MIN_LEG_TRAVEL = 25;
+	private static final double MIN_RANGE = 1e-6;
+
+	/** One second of geometry; new observations cannot refresh earlier buckets. */
+	private static final class GeometryObs {
+		long tick;
+		double crossTrack;
+		double legQuality;
+
+		GeometryObs(long tick) {
+			this.tick = tick;
+		}
+	}
+
+	private final Deque<GeometryObs> geometry = new ArrayDeque<>();
+
+	record TargetObs(long tick, double x, double y) {
+	}
+
+	private final Deque<TargetObs> targetMotion = new ArrayDeque<>();
 
 	// Cross-track displacement (accumulated perpendicular motion relative to bearing)
 	private double accumulatedCrossTrack;
+	private long lastGeometryTick = -1;
 	private double prevOwnX = Double.NaN, prevOwnY = Double.NaN;
 	private double prevOwnHeading = Double.NaN;
+	private double legTravel;
+	private double qualityDebt;
 
 	// Range estimation
 	private double estimatedRange = Double.NaN;
 	private double rangeBias = Double.NaN; // systematic error, decays with geometry
 	private double rangeUncertainty = Double.MAX_VALUE;
+	// A fresh bearing cannot remove the target's possible unobserved movement.
+	// Only new spatial geometry or another active fix can repay this bound.
+	private double coastedRangeUncertainty;
 
 	// Heading estimation
 	private double estimatedHeading = Double.NaN;
@@ -89,8 +114,6 @@ final class ContactTracker {
 	// Solution quality
 	private double solutionQuality;
 
-	// Active sonar calibration of source level
-	private double calibratedSL = Double.NaN;
 	// Tick of the last active range fix, or -1. A fix anchors the range
 	// solution; its value fades over PING_FIX_MEMORY_S as the target is free
 	// to change course and speed.
@@ -100,22 +123,24 @@ final class ContactTracker {
 
 	// Contact continuity
 	private long lastObservationTick = -1;
-	private int legCount;
+	private long lastDecayTick = -1;
+	private long lastUsefulObservationTick = -1;
+	private double legQuality;
 	private double legHeadingAccumulator; // accumulated heading change since last leg count
 
 	// Heading estimation: uses ground truth with quality-dependent noise
-	private double prevTargetX = Double.NaN, prevTargetY = Double.NaN;
-	private long prevTargetTick = -1;
+	private double motionHeading = Double.NaN;
+	private double motionSpeed = Double.NaN;
+	private long lastMotionSampleTick = -1;
+	private int consistentMotionWindows;
 
 	// Measurement error processes. All errors reported for this contact are
 	// correlated in time (see CorrelatedNoise) so that a controller cannot
 	// average them away over a few seconds. The sonar model draws the
-	// per-tick bearing, blade-rate speed, and source-level errors from the
-	// first three; the tracker uses the last two internally.
+	// per-tick bearing and blade-rate speed errors from the first two;
+	// the tracker uses the last two internally.
 	final CorrelatedNoise bearingNoise = new CorrelatedNoise(BEARING_CORRELATION_S, SENSOR_CORRELATED_FRACTION);
 	final CorrelatedNoise speedNoise = new CorrelatedNoise(SPEED_CORRELATION_S, SENSOR_CORRELATED_FRACTION);
-	final CorrelatedNoise sourceLevelNoise = new CorrelatedNoise(SOURCE_LEVEL_CORRELATION_S,
-			SENSOR_CORRELATED_FRACTION);
 	private final CorrelatedNoise rangeNoise = new CorrelatedNoise(RANGE_CORRELATION_S, 1.0);
 	private final CorrelatedNoise headingNoise = new CorrelatedNoise(HEADING_CORRELATION_S, 1.0);
 
@@ -125,55 +150,77 @@ final class ContactTracker {
 	 * output of a real TMA filter.
 	 */
 	void update(
-		long tick, double bearing, double se, double estSpeed, double estSL, double ownX, double ownY,
-		double ownHeading, boolean inBaffles, double actualDistance, double actualTargetX, double actualTargetY,
-		Random rng) {
-		lastObservationTick = tick;
-
+		long tick, double bearing, double se, double ownX, double ownY, double ownHeading, boolean inBaffles,
+		double actualDistance, double actualTargetX, double actualTargetY, Random rng) {
 		// Don't update TMA from baffle-degraded observations
-		if (inBaffles)
+		if (inBaffles) {
+			interruptObservations();
+			lastObservationTick = tick;
+			lastDecayTick = tick;
 			return;
+		}
+		if (lastUsefulObservationTick >= 0 && tick - lastUsefulObservationTick > 1)
+			interruptObservations();
+		lastObservationTick = tick;
+		lastUsefulObservationTick = tick;
+		lastDecayTick = tick;
 
 		// Record observation
-		history.add(new BearingObs(tick, bearing, ownX, ownY, se));
+		history.addLast(new BearingObs(tick, bearing, ownX, ownY, se));
 		while (history.size() > 200)
 			history.removeFirst();
+		ageGeometry(tick);
 
 		// Compute cross-track displacement (motion perpendicular to bearing)
+		double crossTrack = 0;
+		double displacement = 0;
+		boolean newLeg = false;
 		if (!Double.isNaN(prevOwnX)) {
 			double dx = ownX - prevOwnX;
 			double dy = ownY - prevOwnY;
-			double displacement = Math.sqrt(dx * dx + dy * dy);
+			displacement = Math.sqrt(dx * dx + dy * dy);
 			double moveHeading = Math.atan2(dx, dy);
 			double crossFraction = Math.abs(Math.sin(moveHeading - bearing));
-			accumulatedCrossTrack += displacement * crossFraction;
+			crossTrack = displacement * crossFraction;
+			legTravel += displacement;
 		}
 
-		// Detect leg changes: accumulate heading change over time. When the
-		// accumulated change exceeds 15 degrees (regardless of turn rate),
-		// count a new leg and reset the accumulator.
-		if (!Double.isNaN(prevOwnHeading)) {
+		// Translating turns produce independent bearing legs. Rotation while
+		// stationary does not create a baseline, even if the array turns far.
+		if (displacement > 0 && !Double.isNaN(prevOwnHeading)) {
 			double headingChange = ownHeading - prevOwnHeading;
 			while (headingChange > Math.PI)
 				headingChange -= 2 * Math.PI;
 			while (headingChange < -Math.PI)
 				headingChange += 2 * Math.PI;
 			legHeadingAccumulator += headingChange;
-			if (Math.abs(legHeadingAccumulator) > Math.toRadians(15)) {
-				legCount++;
+			if (displacement > 0 && legTravel >= MIN_LEG_TRAVEL
+					&& Math.abs(legHeadingAccumulator) > Math.toRadians(15)) {
+				newLeg = true;
+				legTravel = 0;
 				legHeadingAccumulator = 0;
 			}
 		}
 		prevOwnX = ownX;
 		prevOwnY = ownY;
 		prevOwnHeading = ownHeading;
+		if (newLeg || (displacement > 0 && crossTrack > displacement * 0.1)) {
+			lastGeometryTick = tick;
+		}
+		addGeometry(tick, crossTrack, newLeg);
+		// Missing observations reduce maturity. Only new spatial information can
+		// repay that loss; recomputing the old geometry must not undo coasting.
+		double newInformation = crossTrack / (2 * rangeScale()) + (newLeg ? 0.12 : 0);
+		qualityDebt = Math.max(0, qualityDebt - newInformation);
+		coastedRangeUncertainty *= Math.max(0, 1 - newInformation);
+		updateTargetMotion(tick, actualTargetX, actualTargetY);
 
 		// === Solution quality (must be computed before range, as it gates bias decay) ===
-		updateSolutionQuality(actualDistance);
+		updateSolutionQuality();
 		// A recent active fix is worth more than any passive geometry, and
 		// fades as it ages instead of vanishing on the next passive tick.
 		double fix = pingFixFactor(tick);
-		solutionQuality = Math.max(solutionQuality, 0.95 * fix);
+		solutionQuality = Math.max(solutionQuality, Math.max(0, 0.95 * fix - qualityDebt));
 
 		// === Range estimation: ground truth + persistent bias + noise ===
 		// The bias models the systematic error of a real TMA system that
@@ -207,7 +254,9 @@ final class ContactTracker {
 		// the passive wander takes over as the fix ages.
 		noiseLevel = noiseLevel * (1.0 - fix) + PING_RANGE_NOISE * fix;
 		double noisyRange = actualDistance + rangeBias + actualDistance * rangeNoise.next(tick, rng) * noiseLevel;
-		noisyRange = Math.max(100, noisyRange);
+		// Keep estimates physical without imposing a tactical stand-off distance.
+		// In particular, passive updates must preserve active fixes below 100 m.
+		noisyRange = Math.max(MIN_RANGE, noisyRange);
 
 		if (Double.isNaN(estimatedRange)) {
 			estimatedRange = noisyRange;
@@ -224,57 +273,119 @@ final class ContactTracker {
 		// Range uncertainty: reflects both quality and remaining bias. The bias
 		// term is kept in metres on purpose: scaling it by the estimate would
 		// collapse the reported uncertainty together with the estimate when the
-		// initial guess is short and the estimate sits on the 100 m floor,
-		// telling the controller "100 m +- 60 m" about a target 500 m away.
+		// initial guess is short and the estimate sits on the positive range floor,
+		// telling the controller it knows the range of a distant target precisely.
 		// The wander passes through the smoothing largely intact, so the
 		// quality term can never drop below the current noise level.
 		double qualityFraction = Math.max((1.0 - solutionQuality) * 0.6, noiseLevel);
-		rangeUncertainty = Math.max(estimatedRange * qualityFraction, Math.abs(rangeBias));
+		rangeUncertainty = Math.max(coastedRangeUncertainty,
+				Math.max(estimatedRange * qualityFraction, Math.abs(rangeBias)));
 
-		// === Heading estimation: requires quality > 0.5 ===
-		// Uses ground-truth target displacement with quality-dependent noise.
-		// Needs real maneuvering (multiple legs) before heading is available.
-		if (solutionQuality > 0.5 && !Double.isNaN(prevTargetX) && tick - prevTargetTick >= 250) { // 5 seconds between samples
-			double tdx = actualTargetX - prevTargetX;
-			double tdy = actualTargetY - prevTargetY;
-			double targetMoved = Math.sqrt(tdx * tdx + tdy * tdy);
-
-			if (targetMoved > 10) { // target must have moved meaningfully
-				double trueHeading = Math.atan2(tdx, tdy);
-				if (trueHeading < 0)
-					trueHeading += 2 * Math.PI;
-
-				// Add noise: 25 degrees at q=0.5, 5 degrees at q=1.0
-				double headingSigma = Math.toRadians(50) * (1.0 - solutionQuality);
-				double noisyHeading = trueHeading + headingNoise.next(tick, rng) * headingSigma;
-				if (noisyHeading < 0)
-					noisyHeading += 2 * Math.PI;
-				if (noisyHeading >= 2 * Math.PI)
-					noisyHeading -= 2 * Math.PI;
-
-				if (Double.isNaN(estimatedHeading)) {
-					estimatedHeading = noisyHeading;
-				} else {
-					double hDiff = noisyHeading - estimatedHeading;
-					while (hDiff > Math.PI)
-						hDiff -= 2 * Math.PI;
-					while (hDiff < -Math.PI)
-						hDiff += 2 * Math.PI;
-					estimatedHeading += hDiff * 0.2;
-					if (estimatedHeading < 0)
-						estimatedHeading += 2 * Math.PI;
-					if (estimatedHeading >= 2 * Math.PI)
-						estimatedHeading -= 2 * Math.PI;
-				}
-			}
-			prevTargetX = actualTargetX;
-			prevTargetY = actualTargetY;
-			prevTargetTick = tick;
-		} else if (Double.isNaN(prevTargetX)) {
-			prevTargetX = actualTargetX;
-			prevTargetY = actualTargetY;
-			prevTargetTick = tick;
+		if (solutionQuality > 0.5 && consistentMotionWindows >= 2 && tick == lastMotionSampleTick
+				&& Double.isFinite(motionHeading)) {
+			double headingSigma = Math.toRadians(50) * (1.0 - solutionQuality);
+			double noisyHeading = motionHeading + headingNoise.next(tick, rng) * headingSigma;
+			estimatedHeading = Double.isNaN(estimatedHeading) ? normalizeHeading(noisyHeading)
+					: normalizeHeading(estimatedHeading + angleDifference(noisyHeading, estimatedHeading) * 0.2);
 		}
+	}
+
+	/** Motion samples never span discarded or missing bearings. */
+	private void interruptObservations() {
+		prevOwnX = prevOwnY = prevOwnHeading = Double.NaN;
+		legTravel = legHeadingAccumulator = 0;
+		targetMotion.clear();
+		motionHeading = motionSpeed = estimatedHeading = Double.NaN;
+		lastMotionSampleTick = -1;
+		consistentMotionWindows = 0;
+	}
+
+	private void addGeometry(long tick, double crossTrack, boolean newLeg) {
+		if (crossTrack <= 0 && !newLeg)
+			return;
+		var bucket = geometry.peekLast();
+		if (bucket == null || bucket.tick / GEOMETRY_BUCKET_TICKS != tick / GEOMETRY_BUCKET_TICKS) {
+			bucket = new GeometryObs(tick);
+			geometry.addLast(bucket);
+		}
+		bucket.tick = tick;
+		bucket.crossTrack += crossTrack;
+		bucket.legQuality += newLeg ? 0.12 : 0;
+		accumulatedCrossTrack += crossTrack;
+		legQuality += newLeg ? 0.12 : 0;
+	}
+
+	private void ageGeometry(long tick) {
+		while (!geometry.isEmpty() && tick - geometry.getFirst().tick >= GEOMETRY_MEMORY_TICKS) {
+			var old = geometry.removeFirst();
+			accumulatedCrossTrack = Math.max(0, accumulatedCrossTrack - old.crossTrack);
+			legQuality = Math.max(0, legQuality - old.legQuality);
+		}
+		if (lastGeometryTick >= 0 && tick - lastGeometryTick >= GEOMETRY_MEMORY_TICKS) {
+			legTravel = legHeadingAccumulator = 0;
+			lastGeometryTick = -1;
+		}
+	}
+
+	/**
+	 * Keep a rolling five-second displacement window, independent of when range quality first
+	 * crossed its gate. Contradictory motion invalidates the old geometry; a new passive solution
+	 * requires new translating listener legs.
+	 */
+	private void updateTargetMotion(long tick, double x, double y) {
+		targetMotion.addLast(new TargetObs(tick, x, y));
+		while (targetMotion.size() > 1 && tick - targetMotion.getFirst().tick() > MOTION_WINDOW_TICKS)
+			targetMotion.removeFirst();
+		var first = targetMotion.getFirst();
+		if (tick - first.tick() < MOTION_WINDOW_TICKS)
+			return;
+		double dx = x - first.x(), dy = y - first.y();
+		double speed = Math.hypot(dx, dy) / 5.0;
+		double heading = speed > 2 ? normalizeHeading(Math.atan2(dx, dy)) : Double.NaN;
+		boolean wasMoving = Double.isFinite(motionHeading);
+		boolean moving = Double.isFinite(heading);
+		boolean changed = Double.isFinite(motionSpeed) && (wasMoving != moving
+				|| (moving && Math.abs(angleDifference(heading, motionHeading)) > Math.toRadians(30))
+				|| Math.abs(speed - motionSpeed) > 2);
+		if (changed) {
+			geometry.clear();
+			accumulatedCrossTrack = 0;
+			lastGeometryTick = -1;
+			legQuality = 0;
+			legTravel = legHeadingAccumulator = 0;
+			history.clear();
+			pingTick = -1;
+			estimatedHeading = Double.NaN;
+			consistentMotionWindows = 0;
+			lastMotionSampleTick = tick;
+			motionHeading = heading;
+			motionSpeed = speed;
+			return;
+		}
+		if (!Double.isFinite(heading)) {
+			estimatedHeading = motionHeading = Double.NaN;
+			motionSpeed = speed;
+			consistentMotionWindows = 0;
+			return;
+		}
+		if (lastMotionSampleTick < 0 || tick - lastMotionSampleTick >= MOTION_WINDOW_TICKS) {
+			motionHeading = heading;
+			motionSpeed = speed;
+			lastMotionSampleTick = tick;
+			consistentMotionWindows++;
+		}
+	}
+
+	private static double angleDifference(double a, double b) {
+		return Math.atan2(Math.sin(a - b), Math.cos(a - b));
+	}
+
+	private static double normalizeHeading(double heading) {
+		return (heading % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI);
+	}
+
+	private double rangeScale() {
+		return !Double.isNaN(estimatedRange) && estimatedRange > 100 ? estimatedRange : Math.max(100, rangeUncertainty);
 	}
 
 	/**
@@ -285,11 +396,10 @@ final class ContactTracker {
 	 * <li>Tiny time bonus: just observation count stability, capped very low</li>
 	 * </ol>
 	 */
-	private void updateSolutionQuality(double actualDistance) {
-		// Use actualDistance as proxy for range in the ratio (before we have
-		// a good estimate). This is acceptable: the quality calculation isn't
-		// exposed to controllers, only its effects are.
-		double rangeForRatio = !Double.isNaN(estimatedRange) && estimatedRange > 100 ? estimatedRange : actualDistance;
+	private void updateSolutionQuality() {
+		// Quality is public too: never normalize a short initial guess by hidden true range.
+		// For short initial guesses, use the public uncertainty as a conservative baseline scale.
+		double rangeForRatio = rangeScale();
 
 		// Cross-track ratio: how much perpendicular baseline we've built
 		// relative to the target range. Need ~50% of range in cross-track
@@ -299,31 +409,33 @@ final class ContactTracker {
 
 		// Leg bonus: each deliberate course change adds independent information.
 		// Two legs gives a decent solution; three or more is very good.
-		double legBonus = Math.min(legCount * 0.12, 0.35);
+		double legBonus = Math.min(0.35, legQuality);
 
 		// Minimal time bonus: just rewards having some observation history.
 		// Capped at 0.05 to prevent free convergence from sitting still.
 		double timeBonus = Math.min(history.size() * 0.0005, 0.05);
 
 		// Floor at 0.05 (bearing only, essentially no range information)
-		solutionQuality = Math.clamp(geoQuality + legBonus + timeBonus, 0.05, 0.95);
+		// A coherent moving track can keep extending its baseline. Once useful
+		// ownship geometry stops, its information fades over two minutes instead
+		// of remaining a permanent source of confidence.
+		double geometryFreshness = lastGeometryTick < 0 ? 0 : 1;
+		solutionQuality = Math.clamp((geoQuality + legBonus) * geometryFreshness + timeBonus - qualityDebt, 0.05, 0.95);
 	}
 
 	/**
 	 * Active sonar ping gives precise range immediately, bypassing TMA.
 	 */
-	void updateFromPing(long tick, double range, double se) {
+	void updateFromPing(long tick, double range) {
 		estimatedRange = range;
 		rangeBias = 0; // ping eliminates systematic error entirely
 		rangeUncertainty = range * PING_RANGE_NOISE; // 2% RMS
+		coastedRangeUncertainty = 0;
 		solutionQuality = 0.95;
+		qualityDebt = 0;
 		lastObservationTick = tick;
+		lastDecayTick = tick;
 		pingTick = tick;
-
-		// Calibrate SL from active return
-		if (se > 5.0 && range > 1.0) {
-			calibratedSL = se + SPREADING_COEFFICIENT * Math.log10(range) + AMBIENT_NOISE_DB;
-		}
 	}
 
 	/** 1.0 at the moment of an active fix, decaying to 0 as the fix ages; 0 if never pinged. */
@@ -334,11 +446,19 @@ final class ContactTracker {
 	}
 
 	void decay(long tick, double maxSubSpeed) {
-		if (lastObservationTick < 0)
+		if (lastObservationTick < 0 || tick <= lastDecayTick)
 			return;
-		double dtSec = (tick - lastObservationTick) / 50.0;
+		// Integrate only the unaccounted interval. Sonar calls this on every missed
+		// tick; applying the whole observation age each time would compound decay.
+		double dtSec = (tick - lastDecayTick) / CorrelatedNoise.TICKS_PER_SECOND;
+		lastDecayTick = tick;
 		solutionQuality = Math.max(0, solutionQuality - 0.01 * dtSec);
+		qualityDebt = Math.min(0.95, qualityDebt + 0.01 * dtSec);
 		rangeUncertainty += maxSubSpeed * dtSec;
+		if (Double.isFinite(estimatedRange))
+			coastedRangeUncertainty = rangeUncertainty;
+		interruptObservations();
+		ageGeometry(tick);
 	}
 
 	boolean isExpired(long tick) {
@@ -359,7 +479,7 @@ final class ContactTracker {
 	}
 
 	double estimatedHeading() {
-		return estimatedHeading;
+		return solutionQuality > 0.5 && consistentMotionWindows >= 2 ? estimatedHeading : Double.NaN;
 	}
 
 	long lastObservationTick() {

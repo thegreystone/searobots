@@ -26,12 +26,21 @@ public interface TorpedoInput {
 	Pose self();
 
 	/**
-	 * Torpedo's current velocity.
+	 * Torpedo's velocity relative to the water, in world axes, and pose-angle rates. Use
+	 * {@link #groundVelocity()} for linear motion over the seabed, including current drift.
 	 */
 	Velocity velocity();
 
 	/**
-	 * Torpedo's current forward speed in m/s.
+	 * Linear velocity over the seabed in world (x, y, z) axes, in m/s. The simulation includes the
+	 * ocean current at the torpedo's depth. The default assumes still water.
+	 */
+	default Vec3 groundVelocity() {
+		return velocity().linear();
+	}
+
+	/**
+	 * Torpedo's current forward speed relative to the water, in m/s.
 	 */
 	double speed();
 

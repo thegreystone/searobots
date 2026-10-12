@@ -32,6 +32,10 @@ package se.hirt.searobots.api;
  * Data-driven vehicle configuration. All physics constants that were previously hardcoded in
  * SubmarinePhysics are now per-entity parameters, enabling submarines, surface ships, and (future)
  * torpedoes to share the same physics engine with different tuning.
+ *
+ * @param terrainClearance
+ *            recommended navigation margin below the hull, in metres. This advisory clearance is
+ *            independent of physical terrain contact, which uses the hull geometry itself.
  */
 public record VehicleConfig(double dryMass, double addedMassSurge, double addedMassSway, double addedMassHeave,
 		double maxThrust, double reverseThrustFactor, double maxReverseSpeed, double dragCoeff, double swayDragCoeff,
@@ -71,6 +75,28 @@ public record VehicleConfig(double dryMass, double addedMassSurge, double addedM
 	}
 
 	/**
+	 * Collision pitch inertia in kg m^2, approximating a uniform ellipsoid with the configured hull
+	 * dimensions and directional dry plus added-water masses. The manoeuvring
+	 * {@code rotationalInertia} coefficient tunes steering and is not a physical hull moment.
+	 */
+	public double collisionPitchInertia() {
+		return (massHeave() * hullHalfLength * hullHalfLength + massSurge() * hullHalfBeam * hullHalfBeam) / 5.0;
+	}
+
+	/** Collision yaw inertia in kg m^2, using the same ellipsoid approximation. */
+	public double collisionYawInertia() {
+		return (massSway() * hullHalfLength * hullHalfLength + massSurge() * hullHalfBeam * hullHalfBeam) / 5.0;
+	}
+
+	/**
+	 * Principal inertia about the hull's length axis in kg m^2. Roll is locked, but this moment
+	 * contributes to rotation about world Z when the hull is pitched.
+	 */
+	public double collisionRollInertia() {
+		return (massSway() + massHeave()) * hullHalfBeam * hullHalfBeam / 5.0;
+	}
+
+	/**
 	 * Attack submarine: 75m length, 12m beam, ~2500 tonnes. Max speed 15 m/s (~29 knots). Turn
 	 * radius ~150-300m at patrol speed.
 	 */
@@ -96,7 +122,7 @@ public record VehicleConfig(double dryMass, double addedMassSurge, double addedM
 				1.0 / 5.0, // ballastSlewRate (full blow in ~2.5s from neutral)
 				0.03 * mass * 9.81, // ballastForceMax
 				0.5 * 1025 * 1.0 * 520 * 1.5, // verticalDragCoeff (scaled for hull)
-				12.0, // terrainClearance
+				12.0, // terrainClearance (recommended navigation margin below the hull)
 				37.5, // hullHalfLength (75m / 2)
 				6.0, // hullHalfBeam (12m / 2)
 				5.0, // collisionDamageFactor
@@ -151,7 +177,7 @@ public record VehicleConfig(double dryMass, double addedMassSurge, double addedM
 				0, // ballastSlewRate (no ballast)
 				0, // ballastForceMax
 				0.5 * 1025 * 0.1 * 0.2 * 1.5, // verticalDragCoeff (small cross-section)
-				1.0, // terrainClearance (torpedo is small)
+				1.0, // terrainClearance (recommended navigation margin for a small torpedo)
 				2.5, // hullHalfLength (5m / 2)
 				0.25, // hullHalfBeam (0.5m / 2)
 				10.0, // collisionDamageFactor (torpedo is fragile)
@@ -197,7 +223,7 @@ public record VehicleConfig(double dryMass, double addedMassSurge, double addedM
 				0, // ballastSlewRate (no ballast)
 				0, // ballastForceMax
 				0, // verticalDragCoeff (not used)
-				5.0, // terrainClearance (shallow draft)
+				5.0, // terrainClearance (recommended navigation margin below the hull)
 				75.0, // hullHalfLength (150m ship)
 				15.0, // hullHalfBeam (30m beam)
 				5.0, // collisionDamageFactor

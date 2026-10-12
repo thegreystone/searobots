@@ -140,14 +140,21 @@ class SubmarinePhysicsTest {
 	}
 
 	@Test
-	void reverseSpeedIsCapped() {
+	void reverseOperatingLimitDoesNotClipExternallyImpartedDrift() {
 		var physics = new SubmarinePhysics();
-		var sub = makeSub(-10, 0); // already going fast in reverse
+		var sub = makeSub(-10, 0); // momentum can exceed the engine's astern operating speed
 		sub.setThrottle(-1.0);
+		sub.setActualThrottle(-1.0);
 
 		physics.step(sub, DT, TERRAIN, NO_CURRENT, CONFIG.battleArea());
 
-		assertTrue(sub.speed() >= -3.0, "Reverse speed should be capped at -3 m/s, got speed=" + sub.speed());
+		assertTrue(sub.speed() > -10 && sub.speed() < -9.9,
+				"Water drag should slow external astern drift gradually, got speed=" + sub.speed());
+		for (int tick = 0; tick < Math.round(60 / DT); tick++) {
+			physics.step(sub, DT, TERRAIN, NO_CURRENT, CONFIG.battleArea());
+		}
+		assertEquals(-sub.vehicleConfig().maxReverseSpeed(), sub.speed(), 0.01,
+				"After excess drift dissipates, full reverse thrust should approach its normal force balance.");
 	}
 
 	// ── Cavitation noise ──────────────────────────────────────────────
