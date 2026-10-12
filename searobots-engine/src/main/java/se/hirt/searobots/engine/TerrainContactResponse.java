@@ -45,6 +45,7 @@ final class TerrainContactResponse {
 	private static final double SPEED_TOLERANCE = 1e-8;
 	private static final int MAX_ITERATIONS = 96;
 	private static final int MAX_SUPPORT_ITERATIONS = 8;
+	private static final double SUPPORT_MARGIN_INTERVAL = 1e-3;
 
 	private TerrainContactResponse() {
 	}
@@ -158,12 +159,14 @@ final class TerrainContactResponse {
 				for (var normal : normals) {
 					var contact = new Contact(sub, offset, normal);
 					if (contact.inverseMass > 0) {
-						// The slop only widens contact detection. A late swept contact can leave an
-						// interval of nanoseconds; dividing a position margin by it would turn the
-						// margin into an unbounded impulse. The predicted penetration itself is
-						// bounded by the closing speed over the interval.
+						// The slop leaves the end pose clear of the sweep tolerance, but as a
+						// margin it is spread over at least a millisecond: a late swept contact
+						// can leave an interval of nanoseconds, and dividing the margin by that
+						// would turn it into an unbounded impulse. The predicted penetration
+						// itself is bounded by the closing speed over the interval.
+						double margin = CONTACT_SLOP / Math.max(seconds, SUPPORT_MARGIN_INTERVAL);
 						contact.targetSpeed = SubCollisionResponse.contactVelocity(sub, offset, currents).dot(normal)
-								+ Math.max(0, penetration) * normal.z() / seconds;
+								+ (Math.max(0, penetration) / seconds + margin) * normal.z();
 						contacts.add(contact);
 					}
 				}
