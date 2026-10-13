@@ -60,7 +60,7 @@ public final class SubmarineEntity implements SubmarineOutput {
 	private double swaySpeed; // lateral water-relative velocity, including collision impulses (m/s)
 	private double yawRate; // angular velocity around vertical axis (rad/s)
 	private double pitchRate; // angular velocity around lateral axis (rad/s)
-	private double wreckFloodFraction; // fraction of lost buoyancy after a surface ship is destroyed
+	private double wreckFloodFraction; // fraction of continued hull flooding after destruction
 
 	// sonar state
 	private boolean pingRequested;

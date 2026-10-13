@@ -149,12 +149,18 @@ Features:
   terrain slope.
 
 **Cinematic Director** (default camera mode): event-driven automatic
-camera system that creates TV-broadcast-style coverage. Structured idle
-sequence cycles through all entities (close underwater, birds-eye,
-tactical overview). Hard-cuts to torpedo launches, terminal approaches,
-and explosions. Terrain-aware detonation camera with slow orbit. Smooth
-spline transitions between shots. Water fades for overhead views.
-North-up orientation for situational awareness.
+camera system combining low bow-quarter passes, close fly-bys, rising
+push-in/pull-back orbits, and event coverage. Terminal approaches use a
+restrained arc on one side of the weapon-target axis. Oriented hull
+envelopes are fitted to the live camera frustum so submarine pairs and
+close subjects remain framed across viewport shapes. Two beauty passes
+alternate with a north-up tactical overview; an independent 28-second
+timer also reserves overviews during continuous action. Each overview
+gets at least 4.5 seconds after arrival and water fade, unless an imminent
+impact, detonation, or sinking event interrupts. Superseded and stale
+event shots are pruned. Terrain-aware detonation camera, smooth spline
+transitions, and water fades preserve continuity between overhead and
+underwater views.
 
 The viewer never influences simulation state.
 
@@ -442,12 +448,21 @@ destroyed. This creates natural end-of-life without an arbitrary timer,
 and means a torpedo that loses its target and slows down in a tight
 search pattern will eventually sink on its own.
 
-Fuel is limited (180 seconds at full throttle). At cruise speed
-(~25 m/s), this gives roughly 4.5 km of powered range plus coast time.
+Fuel is limited to 240 seconds of powered running; any positive throttle
+uses that budget at the same rate. Neutral-fin cruise speed is about
+23 m/s, giving roughly 5.5 km of powered range plus coast time.
 Smart torpedo controllers reduce speed in the terminal phase for better
-maneuverability (turn radius halves when speed halves), at the cost of
-fuel efficiency. Long enough to execute a search pattern and re-acquire
-after a miss, short enough that a well-executed evasion can outlast it.
+maneuverability, at the cost of powered range and closing speed.
+Long enough to execute a search pattern and re-acquire after a miss,
+short enough that a well-executed evasion can outlast it.
+
+Yaw and pitch share one steering budget for changing the direction of
+travel. Pitch responds faster, but cannot add an independent tight turn
+on top of full yaw authority. Fin lift falls continuously beyond stall,
+and deflected fins incur induced and profile drag: a sustained combined
+turn at maximum thrust settles near 19 m/s. The fixed-speed minimum
+spatial turn radius is about 160 m at 20 m/s and 184 m at 23 m/s;
+recovering from a missed pass also costs speed and time to turn.
 
 Torpedo guidance must manage speed carefully: throttle down too much and
 you lose the ability to steer, and eventually sink.
