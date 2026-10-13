@@ -87,8 +87,8 @@ class TorpedoTurnRadiusTest {
 					"The fixture must measure active pitch authority before the pitch stop");
 			double radius = torpedo.speed() / Math.abs(torpedo.pitchRate());
 			assertTrue(Double.isFinite(radius), "An infinite radius must not satisfy the pitch safety bound");
-			assertTrue(radius >= 80,
-					"23 m/s needs at least an 80 m pitch radius at " + angle + " degrees, got " + radius);
+			assertTrue(radius >= 175,
+					"23 m/s needs at least a 175 m pitch radius at " + angle + " degrees, got " + radius);
 		}
 	}
 
@@ -103,7 +103,34 @@ class TorpedoTurnRadiusTest {
 			// Omitting the cos(pitch) factor overestimates yaw curvature, so this is a conservative bound.
 			double radius = torpedo.speed() / Math.hypot(torpedo.yawRate(), torpedo.pitchRate());
 			assertTrue(Double.isFinite(radius), "The combined radius must be a finite steering measurement");
-			assertTrue(radius >= 70, "Combined steering at 23 m/s needs at least a 70 m radius, got " + radius);
+			assertTrue(radius >= 175, "Combined steering at 23 m/s needs at least a 175 m radius, got " + radius);
+		}
+	}
+
+	@Test
+	void switchingSteeringAxesCannotExceedTheSpatialTurnEnvelope() {
+		double[] speeds = {5, 10, 15, 20, 23};
+		double[] minimumRadii = {40, 75, 110, 150, 175};
+		for (int sample = 0; sample < speeds.length; sample++) {
+			double speed = speeds[sample];
+			var config = VehicleConfig.torpedo();
+			var torpedo = new TorpedoEntity(9000, 0, config, null, new Vec3(0, 0, -5000), 0, 0, 20, Color.RED);
+			var output = torpedo.createOutput();
+			var physics = new TorpedoPhysics();
+			for (int tick = 0; tick < 6_000; tick++) {
+				// Exercise axis transfers, reversals and both pitch stops without resetting orientation
+				// or angular momentum. Speed is held to isolate the spatial steering envelope.
+				int phase = (tick / 300) % 4;
+				output.setRudder(phase < 2 ? 2.0 / 3 : -2.0 / 3);
+				output.setSternPlanes(phase == 0 ? 0 : phase == 1 ? 2.0 / 3 : -2.0 / 3);
+				torpedo.setSpeed(speed);
+				physics.step(torpedo, DT, null, null, null);
+				double directionRate = Math.hypot(torpedo.yawRate() * Math.cos(torpedo.pitch()), torpedo.pitchRate());
+				if (directionRate > 1e-8) {
+					assertTrue(torpedo.speed() / directionRate >= minimumRadii[sample],
+							"A transient combined turn must retain its spatial radius at " + speed + " m/s");
+				}
+			}
 		}
 	}
 
@@ -127,9 +154,11 @@ class TorpedoTurnRadiusTest {
 		torpedo.setActualSternPlanes(planes);
 		var physics = new TorpedoPhysics();
 		for (int tick = 0; tick < Math.round(60 / DT); tick++) {
+			// Fixed-speed fin authority is separate from the speed cost of a powered turn.
 			// Hold orientation away from its stop while preserving the angular-rate response.
 			torpedo.setPitch(0);
 			physics.step(torpedo, DT, null, null, null);
+			torpedo.setSpeed(speed);
 		}
 		assertEquals(speed, torpedo.speed(), 1e-10, "The fixture must maintain the requested speed");
 		assertTrue(torpedo.alive() && torpedo.fuelRemaining() > 0,

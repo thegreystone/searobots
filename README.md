@@ -154,10 +154,13 @@ mvn exec:exec -pl searobots-viewer
 - **Free Look**: detached orbit with manual control
 - **Fly-by**: static camera watching the entity pass by
 - **Director** (default): automatic cinematic camera with event-driven
-  cuts. Cycles through all entities with structured transitions
-  (close underwater, birds-eye, tactical overview). Automatically
-  cuts to torpedo launches, terminal approaches, and explosions.
-  North-up overhead views for situational awareness.
+  cuts. Low bow-quarter passes, close fly-bys, and rising orbits reveal
+  hull details; torpedo tracking uses the same push-in/pull-back at
+  torpedo scale. Terminal approaches keep the weapon and target framed
+  from the same side of the action. A north-up tactical view returns
+  roughly every 30 seconds and holds both submarines in view for at least
+  4.5 readable seconds. Imminent impacts, explosions, and sinking events
+  take priority. Framing adapts to the viewport shape.
 
 #### Ship Configuration
 

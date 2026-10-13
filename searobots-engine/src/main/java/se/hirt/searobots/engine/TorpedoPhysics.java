@@ -46,6 +46,9 @@ public final class TorpedoPhysics {
 	private static final double LIFT_COEFFICIENT = 0.3; // lift per m/s^2 at depth
 	private static final double MAX_CONTROL_DEFLECTION = Math.PI / 4;
 	private static final double FULL_DEFLECTION_LIFT_FRACTION = 0.6;
+	// Game-calibrated fin drag: lift-induced loss plus profile loss at large deflections.
+	private static final double INDUCED_DRAG_FACTOR = 0.002;
+	private static final double FIN_PROFILE_DRAG_FACTOR = 0.02;
 	private static final int MAX_TERRAIN_BROADPHASE_CORNERS = 256;
 
 	/**
@@ -106,16 +109,7 @@ public final class TorpedoPhysics {
 		}
 		torp.setActualThrottle(actualThrottle);
 
-		// 3. Thrust and drag
-		double thrust = cfg.maxThrust() * actualThrottle;
-		double speed = torp.speed();
-		double drag = cfg.dragCoeff() * speed * Math.abs(speed);
-		speed += (thrust - drag) / cfg.massSurge() * dt;
-		if (speed < 0)
-			speed = 0; // no reverse
-		torp.setSpeed(speed);
-
-		// 4. Control surface slew (faster than submarine: small fins, less inertia)
+		// 3. Control surface slew (faster than submarine: small fins, less inertia)
 		double controlSlewRate = 1.5; // faster than sub's 0.57
 		double maxControlChange = controlSlewRate * dt;
 
@@ -137,17 +131,34 @@ public final class TorpedoPhysics {
 		}
 		torp.setActualSternPlanes(actualPlanes);
 
-		// 5. Yaw dynamics (same first-order model as submarine, different coefficients)
 		double rudderAngle = actualRudder * MAX_CONTROL_DEFLECTION;
 		double rudderCl = liftCoefficient(rudderAngle, cfg.stallAngle());
+		double planesAngle = actualPlanes * MAX_CONTROL_DEFLECTION;
+		double planesCl = liftCoefficient(planesAngle, cfg.stallAngle());
+
+		// 4. Thrust and drag. A hard turn must spend speed as well as angular authority;
+		// stalled fins still incur profile drag even after their lift has fallen.
+		double rudderSin = Math.sin(rudderAngle), planesSin = Math.sin(planesAngle);
+		double finDrag = 0.5 * WATER_DENSITY * (INDUCED_DRAG_FACTOR
+				* (cfg.rudderArea() * rudderCl * rudderCl + cfg.planesArea() * planesCl * planesCl)
+				+ FIN_PROFILE_DRAG_FACTOR
+						* (cfg.rudderArea() * rudderSin * rudderSin + cfg.planesArea() * planesSin * planesSin));
+		double thrust = cfg.maxThrust() * actualThrottle;
+		double speed = torp.speed();
+		double drag = (cfg.dragCoeff() + finDrag) * speed * Math.abs(speed);
+		speed = Math.max(0, speed + (thrust - drag) / cfg.massSurge() * dt);
+		torp.setSpeed(speed);
+
+		// 5. Steering authority. Pitch responds faster than yaw, but has comparable steady
+		// authority. Both axes share one budget for changing the direction of travel.
 		double rudderMoment = 0.5 * WATER_DENSITY * speed * Math.abs(speed) * cfg.rudderArea() * rudderCl
 				* cfg.rudderArm();
 
 		double baseInertia = cfg.massSurge() * cfg.rotationalInertia();
 		// Torpedo: long narrow body generates enormous rotational resistance at speed.
 		// Speed damping grows with v^2, making the torpedo progressively less
-		// maneuverable at higher speeds. At 20 m/s the turn radius is ~200m;
-		// at 5 m/s it's much tighter (~30m) but control surfaces are also weaker.
+		// maneuverable at higher speeds. At fixed speed the optimum level turn radius
+		// is about 160m at 20m/s and 44m at 5m/s; powered turns also lose speed to fin drag.
 		double speedDampingCoeff = 0.4; // higher than sub's 0.05, but allows reasonable turns
 		double speedDamping = baseInertia * speedDampingCoeff * speed * Math.abs(speed);
 		double effectiveInertia = baseInertia + speedDamping;
@@ -158,45 +169,65 @@ public final class TorpedoPhysics {
 		double tau = effectiveInertia / (cfg.swayDragCoeff() * cfg.hullMomentArm() * absSpeed);
 		tau = Math.clamp(tau, 0.5, 10.0); // torpedoes respond faster
 
-		double yawRate = torp.yawRate();
-		yawRate += (yawRateSteady - yawRate) * (1.0 - Math.exp(-dt / tau));
-		torp.setYawRate(yawRate);
+		double pitchMoment = 0.5 * WATER_DENSITY * speed * Math.abs(speed) * cfg.planesArea() * planesCl
+				* cfg.planesArm();
+		double pitchInertia = baseInertia * 1.5 + speedDamping;
+		double pitchRateSteady = pitchInertia > 0 ? pitchMoment / pitchInertia : 0;
+		double pitchTau = Math.clamp(pitchInertia / (cfg.swayDragCoeff() * absSpeed), 1.2, 6.0);
 
-		double heading = torp.heading() + yawRate * dt;
-		heading = heading % (2 * Math.PI);
+		double pitch = torp.pitch();
+		double pitchLimit = Math.PI / 3; // max 60 deg
+		double previousPitchRate = torp.pitchRate();
+		if ((pitch >= pitchLimit && pitchRateSteady > 0) || (pitch <= -pitchLimit && pitchRateSteady < 0))
+			pitchRateSteady = 0;
+		if ((pitch >= pitchLimit && previousPitchRate > 0) || (pitch <= -pitchLimit && previousPitchRate < 0))
+			previousPitchRate = 0;
+
+		double peakCl = Math.abs(liftCoefficient(cfg.stallAngle(), cfg.stallAngle()));
+		double peakYawRate = effectiveInertia > 0
+				? 0.5 * WATER_DENSITY * speed * speed * cfg.rudderArea() * peakCl * cfg.rudderArm() / effectiveInertia
+				: 0;
+		double peakPitchRate = pitchInertia > 0
+				? 0.5 * WATER_DENSITY * speed * speed * cfg.planesArea() * peakCl * cfg.planesArm() / pitchInertia : 0;
+		double steeringBudget = Math.max(peakYawRate, peakPitchRate);
+		double cosPitch = Math.cos(pitch);
+		double demandedRate = Math.hypot(yawRateSteady * cosPitch, pitchRateSteady);
+		if (demandedRate > steeringBudget) {
+			double scale = steeringBudget / demandedRate;
+			yawRateSteady *= scale;
+			pitchRateSteady *= scale;
+		}
+
+		// Unequal response times must not briefly double the budget when switching axes.
+		// Preserve naturally decaying prior motion, including rotation of a stopped hull.
+		double yawRetention = Math.exp(-dt / tau), pitchRetention = Math.exp(-dt / pitchTau);
+		double retainedYaw = torp.yawRate() * yawRetention;
+		double retainedPitch = previousPitchRate * pitchRetention;
+		double yawRate = retainedYaw + yawRateSteady * (1 - yawRetention);
+		double pitchRate = retainedPitch + pitchRateSteady * (1 - pitchRetention);
+		// Inward pitch motion increases yaw's contribution to spatial curvature. Bound the
+		// entire pitch sweep, including a crossing of level, before advancing orientation.
+		double endPitch = Math.clamp(pitch + pitchRate * dt, -pitchLimit, pitchLimit);
+		double sweepCosine = pitch * endPitch <= 0 ? 1 : Math.max(Math.abs(cosPitch), Math.abs(Math.cos(endPitch)));
+		double allowedRate = Math.max(steeringBudget, Math.hypot(retainedYaw * sweepCosine, retainedPitch));
+		double directionRate = Math.hypot(yawRate * sweepCosine, pitchRate);
+		if (directionRate > allowedRate) {
+			double scale = allowedRate / directionRate;
+			yawRate *= scale;
+			pitchRate *= scale;
+		}
+		torp.setYawRate(yawRate);
+		torp.setPitchRate(pitchRate);
+
+		// 6. Advance orientation, removing only outward motion at the pitch stops.
+		double heading = (torp.heading() + yawRate * dt) % (2 * Math.PI);
 		if (heading < 0)
 			heading += 2 * Math.PI;
 		torp.setHeading(heading);
-
-		// 6. Pitch dynamics
-		if (cfg.planesArea() > 0) {
-			double planesAngle = actualPlanes * MAX_CONTROL_DEFLECTION;
-			double planesCl = liftCoefficient(planesAngle, cfg.stallAngle());
-			double pitchMoment = 0.5 * WATER_DENSITY * speed * Math.abs(speed) * cfg.planesArea() * planesCl
-					* cfg.planesArm();
-
-			// Torpedoes should answer depth commands faster than they answer yaw.
-			// Keeping pitch damping as high as yaw made deep targets effectively
-			// unreachable before the weapon had already overrun them.
-			double pitchDampingCoeff = 0.18;
-			double pitchSpeedDamping = baseInertia * pitchDampingCoeff * speed * Math.abs(speed);
-			double pitchInertia = baseInertia * 1.5 + pitchSpeedDamping;
-			double pitchRateSteady = pitchInertia > 0 ? pitchMoment / pitchInertia : 0;
-			double pitchTau = Math.clamp(pitchInertia / (cfg.swayDragCoeff() * absSpeed), 1.2, 6.0);
-
-			double pitchRate = torp.pitchRate();
-			pitchRate += (pitchRateSteady - pitchRate) * (1.0 - Math.exp(-dt / pitchTau));
-			torp.setPitchRate(pitchRate);
-
-			double pitch = torp.pitch() + pitchRate * dt;
-			double pitchLimit = Math.PI / 3; // max 60 deg
-			pitch = Math.clamp(pitch, -pitchLimit, pitchLimit);
-			if ((pitch == pitchLimit && pitchRate > 0) || (pitch == -pitchLimit && pitchRate < 0)) {
-				// The pitch stop removes outward motion; inward control can recover immediately.
-				torp.setPitchRate(0);
-			}
-			torp.setPitch(pitch);
-		}
+		pitch = Math.clamp(pitch + pitchRate * dt, -pitchLimit, pitchLimit);
+		if ((pitch == pitchLimit && pitchRate > 0) || (pitch == -pitchLimit && pitchRate < 0))
+			torp.setPitchRate(0);
+		torp.setPitch(pitch);
 
 		// 7. Buoyancy and lift
 		double verticalSpeed = torp.verticalSpeed();
