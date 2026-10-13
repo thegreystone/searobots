@@ -32,7 +32,8 @@ package se.hirt.searobots.engine;
 final class WreckDynamics {
 
 	private static final double FLOOD_TIME_CONSTANT = 20;
-	private static final double LOST_BUOYANCY_FRACTION = 0.03;
+	private static final double SHIP_LOST_BUOYANCY_FRACTION = 0.03;
+	private static final double SUBMARINE_LOST_BUOYANCY_FRACTION = 0.015;
 	private static final double WATER_DENSITY = 1025;
 
 	private WreckDynamics() {
@@ -55,16 +56,13 @@ final class WreckDynamics {
 		sub.setActualSternPlanes(0);
 		sub.setBallast(0);
 
-		if (!sub.vehicleConfig().surfaceLocked()) {
-			// Submarine wrecks already flood through the existing ballast slew and force model.
-			return 0;
-		}
-
 		double fraction = 1 - (1 - sub.wreckFloodFraction()) * Math.exp(-Math.max(0, dt) / FLOOD_TIME_CONSTANT);
 		sub.setWreckFloodFraction(fraction);
-		// A modest weight imbalance gives gradual sinking rather than free fall. Flooding
-		// eventually loses 3% of dry weight in buoyancy, comparable to a flooded submarine.
-		return -LOST_BUOYANCY_FRACTION * sub.vehicleConfig().dryMass() * 9.81 * fraction;
+		// Flooded submarine ballast supplies the initial sinking force. Continued hull flooding
+		// adds a smaller imbalance over tens of seconds; passive water drag bounds the descent.
+		double lostBuoyancy = sub.vehicleConfig().surfaceLocked() ? SHIP_LOST_BUOYANCY_FRACTION
+				: SUBMARINE_LOST_BUOYANCY_FRACTION;
+		return -lostBuoyancy * sub.vehicleConfig().dryMass() * 9.81 * fraction;
 	}
 
 	static double verticalDragCoefficient(SubmarineEntity sub) {

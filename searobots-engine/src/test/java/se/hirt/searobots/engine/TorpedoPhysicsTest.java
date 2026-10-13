@@ -81,12 +81,13 @@ class TorpedoPhysicsTest {
 		double previousYaw = Double.POSITIVE_INFINITY;
 		double previousPitch = Double.POSITIVE_INFINITY;
 		for (double angle : new double[] {30, 35, 40, 45}) {
-			var torpedo = settled(20, Math.toRadians(angle), Math.toRadians(angle));
-			assertTrue(torpedo.yawRate() < previousYaw, "Increasing stalled rudder must reduce yaw authority");
-			assertTrue(torpedo.pitchRate() < previousPitch,
+			var yaw = settled(20, Math.toRadians(angle), 0);
+			var pitch = settled(20, 0, Math.toRadians(angle));
+			assertTrue(yaw.yawRate() < previousYaw, "Increasing stalled rudder must reduce yaw authority");
+			assertTrue(pitch.pitchRate() < previousPitch,
 					"Increasing stalled stern planes must reduce pitch authority");
-			previousYaw = torpedo.yawRate();
-			previousPitch = torpedo.pitchRate();
+			previousYaw = yaw.yawRate();
+			previousPitch = pitch.pitchRate();
 		}
 	}
 
@@ -119,24 +120,84 @@ class TorpedoPhysicsTest {
 
 	@Test
 	void reducingStalledDeflectionRestoresAuthorityWithoutAnInstantRateChange() {
-		var torpedo = settled(20, Math.toRadians(45), Math.toRadians(45));
-		double stalledYaw = torpedo.yawRate();
-		double stalledPitch = torpedo.pitchRate();
-		var output = torpedo.createOutput();
-		output.setRudder(2.0 / 3);
-		output.setSternPlanes(2.0 / 3);
-		advance(torpedo, DT);
-		assertEquals(stalledYaw, torpedo.yawRate(), stalledYaw * 0.01,
-				"Stall recovery must preserve gradual yaw response");
-		assertEquals(stalledPitch, torpedo.pitchRate(), stalledPitch * 0.01,
+		var yaw = settled(20, Math.toRadians(45), 0);
+		var pitch = settled(20, 0, Math.toRadians(45));
+		double stalledYaw = yaw.yawRate();
+		double stalledPitch = pitch.pitchRate();
+		yaw.createOutput().setRudder(2.0 / 3);
+		pitch.createOutput().setSternPlanes(2.0 / 3);
+		advance(yaw, DT);
+		advance(pitch, DT);
+		assertEquals(stalledYaw, yaw.yawRate(), stalledYaw * 0.01, "Stall recovery must preserve gradual yaw response");
+		assertEquals(stalledPitch, pitch.pitchRate(), stalledPitch * 0.01,
 				"Stall recovery must preserve gradual pitch response");
-		advance(torpedo, 60);
-		assertEquals(2.0 / 3, torpedo.actualRudder(), 0);
-		assertEquals(2.0 / 3, torpedo.actualSternPlanes(), 0);
-		assertTrue(torpedo.yawRate() > stalledYaw * 1.5,
+		advance(yaw, 60);
+		advance(pitch, 60);
+		assertEquals(2.0 / 3, yaw.actualRudder(), 0);
+		assertEquals(2.0 / 3, pitch.actualSternPlanes(), 0);
+		assertTrue(yaw.yawRate() > stalledYaw * 1.5,
 				"Backing off full rudder to the stall angle must restore yaw authority");
-		assertTrue(torpedo.pitchRate() > stalledPitch * 1.5,
+		assertTrue(pitch.pitchRate() > stalledPitch * 1.5,
 				"Backing off full stern planes to the stall angle must restore pitch authority");
+	}
+
+	@Test
+	void combinedSteeringSharesTheAuthorityOfOneAxis() {
+		for (double speed : new double[] {5, 10, 15, 20, 23}) {
+			var yaw = settled(speed, Math.toRadians(30), 0);
+			var pitch = settled(speed, 0, Math.toRadians(30));
+			var combined = settled(speed, Math.toRadians(30), Math.toRadians(30));
+			double maximum = Math.max(yaw.yawRate(), pitch.pitchRate());
+			assertTrue(Math.hypot(combined.yawRate(), combined.pitchRate()) <= maximum * 1.002,
+					"Using both fins must not gain a second turning budget at " + speed + " m/s");
+			assertTrue(combined.yawRate() > 0 && combined.pitchRate() > 0,
+					"Sharing authority must preserve both requested steering directions");
+		}
+	}
+
+	@Test
+	void inwardPitchSweepCannotIncreaseYawContributionBeyondTheSharedBudget() {
+		var peak = settled(20, Math.toRadians(30), 0);
+		advance(peak, 60); // converge the reference beyond the ordinary 60-second response fixture
+		var torpedo = fixedSpeed(20, Math.toRadians(30), -Math.toRadians(30));
+		torpedo.setPitch(Math.toRadians(50));
+		torpedo.setYawRate(0.12);
+		torpedo.setPitchRate(-0.095);
+		assertTrue(Math.hypot(torpedo.yawRate() * Math.cos(torpedo.pitch()), torpedo.pitchRate()) < peak.yawRate(),
+				"The fixture must start inside the steering envelope");
+		PHYSICS.step(torpedo, 1, null, null, null);
+		assertTrue(torpedo.pitch() < Math.toRadians(50), "The step must move pitch toward level");
+		assertTrue(Math.hypot(torpedo.yawRate() * Math.cos(torpedo.pitch()), torpedo.pitchRate()) <= peak.yawRate(),
+				"The pitch sweep must not gain curvature just because yaw becomes more horizontal");
+	}
+
+	@Test
+	void poweredHardTurnCostsSpeedWhileStraightRunRetainsCruiseSpeed() {
+		var straight = fixedSpeed(23, 0, 0);
+		var turning = fixedSpeed(23, Math.toRadians(30), Math.toRadians(30));
+		for (int tick = 0; tick < 6_000; tick++) {
+			PHYSICS.step(straight, DT, null, null, null);
+			PHYSICS.step(turning, DT, null, null, null);
+		}
+		assertEquals(23, straight.speed(), 1e-10, "Neutral fins must retain the configured top speed");
+		assertTrue(turning.speed() > 18.5 && turning.speed() < 20,
+				"A sustained combined turn should lose a modest amount of cruise speed, got " + turning.speed());
+	}
+
+	@Test
+	void hardSteeringAlsoDissipatesSpeedWhileCoasting() {
+		var straight = fixedSpeed(20, 0, 0);
+		var turning = fixedSpeed(20, Math.toRadians(30), Math.toRadians(30));
+		for (var torpedo : new TorpedoEntity[] {straight, turning}) {
+			torpedo.createOutput().setThrottle(0);
+			torpedo.setActualThrottle(0);
+		}
+		for (int tick = 0; tick < 1_000; tick++) {
+			PHYSICS.step(straight, DT, null, null, null);
+			PHYSICS.step(turning, DT, null, null, null);
+		}
+		assertTrue(turning.speed() < straight.speed() - 0.5,
+				"A coasting weapon must pay the same steering loss without propulsion to replace it");
 	}
 
 	@Test
@@ -203,11 +264,13 @@ class TorpedoPhysicsTest {
 	}
 
 	private static void advance(TorpedoEntity torpedo, double seconds) {
+		double speed = torpedo.speed();
 		for (int tick = 0; tick < Math.round(seconds / DT); tick++) {
-			// These tests measure unconstrained fin authority and rate response. Keep the
-			// orientation away from the pitch stops without resetting angular momentum.
+			// Isolate fin authority at fixed flow speed, away from pitch stops, while keeping
+			// angular momentum. Powered/coasting speed loss is exercised separately above.
 			torpedo.setPitch(0);
 			PHYSICS.step(torpedo, DT, null, null, null);
+			torpedo.setSpeed(speed);
 		}
 	}
 }

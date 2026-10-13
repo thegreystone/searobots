@@ -434,7 +434,8 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 		fpp.addFilter(fogFilter);
 
 		fpp.addFilter(waterFilter);
-		// Underwater effects (ExplosionEffects.UNDERWATER) draw here, after the water and fog filters
+		// Underwater effects and bubble wakes draw after water and fog, which would otherwise obscure
+		// particles using the depth of the sky or seabed behind them.
 		fpp.addFilter(new com.jme3.post.filters.TranslucentBucketFilter());
 		// Bloom on glowing objects only (the team lights), so the rest of the scene keeps its look
 		var bloom = new BloomFilter(BloomFilter.GlowMode.Objects);
@@ -2352,6 +2353,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 				bubbleMat.getAdditionalRenderState().setBlendMode(RenderState.BlendMode.Additive);
 				bubbleMat.getAdditionalRenderState().setFaceCullMode(com.jme3.material.RenderState.FaceCullMode.Off);
 				bubbles.setMaterial(bubbleMat);
+				bubbles.setQueueBucket(RenderQueue.Bucket.Translucent);
 				bubbles.setImagesX(1);
 				bubbles.setImagesY(3);
 				bubbles.setStartColor(new ColorRGBA(1f, 1f, 1f, 0.6f));
@@ -2533,6 +2535,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 				bMat.getAdditionalRenderState().setBlendMode(RenderState.BlendMode.Additive);
 				bMat.getAdditionalRenderState().setFaceCullMode(com.jme3.material.RenderState.FaceCullMode.Off);
 				torpBub.setMaterial(bMat);
+				torpBub.setQueueBucket(RenderQueue.Bucket.Translucent);
 				torpBub.setImagesX(1);
 				torpBub.setImagesY(3);
 				torpBub.setStartColor(new ColorRGBA(1f, 1f, 1f, 0.5f));
@@ -2959,10 +2962,10 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 		case DIRECTOR -> {
 			if (cinematicDirector == null) {
 				cinematicDirector = new CinematicDirector(() -> latestSnapshots, () -> latestTorpedoSnapshots, subNodes,
-						torpedoNodes, standaloneWorld != null ? standaloneWorld.terrain() : null);
+						torpedoNodes, standaloneWorld != null ? standaloneWorld.terrain() : null, cam);
 			}
 			int newId = cinematicDirector.update(tpf, outPos, outLookAt);
-			if (newId != selectedSubId) {
+			if (newId >= 0 && newId != selectedSubId) {
 				selectedSubId = newId;
 				chaseInitialized = false;
 			}

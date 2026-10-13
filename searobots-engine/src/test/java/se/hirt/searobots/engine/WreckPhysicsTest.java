@@ -123,6 +123,35 @@ class WreckPhysicsTest {
 	}
 
 	@Test
+	void submarineWreckKeepsAcceleratingAsHullFloodsAfterBallastIsFull() {
+		var sub = vehicle(VehicleConfig.submarine(), 0, new Vec3(0, 0, -20));
+		sub.setHp(0);
+		var physics = new SubmarinePhysics(CONFIG);
+		var terrain = flat(-500);
+		double descentAtThirtySeconds = 0;
+		double descentAtSixtySeconds = 0;
+		for (int tick = 1; tick <= 6000; tick++) {
+			physics.step(sub, 0.02, terrain, NO_CURRENT, CONFIG.battleArea());
+			assertTrue(sub.verticalSpeed() <= 0 && sub.verticalSpeed() > -1.7,
+					"Continued flooding must retain a bounded, downward terminal descent.");
+			if (tick == 500) {
+				assertEquals(0, sub.actualBallast(), 1e-12,
+						"Ballast must already be fully flooded before the later speed increase.");
+			} else if (tick == 1500) {
+				descentAtThirtySeconds = -sub.verticalSpeed();
+			} else if (tick == 3000) {
+				descentAtSixtySeconds = -sub.verticalSpeed();
+			}
+		}
+		assertTrue(descentAtSixtySeconds > descentAtThirtySeconds + 0.04,
+				"Hull flooding must continue increasing descent after ballast-driven sinking would level off.");
+		assertTrue(-sub.verticalSpeed() > descentAtSixtySeconds + 0.01,
+				"Descent should approach its limit gradually as the remaining buoyancy is lost.");
+		assertTrue(-sub.verticalSpeed() > 1.6, "A fully flooded wreck must sink modestly faster than ballast alone.");
+		assertTrue(sub.wreckFloodFraction() > 0.99);
+	}
+
+	@Test
 	void destructionDisablesThrustAndSteeringImmediatelyButRetainsDrift() {
 		var ship = vehicle(VehicleConfig.surfaceShip(), 0, Vec3.ZERO);
 		ship.setThrottle(1);
@@ -146,18 +175,20 @@ class WreckPhysicsTest {
 
 	@Test
 	void floodExposureIsIndependentOfTickSubdivision() {
-		var oneStep = vehicle(VehicleConfig.surfaceShip(), 0, Vec3.ZERO);
-		var manySteps = vehicle(VehicleConfig.surfaceShip(), 1, Vec3.ZERO);
-		oneStep.setHp(0);
-		manySteps.setHp(0);
-		double oneForce = WreckDynamics.advance(oneStep, 20);
-		double manyForce = 0;
-		for (int tick = 0; tick < 1000; tick++) {
-			manyForce = WreckDynamics.advance(manySteps, 0.02);
+		for (var config : List.of(VehicleConfig.surfaceShip(), VehicleConfig.submarine())) {
+			var oneStep = vehicle(config, 0, Vec3.ZERO);
+			var manySteps = vehicle(config, 1, Vec3.ZERO);
+			oneStep.setHp(0);
+			manySteps.setHp(0);
+			double oneForce = WreckDynamics.advance(oneStep, 20);
+			double manyForce = 0;
+			for (int tick = 0; tick < 1000; tick++) {
+				manyForce = WreckDynamics.advance(manySteps, 0.02);
+			}
+			assertEquals(1 - Math.exp(-1), oneStep.wreckFloodFraction(), 1e-12);
+			assertEquals(oneStep.wreckFloodFraction(), manySteps.wreckFloodFraction(), 1e-12);
+			assertEquals(oneForce, manyForce, 1e-6);
 		}
-		assertEquals(1 - Math.exp(-1), oneStep.wreckFloodFraction(), 1e-12);
-		assertEquals(oneStep.wreckFloodFraction(), manySteps.wreckFloodFraction(), 1e-12);
-		assertEquals(oneForce, manyForce, 1e-6);
 	}
 
 	@Test
