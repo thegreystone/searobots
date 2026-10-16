@@ -9,6 +9,7 @@ Run the commands below from the repository root after building the project.
 The viewer uses 4x multisampling where the renderer supports it and a final antialiasing
 pass, finer terrain textures, angle-dependent water reflections, and soft vegetation
 contact shadows. F3 opens the render settings, including fine control over water highlights.
+
 ## Terrain and materials
 
 Generated islands have seeded, gently rising beach shelves along suitable coast sections,
@@ -82,4 +83,3 @@ java -XstartOnFirstThread -Djava.awt.headless=true \
   -cp searobots-viewer/target/searobots-viewer-0.1.2-SNAPSHOT.jar \
   se.hirt.searobots.viewer.tools.TreeImpostorBaker
 ```
-
