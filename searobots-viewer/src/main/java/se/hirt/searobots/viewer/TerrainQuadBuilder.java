@@ -32,37 +32,39 @@ import com.jme3.asset.AssetManager;
 import com.jme3.material.Material;
 import com.jme3.texture.image.ColorSpace;
 import com.jme3.renderer.Camera;
-import com.jme3.terrain.geomipmap.TerrainLodControl;
 import com.jme3.terrain.geomipmap.TerrainQuad;
-import com.jme3.terrain.geomipmap.lodcalc.DistanceLodCalculator;
 import com.jme3.texture.Image;
 import com.jme3.texture.Texture;
 import com.jme3.texture.Texture2D;
 import com.jme3.util.BufferUtils;
 import se.hirt.searobots.api.TerrainMap;
+import se.hirt.searobots.engine.PerlinNoise;
+import se.hirt.searobots.viewer.shoreline.ShorelineTerrain;
 
 import java.nio.ByteBuffer;
 
 /**
- * Builds a jMonkeyEngine {@link TerrainQuad} from a {@link TerrainMap}, with LOD, lit texture
- * splatting via procedural alpha maps, normal maps, and tri-planar texturing for steep slopes.
+ * Builds a jMonkeyEngine {@link TerrainQuad} from a {@link TerrainMap}, with lit texture splatting
+ * via procedural alpha maps, normal maps, and tri-planar texturing for steep slopes.
  * <p>
- * Three surface materials are blended by elevation and slope:
+ * Four PBR surface materials are blended by elevation and slope:
  * <ol>
- * <li>Rock for the seabed and exposed cliffs</li>
- * <li>Beach / coastal sand</li>
- * <li>Forest / vegetation</li>
+ * <li>Dry coastal sand</li>
+ * <li>Forest floor</li>
+ * <li>Cliff rock, blended with gravel and sediment below water</li>
+ * <li>Wet sand around the waterline</li>
  * </ol>
  * <p>
  * TerrainQuad requires a (2^n + 1) square heightmap. The simulation's 1600x1600 grid is resampled
- * to 1025x1025 with bilinear interpolation.
+ * to 2049x2049 with bilinear interpolation, retaining the coastline's source detail.
  */
 final class TerrainQuadBuilder {
 
-	/** Terrain quad size: 1025 = 2^10 + 1. */
-	private static final int QUAD_SIZE = 1025;
+	/** Terrain quad size: 2049 = 2^11 + 1, about 8m per sample in the default world. */
+	private static final int QUAD_SIZE = 2049;
 	/** Patch size for LOD tiles: 65 = 2^6 + 1. */
 	private static final int PATCH_SIZE = 65;
+	private static final PerlinNoise SURFACE_NOISE = new PerlinNoise(0x534f494c50415443L);
 
 	private TerrainQuadBuilder() {
 	}
@@ -75,13 +77,13 @@ final class TerrainQuadBuilder {
 	 * @param assetManager
 	 *            jME asset manager for loading textures
 	 * @param camera
-	 *            camera for LOD control
+	 *            main view camera
 	 * @return a TerrainQuad positioned and scaled to match world coordinates
 	 */
 	static TerrainQuad build(TerrainMap terrain, AssetManager assetManager, Camera camera) {
-		float[] heightmap = resample(terrain);
 		double worldW = terrain.worldWidth();
 		float scaleXZ = (float) (worldW / (QUAD_SIZE - 1));
+		float[] heightmap = smoothDryRelief(resample(terrain), QUAD_SIZE, scaleXZ);
 		TerrainQuad quad = createGeometry(heightmap, PATCH_SIZE, QUAD_SIZE, scaleXZ);
 		quad.setMaterial(createMaterial(assetManager, heightmap, scaleXZ));
 
@@ -96,12 +98,9 @@ final class TerrainQuadBuilder {
 		float centreZ = (float) -(terrain.getOriginY() + worldH / 2);
 		quad.setLocalTranslation(centreX, 0, centreZ);
 
-		// LOD control: reduce triangle count for distant patches.
-		// High multiplier (5) keeps detail visible further from the camera,
-		// preventing distant terrain from appearing flat.
-		TerrainLodControl lodControl = new TerrainLodControl(quad, camera);
-		lodControl.setLodCalculator(new DistanceLodCalculator(PATCH_SIZE, 5f));
-		quad.addControl(lodControl);
+		// Keep the sampled surface used for tree/scenery grounding at every distance. Coarse
+		// geomipmap levels can erase small islands beneath their fixed-height vegetation.
+		// Terrain patches still use ordinary frustum culling; vegetation retains its own LOD.
 
 		System.out.printf(
 				"TerrainQuad: %dx%d resampled from %dx%d, scale=%.2f, " + "world=%.0fx%.0f, elev=[%.0f, %.0f]%n",
@@ -140,7 +139,7 @@ final class TerrainQuadBuilder {
 
 		for (int row = 0; row < QUAD_SIZE; row++) {
 			// TerrainQuad row 0 corresponds to jME -Z = sim +Y (north).
-			// Map row 0..1024 to sim Y from north (originY + worldH) to south (originY).
+			// Map rows to sim Y from north (originY + worldH) to south (originY).
 			double simY = originY + worldH - row * (worldH / (QUAD_SIZE - 1));
 			for (int col = 0; col < QUAD_SIZE; col++) {
 				double simX = originX + col * (worldW / (QUAD_SIZE - 1));
@@ -151,53 +150,81 @@ final class TerrainQuadBuilder {
 		return heightmap;
 	}
 
+	/**
+	 * Rounds small inland height spikes over a roughly 25m footprint. This is visual relief only:
+	 * water, beaches and every vertex touching a water-bearing cell keep their original heights. A
+	 * six-metre displacement bound retains headlands and larger hills; tree/scenery placement uses
+	 * the resulting rendered surface.
+	 */
+	static float[] smoothDryRelief(float[] source, int size, float cellSize) {
+		int radius = Math.max(1, (int) Math.ceil(24f / cellSize));
+		float[] kernel = new float[radius * 2 + 1];
+		float total = 0;
+		for (int offset = -radius; offset <= radius; offset++) {
+			kernel[offset + radius] = (float) Math.exp(-0.5 * Math.pow(offset * cellSize / 12f, 2));
+			total += kernel[offset + radius];
+		}
+		for (int i = 0; i < kernel.length; i++)
+			kernel[i] /= total;
+		float[] horizontal = new float[source.length], result = source.clone();
+		for (int row = 0; row < size; row++) {
+			for (int col = 0; col < size; col++) {
+				int index = row * size + col;
+				if (source[index] <= 12f) {
+					horizontal[index] = source[index];
+					continue;
+				}
+				for (int offset = -radius; offset <= radius; offset++) {
+					int x = Math.max(0, Math.min(size - 1, col + offset));
+					horizontal[index] += source[row * size + x] * kernel[offset + radius];
+				}
+			}
+		}
+		for (int row = 1; row < size - 1; row++) {
+			for (int col = 1; col < size - 1; col++) {
+				int index = row * size + col;
+				if (source[index] <= 20f)
+					continue;
+				boolean coastal = false;
+				for (int dz = -1; dz <= 1; dz++) {
+					for (int dx = -1; dx <= 1; dx++)
+						coastal |= source[index + dz * size + dx] <= 0f;
+				}
+				if (coastal)
+					continue;
+				float average = 0;
+				for (int offset = -radius; offset <= radius; offset++) {
+					int z = Math.max(0, Math.min(size - 1, row + offset));
+					average += horizontal[z * size + col] * kernel[offset + radius];
+				}
+				float displacement = Math.max(-6f, Math.min(6f, average - source[index]));
+				result[index] += displacement * smoothstep(20f, 40f, source[index]) * 0.8f;
+			}
+		}
+		return result;
+	}
+
 	// ── Material and alpha maps ────────────────────────────────────────
 
 	/**
-	 * Create a lit terrain material with 3 texture layers blended by procedural coverage derived
+	 * Create a PBR terrain material with four shared texture layers and procedural coverage derived
 	 * from elevation and slope.
 	 */
-	private static Material createMaterial(AssetManager assetManager, float[] heightmap, float cellSize) {
-		Material mat = new Material(assetManager, "Common/MatDefs/Terrain/TerrainLighting.j3md");
-		mat.setBoolean("useTriPlanarMapping", true);
-
-		// No specular: avoids washed-out highlights from strong sun
-		mat.setFloat("Shininess", 0f);
-
-		mat.setTexture("AlphaMap", generateAlphaMap(heightmap, QUAD_SIZE, cellSize));
-
-		// Tri-planar scales are repeats per local grid unit, not UV repeats across the whole terrain.
-		// Keep ground detail at believable scales (~17m rock, 11m sand, 27m vegetation on the
-		// 17km map) on vertical faces too. Every 64-cell patch contains an integer number of
-		// tiles, keeping patch-local projections continuous across patch boundaries.
-		// Base rock covers all depths and exposed cliffs; water and fog darken the deep seabed.
-		mat.setTexture("DiffuseMap", loadWrap(assetManager, "Textures/Terrain/PBR/Gravel015_1K_Color.png"));
-		mat.setTexture("NormalMap", loadWrap(assetManager, "Textures/Terrain/PBR/Gravel015_1K_Normal.png"));
-		mat.setFloat("DiffuseMap_0_scale", 1024f / (QUAD_SIZE - 1));
-
-		// First overlay (AlphaMap.G): beach sand.
-		mat.setTexture("DiffuseMap_1", loadWrap(assetManager, "Textures/Terrain/PBR/Ground037_1K_Color.png"));
-		mat.setTexture("NormalMap_1", loadWrap(assetManager, "Textures/Terrain/PBR/Ground037_1K_Normal.png"));
-		mat.setFloat("DiffuseMap_1_scale", 1536f / (QUAD_SIZE - 1));
-
-		// Second overlay (AlphaMap.B): lush green vegetation.
-		mat.setTexture("DiffuseMap_2", loadWrap(assetManager, "Textures/Terrain/custom/vegetation.png"));
-		mat.setTexture("NormalMap_2", loadWrap(assetManager, "Textures/Terrain/custom/vegetation_normal.png"));
-		mat.setFloat("DiffuseMap_2_scale", 640f / (QUAD_SIZE - 1));
-
-		return mat;
+	static Material createMaterial(AssetManager assetManager, float[] heightmap, float cellSize) {
+		int size = (int) Math.sqrt(heightmap.length);
+		return ShorelineTerrain.islandMaterial(assetManager, generateAlphaMap(heightmap, size, cellSize), cellSize);
 	}
 
 	/**
 	 * Generate an RGBA map for jME's ordered layer blending:
 	 *
 	 * <pre>
-	 * R = 1 (full base rock), G = sand coverage before vegetation, B = vegetation coverage, A = 0
+	 * R = 1 (dry sand base), G = forest coverage, B = exposed rock coverage, A = wet sand coverage
 	 * </pre>
 	 *
-	 * TerrainLighting multiplies the base by R, then mixes each later layer over the result. Its
-	 * channels are therefore coverages, not normalized weights. A fully covered base prevents dark
-	 * seams, including when the map is filtered between biomes.
+	 * AdvancedPBRTerrain mixes each successive layer over the result. Its channels are therefore
+	 * coverages, not normalized weights. A fully covered base prevents dark seams, including when
+	 * the map is filtered between biomes.
 	 */
 	static Texture2D generateAlphaMap(float[] heightmap, int size, float cellSize) {
 		ByteBuffer buf = BufferUtils.createByteBuffer(size * size * 4);
@@ -218,15 +245,18 @@ final class TerrainQuadBuilder {
 				float dzdy = (heightmap[rd * size + col] - heightmap[ru * size + col]) / ((rd - ru) * cellSize);
 				float slopeDeg = (float) Math.toDegrees(Math.atan(Math.sqrt(dzdx * dzdx + dzdy * dzdy)));
 
-				writeCoverage(buf, elev, slopeDeg);
+				float x = (col - (size - 1) * 0.5f) * cellSize;
+				float z = (hRow - (size - 1) * 0.5f) * cellSize;
+				writeCoverage(buf, elev, slopeDeg, x, z);
 			}
 		}
 		buf.flip();
 		return bufferToTexture(buf, size);
 	}
 
-	private static void writeCoverage(ByteBuffer buf, float elev, float slopeDeg) {
-		float forest = smoothstep(10, 13, elev);
+	private static void writeCoverage(ByteBuffer buf, float elev, float slopeDeg, float x, float z) {
+		float variation = (float) SURFACE_NOISE.noise(x / 85f, z / 85f);
+		float forest = smoothstep(10, 18, elev + variation * 2f);
 		float sand = smoothstep(-20, -5, elev) * (1 - forest);
 
 		// Sandy shallows and beaches remain flat; vegetation grows on steeper land.
@@ -237,18 +267,24 @@ final class TerrainQuadBuilder {
 		}
 
 		if (elev > 0) {
-			// Vegetation clings to slopes up to 50 degrees, with exposed rock on steep cliffs.
-			float cliff = smoothstep(50, 70, slopeDeg);
+			// Expose rock before the slope is too steep to support a canopy, avoiding bare green walls.
+			float cliff = smoothstep(35, 60, slopeDeg);
 			float peakExposure = smoothstep(100, 150, elev) * 0.3f;
 			float biomeScale = 1 - Math.max(cliff, peakExposure);
 			sand *= biomeScale;
 			forest *= biomeScale;
+			// Broad weathered pockets break up uninterrupted moss; detail tiles remain metre-sized.
+			float weathering = smoothstep(0.10f, 0.45f, Math.abs(variation)) * 0.22f;
+			forest *= 1 - weathering;
 		}
 
-		// mix(mix(rock, sand, G), forest, B) has final sand weight G * (1 - B).
-		// Invert that equation rather than writing normalized weights into the coverage map.
-		float sandCoverage = forest < 1 ? sand / (1 - forest) : 0;
-		buf.put((byte) 255).put(toByte(sandCoverage)).put(toByte(forest)).put((byte) 0);
+		float rock = Math.max(0, 1 - sand - forest);
+		float wetSand = sand * (1 - smoothstep(0.25f, 1.7f, elev));
+		float drySand = sand - wetSand;
+		// Invert the ordered GLSL mixes so wet sand never paints over cliff rock or forest.
+		float forestCoverage = drySand + forest > 0 ? forest / (drySand + forest) : 0;
+		float rockCoverage = wetSand < 1 ? rock / (1 - wetSand) : 0;
+		buf.put((byte) 255).put(toByte(forestCoverage)).put(toByte(rockCoverage)).put(toByte(wetSand));
 	}
 
 	private static byte toByte(float coverage) {
@@ -258,7 +294,7 @@ final class TerrainQuadBuilder {
 	private static Texture2D bufferToTexture(ByteBuffer buf, int size) {
 		Image img = new Image(Image.Format.RGBA8, size, size, buf, ColorSpace.Linear);
 		Texture2D tex = new Texture2D(img);
-		tex.setMinFilter(Texture.MinFilter.BilinearNearestMipMap);
+		tex.setMinFilter(Texture.MinFilter.BilinearNoMipMaps);
 		tex.setMagFilter(Texture.MagFilter.Bilinear);
 		return tex;
 	}
@@ -269,12 +305,4 @@ final class TerrainQuadBuilder {
 		return t * t * (3 - 2 * t);
 	}
 
-	private static Texture loadWrap(AssetManager am, String path) {
-		Texture t = am.loadTexture(path);
-		t.setWrap(Texture.WrapMode.Repeat);
-		t.setMinFilter(Texture.MinFilter.Trilinear);
-		t.setMagFilter(Texture.MagFilter.Bilinear);
-		t.setAnisotropicFilter(8);
-		return t;
-	}
 }

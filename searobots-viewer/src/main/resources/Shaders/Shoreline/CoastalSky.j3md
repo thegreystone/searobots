@@ -1,0 +1,23 @@
+MaterialDef Coastal Cloud Sky {
+    MaterialParameters {
+        TextureCubeMap Texture -LINEAR
+        Vector3 NormalScale
+        Float Daylight : 1.0
+    }
+
+    Technique {
+        VertexShader GLSL300 GLSL150 GLSL100 : Common/MatDefs/Misc/Sky.vert
+        FragmentShader GLSL300 GLSL150 GLSL100 : Shaders/Shoreline/CoastalSky.frag
+
+        WorldParameters {
+            ViewMatrix
+            ProjectionMatrix
+            WorldMatrixInverse
+        }
+
+        RenderState {
+            DepthWrite Off
+            DepthFunc Equal
+        }
+    }
+}

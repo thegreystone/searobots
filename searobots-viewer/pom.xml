@@ -16,6 +16,7 @@
 
     <properties>
         <jme.version>3.8.1-stable</jme.version>
+        <exec.mainClass>se.hirt.searobots.viewer.SubmarineScene3D</exec.mainClass>
     </properties>
 
     <dependencies>
@@ -110,7 +111,7 @@
                         <argument>-Xmx2g</argument>
                         <argument>-cp</argument>
                         <classpath/>
-                        <argument>se.hirt.searobots.viewer.SubmarineScene3D</argument>
+                        <argument>${exec.mainClass}</argument>
                     </arguments>
                 </configuration>
             </plugin>

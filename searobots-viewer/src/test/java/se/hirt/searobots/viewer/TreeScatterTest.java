@@ -45,6 +45,77 @@ import static org.junit.jupiter.api.Assertions.*;
 class TreeScatterTest {
 
 	@Test
+	void distantAndModeledTreesKeepTheExistingSeededArchetypes() {
+		var tree = new TreeScatter.TreeInstance(13f, 7f, -23f, 9f, 20f, .31f, .7f, .8f, 1.1f);
+		int[] originalVariants = {-470384705, 76944575, -1427069885, 565198661};
+		for (TreeScatter.Type type : TreeScatter.Type.values()) {
+			assertEquals(originalVariants[type.ordinal()], TreeImpostors.variant(42L, tree, type),
+					"Moving archetype selection must preserve existing worlds");
+			assertEquals(1, TreeImpostors.variantIndex(42L, tree, type));
+		}
+	}
+
+	@Test
+	void modeledImpostorSidesPreserveTintAndUseMatchingFrontAndRearAtlasViews() {
+		var tree = new TreeScatter.TreeInstance(13f, 7f, -23f, 9f, 20f, .31f, .7f, .8f, 1.1f);
+		for (TreeScatter.Type type : TreeScatter.Type.values()) {
+			Mesh mesh = TreeScatter.buildImpostorCrossMesh(List.of(tree), type, 42L);
+			assertEquals(8, mesh.getVertexCount());
+			assertEquals(4, mesh.getTriangleCount(), "Regional visibility masks retain 12 side indices per tree");
+			FloatBuffer uv = mesh.getFloatBuffer(VertexBuffer.Type.TexCoord);
+			FloatBuffer rear = mesh.getFloatBuffer(VertexBuffer.Type.TexCoord2);
+			FloatBuffer colors = mesh.getFloatBuffer(VertexBuffer.Type.Color);
+			FloatBuffer normals = mesh.getFloatBuffer(VertexBuffer.Type.Normal);
+			FloatBuffer tangents = mesh.getFloatBuffer(VertexBuffer.Type.Tangent);
+			FloatBuffer positions = mesh.getFloatBuffer(VertexBuffer.Type.Position);
+			for (int vertex = 0; vertex < 8; vertex++) {
+				int view = vertex / 4;
+				assertEquals(.75f, uv.get(vertex * 2) + rear.get(vertex * 2), .00001f,
+						"Variant-one front and rear views mirror U within the same atlas column");
+				assertEquals(.5f, uv.get(vertex * 2 + 1) - rear.get(vertex * 2 + 1), .00001f);
+				assertTrue(uv.get(vertex * 2 + 1) >= (3f - view) / 4f);
+				assertTrue(uv.get(vertex * 2 + 1) <= (4f - view) / 4f);
+				assertEquals(tree.r(), colors.get(vertex * 4), .00001f, "Baked albedo must not be shaded twice");
+				assertEquals(tree.g(), colors.get(vertex * 4 + 1), .00001f);
+				assertEquals(tree.b(), colors.get(vertex * 4 + 2), .00001f);
+				Vector3f normal = vector(normals, vertex);
+				Vector3f tangent = new Vector3f(tangents.get(vertex * 4), tangents.get(vertex * 4 + 1),
+						tangents.get(vertex * 4 + 2));
+				assertEquals(1f, normal.length(), .00001f);
+				assertEquals(1f, tangent.length(), .00001f);
+				assertEquals(0f, tangent.dot(normal), .00001f);
+				assertEquals(1f, normal.cross(tangent).y, .00001f, "The captured bitangent is upward on both planes");
+				float height = vertex % 4 >= 2 ? tree.h() * TreeImpostors.SIDE_HEIGHT_SCALE : 0f;
+				assertEquals(tree.y() + height, positions.get(vertex * 3 + 1), .00001f);
+			}
+		}
+	}
+
+	@Test
+	void modeledImpostorCrownKeepsVariantYawTintAndRegionalIndexBudget() {
+		var tree = new TreeScatter.TreeInstance(13f, 7f, -23f, 9f, 20f, .31f, .7f, .8f, 1.1f);
+		for (TreeScatter.Type type : TreeScatter.Type.values()) {
+			Mesh mesh = TreeScatter.buildImpostorTopMesh(List.of(tree), type, 42L);
+			assertEquals(9, mesh.getVertexCount());
+			assertEquals(8, mesh.getTriangleCount(), "Regional visibility masks retain 24 crown indices per tree");
+			FloatBuffer uv = mesh.getFloatBuffer(VertexBuffer.Type.TexCoord);
+			FloatBuffer colors = mesh.getFloatBuffer(VertexBuffer.Type.Color);
+			FloatBuffer normals = mesh.getFloatBuffer(VertexBuffer.Type.Normal);
+			FloatBuffer tangents = mesh.getFloatBuffer(VertexBuffer.Type.Tangent);
+			assertEquals(.375f, uv.get(0), .00001f, "Crown uses the same variant-one atlas column");
+			for (int vertex = 0; vertex < 9; vertex++) {
+				assertEquals(Vector3f.UNIT_Y, vector(normals, vertex));
+				assertEquals(FastMath.cos(tree.rot()), tangents.get(vertex * 4), .00001f);
+				assertEquals(FastMath.sin(tree.rot()), tangents.get(vertex * 4 + 2), .00001f);
+				assertEquals(tree.r(), colors.get(vertex * 4), .00001f);
+				assertEquals(tree.g(), colors.get(vertex * 4 + 1), .00001f);
+				assertEquals(tree.b(), colors.get(vertex * 4 + 2), .00001f);
+				assertTrue(uv.get(vertex * 2) >= .25f && uv.get(vertex * 2) <= .5f);
+			}
+		}
+	}
+
+	@Test
 	void crownTextureRotatesWithTreeRatherThanStayingLockedToWorld() {
 		Mesh original = TreeScatter.buildTopMesh(List.of(tree(0f)), TreeScatter.Type.BROADLEAF);
 		Mesh rotated = TreeScatter.buildTopMesh(List.of(tree(FastMath.HALF_PI)), TreeScatter.Type.BROADLEAF);

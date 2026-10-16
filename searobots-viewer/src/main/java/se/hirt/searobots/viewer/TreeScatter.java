@@ -35,6 +35,7 @@ import com.jme3.math.ColorRGBA;
 import com.jme3.math.FastMath;
 import com.jme3.math.Vector3f;
 import com.jme3.renderer.queue.RenderQueue;
+import com.jme3.renderer.Camera;
 import com.jme3.scene.Geometry;
 import com.jme3.scene.Mesh;
 import com.jme3.scene.Node;
@@ -48,18 +49,17 @@ import java.util.List;
 import java.util.Random;
 
 /**
- * Scatters cutout trees across vegetated terrain in natural-looking clusters. Every tree is two
- * crossed vertical quads (the side cutout) plus a low dome near the top of the crown (the top-down
- * cutout), so trees still read as crowns when the camera looks down at an island instead of
- * dissolving into crossed cards.
+ * Scatters trees across vegetated terrain in natural-looking clusters. Nearby cells use modeled
+ * branches and foliage with bounded distance-based detail. Distant trees retain two crossed
+ * vertical quads (the side cutout) plus a low dome near the top of the crown (the top-down cutout),
+ * so trees still read as crowns when the camera looks down at an island instead of dissolving into
+ * crossed cards.
  * <p>
- * Each tree type shares two meshes and lit materials: eight foliage geometries plus one batch of
- * contact shadows. Lighting and reflections can draw them more than once. The foliage material is
- * {@code Lighting.j3md} with alpha testing: trees darken with the sun and at night like the terrain
- * does. Vertex normals are "puffed" (up plus a little outwards from the trunk) rather than the
- * card's face normal, so a tree shades like a rounded crown lit from above and the two crossed
- * quads never disagree. Vertex colours carry a per-tree tint, which breaks up the repetition of
- * four textures, and darken the base of each tree to fake the occlusion under the canopy.
+ * Distant tree types share lit materials in regional batches, plus a batch of contact shadows.
+ * Modeled cells replace their cards and use two PBR material batches. Lighting and reflections can
+ * draw them more than once. Distant crowns use unlit albedo and normal atlases baked from the same
+ * asymmetric tree archetypes, then the same PBR sunlight and environment lighting as the modeled
+ * trees. Atlas selection preserves each tree's variant, orientation and tint across detail tiers.
  */
 public final class TreeScatter {
 
@@ -104,6 +104,10 @@ public final class TreeScatter {
 		public String topPath() {
 			return "Textures/Terrain/custom/" + texture + "_top.png";
 		}
+
+		public float widthRatio() {
+			return widthRatio;
+		}
 	}
 
 	/** A tree to be placed: jME position, size, rotation about Y and colour tint. */
@@ -114,6 +118,11 @@ public final class TreeScatter {
 	}
 
 	static Node create(TerrainMap terrain, TerrainQuad terrainQuad, AssetManager assetManager, long seed) {
+		return create(terrain, terrainQuad, assetManager, seed, null);
+	}
+
+	static Node create(
+		TerrainMap terrain, TerrainQuad terrainQuad, AssetManager assetManager, long seed, Camera camera) {
 		Node treeNode = new Node("trees");
 		var rng = new Random(seed);
 		long startTime = System.currentTimeMillis();
@@ -185,23 +194,16 @@ public final class TreeScatter {
 			}
 		}
 
-		for (Type type : types) {
-			var trees = perType.get(type.ordinal());
-			if (trees.isEmpty())
-				continue;
-			treeNode.attachChild(geometry("trees_" + type.name(), buildCrossMesh(trees),
-					createTreeMaterial(assetManager, type.sidePath())));
-			treeNode.attachChild(geometry("trees_top_" + type.name(), buildTopMesh(trees, type),
-					createTopMaterial(assetManager, type.topPath())));
-		}
+		IslandForestControl detail = new IslandForestControl(treeNode, perType, assetManager, camera, seed);
+		treeNode.addControl(detail);
 
 		Geometry contactShadows = TreeContactShadows.create(perType, terrainQuad, assetManager);
 		if (contactShadows != null)
 			treeNode.attachChild(contactShadows);
 
 		long elapsed = System.currentTimeMillis() - startTime;
-		System.out.printf("TreeScatter: placed %d trees in %dms (%d geometries, direct mesh)%n", placed, elapsed,
-				treeNode.getQuantity());
+		System.out.printf("TreeScatter: placed %d trees in %dms (%d spatial cells, bounded modeled detail)%n", placed,
+				elapsed, treeNode.getQuantity());
 		return treeNode;
 	}
 
@@ -248,6 +250,63 @@ public final class TreeScatter {
 				}
 				b.quad();
 			}
+		}
+		return b.build();
+	}
+
+	/** Two crossed planes using model-derived views and the exact modeled archetype selection. */
+	public static Mesh buildImpostorCrossMesh(List<TreeInstance> trees, Type type, long seed) {
+		var b = new MeshBuffers(trees.size() * 8, trees.size() * 4, true);
+		for (var tree : trees) {
+			int variant = TreeImpostors.variantIndex(seed, tree, type);
+			for (int view = 0; view < 2; view++) {
+				float angle = tree.rot + view * FastMath.HALF_PI;
+				float cosine = FastMath.cos(angle), sine = FastMath.sin(angle);
+				float halfWidth = tree.w * TreeImpostors.SIDE_WIDTH_SCALE * .5f;
+				float[] x = {-halfWidth, halfWidth, halfWidth, -halfWidth};
+				float[] y = {0f, 0f, tree.h * TreeImpostors.SIDE_HEIGHT_SCALE,
+						tree.h * TreeImpostors.SIDE_HEIGHT_SCALE};
+				float[] u = {0f, 1f, 1f, 0f}, v = {0f, 0f, 1f, 1f};
+				for (int vertex = 0; vertex < 4; vertex++) {
+					b.impostorVertex(tree.x + x[vertex] * cosine, tree.y + y[vertex], tree.z + x[vertex] * sine, -sine,
+							0f, cosine, (variant + u[vertex]) / 4f, (3f - view + v[vertex]) / 4f,
+							(variant + 1f - u[vertex]) / 4f, (1f - view + v[vertex]) / 4f, cosine, 0f, sine, tree.r,
+							tree.g, tree.b);
+				}
+				b.quad();
+			}
+		}
+		return b.build();
+	}
+
+	/**
+	 * Eight triangles retain the regional masking budget. Top-down normals come from the actual
+	 * modeled foliage instead of the cap's proxy slope; every crown keeps the tree's yaw and tint.
+	 */
+	public static Mesh buildImpostorTopMesh(List<TreeInstance> trees, Type type, long seed) {
+		int sides = 8;
+		var b = new MeshBuffers(trees.size() * (sides + 1), trees.size() * sides, true);
+		for (var tree : trees) {
+			int variant = TreeImpostors.variantIndex(seed, tree, type);
+			float cosine = FastMath.cos(tree.rot), sine = FastMath.sin(tree.rot);
+			float radius = tree.w * TreeImpostors.SIDE_WIDTH_SCALE * .5f;
+			// Palm fronds occupy a shallow crown; a cone would stretch the captured top view.
+			float rimY = tree.y + tree.h * (type == Type.PALM ? .90f : type.rimHeight);
+			float apexY = tree.y + tree.h * (type == Type.PALM ? .90f : type.apexHeight);
+			float centerU = (variant + .5f) / 4f;
+			int apex = b.impostorVertex(tree.x, apexY, tree.z, 0f, 1f, 0f, centerU, .5f, centerU, .5f, cosine, 0f, sine,
+					tree.r, tree.g, tree.b);
+			int[] rim = new int[sides];
+			for (int side = 0; side < sides; side++) {
+				float local = side * FastMath.TWO_PI / sides;
+				float localCosine = FastMath.cos(local), localSine = FastMath.sin(local);
+				float u = (variant + .5f + .5f * localCosine) / 4f, v = .5f - .5f * localSine;
+				rim[side] = b.impostorVertex(tree.x + radius * (localCosine * cosine - localSine * sine), rimY,
+						tree.z + radius * (localCosine * sine + localSine * cosine), 0f, 1f, 0f, u, v, u, v, cosine, 0f,
+						sine, tree.r, tree.g, tree.b);
+			}
+			for (int side = 0; side < sides; side++)
+				b.tri(apex, rim[(side + 1) % sides], rim[side]);
 		}
 		return b.build();
 	}
@@ -315,6 +374,7 @@ public final class TreeScatter {
 	/** Accumulates triangles into position / normal / texcoord / colour / index buffers. */
 	private static final class MeshBuffers {
 		final float[] pos, norm, tc, col;
+		final float[] backTc, tangents;
 		final int[] idx;
 		int vi, ii;
 
@@ -323,10 +383,16 @@ public final class TreeScatter {
 		}
 
 		MeshBuffers(int vertices, int triangles) {
+			this(vertices, triangles, false);
+		}
+
+		MeshBuffers(int vertices, int triangles, boolean impostor) {
 			pos = new float[vertices * 3];
 			norm = new float[vertices * 3];
 			tc = new float[vertices * 2];
 			col = new float[vertices * 4];
+			backTc = impostor ? new float[vertices * 2] : null;
+			tangents = impostor ? new float[vertices * 4] : null;
 			idx = new int[triangles * 3];
 		}
 
@@ -349,6 +415,19 @@ public final class TreeScatter {
 			return vi++;
 		}
 
+		int impostorVertex(
+			float x, float y, float z, float nx, float ny, float nz, float u, float v, float backU, float backV,
+			float tx, float ty, float tz, float r, float g, float b) {
+			int vertex = vertex(x, y, z, nx, ny, nz, u, v, r, g, b);
+			backTc[vertex * 2] = backU;
+			backTc[vertex * 2 + 1] = backV;
+			tangents[vertex * 4] = tx;
+			tangents[vertex * 4 + 1] = ty;
+			tangents[vertex * 4 + 2] = tz;
+			tangents[vertex * 4 + 3] = 1f;
+			return vertex;
+		}
+
 		void tri(int a, int b, int c) {
 			idx[ii++] = a;
 			idx[ii++] = b;
@@ -368,6 +447,10 @@ public final class TreeScatter {
 			mesh.setBuffer(VertexBuffer.Type.Normal, 3, BufferUtils.createFloatBuffer(norm));
 			mesh.setBuffer(VertexBuffer.Type.TexCoord, 2, BufferUtils.createFloatBuffer(tc));
 			mesh.setBuffer(VertexBuffer.Type.Color, 4, BufferUtils.createFloatBuffer(col));
+			if (backTc != null) {
+				mesh.setBuffer(VertexBuffer.Type.TexCoord2, 2, BufferUtils.createFloatBuffer(backTc));
+				mesh.setBuffer(VertexBuffer.Type.Tangent, 4, BufferUtils.createFloatBuffer(tangents));
+			}
 			mesh.setBuffer(VertexBuffer.Type.Index, 3, BufferUtils.createIntBuffer(idx));
 			mesh.updateBound();
 			return mesh;

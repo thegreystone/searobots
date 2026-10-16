@@ -33,12 +33,16 @@ import com.jme3.app.state.ScreenshotAppState;
 import com.jme3.asset.AssetManager;
 import com.jme3.effect.ParticleEmitter;
 import com.jme3.effect.ParticleMesh;
+import com.jme3.environment.EnvironmentCamera;
+import com.jme3.environment.LightProbeFactory;
+import com.jme3.environment.generation.JobProgressAdapter;
 import com.jme3.font.BitmapText;
 import com.jme3.input.KeyInput;
 import com.jme3.input.MouseInput;
 import com.jme3.input.controls.*;
 import com.jme3.light.AmbientLight;
 import com.jme3.light.DirectionalLight;
+import com.jme3.light.LightProbe;
 import com.jme3.material.Material;
 import com.jme3.material.RenderState;
 import com.jme3.material.TechniqueDef;
@@ -47,10 +51,11 @@ import com.jme3.math.FastMath;
 import com.jme3.math.Quaternion;
 import com.jme3.math.Vector3f;
 import com.jme3.post.FilterPostProcessor;
-import com.jme3.post.filters.BloomFilter;
 import com.jme3.post.filters.FogFilter;
 import com.jme3.post.filters.FXAAFilter;
 import com.jme3.post.filters.LightScatteringFilter;
+import com.jme3.post.filters.ToneMapFilter;
+import com.jme3.post.ssao.SSAOFilter;
 import com.jme3.renderer.Caps;
 import com.jme3.renderer.Renderer;
 import com.jme3.renderer.queue.RenderQueue;
@@ -58,13 +63,14 @@ import com.jme3.scene.*;
 import com.jme3.scene.control.BillboardControl;
 import com.jme3.scene.shape.Box;
 import com.jme3.scene.shape.Quad;
+import com.jme3.shadow.DirectionalLightShadowFilter;
+import com.jme3.shadow.EdgeFilteringMode;
 import com.jme3.system.AppSettings;
 import com.jme3.texture.Image;
 import com.jme3.texture.Texture2D;
-import com.jme3.texture.TextureCubeMap;
 import com.jme3.texture.image.ColorSpace;
 import com.jme3.util.BufferUtils;
-import com.jme3.util.SkyFactory;
+import se.hirt.searobots.viewer.shoreline.CoastalSky;
 import com.jme3.water.WaterFilter;
 import se.hirt.searobots.api.TerrainMap;
 import se.hirt.searobots.api.VehicleConfig;
@@ -127,6 +133,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 	private float tubeDoorClock;
 	private Spatial terrainGeometry;
 	private Node trees;
+	private Node islandScenery;
 	private com.jme3.terrain.geomipmap.TerrainQuad terrainQuad;
 	private TerrainMap displayedTerrain;
 	private Spatial sky;
@@ -246,11 +253,17 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 	private DirectionalLight sun;
 	private DirectionalLight fill;
 	private AmbientLight ambient;
+	private final EnvironmentCamera environmentCamera = new EnvironmentCamera(128, new Vector3f(0, 100, 0));
+	private Node skyEnvironment;
+	private LightProbe islandProbe;
+	private DirectionalLightShadowFilter islandShadows;
+	private SSAOFilter islandOcclusion;
+	private boolean probeRequested;
 	private FogFilter fogFilter;
-	private WaterFilter waterFilter;
+	private AtmosphereWaterFilter waterFilter;
 	private LightScatteringFilter godRaysFilter;
 	private FilterPostProcessor fpp;
-	private volatile boolean atmosphereEnabled = false;
+	private volatile boolean atmosphereEnabled = true;
 	private volatile boolean debugMode = false;
 
 	// Sun simulation: time of day = config.startTime + elapsed tick time
@@ -287,7 +300,8 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 	private final Vector3f orbitCenter = new Vector3f();
 	private float orbitAzimuth = FastMath.QUARTER_PI;
 	private float orbitElevation = 0.4f;
-	private float orbitDistance = 200f;
+	private static final float DEFAULT_ORBIT_DISTANCE = 100f;
+	private float orbitDistance = DEFAULT_ORBIT_DISTANCE;
 	private boolean dragging;
 
 	// Chase camera state
@@ -353,6 +367,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 		settings.setFrameRate(TRACK_FPS ? -1 : 60);
 		settings.setVSync(!TRACK_FPS);
 		settings.setSamples(4);
+		settings.setGammaCorrection(true);
 		settings.setResizable(true);
 		loadIcons(settings);
 		app.setSettings(settings);
@@ -398,6 +413,10 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 		setDisplayFps(TRACK_FPS);
 		flyCam.setEnabled(false);
 		viewPort.setBackgroundColor(new ColorRGBA(0.02f, 0.04f, 0.12f, 1f));
+		if (renderer.getCaps().contains(Caps.Srgb)) {
+			renderer.setMainFrameBufferSrgb(true);
+			renderer.setLinearizeSrgbImages(true);
+		}
 		// Select before loading materials: jME caches their lighting techniques on first use.
 		renderManager.setPreferredLightMode(TechniqueDef.LightMode.SinglePass);
 		renderManager.setSinglePassLightBatchSize(2);
@@ -408,6 +427,16 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 		// so we use Lemur's default style instead.
 		if (standalone) {
 			com.simsilica.lemur.GuiGlobals.initialize(this);
+			// Lemur's default scene picking lazily builds collision trees for new terrain/forest
+			// batches on the render thread. Only GUI widgets use Lemur's picking in this viewer.
+			for (var type : java.util.List.of(com.simsilica.lemur.event.MouseAppState.class,
+					com.simsilica.lemur.event.TouchAppState.class)) {
+				var picker = stateManager.getState(type);
+				if (picker != null) {
+					picker.setIncludeDefaultCollisionRoots(false);
+					picker.addCollisionRoot(guiViewPort, com.simsilica.lemur.event.PickState.PICK_LAYER_GUI);
+				}
+			}
 		}
 
 		// Lighting
@@ -425,9 +454,26 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 		ambient.setColor(new ColorRGBA(0.3f, 0.35f, 0.4f, 1f));
 		rootNode.addLight(ambient);
 
-		// Sky (procedural cube map, no projection artifacts) - must be before water for reflections
-		sky = SkyFactory.createSky(assetManager, createSkyCubeMap(), SkyFactory.EnvMapType.CubeMap);
+		// The visible sky follows the clock; keep a daylight copy for stable indirect lighting.
+		sky = CoastalSky.create(assetManager);
+		sky.setShadowMode(RenderQueue.ShadowMode.Off);
 		rootNode.attachChild(sky);
+		skyEnvironment = new Node("Island sky lighting");
+		skyEnvironment.setShadowMode(RenderQueue.ShadowMode.Off);
+		skyEnvironment.attachChild(sky.clone(true));
+		skyEnvironment.updateGeometricState();
+		stateManager.attach(environmentCamera);
+
+		// Keep shadows local even with the 17km world and long tactical-camera far plane.
+		// All four samplers are bound for Apple core-profile driver validation.
+		islandShadows = new DirectionalLightShadowFilter(assetManager, 2048, 4);
+		islandShadows.setLight(sun);
+		islandShadows.setLambda(0.75f);
+		islandShadows.setShadowIntensity(0.65f);
+		islandShadows.setShadowZExtend(260f);
+		islandShadows.setShadowZFadeLength(45f);
+		islandShadows.setEdgeFilteringMode(EdgeFilteringMode.PCFPOISSON);
+		islandShadows.setEdgesThickness(2);
 
 		// Sun disc (billboard in Sky bucket, renders at sky depth)
 		Quad sunQuad = new Quad(400, 400);
@@ -447,20 +493,24 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 
 		// Water surface (after sky so reflections pick it up)
 		fpp = createFilterPostProcessor(assetManager, renderer, settings.getSamples());
-		waterFilter = new WaterFilter(rootNode, sun.getDirection().mult(-1));
+		waterFilter = new AtmosphereWaterFilter(rootNode, sun.getDirection().mult(-1));
 		waterFilter.setWaterHeight(0f);
-		waterFilter.setSpeed(0.8f);
-		waterFilter.setWaveScale(0.003f);
-		waterFilter.setMaxAmplitude(1.5f);
-		waterFilter.setWaterColor(new ColorRGBA(0.0f, 0.18f, 0.60f, 1f));
-		waterFilter.setDeepWaterColor(new ColorRGBA(0.0f, 0.09f, 0.42f, 1f));
-		waterFilter.setWaterTransparency(0.11f);
-		waterFilter.setColorExtinction(new Vector3f(10f, 30f, 60f));
+		waterFilter.setSpeed(0.45f);
+		waterFilter.setWaveScale(0.006f);
+		waterFilter.setMaxAmplitude(0.45f);
+		waterFilter.setWaterColor(new ColorRGBA(0.035f, 0.24f, 0.25f, 1f));
+		waterFilter.setDeepWaterColor(new ColorRGBA(0.008f, 0.07f, 0.11f, 1f));
+		waterFilter.setWaterTransparency(0.10f);
+		waterFilter.setUnderWaterFogDistance(700f);
+		waterFilter.setColorExtinction(new Vector3f(6f, 18f, 26f));
 		waterFilter.setSunScale(3f);
 		waterFilter.setLightDirection(sun.getDirection());
 		waterFilter.setLightColor(ColorRGBA.White);
 		waterFilter.setCausticsIntensity(0.3f);
 		WaterQualitySettings.configure(waterFilter);
+		waterFilter.setFoamIntensity(0.25f);
+		waterFilter.setFoamExistence(new Vector3f(0.05f, 1.1f, 0.3f));
+		waterFilter.setFoamHardness(1.2f);
 		waterFilter.setUseRipples(true);
 		waterFilter.setUseSpecular(true);
 		waterFilter.setUseRefraction(true);
@@ -469,6 +519,10 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 		fogFilter.setFogDistance(2000f);
 		fogFilter.setFogDensity(1.0f);
 		fogFilter.setFogColor(new ColorRGBA(0.02f, 0.04f, 0.12f, 1f));
+		fpp.addFilter(islandShadows);
+		islandOcclusion = new SSAOFilter(2f, 1.4f, 0.25f, 0.12f);
+		islandOcclusion.setApproximateNormals(true);
+		fpp.addFilter(islandOcclusion);
 		fpp.addFilter(fogFilter);
 
 		fpp.addFilter(waterFilter);
@@ -476,10 +530,11 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 		// particles using the depth of the sky or seabed behind them.
 		fpp.addFilter(new com.jme3.post.filters.TranslucentBucketFilter());
 		// Bloom on glowing objects only (the team lights), so the rest of the scene keeps its look
-		var bloom = new BloomFilter(BloomFilter.GlowMode.Objects);
+		var bloom = new SelectiveBloomFilter();
 		bloom.setBloomIntensity(2.5f);
 		bloom.setBlurScale(1.6f);
 		fpp.addFilter(bloom);
+		fpp.addFilter(new ToneMapFilter(new Vector3f(4f, 4f, 4f)));
 		// FXAA softens foliage silhouettes and provides antialiasing when filter MSAA is unavailable.
 		var antialiasing = new FXAAFilter();
 		antialiasing.setSubPixelShift(0f);
@@ -1376,7 +1431,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 		if (activeCompetition != null && activeCompetition.isRunning()) {
 			return activeCompetition.currentSim();
 		}
-		return standaloneSimManager.currentLoop();
+		return standaloneSimManager == null ? null : standaloneSimManager.currentLoop();
 	}
 
 	private void updateDetailHud() {
@@ -1447,6 +1502,24 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 	@Override
 	public void simpleUpdate(float tpf) {
 		frameCount++;
+		if (!probeRequested && environmentCamera.isInitialized()) {
+			probeRequested = true;
+			// Bake the sky once. Existing ambient lighting modulates IBL with time and depth.
+			islandProbe = LightProbeFactory.makeProbe(environmentCamera, skyEnvironment,
+					new JobProgressAdapter<LightProbe>() {
+						@Override
+						public void done(LightProbe result) {
+							System.out.println("Island environment lighting ready");
+						}
+					});
+			islandProbe.getArea().setRadius(100000f);
+			if (displayedTerrain != null && terrainQuad != null) {
+				islandProbe.setPosition(terrainQuad.getLocalTranslation());
+				islandProbe.getArea().setRadius(
+						(float) Math.max(displayedTerrain.worldWidth(), displayedTerrain.worldHeight()) * 1.5f);
+			}
+			rootNode.addLight(islandProbe);
+		}
 		if (TRACK_FPS) {
 			fpsWindowSeconds += tpf;
 			fpsWindowFrames++;
@@ -1719,13 +1792,20 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 			terrainQuad = null;
 		}
 		if (trees != null) {
+			trees.getControl(IslandForestControl.class).close();
 			trees.removeFromParent();
 			trees = null;
+		}
+		if (islandScenery != null) {
+			islandScenery.getControl(IslandSceneryControl.class).close();
+			islandScenery.removeFromParent();
+			islandScenery = null;
 		}
 
 		TerrainMap terrain = world.terrain();
 		displayedTerrain = terrain;
 		terrainQuad = TerrainQuadBuilder.build(terrain, assetManager, cam);
+		terrainQuad.setShadowMode(RenderQueue.ShadowMode.CastAndReceive);
 		terrainGeometry = terrainQuad;
 		rootNode.attachChild(terrainGeometry);
 
@@ -1760,17 +1840,27 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 
 		// Position orbit camera at first spawn
 		float worldW = (float) terrain.worldWidth();
-		cam.setFrustumFar(worldW * 3f);
+		if (islandProbe != null) {
+			islandProbe.setPosition(terrainQuad.getLocalTranslation());
+			islandProbe.getArea().setRadius((float) Math.max(terrain.worldWidth(), terrain.worldHeight()) * 1.5f);
+		}
+		// Keep distant island bases visible at every camera height.
+		cam.setFrustumFar((float) Math.max(terrain.worldWidth(), terrain.worldHeight()) * 3f);
 		var spawns = world.spawnPoints();
 		var spawn = spawns.isEmpty() ? new se.hirt.searobots.api.Vec3(0, 0, -50) : spawns.getFirst();
 		orbitCenter.set((float) spawn.x(), (float) spawn.z(), (float) -spawn.y());
-		orbitDistance = 200f;
+		orbitDistance = DEFAULT_ORBIT_DISTANCE;
 		orbitAzimuth = FastMath.QUARTER_PI;
 		orbitElevation = 0.4f;
 
 		// Scatter trees on vegetated terrain
-		trees = TreeScatter.create(terrain, terrainQuad, assetManager, world.config().worldSeed());
+		trees = TreeScatter.create(terrain, terrainQuad, assetManager, world.config().worldSeed(), cam);
 		rootNode.attachChild(trees);
+		// Update ancestors before snapshotting: a subtree update can inherit stale empty light lists.
+		rootNode.updateGeometricState();
+		islandScenery = IslandSceneryControl.create(terrain, terrainQuad, assetManager, cam,
+				world.config().worldSeed());
+		rootNode.attachChild(islandScenery);
 
 		System.out.println("attachTerrain: done, worldWidth=" + worldW);
 
@@ -1796,11 +1886,21 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 		}
 	}
 
+	@Override
+	public void destroy() {
+		if (trees != null)
+			trees.getControl(IslandForestControl.class).close();
+		if (islandScenery != null)
+			islandScenery.getControl(IslandSceneryControl.class).close();
+		super.destroy();
+	}
+
 	// Island peak finding is now in IslandOrbitState
 
 	// ---- atmosphere ----
 
 	private void updateAtmosphere() {
+		waterFilter.setFogEnabled(atmosphereEnabled);
 		// Sun path: equator at equinox. Sun up from 6:00 to 18:00.
 		// Arc angle: 0 at east horizon (6am), PI/2 at zenith (noon), PI at west horizon (6pm)
 		float sunProgress = (sunHour - 6f) / 12f; // 0..1 during daylight
@@ -1809,6 +1909,14 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 
 		// Sun elevation (0 = horizon, 1 = zenith)
 		float sunElev = sunUp ? FastMath.sin(arcAngle) : 0f;
+		CoastalSky.updateDaylight(sky, sunUp ? Math.min(1f, sunElev * 3f) : 0f);
+		if (sunBillboard != null)
+			sunBillboard.setCullHint(sunUp ? Spatial.CullHint.Never : Spatial.CullHint.Always);
+		islandOcclusion
+				.setEnabled(!debugMode && atmosphereEnabled && cam.getLocation().y >= 0 && cam.getLocation().y < 180f);
+		islandShadows.setEnabled(!debugMode && atmosphereEnabled && sunUp);
+		islandShadows.setShadowIntensity(
+				debugMode || !atmosphereEnabled || !sunUp ? 0f : 0.65f * Math.min(1f, sunElev * 4f));
 
 		// Sun direction: east-to-west arc through zenith
 		// jME: X=east, Y=up. Light direction = where light travels (opposite of sun position)
@@ -1902,8 +2010,9 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 					0.6f * sunIntensity + 0.1f, 1f));
 			ambient.setColor(new ColorRGBA(0.15f + 0.20f * sunIntensity, 0.18f + 0.22f * sunIntensity,
 					0.25f + 0.20f * sunIntensity, 1f));
-			fogFilter.setFogDistance(5000f);
-			fogFilter.setFogDensity(0.8f);
+			// Light distance haze preserves the islands' color and their reflection's palette.
+			fogFilter.setFogDistance(7500f);
+			fogFilter.setFogDensity(0.4f);
 			// Sky colour shifts with sun
 			float skyBlend = sunIntensity;
 			fogFilter.setFogColor(new ColorRGBA(0.5f * skyBlend, 0.6f * skyBlend, 0.75f * skyBlend, 1f));
@@ -2456,6 +2565,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 				Node template = snap.surfaceLocked() ? shipModelNode : modelNode;
 				subNode = (Node) template.deepClone();
 				subNode.setName("sub-" + snap.id());
+				SelectiveBloomFilter.markOccluder(subNode);
 				setTeamLights(subNode, snap.color(), true);
 				SubmarineDecals.paint(assetManager, subNode, SubmarineDecals.code(snap.shortName(), snap.id()),
 						snap.name());
@@ -2692,6 +2802,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 			if (torpNode == null) {
 				torpNode = (Node) torpedoModelNode.deepClone();
 				torpNode.setName("torpedo-" + ts.id());
+				SelectiveBloomFilter.markOccluder(torpNode);
 				if (!torpNode.getChildren().isEmpty() && torpNode.getChild(0) instanceof Node torpHull)
 					TorpedoRing.attach(assetManager, torpHull, ts.color(), TORPEDO_RING[0], TORPEDO_RING[1],
 							TEAM_LIGHT_LEVEL, TEAM_LIGHT_GLOW);
@@ -3526,58 +3637,6 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 			for (Spatial child : node.getChildren())
 				disableBackFaceCulling(child);
 		}
-	}
-
-	private TextureCubeMap createSkyCubeMap() {
-		int size = 256;
-		var faces = new java.util.ArrayList<ByteBuffer>();
-		for (int face = 0; face < 6; face++) {
-			ByteBuffer buf = BufferUtils.createByteBuffer(size * size * 4);
-			for (int py = 0; py < size; py++) {
-				for (int px = 0; px < size; px++) {
-					float s = 2f * (px + 0.5f) / size - 1f;
-					float t = 2f * (py + 0.5f) / size - 1f;
-					Vector3f dir = cubeFaceDir(face, s, t).normalizeLocal();
-
-					// dir.y = elevation: +1 at zenith, -1 at nadir
-					float elevation = dir.y;
-
-					int r, g, b;
-					if (elevation > 0) {
-						// Sky: bright horizon to deep blue at zenith
-						r = (int) (180 - elevation * 130);
-						g = (int) (210 - elevation * 100);
-						b = (int) (245 - elevation * 30);
-					} else {
-						// Below horizon: dark
-						float d = -elevation;
-						r = (int) (180 - d * 170);
-						g = (int) (210 - d * 200);
-						b = (int) (245 - d * 220);
-					}
-					r = Math.max(0, Math.min(255, r));
-					g = Math.max(0, Math.min(255, g));
-					b = Math.max(0, Math.min(255, b));
-					buf.put((byte) r).put((byte) g).put((byte) b).put((byte) 255);
-				}
-			}
-			buf.flip();
-			faces.add(buf);
-		}
-		var img = new Image(Image.Format.RGBA8, size, size, 0, faces, ColorSpace.sRGB);
-		return new TextureCubeMap(img);
-	}
-
-	private Vector3f cubeFaceDir(int face, float s, float t) {
-		return switch (face) {
-		case 0 -> new Vector3f(+1, -t, -s); // +X
-		case 1 -> new Vector3f(-1, -t, +s); // -X
-		case 2 -> new Vector3f(+s, +1, +t); // +Y
-		case 3 -> new Vector3f(+s, -1, -t); // -Y
-		case 4 -> new Vector3f(+s, -t, +1); // +Z
-		case 5 -> new Vector3f(-s, -t, -1); // -Z
-		default -> throw new IllegalArgumentException();
-		};
 	}
 
 	private Texture2D createSunGlowTexture() {

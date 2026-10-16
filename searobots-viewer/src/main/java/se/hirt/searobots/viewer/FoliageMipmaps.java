@@ -69,6 +69,87 @@ final class FoliageMipmaps {
 		return texture;
 	}
 
+	/** Filters each impostor view independently, preserving its own alpha-test coverage. */
+	static Texture loadAtlas(AssetManager assetManager, String path, int tileWidth, int tileHeight, boolean normalMap) {
+		Texture texture = assetManager.loadTexture(path);
+		AssetKey<Image> key = new AssetKey<>(
+				path + ".foliage-atlas-mips-v1-" + tileWidth + "x" + tileHeight + (normalMap ? "-normal" : "-albedo"));
+		Image image = assetManager.getFromCache(key);
+		if (image == null) {
+			image = generateAtlas(texture.getImage(), tileWidth, tileHeight, normalMap);
+			assetManager.addToCache(key, image);
+		}
+		texture.setImage(image);
+		texture.setMinFilter(Texture.MinFilter.Trilinear);
+		texture.setMagFilter(Texture.MagFilter.Bilinear);
+		// Anisotropic footprints can cross neighbouring view tiles even with a colour gutter.
+		texture.setAnisotropicFilter(1);
+		texture.setWrap(Texture.WrapMode.EdgeClamp);
+		return texture;
+	}
+
+	static Image generateAtlas(Image source, int tileWidth, int tileHeight, boolean normalMap) {
+		int width = source.getWidth(), height = source.getHeight();
+		if (tileWidth <= 0 || tileHeight <= 0 || (tileWidth & (tileWidth - 1)) != 0
+				|| (tileHeight & (tileHeight - 1)) != 0 || width % tileWidth != 0 || height % tileHeight != 0)
+			throw new IllegalArgumentException(
+					"Atlas tiles must have power-of-two dimensions and exactly fill the image");
+		int columns = width / tileWidth, rows = height / tileHeight;
+		float[][] tiles = new float[columns * rows][tileWidth * tileHeight * 4];
+		float[] targetCoverage = new float[tiles.length];
+		byte[] base = new byte[width * height * 4];
+		ImageRaster raster = ImageRaster.create(source, 0, 0, false);
+		boolean srgb = source.getColorSpace() == ColorSpace.sRGB;
+		ColorRGBA color = new ColorRGBA();
+		for (int row = 0; row < rows; row++) {
+			for (int column = 0; column < columns; column++) {
+				float[] pixels = tiles[row * columns + column];
+				for (int y = 0; y < tileHeight; y++) {
+					for (int x = 0; x < tileWidth; x++) {
+						int wx = column * tileWidth + x, wy = row * tileHeight + y;
+						raster.getPixel(wx, wy, color);
+						int p = (y * tileWidth + x) * 4, dest = (wy * width + wx) * 4;
+						for (int c = 0; c < 3; c++) {
+							float channel = c == 0 ? color.r : c == 1 ? color.g : color.b;
+							pixels[p + c] = (normalMap ? channel * 2f - 1f : srgb ? srgbToLinear(channel) : channel)
+									* color.a;
+							// Keep the baked full-resolution colour gutter, including transparent RGB.
+							base[dest + c] = (byte) toByte(normalMap || srgb ? channel : linearToSrgb(channel));
+						}
+						pixels[p + 3] = color.a;
+						base[dest + 3] = (byte) toByte(color.a);
+					}
+				}
+				targetCoverage[row * columns + column] = coverage(pixels, 1f);
+			}
+		}
+		List<byte[]> levels = new ArrayList<>();
+		levels.add(base);
+		int w = tileWidth, h = tileHeight;
+		// A rectangular tile must stop at 1x2 (or 2x1): another GL mip would merge columns
+		// or rows. Square tiles reach 1x1. Every supplied level retains the original layout.
+		while (w > 1 && h > 1) {
+			int nextWidth = w / 2, nextHeight = h / 2;
+			byte[] level = new byte[nextWidth * columns * nextHeight * rows * 4];
+			for (int tile = 0; tile < tiles.length; tile++) {
+				// Alpha corrections never feed back into filtering, and identical source alpha
+				// gives the albedo and normal atlases exactly the same corrected silhouette.
+				tiles[tile] = downsample(tiles[tile], w, h, nextWidth, nextHeight);
+				float scale = coverageScale(tiles[tile], targetCoverage[tile]);
+				byte[] pixels = normalMap ? encodeNormals(tiles[tile], nextWidth, nextHeight, scale)
+						: encode(tiles[tile], nextWidth, nextHeight, scale);
+				int column = tile % columns, row = tile / columns;
+				for (int y = 0; y < nextHeight; y++)
+					System.arraycopy(pixels, y * nextWidth * 4, level,
+							((row * nextHeight + y) * nextWidth * columns + column * nextWidth) * 4, nextWidth * 4);
+			}
+			levels.add(level);
+			w = nextWidth;
+			h = nextHeight;
+		}
+		return mipImage(width, height, levels, normalMap ? ColorSpace.Linear : ColorSpace.sRGB);
+	}
+
 	static Image generate(Image source) {
 		int width = source.getWidth(), height = source.getHeight();
 		// ImageRaster's optional colour conversion uses gamma 2.2. Match the GPU's actual sRGB
@@ -104,13 +185,70 @@ final class FoliageMipmaps {
 			h = nextHeight;
 		}
 
+		return mipImage(width, height, levels, ColorSpace.sRGB);
+	}
+
+	private static Image mipImage(int width, int height, List<byte[]> levels, ColorSpace colorSpace) {
 		int[] sizes = levels.stream().mapToInt(a -> a.length).toArray();
 		int totalSize = levels.stream().mapToInt(a -> a.length).sum();
 		ByteBuffer data = BufferUtils.createByteBuffer(totalSize);
 		for (byte[] level : levels)
 			data.put(level);
 		data.flip();
-		return new Image(Image.Format.RGBA8, width, height, data, sizes, ColorSpace.sRGB);
+		return new Image(Image.Format.RGBA8, width, height, data, sizes, colorSpace);
+	}
+
+	private static byte[] encodeNormals(float[] pixels, int width, int height, float alphaScale) {
+		byte[] encoded = new byte[pixels.length];
+		boolean[] filled = new boolean[width * height];
+		for (int p = 0; p < pixels.length; p += 4) {
+			writeNormal(encoded, p, pixels[p], pixels[p + 1], pixels[p + 2]);
+			encoded[p + 3] = (byte) toByte(pixels[p + 3] * alphaScale);
+			filled[p / 4] = pixels[p + 3] > 0f;
+		}
+		// Extend directions into transparent edge texels within this view tile only. Averaged
+		// gutter directions also need normalization; RGB averaging alone would shorten them.
+		for (int pass = 0; pass < 2; pass++) {
+			byte[] previous = encoded.clone();
+			boolean[] previousFilled = filled.clone();
+			for (int y = 0; y < height; y++) {
+				for (int x = 0; x < width; x++) {
+					int p = (y * width + x) * 4;
+					if (previousFilled[p / 4])
+						continue;
+					float nx = 0, ny = 0, nz = 0;
+					int count = 0;
+					for (int dy = -1; dy <= 1; dy++) {
+						for (int dx = -1; dx <= 1; dx++) {
+							int sx = x + dx, sy = y + dy;
+							if (sx < 0 || sx >= width || sy < 0 || sy >= height || !previousFilled[sy * width + sx])
+								continue;
+							int neighbor = (sy * width + sx) * 4;
+							nx += (previous[neighbor] & 0xff) / 127.5f - 1f;
+							ny += (previous[neighbor + 1] & 0xff) / 127.5f - 1f;
+							nz += (previous[neighbor + 2] & 0xff) / 127.5f - 1f;
+							count++;
+						}
+					}
+					if (count > 0) {
+						writeNormal(encoded, p, nx, ny, nz);
+						filled[p / 4] = true;
+					}
+				}
+			}
+		}
+		return encoded;
+	}
+
+	private static void writeNormal(byte[] encoded, int p, float x, float y, float z) {
+		float length = (float) Math.sqrt(x * x + y * y + z * z);
+		if (length < .000001f) {
+			x = y = 0f;
+			z = length = 1f;
+		}
+		encoded[p] = (byte) toByte(x / length * .5f + .5f);
+		encoded[p + 1] = (byte) toByte(y / length * .5f + .5f);
+		encoded[p + 2] = (byte) toByte(z / length * .5f + .5f);
 	}
 
 	private static float[] downsample(float[] source, int width, int height, int nextWidth, int nextHeight) {

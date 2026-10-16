@@ -992,8 +992,8 @@ final class CinematicDirector {
 		float passDuration = Math.max(currentShot.duration - closePassDelay, 0.1f);
 		float progress = passProgress();
 		float pushIn = 0.5f - 0.5f * FastMath.cos(FastMath.TWO_PI * progress);
-		float nearRange = isTorp ? 9f : 65f;
-		float farRange = isTorp ? 16f : 100f;
+		float nearRange = isTorp ? 9f : 55f;
+		float farRange = isTorp ? 16f : 82f;
 		// Surface ships are twice the submarine's length and need room for the entire hull.
 		boolean surfaceShip = subs.stream().anyMatch(s -> s.id() == currentShot.subjectId && s.surfaceLocked());
 		float dist = (farRange + (nearRange - farRange) * pushIn) * (surfaceShip ? 2f : 1f);
@@ -1009,7 +1009,7 @@ final class CinematicDirector {
 		outLookAt.set(pos.x, pos.y + (isTorp ? 0f : 2f), pos.z);
 		outPos.set(outLookAt.x + dist * FastMath.cos(elev) * FastMath.sin(angle),
 				outLookAt.y + dist * FastMath.sin(elev), outLookAt.z + dist * FastMath.cos(elev) * FastMath.cos(angle));
-		frameEntities(subs, outPos, outLookAt, currentShot.subjectId);
+		frameCloseEntity(subs, outPos, outLookAt, currentShot.subjectId);
 	}
 
 	private void computeHeroPass(List<SubmarineSnapshot> subs, Vector3f outPos, Vector3f outLookAt) {
@@ -1027,9 +1027,9 @@ final class CinematicDirector {
 		outLookAt.y += 2f;
 		// Sweep from the low bow quarter towards the beam, with a small crane rise.
 		outPos.set(node.getLocalTranslation()).addLocal(forward.mult((70f - 95f * eased) * scale))
-				.addLocal(side.mult((78f - 12f * FastMath.sin(FastMath.PI * progress)) * scale));
+				.addLocal(side.mult((64f - 12f * FastMath.sin(FastMath.PI * progress)) * scale));
 		outPos.y += (6f + 18f * eased) * scale;
-		frameEntities(subs, outPos, outLookAt, currentShot.subjectId);
+		frameCloseEntity(subs, outPos, outLookAt, currentShot.subjectId);
 	}
 
 	private void computeIdleFlyBy(float tpf, List<SubmarineSnapshot> subs, Vector3f outPos, Vector3f outLookAt) {
@@ -1094,6 +1094,15 @@ final class CinematicDirector {
 
 	/** Fit oriented hulls to the live lens, with room at the screen edges. */
 	private void frameEntities(List<SubmarineSnapshot> subs, Vector3f position, Vector3f lookAt, int ... ids) {
+		frameEntities(subs, position, lookAt, false, ids);
+	}
+
+	private void frameCloseEntity(List<SubmarineSnapshot> subs, Vector3f position, Vector3f lookAt, int id) {
+		frameEntities(subs, position, lookAt, true, id);
+	}
+
+	private void frameEntities(
+		List<SubmarineSnapshot> subs, Vector3f position, Vector3f lookAt, boolean close, int ... ids) {
 		Vector3f offset = position.subtract(lookAt);
 		float range = offset.length();
 		if (range < 0.1f)
@@ -1106,20 +1115,24 @@ final class CinematicDirector {
 		float tanV = camera != null ? Math.abs(camera.getFrustumTop() / camera.getFrustumNear())
 				: FastMath.tan(FastMath.DEG_TO_RAD * 22.5f);
 		float tanH = camera != null ? Math.abs(camera.getFrustumRight() / camera.getFrustumNear()) : tanV * 16f / 9f;
-		float padding = 0.88f;
 		for (int id : ids) {
 			Node node = findEntityNode(id);
 			if (node == null)
 				continue;
 			boolean weapon = isTorpedoEntity(id);
 			boolean ship = subs.stream().anyMatch(s -> s.id() == id && s.surfaceLocked());
-			float halfBeam = weapon ? 0.5f : ship ? 17f : 7f;
+			boolean closeSub = close && !weapon && !ship;
+			float padding = closeSub ? 0.94f : 0.88f;
+			float halfBeam = weapon ? 0.5f : ship ? 17f : closeSub ? 6.2f : 7f;
 			float halfLength = weapon ? 3f : ship ? 85f : 42f;
 			float halfHeight = weapon ? 1f : ship ? 38f : 8f;
 			// Node bounds include particle emitters; use the body envelope instead.
+			// Close submarine views use its asymmetric 73m hull and sail envelope,
+			// so the safety margin does not push the name-reading pass back out.
 			for (int corner = 0; corner < 8; corner++) {
 				Vector3f point = new Vector3f((corner & 1) == 0 ? -halfBeam : halfBeam,
-						(corner & 2) == 0 ? -halfLength : halfLength, (corner & 4) == 0 ? -halfHeight : halfHeight);
+						closeSub ? ((corner & 2) == 0 ? -35f : 40f) : ((corner & 2) == 0 ? -halfLength : halfLength),
+						closeSub ? ((corner & 4) == 0 ? -3.8f : 8.2f) : ((corner & 4) == 0 ? -halfHeight : halfHeight));
 				node.getLocalRotation().mult(point, point);
 				point.addLocal(node.getLocalTranslation()).subtractLocal(lookAt);
 				float screenRange = Math.max(Math.abs(right.dot(point)) / (tanH * padding),

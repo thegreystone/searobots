@@ -230,6 +230,97 @@ class CinematicDirectorTest {
 		throw new AssertionError("The battle overview never returned to a submarine shot");
 	}
 
+	@ParameterizedTest
+	@CsvSource({"1920,1080", "1440,1080", "1080,1920"})
+	void closeSubmarineShotsKeepTheHullVisibleThroughoutThePass(int width, int height) throws Exception {
+		Scene scene = new Scene(width, height);
+		for (var type : List.of(CinematicDirector.ShotType.IDLE_ORBIT, CinematicDirector.ShotType.IDLE_HERO))
+			for (float heading : new float[] {0, 0.7f, 2.1f, 4.8f})
+				for (float side : new float[] {-1, 1})
+					for (float progress : new float[] {0, .25f, .5f, .75f, 1}) {
+						scene.subNodes.get(1).setLocalRotation(node(Vector3f.ZERO, heading).getLocalRotation());
+						frameCloseShot(scene, type, progress, side, scene.submarines());
+						assertTrue(hullFits(scene.camera, scene.subNodes.get(1)),
+								"Hull clipped in " + type + " at progress=" + progress + ", heading=" + heading
+										+ ", side=" + side + ", viewport=" + width + "x" + height);
+					}
+	}
+
+	@Test
+	void closestSubmarineOrbitUsesTheViewportForReadableMarkings() throws Exception {
+		Scene scene = new Scene(1920, 1080);
+		for (float heading : new float[] {0, 0.7f, 2.1f, 4.8f})
+			for (float side : new float[] {-1, 1}) {
+				Node submarine = scene.subNodes.get(1);
+				submarine.setLocalRotation(node(Vector3f.ZERO, heading).getLocalRotation());
+				frameCloseShot(scene, CinematicDirector.ShotType.IDLE_ORBIT, .5f, side, scene.submarines());
+				float[] bounds = projectedBounds(scene.camera, submarine, new Vector3f(-6, -34.15f, -3.6001f),
+						new Vector3f(6, 38.95152f, 7.88f));
+				float width = (bounds[2] - bounds[0]) / scene.camera.getWidth();
+				assertTrue(width >= .8f && width <= 1f,
+						"The closest beam view must show the full hull envelope at a readable size: " + width);
+			}
+	}
+
+	@ParameterizedTest
+	@CsvSource({"1920,1080", "1440,1080", "1080,1920"})
+	void closeSurfaceShipShotsRetainRoomForTheLargerHull(int width, int height) throws Exception {
+		Scene scene = new Scene(width, height);
+		Node ship = scene.subNodes.get(1);
+		var snapshot = new SubmarineSnapshot(1, "Surface ship", "SS", pose(ship, 1.1f), Velocity.ZERO, 0, Color.CYAN,
+				false, 1000, 0, 0, 0, 0, 0, "", false, 0, List.of(), List.of(), List.of(), null, true);
+		for (var type : List.of(CinematicDirector.ShotType.IDLE_ORBIT, CinematicDirector.ShotType.IDLE_HERO))
+			for (float side : new float[] {-1, 1})
+				for (float progress : new float[] {0, .5f, 1}) {
+					frameCloseShot(scene, type, progress, side, List.of(snapshot));
+					float[] bounds = projectedBounds(scene.camera, ship, new Vector3f(-17, -85, -38),
+							new Vector3f(17, 85, 38));
+					assertTrue(bounds[0] >= 0 && bounds[1] >= 0 && bounds[2] <= width && bounds[3] <= height,
+							"Surface ship clipped in " + type + " at progress=" + progress + ", viewport=" + width + "x"
+									+ height);
+				}
+	}
+
+	private static void frameCloseShot(
+		Scene scene, CinematicDirector.ShotType type, float progress, float side, List<SubmarineSnapshot> subjects)
+			throws Exception {
+		var shot = CinematicDirector.class.getDeclaredField("currentShot");
+		shot.setAccessible(true);
+		shot.set(scene.director,
+				new CinematicDirector.Shot(type, 1, -1, 10, 0, CinematicDirector.TransitionType.HARD_CUT));
+		for (var entry : Map.of("shotTimer", progress * 10, "closePassDelay", 0f, "closeOrbitSide", side).entrySet()) {
+			var field = CinematicDirector.class.getDeclaredField(entry.getKey());
+			field.setAccessible(true);
+			field.setFloat(scene.director, entry.getValue());
+		}
+		var compute = CinematicDirector.class.getDeclaredMethod(
+				type == CinematicDirector.ShotType.IDLE_ORBIT ? "computeCloseOrbit" : "computeHeroPass", List.class,
+				Vector3f.class, Vector3f.class);
+		compute.setAccessible(true);
+		compute.invoke(scene.director, subjects, scene.position, scene.look);
+		scene.aimCamera();
+	}
+
+	private static float[] projectedBounds(Camera camera, Node subject, Vector3f minimum, Vector3f maximum) {
+		float[] bounds = {Float.POSITIVE_INFINITY, Float.POSITIVE_INFINITY, Float.NEGATIVE_INFINITY,
+				Float.NEGATIVE_INFINITY};
+		for (float x : new float[] {minimum.x, maximum.x})
+			for (float y : new float[] {minimum.y, maximum.y})
+				for (float z : new float[] {minimum.z, maximum.z}) {
+					Vector3f point = subject.getLocalRotation().mult(new Vector3f(x, y, z))
+							.addLocal(subject.getLocalTranslation());
+					assertTrue(
+							point.subtract(camera.getLocation()).dot(camera.getDirection()) > camera.getFrustumNear(),
+							"The hull must stay in front of the camera");
+					Vector3f screen = camera.getScreenCoordinates(point);
+					bounds[0] = Math.min(bounds[0], screen.x);
+					bounds[1] = Math.min(bounds[1], screen.y);
+					bounds[2] = Math.max(bounds[2], screen.x);
+					bounds[3] = Math.max(bounds[3], screen.y);
+				}
+		return bounds;
+	}
+
 	private static void assertHullFits(Camera camera, Node node) {
 		assertTrue(hullFits(camera, node), "Submarine hull clipped in " + camera.getWidth() + "x" + camera.getHeight());
 	}
@@ -288,6 +379,10 @@ class CinematicDirectorTest {
 
 		void step(float dt) {
 			trackedId = director.update(dt, position, look);
+			aimCamera();
+		}
+
+		void aimCamera() {
 			camera.setLocation(position);
 			float downness = Math.abs(look.subtract(position).normalizeLocal().dot(Vector3f.UNIT_Y));
 			camera.lookAt(look, downness > .7f ? new Vector3f(0, 0, -1) : Vector3f.UNIT_Y);

@@ -111,6 +111,7 @@ public final class WorldGenerator {
 			}
 		}
 
+		IslandBeachShaper.shape(elevations, gridSize, gridSize, origin, origin, cell, config.worldSeed());
 		return new TerrainMap(elevations, gridSize, gridSize, origin, origin, cell);
 	}
 
