@@ -526,8 +526,8 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 		fpp.addFilter(fogFilter);
 
 		fpp.addFilter(waterFilter);
-		// Underwater effects and bubble wakes draw after water and fog, which would otherwise obscure
-		// particles using the depth of the sky or seabed behind them.
+		// Trails, underwater effects and bubble wakes draw after water and fog, which would otherwise
+		// obscure them using the depth of the sky or seabed behind them.
 		fpp.addFilter(new com.jme3.post.filters.TranslucentBucketFilter());
 		// Bloom on glowing objects only (the team lights), so the rest of the scene keeps its look
 		var bloom = new SelectiveBloomFilter();
@@ -2238,19 +2238,17 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 	private void updateOverlays() {
 		var snapshots = latestSnapshots;
 		long tick = latestTick;
-		boolean historyChanged = lastTrailTick < 0 || tick / 10 != lastTrailTick / 10;
 
 		for (var snap : snapshots) {
 			int id = snap.id();
 			var pos = snap.pose().position();
 			Vector3f jmePos = new Vector3f((float) pos.x(), (float) pos.z(), (float) -pos.y());
-
-			// Sub colour
 			java.awt.Color awtColor = snap.color();
 			ColorRGBA color = new ColorRGBA(awtColor.getRed() / 255f, awtColor.getGreen() / 255f,
 					awtColor.getBlue() / 255f, 1f);
 
-			// --- Trails ---
+			// Recent history fades toward its oldest sample. Tactical shots use wider
+			// screen-space ribbons; other shots retain ordinary world geometry.
 			var trail = trailBuffers.computeIfAbsent(id, k -> new java.util.ArrayDeque<>());
 			if (tick > lastTrailTick
 					&& (lastTrailTick < 0 || tick / TRAIL_SAMPLE_INTERVAL > lastTrailTick / TRAIL_SAMPLE_INTERVAL)) {
@@ -2258,281 +2256,208 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 				if (trail.size() > MAX_TRAIL_POINTS)
 					trail.removeFirst();
 			}
-
-			Node trailNode = trailNodes.get(id);
-			if (trailNode == null) {
-				trailNode = new Node("trail-" + id);
-				trailNodes.put(id, trailNode);
-				rootNode.attachChild(trailNode);
-			}
+			Node trailNode = overlayNode(trailNodes, id, "trail-");
 			trailNode.setCullHint(overlayConfig.trails ? Spatial.CullHint.Never : Spatial.CullHint.Always);
-
-			if (overlayConfig.trails && trail.size() >= 2 && (historyChanged || trailNode.getQuantity() == 0)) {
-				trailNode.detachAllChildren();
-				float[] positions = new float[trail.size() * 3];
-				float[] colors = new float[trail.size() * 4];
-				int i = 0;
-				int total = trail.size();
-				for (Vector3f p : trail) {
-					float alpha = (float) i / total * 0.6f; // 0 = old (faded), 0.6 = newest (match 2D)
-					positions[i * 3] = p.x;
-					positions[i * 3 + 1] = p.y;
-					positions[i * 3 + 2] = p.z;
-					float glow = 2f; // overbright for additive glow
-					colors[i * 4] = color.r * glow;
-					colors[i * 4 + 1] = color.g * glow;
-					colors[i * 4 + 2] = color.b * glow;
-					colors[i * 4 + 3] = alpha;
-					i++;
+			if (overlayConfig.trails && trail.size() >= 2 && historyNeedsUpdate(trailNode, tick)) {
+				TacticalPath path = (TacticalPath) trailNode.getChild("trailLine");
+				if (path == null) {
+					path = new TacticalPath(assetManager, "trailLine", List.copyOf(trail), color, 3f, 0.05f, 0.85f,
+							TacticalPath.WorldStyle.LINE);
+					trailNode.attachChild(path);
+				} else {
+					path.setPoints(List.copyOf(trail));
 				}
-				Mesh trailMesh = new Mesh();
-				trailMesh.setMode(Mesh.Mode.LineStrip);
-				trailMesh.setBuffer(VertexBuffer.Type.Position, 3, positions);
-				trailMesh.setBuffer(VertexBuffer.Type.Color, 4, colors);
-				trailMesh.updateBound();
-				Geometry trailGeom = new Geometry("trailLine-" + id, trailMesh);
-				Material mat = new Material(assetManager, "Common/MatDefs/Misc/Unshaded.j3md");
-				mat.setBoolean("VertexColor", true);
-				mat.getAdditionalRenderState().setBlendMode(RenderState.BlendMode.Additive);
-				mat.getAdditionalRenderState().setDepthWrite(false);
-				mat.getAdditionalRenderState().setDepthTest(false);
-				mat.getAdditionalRenderState().setFaceCullMode(RenderState.FaceCullMode.Off);
-				trailGeom.setMaterial(mat);
-				trailGeom.setQueueBucket(RenderQueue.Bucket.Transparent);
-				trailGeom.setCullHint(Spatial.CullHint.Never);
-				trailNode.attachChild(trailGeom);
+				trailNode.setUserData("historyTick", tick);
 			}
+			if (overlayConfig.trails)
+				updateOverlayGeometry(trailNode);
 
-			// --- Waypoints ---
-			Node wpNode = waypointNodes.get(id);
-			if (wpNode == null) {
-				wpNode = new Node("waypoints-" + id);
-				waypointNodes.put(id, wpNode);
-				rootNode.attachChild(wpNode);
-			}
+			Node wpNode = overlayNode(waypointNodes, id, "waypoints-");
 			wpNode.setCullHint(overlayConfig.waypoints ? Spatial.CullHint.Never : Spatial.CullHint.Always);
-
 			var waypoints = snap.waypoints();
 			if (overlayConfig.waypoints && (!waypoints.equals(renderedWaypoints.get(id))
 					|| !awtColor.equals(renderedWaypointColors.get(id)))) {
 				wpNode.detachAllChildren();
 				renderedWaypoints.put(id, List.copyOf(waypoints));
 				renderedWaypointColors.put(id, awtColor);
-				if (!waypoints.isEmpty()) {
-					// Solid ribbon connecting waypoints (triangle strip tube)
-					if (waypoints.size() >= 2) {
-						float hw = 2f; // ribbon half-width
-						// Build a flat ribbon strip: for each waypoint, emit two
-						// vertices offset perpendicular to the segment direction
-						float[] spos = new float[waypoints.size() * 2 * 3];
-						for (int j = 0; j < waypoints.size(); j++) {
-							var wp = waypoints.get(j);
-							float cx = (float) wp.x();
-							float cy = (float) wp.z();
-							float cz = (float) -wp.y();
-							// Perpendicular in XZ plane (horizontal ribbon)
-							float dx = 0, dz = 0;
-							if (j < waypoints.size() - 1) {
-								var next = waypoints.get(j + 1);
-								dx = (float) next.x() - cx;
-								dz = (float) -next.y() - cz;
-							} else {
-								var prev = waypoints.get(j - 1);
-								dx = cx - (float) prev.x();
-								dz = cz - (float) (-prev.y());
-							}
-							float len = (float) Math.sqrt(dx * dx + dz * dz);
-							if (len > 0.001f) {
-								dx /= len;
-								dz /= len;
-							}
-							// Perpendicular: rotate 90 degrees in XZ
-							float px = -dz * hw, pz = dx * hw;
-							spos[j * 6] = cx + px;
-							spos[j * 6 + 1] = cy;
-							spos[j * 6 + 2] = cz + pz;
-							spos[j * 6 + 3] = cx - px;
-							spos[j * 6 + 4] = cy;
-							spos[j * 6 + 5] = cz - pz;
-						}
-						Mesh splineMesh = new Mesh();
-						splineMesh.setMode(Mesh.Mode.TriangleStrip);
-						splineMesh.setBuffer(VertexBuffer.Type.Position, 3, spos);
-						splineMesh.updateBound();
-						Geometry splineGeom = new Geometry("wpSpline", splineMesh);
-						Material spMat = new Material(assetManager, "Common/MatDefs/Misc/Unshaded.j3md");
-						spMat.setColor("Color", new ColorRGBA(color.r * 0.5f, color.g * 0.5f, color.b * 0.5f, 1f));
-						spMat.getAdditionalRenderState().setFaceCullMode(RenderState.FaceCullMode.Off);
-						splineGeom.setMaterial(spMat);
-						splineGeom.setCullHint(Spatial.CullHint.Never);
-						wpNode.attachChild(splineGeom);
-					}
-
-					// Waypoint markers: solid circle rings, active one larger and white
-					int circSegs = 24;
-					for (var wp : waypoints) {
-						float wpX = (float) wp.x();
-						float wpY = (float) wp.z();
-						float wpZ = (float) -wp.y();
-						boolean active = wp.active();
-						float r = active ? 18f : 10f;
-						float w = active ? 2.5f : 1.5f;
-
-						// Solid circle ring (triangle strip)
-						float[] cpos = new float[circSegs * 2 * 3];
-						for (int ci = 0; ci < circSegs; ci++) {
-							float a = (float) (2 * Math.PI * ci / (circSegs - 1));
-							float cos = FastMath.cos(a), sin = FastMath.sin(a);
-							cpos[ci * 6] = (r - w) * cos;
-							cpos[ci * 6 + 1] = (r - w) * sin;
-							cpos[ci * 6 + 2] = 0;
-							cpos[ci * 6 + 3] = (r + w) * cos;
-							cpos[ci * 6 + 4] = (r + w) * sin;
-							cpos[ci * 6 + 5] = 0;
-						}
-						Mesh cm = new Mesh();
-						cm.setMode(Mesh.Mode.TriangleStrip);
-						cm.setBuffer(VertexBuffer.Type.Position, 3, cpos);
-						cm.updateBound();
-						Geometry wpGeom = new Geometry("wp", cm);
-						Material wpMat = new Material(assetManager, "Common/MatDefs/Misc/Unshaded.j3md");
-						wpMat.setColor("Color", active ? ColorRGBA.White : color);
-						wpMat.getAdditionalRenderState().setFaceCullMode(RenderState.FaceCullMode.Off);
-						wpGeom.setMaterial(wpMat);
-						wpGeom.setLocalTranslation(wpX, wpY, wpZ);
-						wpGeom.addControl(new BillboardControl());
-						wpGeom.setCullHint(Spatial.CullHint.Never);
-						wpNode.attachChild(wpGeom);
+				int activeIndex = -1;
+				for (int i = 0; i < waypoints.size(); i++) {
+					if (waypoints.get(i).active()) {
+						activeIndex = i;
+						break;
 					}
 				}
+				// Controllers can publish their whole path. Passed waypoints are history;
+				// the plan begins at the currently active target, when one is supplied.
+				var plannedPoints = new java.util.ArrayList<Vector3f>();
+				for (int i = Math.max(0, activeIndex); i < waypoints.size(); i++) {
+					var wp = waypoints.get(i);
+					Vector3f target = new Vector3f((float) wp.x(), (float) wp.z(), (float) -wp.y());
+					plannedPoints.add(target);
+					wpNode.attachChild(waypointMarker("wp", target, wp.active(), color, false));
+				}
+				if (plannedPoints.size() >= 2)
+					wpNode.attachChild(new TacticalPath(assetManager, "wpPlan", plannedPoints, color, 3f, 0.9f, 0.9f));
+				if (activeIndex >= 0) {
+					Vector3f target = plannedPoints.getFirst();
+					ColorRGBA nextColor = color.clone().interpolateLocal(ColorRGBA.White, 0.65f);
+					WaypointDirectionIndicator direction = new WaypointDirectionIndicator(assetManager, "wpDirection",
+							HullGeometry.envelope(snap), nextColor);
+					direction.setUserData("target", target);
+					wpNode.attachChild(direction);
+				}
+			}
+			if (overlayConfig.waypoints) {
+				WaypointDirectionIndicator direction = (WaypointDirectionIndicator) wpNode.getChild("wpDirection");
+				if (direction != null) {
+					// Follow the displayed hull rather than jumping ahead to the latest simulation pose.
+					Node vehicle = subNodes.get(id);
+					direction.update(vehicle != null ? vehicle.getLocalTranslation() : jmePos,
+							vehicle != null ? vehicle.getLocalRotation() : vehicleRotation(snap),
+							direction.getUserData("target"), cam, isTacticalOverlayActive());
+				}
+				updateOverlayGeometry(wpNode);
 			}
 
-			// --- Strategic Waypoints ---
-			Node stNode = strategicNodes.get(id);
-			if (stNode == null) {
-				stNode = new Node("strategic-" + id);
-				strategicNodes.put(id, stNode);
-				rootNode.attachChild(stNode);
-			}
+			Node stNode = overlayNode(strategicNodes, id, "strategic-");
 			stNode.setCullHint(overlayConfig.strategicWaypoints ? Spatial.CullHint.Never : Spatial.CullHint.Always);
-
 			var stratWps = snap.strategicWaypoints() != null ? snap.strategicWaypoints()
 					: List.<SubmarineSnapshot.StrategicWaypointViz> of();
 			if (overlayConfig.strategicWaypoints && !stratWps.equals(renderedStrategicWaypoints.get(id))) {
 				stNode.detachAllChildren();
 				renderedStrategicWaypoints.put(id, List.copyOf(stratWps));
-				if (!stratWps.isEmpty()) {
-					int circSegs = 24;
-					for (var sw : stratWps) {
-						var wp = sw.waypoint();
-						float wpX = (float) wp.x();
-						float wpY = (float) wp.z();
-						float wpZ = (float) -wp.y();
-						boolean active = wp.active();
-						float r = active ? 25f : 16f;
-						float w = active ? 3.5f : 2.5f;
-
-						// Color-code by purpose
-						ColorRGBA purposeColor = switch (sw.purpose()) {
-						case PATROL -> new ColorRGBA(0.2f, 0.8f, 0.2f, 1f);
-						case INVESTIGATE -> new ColorRGBA(1f, 1f, 0.2f, 1f);
-						case PING_POSITION -> new ColorRGBA(1f, 0.5f, 0f, 1f);
-						case STEALTH_TRANSIT -> new ColorRGBA(0.3f, 0.3f, 0.8f, 1f);
-						case INTERCEPT -> new ColorRGBA(1f, 0.2f, 0.2f, 1f);
-						case EVADE -> new ColorRGBA(0.8f, 0.2f, 0.8f, 1f);
-						case RALLY -> ColorRGBA.Cyan;
-						};
-
-						float[] cpos = new float[circSegs * 2 * 3];
-						for (int ci = 0; ci < circSegs; ci++) {
-							float a = (float) (2 * Math.PI * ci / (circSegs - 1));
-							float cos = FastMath.cos(a), sin = FastMath.sin(a);
-							cpos[ci * 6] = (r - w) * cos;
-							cpos[ci * 6 + 1] = (r - w) * sin;
-							cpos[ci * 6 + 2] = 0;
-							cpos[ci * 6 + 3] = (r + w) * cos;
-							cpos[ci * 6 + 4] = (r + w) * sin;
-							cpos[ci * 6 + 5] = 0;
-						}
-						Mesh cm = new Mesh();
-						cm.setMode(Mesh.Mode.TriangleStrip);
-						cm.setBuffer(VertexBuffer.Type.Position, 3, cpos);
-						cm.updateBound();
-						Geometry swGeom = new Geometry("strategic-wp", cm);
-						Material swMat = new Material(assetManager, "Common/MatDefs/Misc/Unshaded.j3md");
-						swMat.setColor("Color", active ? ColorRGBA.White : purposeColor);
-						swMat.getAdditionalRenderState().setFaceCullMode(RenderState.FaceCullMode.Off);
-						swGeom.setMaterial(swMat);
-						swGeom.setLocalTranslation(wpX, wpY, wpZ);
-						swGeom.addControl(new BillboardControl());
-						swGeom.setCullHint(Spatial.CullHint.Never);
-						stNode.attachChild(swGeom);
-					}
+				for (var sw : stratWps) {
+					var wp = sw.waypoint();
+					ColorRGBA purposeColor = switch (sw.purpose()) {
+					case PATROL -> new ColorRGBA(0.2f, 0.8f, 0.2f, 1f);
+					case INVESTIGATE -> new ColorRGBA(1f, 1f, 0.2f, 1f);
+					case PING_POSITION -> new ColorRGBA(1f, 0.5f, 0f, 1f);
+					case STEALTH_TRANSIT -> new ColorRGBA(0.3f, 0.3f, 0.8f, 1f);
+					case INTERCEPT -> new ColorRGBA(1f, 0.2f, 0.2f, 1f);
+					case EVADE -> new ColorRGBA(0.8f, 0.2f, 0.8f, 1f);
+					case RALLY -> ColorRGBA.Cyan;
+					};
+					Vector3f target = new Vector3f((float) wp.x(), (float) wp.z(), (float) -wp.y());
+					stNode.attachChild(waypointMarker("strategic-wp", target, wp.active(), purposeColor, true));
 				}
 			}
+			if (overlayConfig.strategicWaypoints)
+				updateOverlayGeometry(stNode);
 
-			// --- Route ---
-			Node rtNode = routeNodes.get(id);
-			if (rtNode == null) {
-				rtNode = new Node("route-" + id);
-				routeNodes.put(id, rtNode);
-				rootNode.attachChild(rtNode);
-			}
-			rtNode.setCullHint(overlayConfig.route ? Spatial.CullHint.Never : Spatial.CullHint.Always);
-
-			// Sample route history (less frequent than trails, full match history)
-			// Use interval-crossing check so high speed multipliers don't skip samples
+			// Full-match history uses a quieter line than the recent trail and the plan.
 			var route = routeBuffers.computeIfAbsent(id, k -> new java.util.ArrayList<>());
 			if (tick > lastTrailTick
 					&& (lastTrailTick < 0 || tick / ROUTE_SAMPLE_INTERVAL > lastTrailTick / ROUTE_SAMPLE_INTERVAL)) {
 				route.add(jmePos.clone());
 			}
-
-			if (overlayConfig.route && route.size() >= 2 && (historyChanged || rtNode.getQuantity() == 0)) {
-				rtNode.detachAllChildren();
-				int n = route.size();
-				float w = 2f; // half-width of the route duct
-
-				// Build a rectangular duct: 4 walls (top, bottom, left, right)
-				// Cross-section in YZ plane (perpendicular to travel in XZ)
-				// Each offset pair: (dY1, dZ1, dY2, dZ2)
-				float[][] offsets = {{+w, -w, +w, +w}, // top wall:    top-left to top-right
-						{-w, -w, -w, +w}, // bottom wall: bottom-left to bottom-right
-						{-w, -w, +w, -w}, // left wall:   bottom-left to top-left
-						{-w, +w, +w, +w}, // right wall:  bottom-right to top-right
-				};
-
-				Material rtMat = new Material(assetManager, "Common/MatDefs/Misc/Unshaded.j3md");
-				rtMat.setColor("Color", color);
-				rtMat.getAdditionalRenderState().setFaceCullMode(RenderState.FaceCullMode.Off);
-
-				for (float[] off : offsets) {
-					float[] rpos = new float[n * 2 * 3];
-					for (int j = 0; j < n; j++) {
-						var rp = route.get(j);
-						rpos[j * 6] = rp.x;
-						rpos[j * 6 + 1] = rp.y + off[0];
-						rpos[j * 6 + 2] = rp.z + off[1];
-						rpos[j * 6 + 3] = rp.x;
-						rpos[j * 6 + 4] = rp.y + off[2];
-						rpos[j * 6 + 5] = rp.z + off[3];
-					}
-					Mesh wall = new Mesh();
-					wall.setMode(Mesh.Mode.TriangleStrip);
-					wall.setBuffer(VertexBuffer.Type.Position, 3, rpos);
-					wall.updateBound();
-					Geometry wallGeom = new Geometry("routeWall-" + id, wall);
-					wallGeom.setMaterial(rtMat);
-					wallGeom.setQueueBucket(RenderQueue.Bucket.Opaque);
-					wallGeom.setCullHint(Spatial.CullHint.Never);
-					rtNode.attachChild(wallGeom);
+			Node rtNode = overlayNode(routeNodes, id, "route-");
+			rtNode.setCullHint(overlayConfig.route ? Spatial.CullHint.Never : Spatial.CullHint.Always);
+			if (overlayConfig.route && route.size() >= 2 && historyNeedsUpdate(rtNode, tick)) {
+				TacticalPath path = (TacticalPath) rtNode.getChild("routeLine");
+				if (path == null) {
+					path = new TacticalPath(assetManager, "routeLine", route, color, 2f, 0.45f, 0.45f,
+							TacticalPath.WorldStyle.TUBE);
+					rtNode.attachChild(path);
+				} else {
+					path.setPoints(route);
 				}
+				rtNode.setUserData("historyTick", tick);
 			}
+			if (overlayConfig.route)
+				updateOverlayGeometry(rtNode);
 		}
 		lastTrailTick = tick;
 	}
 
+	private static boolean historyNeedsUpdate(Node node, long tick) {
+		Long renderedTick = node.getUserData("historyTick");
+		return renderedTick == null || renderedTick / 10 != tick / 10;
+	}
+
+	private Node overlayNode(Map<Integer, Node> nodes, int id, String prefix) {
+		return nodes.computeIfAbsent(id, key -> {
+			Node node = new Node(prefix + key);
+			rootNode.attachChild(node);
+			return node;
+		});
+	}
+
+	private Geometry waypointMarker(String name, Vector3f target, boolean active, ColorRGBA color, boolean strategic) {
+		float radius = strategic ? (active ? 25f : 16f) : (active ? 18f : 10f);
+		float halfWidth = strategic ? (active ? 3.5f : 2.5f) : (active ? 2.5f : 1.5f);
+		int segments = 32;
+		float[] positions = new float[(segments + 1) * 6];
+		for (int i = 0; i <= segments; i++) {
+			float angle = FastMath.TWO_PI * i / segments;
+			float cos = FastMath.cos(angle), sin = FastMath.sin(angle);
+			positions[i * 6] = (radius - halfWidth) * cos;
+			positions[i * 6 + 1] = (radius - halfWidth) * sin;
+			positions[i * 6 + 3] = (radius + halfWidth) * cos;
+			positions[i * 6 + 4] = (radius + halfWidth) * sin;
+		}
+		Mesh mesh = new Mesh();
+		mesh.setMode(Mesh.Mode.TriangleStrip);
+		mesh.setBuffer(VertexBuffer.Type.Position, 3, positions);
+		mesh.updateBound();
+		Geometry marker = new Geometry(name, mesh);
+		Material material = new Material(assetManager, "Common/MatDefs/Misc/Unshaded.j3md");
+		material.setColor("Color", active ? ColorRGBA.White : color);
+		material.getAdditionalRenderState().setFaceCullMode(RenderState.FaceCullMode.Off);
+		material.getAdditionalRenderState().setDepthTest(false);
+		material.getAdditionalRenderState().setDepthWrite(false);
+		marker.setMaterial(material);
+		marker.setLocalTranslation(target);
+		marker.addControl(new BillboardControl());
+		marker.setCullHint(Spatial.CullHint.Never);
+		marker.setUserData("radius", radius);
+		marker.setUserData("pixelRadius", strategic ? (active ? 12f : 9f) : (active ? 9f : 6f));
+		return marker;
+	}
+
+	private void updateOverlayGeometry(Node node) {
+		boolean tactical = isTacticalOverlayActive();
+		for (Spatial child : node.getChildren()) {
+			if (child instanceof TacticalPath path) {
+				path.update(cam, tactical);
+			} else {
+				Float radius = child.getUserData("radius");
+				Float pixels = child.getUserData("pixelRadius");
+				if (radius != null && pixels != null && child instanceof Geometry marker) {
+					marker.setLocalScale(
+							tactical ? overlayMarkerScale(cam, child.getLocalTranslation(), radius, pixels) : 1f);
+					var state = marker.getMaterial().getAdditionalRenderState();
+					state.setDepthTest(!tactical);
+					state.setDepthWrite(!tactical);
+					marker.setQueueBucket(tactical ? RenderQueue.Bucket.Transparent : RenderQueue.Bucket.Opaque);
+				}
+			}
+		}
+	}
+
+	private boolean isTacticalOverlayActive() {
+		// Water reflections use a different camera, so screen-space geometry is only
+		// suitable once the tactical shot has hidden the water.
+		return screenshotTacticalMode || cameraMode == CameraMode.DIRECTOR && cinematicDirector != null
+				&& cinematicDirector.isTacticalView() && cinematicDirector.waterOpacity() < 0.5f;
+	}
+
+	/** Retain the world size close up, with a minimum readable radius in screen pixels. */
+	static float overlayMarkerScale(
+		com.jme3.renderer.Camera camera, Vector3f position, float radius, float pixelRadius) {
+		float depth = position.subtract(camera.getLocation()).dot(camera.getDirection());
+		float viewHeight = camera.getHeight() * (camera.getViewPortTop() - camera.getViewPortBottom());
+		float unitsPerPixel = (camera.getFrustumTop() - camera.getFrustumBottom()) / Math.max(1f, viewHeight);
+		if (!camera.isParallelProjection())
+			unitsPerPixel *= Math.max(camera.getFrustumNear(), depth) / camera.getFrustumNear();
+		return Math.max(1f, pixelRadius * unitsPerPixel / radius);
+	}
+
 	// ---- vehicle tracking ----
+
+	private static Quaternion vehicleRotation(SubmarineSnapshot snapshot) {
+		return new Quaternion().fromAngles(-FastMath.HALF_PI - (float) snapshot.pose().pitch(),
+				FastMath.PI - (float) snapshot.pose().heading(), (float) snapshot.pose().roll());
+	}
 
 	private void updateVehicles() {
 		var snapshots = latestSnapshots;
@@ -2555,10 +2480,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 			// Target orientation
 			// jME fromAngles(pitch, yaw, roll): positive X pitch = nose down
 			// sim pitch: positive = nose up, so negate for jME
-			float heading = (float) -snap.pose().heading() + FastMath.PI;
-			float pitch = (float) snap.pose().pitch();
-			float roll = (float) snap.pose().roll();
-			var targetRot = new Quaternion().fromAngles(-FastMath.HALF_PI - pitch, heading, roll);
+			var targetRot = vehicleRotation(snap);
 
 			if (subNode == null) {
 				// Create a new vehicle model by cloning the matching template

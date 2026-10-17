@@ -359,6 +359,10 @@ final class CinematicDirector {
 		return currentShot != null ? currentShot.type.label : "---";
 	}
 
+	boolean isTacticalView() {
+		return currentShot != null && currentShot.type == ShotType.CONTEXT_WIDE;
+	}
+
 	/**
 	 * Water opacity: 1.0 = normal rendering, 0.0 = fully transparent. Establishing shots smoothly
 	 * fade to 0 so the subs become visible from above. Other shots fade back to 1.0.
