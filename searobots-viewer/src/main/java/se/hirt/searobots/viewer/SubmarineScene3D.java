@@ -138,7 +138,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 	private TerrainMap displayedTerrain;
 	private Spatial sky;
 	private Geometry sunBillboard;
-	private volatile GeneratedWorld pendingWorld;
+	private final java.util.concurrent.atomic.AtomicReference<GeneratedWorld> pendingWorld = new java.util.concurrent.atomic.AtomicReference<>();
 	// Auto-screenshot: enabled with -Dscreenshots=true
 	private static final boolean AUTO_SCREENSHOTS = Boolean.getBoolean("screenshots");
 	// Frame-rate tracking: enabled with -Dfps=true (shows the counter, lifts the 60 fps cap, logs every 5 s)
@@ -208,7 +208,37 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 	private BitmapText hudText;
 	private BitmapText tacticalText;
 	private BitmapText keysText;
-	private BitmapText loadingText;
+	private LoadingOverlay loadingOverlay;
+	private final java.util.concurrent.ExecutorService loadingWorker = java.util.concurrent.Executors
+			.newSingleThreadExecutor(Thread.ofPlatform().daemon().name("viewer-setup").factory());
+
+	private record SetupStep(float progress, String message, Runnable action, boolean background) {
+	}
+
+	private record LoadingStatus(float progress, String message) {
+	}
+
+	private record PreparedTerrain(GeneratedWorld world, com.jme3.terrain.geomipmap.TerrainQuad quad, Node forest,
+			IslandOrbitState islands, java.awt.image.BufferedImage mapImage) implements AutoCloseable {
+		@Override
+		public void close() {
+			forest.getControl(IslandForestControl.class).close();
+		}
+	}
+
+	private final java.util.ArrayDeque<SetupStep> setupSteps = new java.util.ArrayDeque<>();
+	private SetupStep setupStep;
+	private java.util.concurrent.Future<?> setupWork;
+	private long setupStepFrame;
+	private boolean sceneReady;
+	private volatile LoadingStatus loadingStatus = new LoadingStatus(0f, "Opening SeaRobots...");
+	private java.util.concurrent.Future<PreparedTerrain> terrainWork;
+	private boolean worldInstalled;
+	private boolean resumeAfterLoading;
+	private boolean waitingForFirstTick;
+	private long loadingFinishedFrame = -1;
+	private volatile boolean sourceLoading;
+	private boolean loadingFailed;
 	private BitmapText speedText;
 	private BitmapText replayLabel; // lower-left "REPLAY: <file>" indicator, clickable to copy path
 	private BitmapText toggleStatusText;
@@ -374,14 +404,9 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 		app.setShowSettings(false);
 		app.setPauseOnLostFocus(false);
 
-		// Wire up simulation. For a replay the world is regenerated from the recorded config
-		// inside SimulationManager.startReplay(); here we just need a world for the initial
-		// setWorld()/MapRenderer wiring.
-		var generator = new se.hirt.searobots.engine.WorldGenerator();
-		var world = generator.generate(se.hirt.searobots.api.MatchConfig.withDefaults(seed));
+		// Open the window before generating the world so setup can display progress.
 		app.standaloneSeed = seed;
-		app.standaloneGenerator = generator;
-		app.standaloneWorld = world;
+		app.standaloneGenerator = new se.hirt.searobots.engine.WorldGenerator();
 
 		app.start();
 	}
@@ -408,7 +433,6 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 
 	@Override
 	public void simpleInitApp() {
-		System.out.println("simpleInitApp: PHASE 1 - submarine model only");
 		setDisplayStatView(false);
 		setDisplayFps(TRACK_FPS);
 		flyCam.setEnabled(false);
@@ -420,6 +444,165 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 		// Select before loading materials: jME caches their lighting techniques on first use.
 		renderManager.setPreferredLightMode(TechniqueDef.LightMode.SinglePass);
 		renderManager.setSinglePassLightBatchSize(2);
+		loadingOverlay = new LoadingOverlay(assetManager, guiFont);
+		guiNode.attachChild(loadingOverlay);
+		setupSteps.add(new SetupStep(.04f, "Preparing ocean and lighting...", this::setupEnvironment, false));
+		setupSteps.add(new SetupStep(.12f, "Loading submarine...", this::loadSubmarineModel, false));
+		setupSteps.add(new SetupStep(.19f, "Loading surface ship...", this::loadShipModel, false));
+		setupSteps.add(new SetupStep(.24f, "Loading torpedoes...", this::loadTorpedoModel, false));
+		setupSteps.add(new SetupStep(.28f, "Preparing viewer controls...", this::setupHud, false));
+		if (standalone) {
+			setupSteps.add(new SetupStep(.32f, "Generating ocean and islands...", () -> {
+				if (replayPath != null) {
+					standaloneSimManager = new SimulationManager();
+					var replay = standaloneSimManager.startReplay(java.nio.file.Path.of(replayPath));
+					if (replay == null)
+						throw new IllegalStateException("Cannot load replay " + replayPath);
+					standaloneWorld = replay.world();
+				} else {
+					standaloneWorld = standaloneGenerator
+							.generate(se.hirt.searobots.api.MatchConfig.withDefaults(standaloneSeed));
+				}
+				standaloneMapRenderer = new MapRenderer(standaloneWorld, overlayConfig);
+			}, true));
+			setupSteps.add(new SetupStep(.38f, "Preparing simulation...", this::setupStandalone, false));
+		}
+	}
+
+	private void updateSetup() {
+		if (loadingFailed)
+			return;
+		try {
+			if (setupStep == null) {
+				setupStep = setupSteps.pollFirst();
+				if (setupStep == null) {
+					sceneReady = true;
+					return;
+				}
+				loadingStatus = new LoadingStatus(setupStep.progress(), setupStep.message());
+				setupStepFrame = frameCount;
+				return; // Present the label before running a render-thread setup step.
+			}
+			if (frameCount <= setupStepFrame)
+				return;
+			if (setupStep.background()) {
+				if (setupWork == null) {
+					setupWork = loadingWorker.submit(setupStep.action());
+					return;
+				}
+				if (!setupWork.isDone())
+					return;
+				setupWork.get();
+				setupWork = null;
+			} else {
+				setupStep.action().run();
+			}
+			setupStep = null;
+		} catch (Exception e) {
+			failLoading(e);
+		}
+	}
+
+	private void failLoading(Exception failure) {
+		loadingFailed = true;
+		sourceLoading = false;
+		Throwable cause = failure.getCause() != null ? failure.getCause() : failure;
+		loadingStatus = new LoadingStatus(loadingStatus.progress(),
+				"Setup failed. Please close the viewer and try again.");
+		System.err.println("Viewer setup failed: " + cause);
+		cause.printStackTrace(System.err);
+	}
+
+	private void updateTerrainLoading() {
+		try {
+			if (terrainWork != null) {
+				if (!terrainWork.isDone())
+					return;
+				var prepared = terrainWork.get();
+				terrainWork = null;
+				if (pendingWorld.get() != null) {
+					prepared.close(); // A newer request superseded this detached scene.
+				} else {
+					loadingStatus = new LoadingStatus(.92f, "Preparing the scene...");
+					attachTerrain(prepared);
+					if (standaloneMapRenderer != null)
+						standaloneMapRenderer.setWorld(prepared.world(), prepared.mapImage());
+					worldInstalled = true;
+					if (resumeAfterLoading && standaloneSimManager != null) {
+						resumeAfterLoading = false;
+						waitingForFirstTick = true;
+						standaloneSimManager.play();
+					}
+					loadingFinishedFrame = -1;
+					loadingStatus = new LoadingStatus(.97f, "Starting simulation...");
+				}
+			}
+			var requested = pendingWorld.getAndSet(null);
+			if (requested != null) {
+				worldInstalled = false;
+				loadingFailed = false;
+				loadingFinishedFrame = -1;
+				loadingStatus = new LoadingStatus(.40f, "Building the terrain...");
+				terrainWork = loadingWorker.submit(() -> prepareTerrain(requested));
+			}
+		} catch (Exception e) {
+			terrainWork = null;
+			failLoading(e);
+		}
+	}
+
+	private PreparedTerrain prepareTerrain(GeneratedWorld world) {
+		var quad = TerrainQuadBuilder.build(world.terrain(), assetManager, null, (progress, message) -> {
+			if (Thread.currentThread().isInterrupted())
+				throw new java.util.concurrent.CancellationException();
+			loadingStatus = new LoadingStatus(.40f + .32f * progress, message);
+		});
+		loadingStatus = new LoadingStatus(.76f, "Planting island forests...");
+		Node forest = TreeScatter.prepare(world.terrain(), quad, assetManager, world.config().worldSeed());
+		try {
+			loadingStatus = new LoadingStatus(.85f, "Finding island viewpoints...");
+			var islands = new IslandOrbitState();
+			islands.initFromTerrain(world.terrain());
+			loadingStatus = new LoadingStatus(.88f, "Preparing the tactical map...");
+			var mapImage = MapRenderer.prepareTerrainImage(world);
+			if (loadingWorker.isShutdown())
+				throw new java.util.concurrent.CancellationException();
+			return new PreparedTerrain(world, quad, forest, islands, mapImage);
+		} catch (RuntimeException | Error failure) {
+			forest.getControl(IslandForestControl.class).close();
+			throw failure;
+		}
+	}
+
+	private boolean isLoading() {
+		return !sceneReady || sourceLoading || pendingWorld.get() != null || terrainWork != null || !worldInstalled
+				|| waitingForFirstTick || loadingFailed;
+	}
+
+	private void updateLoading(float tpf) {
+		if (loadingOverlay == null)
+			return;
+		if (worldInstalled && terrainWork == null && pendingWorld.get() == null && !sourceLoading && !loadingFailed) {
+			var sim = getActiveSim();
+			if (waitingForFirstTick && (!latestSnapshots.isEmpty() || sim == null || sim.isPaused()
+					|| sim.getState() == se.hirt.searobots.engine.SimulationLoop.State.STOPPED))
+				waitingForFirstTick = false;
+			if (!waitingForFirstTick) {
+				if (loadingFinishedFrame < 0) {
+					loadingFinishedFrame = frameCount;
+					loadingStatus = new LoadingStatus(1f, "Ready");
+				}
+			}
+		}
+		boolean visible = isLoading() || loadingFinishedFrame < 0 || frameCount - loadingFinishedFrame < 18;
+		loadingOverlay.setVisible(visible);
+		if (visible) {
+			var status = loadingStatus;
+			loadingOverlay.update(tpf, cam.getWidth(), cam.getHeight(), status.progress(), status.message());
+		}
+	}
+
+	private void setupEnvironment() {
 		setupInput();
 
 		// Initialize Lemur GUI (must happen before any Lemur widget creation)
@@ -541,6 +724,9 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 		fpp.addFilter(antialiasing);
 		viewPort.addProcessor(fpp);
 
+	}
+
+	private void loadSubmarineModel() {
 		// Load submarine model
 		modelNode = new Node("submarineTemplate");
 		try {
@@ -574,6 +760,9 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 		modelNode.setLocalRotation(new Quaternion().fromAngles(-FastMath.HALF_PI, 0, 0));
 		// modelNode is a template for cloning - don't attach to rootNode
 
+	}
+
+	private void loadShipModel() {
 		// Load surface ship model template. Same OBJ convention as the submarine
 		// (Y fore-aft with the bow at -Y, Z up, metres, waterline at Z=0), so it
 		// gets the same rotation and needs no scaling.
@@ -597,6 +786,9 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 		}
 		shipModelNode.setLocalRotation(new Quaternion().fromAngles(-FastMath.HALF_PI, 0, 0));
 
+	}
+
+	private void loadTorpedoModel() {
 		// Load torpedo model template (scaled to ~5m, sub is ~75m so torpedo is ~1/15th)
 		torpedoModelNode = new Node("torpedoTemplate");
 		try {
@@ -626,6 +818,9 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 		}
 		torpedoModelNode.setLocalRotation(new Quaternion().fromAngles(-FastMath.HALF_PI, 0, 0));
 
+	}
+
+	private void setupHud() {
 		// HUD overlay - top left: sub telemetry
 		hudText = new BitmapText(guiFont);
 		hudText.setSize(guiFont.getCharSet().getRenderedSize());
@@ -639,14 +834,6 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 		tacticalText.setColor(new ColorRGBA(0.9f, 0.95f, 1.0f, 1f));
 		// Position updated dynamically in updateHud() to track window resize
 		guiNode.attachChild(tacticalText);
-
-		// HUD overlay - center: loading indicator
-		loadingText = new BitmapText(guiFont);
-		loadingText.setSize(guiFont.getCharSet().getRenderedSize() * 2);
-		loadingText.setColor(new ColorRGBA(0.5f, 0.8f, 1.0f, 0.9f));
-		loadingText.setText("INITIALIZING...");
-		loadingText.setCullHint(Spatial.CullHint.Always); // hidden by default
-		guiNode.attachChild(loadingText);
 
 		// HUD overlay - top center: speed indicator
 		speedText = new BitmapText(guiFont);
@@ -791,28 +978,28 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 			System.out.println("Auto-screenshot mode enabled");
 		}
 
-		System.out.println("simpleInitApp: PHASE 1 DONE");
+	}
 
+	private void setupStandalone() {
 		// Standalone mode: auto-start simulation and register Lemur AppStates
 		if (standalone && standaloneWorld != null) {
 			setWorld(standaloneWorld);
-			standaloneSimManager = new SimulationManager();
+			if (standaloneSimManager == null)
+				standaloneSimManager = new SimulationManager();
 			standaloneSimManager.addListener(this);
 			if (replayPath != null) {
-				// Play a recorded match instead of running controllers live. Deferred until the
-				// viewers are registered below; loadReplay parses the file on a background
-				// thread so the first frame renders immediately.
+				// The replay was prepared by the setup worker and remains paused until terrain is ready.
+				resumeAfterLoading = true;
 			} else {
 				var controllers = SimConfigState.currentControllers();
 				var vehicleConfigs = SimConfigState.currentVehicleConfigs();
 				if (!controllers.isEmpty()) {
 					standaloneSimManager.start(standaloneWorld, controllers, vehicleConfigs);
-					standaloneSimManager.play();
+					resumeAfterLoading = true;
 				}
 			}
 
 			// Register 2D map view with speed/pause suppliers
-			standaloneMapRenderer = new MapRenderer(standaloneWorld, overlayConfig);
 			var mapRenderer = standaloneMapRenderer;
 			mapRenderer.setSimSpeedSupplier(() -> {
 				var sim = standaloneSimManager.currentLoop();
@@ -851,40 +1038,8 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 			};
 			palette.onRerun = this::restartSim;
 			palette.onConfigure = () -> simConfigState.setEnabled(true);
-			palette.onFlatOcean = () -> {
-				standaloneWorld = se.hirt.searobots.engine.GeneratedWorld.deepFlat();
-				enqueue(() -> {
-					setWorld(standaloneWorld);
-					return null;
-				});
-				if (standaloneMapRenderer != null)
-					standaloneMapRenderer.setWorld(standaloneWorld);
-				standaloneSimManager.stop();
-				standaloneSimManager.setWorld(standaloneWorld);
-				var c = SimConfigState.currentControllers();
-				var v = SimConfigState.currentVehicleConfigs();
-				if (!c.isEmpty()) {
-					standaloneSimManager.start(standaloneWorld, c, v);
-					standaloneSimManager.play();
-				}
-			};
-			palette.onLIsland = () -> {
-				standaloneWorld = se.hirt.searobots.engine.GeneratedWorld.lIslandRecovery();
-				enqueue(() -> {
-					setWorld(standaloneWorld);
-					return null;
-				});
-				if (standaloneMapRenderer != null)
-					standaloneMapRenderer.setWorld(standaloneWorld);
-				standaloneSimManager.stop();
-				standaloneSimManager.setWorld(standaloneWorld);
-				var c = SimConfigState.currentControllers();
-				var v = SimConfigState.currentVehicleConfigs();
-				if (!c.isEmpty()) {
-					standaloneSimManager.start(standaloneWorld, c, v);
-					standaloneSimManager.play();
-				}
-			};
+			palette.onFlatOcean = () -> loadPatrol(se.hirt.searobots.engine.GeneratedWorld::deepFlat);
+			palette.onLIsland = () -> loadPatrol(se.hirt.searobots.engine.GeneratedWorld::lIslandRecovery);
 			palette.onSeedInput = () -> {
 				String hex = Long.toHexString(standaloneSeed);
 				long window = org.lwjgl.glfw.GLFW.glfwGetCurrentContext();
@@ -897,9 +1052,6 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 
 			setupStandaloneInput();
 
-			if (replayPath != null) {
-				loadReplay(java.nio.file.Path.of(replayPath));
-			}
 		}
 	}
 
@@ -1138,6 +1290,8 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 	}
 
 	private void restartSim() {
+		if (isLoading())
+			return;
 		// Stop any active competition
 		if (activeCompetition != null) {
 			activeCompetition.stopAll();
@@ -1152,32 +1306,42 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 	}
 
 	private void runFreePatrol() {
-		var world = standaloneGenerator.generate(se.hirt.searobots.api.MatchConfig.withDefaults(standaloneSeed));
-		standaloneWorld = world;
-		enqueue(() -> {
-			setWorld(world);
-			competitionScoreText.setText("");
-			competitionPhaseText.setText("");
-			competitionDetailText.setText("");
-			// Update title without restarting the OpenGL context
-			try {
-				long win = org.lwjgl.glfw.GLFW.glfwGetCurrentContext();
-				org.lwjgl.glfw.GLFW.glfwSetWindowTitle(win,
-						"SeaRobots [seed: " + Long.toHexString(standaloneSeed) + "]");
-			} catch (Exception e) {
-				/* ignore */ }
-			return null;
-		});
-		if (standaloneMapRenderer != null)
-			standaloneMapRenderer.setWorld(world);
-		standaloneSimManager.stop();
-		standaloneSimManager.setWorld(world);
+		long seed = standaloneSeed;
+		loadPatrol(() -> standaloneGenerator.generate(se.hirt.searobots.api.MatchConfig.withDefaults(seed)));
+	}
+
+	private void loadPatrol(java.util.function.Supplier<GeneratedWorld> source) {
+		if (isLoading())
+			return;
+		sourceLoading = true;
+		worldInstalled = false;
+		loadingFinishedFrame = -1;
+		loadingStatus = new LoadingStatus(.04f, "Generating ocean and islands...");
 		var controllers = SimConfigState.currentControllers();
 		var vehicleConfigs = SimConfigState.currentVehicleConfigs();
-		if (!controllers.isEmpty()) {
-			standaloneSimManager.start(world, controllers, vehicleConfigs);
-			standaloneSimManager.play();
-		}
+		loadingWorker.submit(() -> {
+			try {
+				standaloneSimManager.stop();
+				var world = source.get();
+				if (!controllers.isEmpty())
+					standaloneSimManager.start(world, controllers, vehicleConfigs);
+				enqueue(() -> {
+					replayPath = null;
+					standaloneWorld = world;
+					setWorld(world);
+					competitionScoreText.setText("");
+					competitionPhaseText.setText("");
+					competitionDetailText.setText("");
+					long win = org.lwjgl.glfw.GLFW.glfwGetCurrentContext();
+					org.lwjgl.glfw.GLFW.glfwSetWindowTitle(win,
+							"SeaRobots [seed: " + Long.toHexString(standaloneSeed) + "]");
+					resumeAfterLoading = !controllers.isEmpty();
+					sourceLoading = false;
+				});
+			} catch (Exception e) {
+				enqueue(() -> failLoading(e));
+			}
+		});
 	}
 
 	/**
@@ -1211,33 +1375,37 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 	 * and playback begins only once they have it.
 	 */
 	private void loadReplay(java.nio.file.Path srl) {
+		if (isLoading())
+			return;
+		sourceLoading = true;
+		worldInstalled = false;
+		loadingFinishedFrame = -1;
+		loadingStatus = new LoadingStatus(.04f, "Loading recorded match...");
 		if (activeCompetition != null) {
 			activeCompetition.stopAll();
 			activeCompetition = null;
 		}
-		Thread.ofPlatform().daemon().name("replay-load").start(() -> {
-			var start = standaloneSimManager.startReplay(srl);
-			if (start == null)
-				return;
-			replayPath = srl.toString();
-			standaloneSeed = start.header().seed();
-			var world = start.world();
-			standaloneWorld = world;
-			enqueue(() -> {
-				setWorld(world);
-				if (standaloneMapRenderer != null)
-					standaloneMapRenderer.setWorld(world);
-				competitionScoreText.setText("");
-				competitionPhaseText.setText("");
-				competitionDetailText.setText("");
-				try {
+		loadingWorker.submit(() -> {
+			try {
+				var start = standaloneSimManager.startReplay(srl);
+				if (start == null)
+					throw new IllegalStateException("Cannot load replay " + srl);
+				enqueue(() -> {
+					replayPath = srl.toString();
+					standaloneSeed = start.header().seed();
+					standaloneWorld = start.world();
+					setWorld(standaloneWorld);
+					competitionScoreText.setText("");
+					competitionPhaseText.setText("");
+					competitionDetailText.setText("");
 					long win = org.lwjgl.glfw.GLFW.glfwGetCurrentContext();
 					org.lwjgl.glfw.GLFW.glfwSetWindowTitle(win, "SeaRobots [replay: " + srl.getFileName() + "]");
-				} catch (Exception e) {
-					/* ignore */ }
-				standaloneSimManager.play();
-				return null;
-			});
+					resumeAfterLoading = true;
+					sourceLoading = false;
+				});
+			} catch (Exception e) {
+				enqueue(() -> failLoading(e));
+			}
 		});
 	}
 
@@ -1502,6 +1670,15 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 	@Override
 	public void simpleUpdate(float tpf) {
 		frameCount++;
+		if (!sceneReady) {
+			updateSetup();
+			updateLoading(tpf);
+			return;
+		}
+		updateTerrainLoading();
+		updateLoading(tpf);
+		if (terrainGeometry == null)
+			return;
 		if (!probeRequested && environmentCamera.isInitialized()) {
 			probeRequested = true;
 			// Bake the sky once. Existing ambient lighting modulates IBL with time and depth.
@@ -1537,12 +1714,6 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 			System.out.println("simpleUpdate frame #" + frameCount);
 		}
 		try {
-			// Phase 3: terrain + vehicles
-			GeneratedWorld w = pendingWorld;
-			if (w != null) {
-				pendingWorld = null;
-				attachTerrain(w);
-			}
 			// Auto-screenshot camera tour (only when -Dscreenshots=true)
 			if (AUTO_SCREENSHOTS && screenshotCountdown > 0 && screenshotsTaken < screenshotCount) {
 				screenshotCountdown--;
@@ -1640,18 +1811,6 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 			if (capture != null)
 				capture.update(tpf);
 			updateFastForwardTo();
-			// Loading indicator
-			if (loadingText != null) {
-				var simSt = simStateSupplier.get();
-				boolean showLoading = simSt == se.hirt.searobots.engine.SimulationLoop.State.INITIALIZING
-						|| simSt == se.hirt.searobots.engine.SimulationLoop.State.CREATED;
-				loadingText.setCullHint(showLoading ? Spatial.CullHint.Never : Spatial.CullHint.Always);
-				if (showLoading) {
-					float cx = settings.getWidth() / 2f - loadingText.getLineWidth() / 2f;
-					float cy = settings.getHeight() / 2f;
-					loadingText.setLocalTranslation(cx, cy, 0);
-				}
-			}
 			// Keep sun billboard centered on camera (infinitely far away)
 			if (sunBillboard != null) {
 				Vector3f sunPos = cam.getLocation().add(sun.getDirection().mult(-900f));
@@ -1702,12 +1861,12 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 	}
 
 	/**
-	 * Set the world to display terrain for. Safe to call from any thread. The terrain mesh will be
-	 * built and attached on the next jME update tick.
+	 * Set the world to display. Safe to call from any thread. Detached terrain and vegetation are
+	 * prepared on the loading worker, then installed on the render thread.
 	 */
 	public void setWorld(GeneratedWorld world) {
 		System.out.println("SubmarineScene3D.setWorld() called, world=" + (world != null));
-		pendingWorld = world;
+		pendingWorld.set(world);
 		// Reset the cinematic director so it replays the opening flyaround
 		cinematicDirector = null;
 	}
@@ -1782,8 +1941,8 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 		latestSnapshots = List.copyOf(snapshots);
 	}
 
-	private void attachTerrain(GeneratedWorld world) {
-		System.out.println("attachTerrain: building TerrainQuad...");
+	private void attachTerrain(PreparedTerrain prepared) {
+		GeneratedWorld world = prepared.world();
 
 		// Remove previous terrain
 		if (terrainGeometry != null) {
@@ -1804,7 +1963,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 
 		TerrainMap terrain = world.terrain();
 		displayedTerrain = terrain;
-		terrainQuad = TerrainQuadBuilder.build(terrain, assetManager, cam);
+		terrainQuad = prepared.quad();
 		terrainQuad.setShadowMode(RenderQueue.ShadowMode.CastAndReceive);
 		terrainGeometry = terrainQuad;
 		rootNode.attachChild(terrainGeometry);
@@ -1854,7 +2013,8 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 		orbitElevation = 0.4f;
 
 		// Scatter trees on vegetated terrain
-		trees = TreeScatter.create(terrain, terrainQuad, assetManager, world.config().worldSeed(), cam);
+		trees = prepared.forest();
+		trees.getControl(IslandForestControl.class).setCamera(cam);
 		rootNode.attachChild(trees);
 		// Update ancestors before snapshotting: a subtree update can inherit stale empty light lists.
 		rootNode.updateGeometricState();
@@ -1865,8 +2025,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 		System.out.println("attachTerrain: done, worldWidth=" + worldW);
 
 		// Find island peaks for island orbit cam and screenshot tour
-		islandOrbitState = new IslandOrbitState();
-		islandOrbitState.initFromTerrain(world.terrain());
+		islandOrbitState = prepared.islands();
 		if (AUTO_SCREENSHOTS) {
 			// Start with overview of first island
 			var peaks = islandOrbitState.getIslandPeaks();
@@ -1888,6 +2047,14 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 
 	@Override
 	public void destroy() {
+		loadingWorker.shutdownNow();
+		if (terrainWork != null && terrainWork.isDone()) {
+			try {
+				terrainWork.get().close();
+			} catch (Exception ignored) {
+				// A failed/cancelled preparation has no forest to release.
+			}
+		}
 		if (trees != null)
 			trees.getControl(IslandForestControl.class).close();
 		if (islandScenery != null)
