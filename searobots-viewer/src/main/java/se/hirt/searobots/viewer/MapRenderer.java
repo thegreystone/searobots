@@ -147,11 +147,15 @@ final class MapRenderer implements se.hirt.searobots.engine.SimulationListener {
 	}
 
 	public void setWorld(GeneratedWorld world) {
+		setWorld(world, prepareTerrainImage(world));
+	}
+
+	void setWorld(GeneratedWorld world, BufferedImage image) {
 		this.world = world;
 		this.viewX = 0;
 		this.viewY = 0;
 		fitBattleArea();
-		this.terrainImage = renderTerrainImage();
+		this.terrainImage = image;
 		this.submarines = List.of();
 		this.trails = new Deque[0];
 		this.routes = new List[0];
@@ -1592,7 +1596,7 @@ final class MapRenderer implements se.hirt.searobots.engine.SimulationListener {
 
 	// ── terrain image ──────────────────────────────────────────────────
 
-	private BufferedImage renderTerrainImage() {
+	static BufferedImage prepareTerrainImage(GeneratedWorld world) {
 		if (world == null)
 			return null;
 		var terrain = world.terrain();

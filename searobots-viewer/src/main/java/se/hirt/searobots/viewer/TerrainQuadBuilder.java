@@ -42,6 +42,7 @@ import se.hirt.searobots.engine.PerlinNoise;
 import se.hirt.searobots.viewer.shoreline.ShorelineTerrain;
 
 import java.nio.ByteBuffer;
+import java.util.function.BiConsumer;
 
 /**
  * Builds a jMonkeyEngine {@link TerrainQuad} from a {@link TerrainMap}, with lit texture splatting
@@ -65,6 +66,8 @@ final class TerrainQuadBuilder {
 	/** Patch size for LOD tiles: 65 = 2^6 + 1. */
 	private static final int PATCH_SIZE = 65;
 	private static final PerlinNoise SURFACE_NOISE = new PerlinNoise(0x534f494c50415443L);
+	private static final BiConsumer<Float, String> NO_PROGRESS = (fraction, stage) -> {
+	};
 
 	private TerrainQuadBuilder() {
 	}
@@ -81,11 +84,28 @@ final class TerrainQuadBuilder {
 	 * @return a TerrainQuad positioned and scaled to match world coordinates
 	 */
 	static TerrainQuad build(TerrainMap terrain, AssetManager assetManager, Camera camera) {
+		return build(terrain, assetManager, camera, NO_PROGRESS);
+	}
+
+	/**
+	 * Builds detached terrain, reporting completed preparation work on the calling thread. The
+	 * callback receives a fraction from zero to one and the current stage. No camera or attached
+	 * scene state is accessed, so a loading worker may pass a null camera.
+	 */
+	static TerrainQuad build(
+		TerrainMap terrain, AssetManager assetManager, Camera camera, BiConsumer<Float, String> progress) {
+		progress.accept(0f, "Sampling terrain");
 		double worldW = terrain.worldWidth();
 		float scaleXZ = (float) (worldW / (QUAD_SIZE - 1));
-		float[] heightmap = smoothDryRelief(resample(terrain), QUAD_SIZE, scaleXZ);
+		float[] sampled = resample(terrain, progress);
+		progress.accept(.25f, "Smoothing terrain");
+		float[] heightmap = smoothDryRelief(sampled, QUAD_SIZE, scaleXZ);
+		progress.accept(.4f, "Building terrain geometry");
 		TerrainQuad quad = createGeometry(heightmap, PATCH_SIZE, QUAD_SIZE, scaleXZ);
-		quad.setMaterial(createMaterial(assetManager, heightmap, scaleXZ));
+		progress.accept(.6f, "Painting terrain surfaces");
+		Texture2D coverage = generateAlphaMap(heightmap, QUAD_SIZE, scaleXZ, progress);
+		progress.accept(.9f, "Preparing coastal materials");
+		quad.setMaterial(ShorelineTerrain.islandMaterial(assetManager, coverage, scaleXZ));
 
 		// Position: TerrainQuad is centred at origin. The sim terrain has
 		// its origin at (originX, originY). We need to shift so the centre
@@ -107,6 +127,7 @@ final class TerrainQuadBuilder {
 				QUAD_SIZE, QUAD_SIZE, terrain.getCols(), terrain.getRows(), scaleXZ, worldW, worldH,
 				terrain.getMinElevation(), terrain.getMaxElevation());
 
+		progress.accept(1f, "Terrain ready");
 		return quad;
 	}
 
@@ -129,7 +150,7 @@ final class TerrainQuadBuilder {
 	 * Resample the simulation terrain to a (QUAD_SIZE x QUAD_SIZE) float array using bilinear
 	 * interpolation via {@link TerrainMap#elevationAt}.
 	 */
-	private static float[] resample(TerrainMap terrain) {
+	private static float[] resample(TerrainMap terrain, BiConsumer<Float, String> progress) {
 		float[] heightmap = new float[QUAD_SIZE * QUAD_SIZE];
 
 		double worldW = terrain.worldWidth();
@@ -145,6 +166,8 @@ final class TerrainQuadBuilder {
 				double simX = originX + col * (worldW / (QUAD_SIZE - 1));
 				heightmap[row * QUAD_SIZE + col] = (float) terrain.elevationAt(simX, simY);
 			}
+			if (row % 32 == 0 || row == QUAD_SIZE - 1)
+				progress.accept(.25f * (row + 1) / QUAD_SIZE, "Sampling terrain");
 		}
 
 		return heightmap;
@@ -227,6 +250,11 @@ final class TerrainQuadBuilder {
 	 * the map is filtered between biomes.
 	 */
 	static Texture2D generateAlphaMap(float[] heightmap, int size, float cellSize) {
+		return generateAlphaMap(heightmap, size, cellSize, NO_PROGRESS);
+	}
+
+	private static Texture2D generateAlphaMap(
+		float[] heightmap, int size, float cellSize, BiConsumer<Float, String> progress) {
 		ByteBuffer buf = BufferUtils.createByteBuffer(size * size * 4);
 
 		for (int row = 0; row < size; row++) {
@@ -249,6 +277,8 @@ final class TerrainQuadBuilder {
 				float z = (hRow - (size - 1) * 0.5f) * cellSize;
 				writeCoverage(buf, elev, slopeDeg, x, z);
 			}
+			if (row % 32 == 0 || row == size - 1)
+				progress.accept(.6f + .3f * (row + 1) / size, "Painting terrain surfaces");
 		}
 		buf.flip();
 		return bufferToTexture(buf, size);

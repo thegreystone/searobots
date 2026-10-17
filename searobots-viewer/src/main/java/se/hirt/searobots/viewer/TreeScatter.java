@@ -121,6 +121,16 @@ public final class TreeScatter {
 		return create(terrain, terrainQuad, assetManager, seed, null);
 	}
 
+	/**
+	 * Prepares a detached forest without reading the live camera. The terrain must also be detached
+	 * and owned by the loading worker. Bind its {@link IslandForestControl} camera on the render
+	 * thread before attaching the result.
+	 */
+	static Node prepare(TerrainMap terrain, TerrainQuad terrainQuad, AssetManager assetManager, long seed) {
+		terrainQuad.updateGeometricState();
+		return create(terrain, terrainQuad, assetManager, seed, null);
+	}
+
 	static Node create(
 		TerrainMap terrain, TerrainQuad terrainQuad, AssetManager assetManager, long seed, Camera camera) {
 		Node treeNode = new Node("trees");

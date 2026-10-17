@@ -83,7 +83,7 @@ public final class IslandForestControl extends AbstractControl implements AutoCl
 	public static final int MAX_RESIDENT_TRIANGLES = 6_000_000;
 
 	private final AssetManager assets;
-	private final Camera camera;
+	private Camera camera;
 	private final long seed;
 	private final List<Cell> cells;
 	private final List<CardRegion> regions;
@@ -112,7 +112,6 @@ public final class IslandForestControl extends AbstractControl implements AutoCl
 			long seed) {
 		this.forest = forest;
 		this.assets = assets;
-		this.camera = camera;
 		this.seed = seed;
 		Map<Long, Cell> grouped = new LinkedHashMap<>();
 		int total = 0;
@@ -184,8 +183,21 @@ public final class IslandForestControl extends AbstractControl implements AutoCl
 			region.node.setShadowMode(RenderQueue.ShadowMode.Off);
 			forest.attachChild(region.node);
 		}
+		setCamera(camera);
+	}
+
+	/**
+	 * Binds prepared forest detail to the main camera. Call on the render thread after preparation.
+	 */
+	void setCamera(Camera camera) {
+		if (closed)
+			return;
+		this.camera = camera;
+		elapsed = 1f;
+		lastPosition.set(Float.POSITIVE_INFINITY, 0f, 0f);
+		lastDirection.set(0f, 0f, 0f);
 		selectCardRegions();
-		if (camera != null && treeCount > 0)
+		if (camera != null && treeCount > 0 && library == null && pending == null)
 			prepareLibrary();
 		publishStatistics();
 	}
