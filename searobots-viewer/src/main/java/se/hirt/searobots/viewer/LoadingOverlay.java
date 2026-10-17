@@ -52,7 +52,7 @@ import java.util.Objects;
 
 /**
  * Render-thread loading screen. Progress is supplied by the setup work; only its presentation is
-	 * interpolated. Instrument rings and a quiet scanning sweep stay active during long tasks.
+ * interpolated. Instrument rings and a quiet scanning sweep stay active during long tasks.
  */
 final class LoadingOverlay extends Node {
 
@@ -246,8 +246,9 @@ final class LoadingOverlay extends Node {
 		return material;
 	}
 
-	private static void addArc(Node parent, AssetManager assets, String name, float radius, float thickness,
-			float start, float degrees, ColorRGBA color) {
+	private static void addArc(
+		Node parent, AssetManager assets, String name, float radius, float thickness, float start, float degrees,
+		ColorRGBA color) {
 		Arc arc = new Arc(Math.max(12, (int) (degrees / 2)), radius, thickness);
 		arc.setSweep(degrees * FastMath.DEG_TO_RAD);
 		Geometry geometry = new Geometry(name, arc.mesh);
