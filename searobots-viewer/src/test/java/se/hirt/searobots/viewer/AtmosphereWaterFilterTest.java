@@ -28,17 +28,29 @@
  */
 package se.hirt.searobots.viewer;
 
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
+
+import com.jme3.asset.AssetManager;
 import com.jme3.asset.DesktopAssetManager;
 import com.jme3.asset.plugins.ClasspathLocator;
 import com.jme3.material.Material;
 import com.jme3.material.plugins.J3MLoader;
+import com.jme3.math.ColorRGBA;
 import com.jme3.math.Vector3f;
 import com.jme3.scene.Node;
+import com.jme3.texture.Image;
+import com.jme3.texture.Texture2D;
+import com.jme3.texture.image.ColorSpace;
+import com.jme3.util.BufferUtils;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 class AtmosphereWaterFilterTest {
+	private static final String STOCK_MATERIAL_DEF = "Common/MatDefs/Water/Water.j3md";
+
 	@Test
 	void defaultsToClearWaterAndPreservesWaterSettingsAcrossRepeatedAtmosphereToggles() {
 		TestWaterFilter water = new TestWaterFilter();
@@ -82,8 +94,53 @@ class AtmosphereWaterFilterTest {
 		assertEquals(420f, water.getUnderWaterFogDistance());
 	}
 
+	@Test
+	void rendersWithTheSurfaceAwareCausticsShaderKeepingEveryStockParameter() throws IOException {
+		AssetManager assets = assets();
+		Material stock = new Material(assets, STOCK_MATERIAL_DEF);
+		Texture2D caustics = new Texture2D(
+				new Image(Image.Format.RGB8, 1, 1, BufferUtils.createByteBuffer(3), ColorSpace.sRGB));
+		stock.setTexture("CausticsMap", caustics);
+		stock.setBoolean("UseCaustics", true);
+		stock.setFloat("CausticsIntensity", 0.3f);
+		stock.setVector3("LightDir", new Vector3f(0.2f, -0.9f, 0.1f));
+		stock.setColor("WaterColor", new ColorRGBA(0.1f, 0.2f, 0.3f, 1f));
+
+		Material water = AtmosphereWaterFilter.withSurfaceAwareCaustics(assets, stock);
+
+		assertEquals(AtmosphereWaterFilter.MATERIAL_DEF, water.getMaterialDef().getAssetName());
+		assertEquals(stock.getParams().size(), water.getParams().size());
+		assertSame(caustics, water.getTextureParam("CausticsMap").getTextureValue());
+		assertEquals(true, water.getParam("UseCaustics").getValue());
+		assertEquals(0.3f, uniform(water, "CausticsIntensity"));
+		assertEquals(new Vector3f(0.2f, -0.9f, 0.1f), water.getParam("LightDir").getValue());
+		assertEquals(new ColorRGBA(0.1f, 0.2f, 0.3f, 1f), water.getParam("WaterColor").getValue());
+		// The stock definition and ours expose the same uniforms, so every filter setter still applies.
+		assertEquals(stock.getMaterialDef().getMaterialParams().size(),
+				water.getMaterialDef().getMaterialParams().size());
+
+		String shader = resource("/Shaders/Water/CausticWater.frag");
+		assertTrue(shader.contains("refract(normalize(m_LightDir)"), "caustics must follow the refracted sun");
+		assertTrue(shader.contains("m_CausticsIntensity * facingSun"), "caustics must be weighted by facing");
+		assertTrue(resource("/Shaders/Water/CausticWater.j3md").contains("Shaders/Water/CausticWater.frag"));
+	}
+
 	private static float uniform(Material material, String name) {
 		return (Float) material.getParam(name).getValue();
+	}
+
+	private static String resource(String path) throws IOException {
+		try (InputStream in = AtmosphereWaterFilterTest.class.getResourceAsStream(path)) {
+			assertNotNull(in, path + " must be on the classpath");
+			return new String(in.readAllBytes(), StandardCharsets.UTF_8);
+		}
+	}
+
+	private static AssetManager assets() {
+		var assets = new DesktopAssetManager(false);
+		assets.registerLoader(J3MLoader.class, "j3m", "j3md");
+		assets.registerLocator("/", ClasspathLocator.class);
+		return assets;
 	}
 
 	private static final class TestWaterFilter extends AtmosphereWaterFilter {
@@ -91,11 +148,13 @@ class AtmosphereWaterFilterTest {
 			super(new Node("reflection scene"), new Vector3f(0f, -1f, 0f));
 		}
 
+		/**
+		 * Installs the material as {@code initFilter} does: the stock one, rebuilt on our
+		 * definition.
+		 */
 		Material installMaterial() {
-			var assets = new DesktopAssetManager(false);
-			assets.registerLoader(J3MLoader.class, "j3m", "j3md");
-			assets.registerLocator("/", ClasspathLocator.class);
-			material = new Material(assets, "Common/MatDefs/Water/Water.j3md");
+			AssetManager assets = assets();
+			material = withSurfaceAwareCaustics(assets, new Material(assets, STOCK_MATERIAL_DEF));
 			return material;
 		}
 

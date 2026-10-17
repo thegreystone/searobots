@@ -28,13 +28,23 @@
  */
 package se.hirt.searobots.viewer;
 
+import com.jme3.asset.AssetManager;
+import com.jme3.material.MatParam;
 import com.jme3.material.Material;
 import com.jme3.math.Vector3f;
+import com.jme3.renderer.RenderManager;
+import com.jme3.renderer.ViewPort;
 import com.jme3.scene.Node;
 import com.jme3.water.WaterFilter;
 
-/** Applies the atmosphere toggle to water fog without changing the water panel's saved distance. */
+/**
+ * The stock water filter with two changes. The atmosphere toggle switches underwater fog off
+ * without touching the water panel's saved distance. Rendering uses {@value #MATERIAL_DEF}, the
+ * stock water shader with caustics that fall only on surfaces facing the refracted sun: the stock
+ * shader paints them on every submerged pixel, hull undersides included.
+ */
 class AtmosphereWaterFilter extends WaterFilter {
+	static final String MATERIAL_DEF = "Shaders/Water/CausticWater.j3md";
 	private static final float CLEAR_FOG_DISTANCE = 100_000f;
 	private boolean fogEnabled;
 
@@ -44,6 +54,23 @@ class AtmosphereWaterFilter extends WaterFilter {
 
 	void setFogEnabled(boolean enabled) {
 		fogEnabled = enabled;
+	}
+
+	@Override
+	protected void initFilter(AssetManager manager, RenderManager renderManager, ViewPort vp, int w, int h) {
+		super.initFilter(manager, renderManager, vp, w, h);
+		material = withSurfaceAwareCaustics(manager, material);
+	}
+
+	/**
+	 * Rebuilds a stock water material on {@value #MATERIAL_DEF}, carrying over every parameter the
+	 * stock filter set, textures included, so the filter's setters keep working unchanged.
+	 */
+	static Material withSurfaceAwareCaustics(AssetManager assets, Material stockWater) {
+		Material water = new Material(assets, MATERIAL_DEF);
+		for (MatParam param : stockWater.getParams())
+			water.setParam(param.getName(), param.getVarType(), param.getValue());
+		return water;
 	}
 
 	@Override
