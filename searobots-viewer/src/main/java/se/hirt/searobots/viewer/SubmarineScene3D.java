@@ -681,15 +681,16 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 		waterFilter.setSpeed(0.45f);
 		waterFilter.setWaveScale(0.006f);
 		waterFilter.setMaxAmplitude(0.45f);
-		waterFilter.setWaterColor(new ColorRGBA(0.035f, 0.24f, 0.25f, 1f));
-		waterFilter.setDeepWaterColor(new ColorRGBA(0.008f, 0.07f, 0.11f, 1f));
-		waterFilter.setWaterTransparency(0.10f);
-		waterFilter.setUnderWaterFogDistance(700f);
+		// Blue open water with enough haze to soften distant terrain while keeping nearby hulls clear.
+		waterFilter.setWaterColor(new ColorRGBA(0.025f, 0.17f, 0.28f, 1f));
+		waterFilter.setDeepWaterColor(new ColorRGBA(0.006f, 0.045f, 0.12f, 1f));
+		waterFilter.setWaterTransparency(0.16f);
+		waterFilter.setUnderWaterFogDistance(376f);
 		waterFilter.setColorExtinction(new Vector3f(6f, 18f, 26f));
 		waterFilter.setSunScale(3f);
 		waterFilter.setLightDirection(sun.getDirection());
 		waterFilter.setLightColor(ColorRGBA.White);
-		waterFilter.setCausticsIntensity(0.3f);
+		waterFilter.setCausticsIntensity(0.83f);
 		WaterQualitySettings.configure(waterFilter);
 		waterFilter.setFoamIntensity(0.25f);
 		waterFilter.setFoamExistence(new Vector3f(0.05f, 1.1f, 0.3f));
@@ -2167,8 +2168,8 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 			float fogDist = 500f + 1500f * depthFactor;
 			fogFilter.setFogDistance(fogDist);
 			fogFilter.setFogDensity(1.5f + 2f * (1f - depthFactor));
-			fogFilter.setFogColor(new ColorRGBA(0.01f + 0.04f * depthFactor, 0.04f + 0.08f * depthFactor,
-					0.10f + 0.10f * depthFactor, 1f));
+			fogFilter.setFogColor(new ColorRGBA(0.008f + 0.027f * depthFactor, 0.025f + 0.05f * depthFactor,
+					0.08f + 0.10f * depthFactor, 1f));
 			viewPort.setBackgroundColor(fogFilter.getFogColor());
 		} else {
 			// Above water

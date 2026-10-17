@@ -7,12 +7,12 @@
 // by Remy Bouquet (nehon) for JMonkeyEngine 3.0
 // original HLSL version by Wojciech Toman 2009
 //
-// SeaRobots: copy of jME 3.8.1's Common/MatDefs/Water/Water.frag with one change. Underwater
-// caustics fall only on surfaces that face the refracted sun. The stock shader projects the
-// caustics texture onto every submerged pixel by its world position, so hull undersides and the
-// shaded sides of a boat flicker just like its deck. The scene normal is rebuilt from the depth
-// buffer; see the ENABLE_CAUSTICS block in underWater(). Everything else is left as upstream wrote
-// it, so a newer jME version can be diffed against this file.
+// SeaRobots: copy of jME 3.8.1's Common/MatDefs/Water/Water.frag with changes to underwater
+// caustics: surface-facing, depth-attenuated sunlight that preserves the scene's materials.
+// Stock caustics project by world position even onto hull undersides and shaded sides. A scene
+// normal rebuilt from the depth buffer restricts them to surfaces facing the refracted sun;
+// see the ENABLE_CAUSTICS block in underWater(). Everything else is left as upstream wrote it,
+// so a newer jME version can be diffed against this file.
 
 uniform COLORTEXTURE m_Texture;
 uniform DEPTHTEXTURE m_DepthTexture;
@@ -234,7 +234,6 @@ vec4 underWater(int sampleNum){
             texC = (position.xz + eyeVecNorm.xz * 0.1) * 0.05 + m_Time * 0.05 * windDirection + sin(m_Time  + position.x) * 0.01;
             vec2 texCoord2 = (position.xz + eyeVecNorm.xz * 0.1) * 0.05 + m_Time * 0.05 * windDirection + sin(m_Time  + position.z) * 0.01;
             caustics += (texture2D(m_CausticsMap, texC)+ texture2D(m_CausticsMap, texCoord2)).rgb;                  
-            caustics=saturate(mix(m_WaterColor.rgb,caustics,m_CausticsIntensity));
 
             // SeaRobots: caustics are sunlight focused by the waves, so they light what the
             // refracted sun can see (deck, top of the hull, seabed), never the underside. Weight the
@@ -246,7 +245,17 @@ vec4 underWater(int sampleNum){
             sceneNormal = normalize(sceneNormal);
             vec3 sunUnderWater = refract(normalize(m_LightDir), vec3(0.0, 1.0, 0.0), 1.0 / 1.333);
             float facingSun = saturate(dot(sceneNormal, -sunUnderWater));
-            color=mix(color2,caustics,m_CausticsIntensity * facingSun);
+            // Focused sunlight fades along its path from the surface to the receiving surface,
+            // independently of camera depth and the fog toggle. A 60 m attenuation length leaves
+            // only 5% at 180 m and virtually none at the deep submarines' operating depths.
+            float receiverDepth = max(m_WaterHeight - position.y, 0.0);
+            float sunPath = receiverDepth / max(-sunUnderWater.y, 0.1);
+            float depthFade = exp(-sunPath / 60.0);
+            float causticStrength = m_CausticsIntensity * facingSun * depthFade;
+            vec3 sunlight = m_LightColor.rgb * saturate(-normalize(m_LightDir).y);
+            // Modulate the existing surface lighting instead of replacing it with water colour.
+            // Hull tiles retain their contrast, and there are no caustics without sunlight.
+            color = color2 * (vec3(1.0) + caustics * sunlight * causticStrength);
         #else
             color=color2;
         #endif
