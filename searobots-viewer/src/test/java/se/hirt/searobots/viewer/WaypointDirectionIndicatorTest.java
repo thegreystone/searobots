@@ -65,8 +65,9 @@ class WaypointDirectionIndicatorTest {
 			assertTrue(start.x * target.x + start.y * target.y > 0,
 					"A target behind the sub must place the arrow behind it");
 			float radius = arrow.getLocalScale().x;
-			assertTrue(square(start.x / ((float) HULL.semiBeam() + radius))
-					+ square(start.y / ((float) HULL.semiLength() + radius)) > 1,
+			assertTrue(
+					square(start.x / ((float) HULL.semiBeam() + radius))
+							+ square(start.y / ((float) HULL.semiLength() + radius)) > 1,
 					"The arrow starts outside the hull with clearance for its head");
 			assertEquals(0.11f, start.z, 0.0001);
 			assertAimsAt(arrow, target);
