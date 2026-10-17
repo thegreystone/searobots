@@ -97,10 +97,6 @@ mvn clean install -DskipTests
 mvn exec:exec -pl searobots-viewer
 ```
 
-In IntelliJ IDEA, select the shared **SeaRobots Viewer (Maven)** run configuration.
-It builds and installs the viewer and its required modules with tests skipped before
-launching the viewer through Maven.
-
 #### Viewer Controls
 
 **Simulation:**
