@@ -1,0 +1,467 @@
+/*
+ * Copyright (C) 2026 Marcus Hirt
+ *
+ * This software is free:
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ * 3. The name of the author may not be used to endorse or promote products
+ *    derived from this software without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESSED OR
+ * IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
+ * OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
+ * IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT,
+ * INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
+ * NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
+ * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+package se.hirt.searobots.viewer;
+
+import com.jme3.asset.AssetManager;
+import com.jme3.material.Material;
+import com.jme3.material.RenderState;
+import com.jme3.math.ColorRGBA;
+import com.jme3.math.FastMath;
+import com.jme3.math.Vector3f;
+import com.jme3.renderer.queue.RenderQueue;
+import com.jme3.renderer.Camera;
+import com.jme3.scene.Geometry;
+import com.jme3.scene.Mesh;
+import com.jme3.scene.Node;
+import com.jme3.scene.VertexBuffer;
+import com.jme3.terrain.geomipmap.TerrainQuad;
+import com.jme3.util.BufferUtils;
+import se.hirt.searobots.api.TerrainMap;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Random;
+
+/**
+ * Scatters trees across vegetated terrain in natural-looking clusters. Nearby cells use modeled
+ * branches and foliage with bounded distance-based detail. Distant trees retain two crossed
+ * vertical quads (the side cutout) plus a low dome near the top of the crown (the top-down cutout),
+ * so trees still read as crowns when the camera looks down at an island instead of dissolving into
+ * crossed cards.
+ * <p>
+ * Distant tree types share lit materials in regional batches, plus a batch of contact shadows.
+ * Modeled cells replace their cards and use two PBR material batches. Lighting and reflections can
+ * draw them more than once. Distant crowns use unlit albedo and normal atlases baked from the same
+ * asymmetric tree archetypes, then the same PBR sunlight and environment lighting as the modeled
+ * trees. Atlas selection preserves each tree's variant, orientation and tint across detail tiers.
+ */
+public final class TreeScatter {
+
+	private static final int MAX_TREES = 500000;
+	private static final float MIN_ELEVATION = 8f;
+	private static final float MAX_SLOPE_DEG = 35f;
+	private static final float BASE_SPACING = 4f;
+
+	/**
+	 * Tree archetypes. {@code widthRatio} must match the aspect ratio of the side cutout painted by
+	 * {@code TextureGenerator}. Crown rim and apex heights are fractions of tree height; the
+	 * conifer uses a taller, narrower cap to stay within its tapered side silhouette.
+	 */
+	public enum Type {
+		BROADLEAF("tree1", 8f, 15f, 0.75f, 0.74f, 0.9f),
+		CONIFER("tree2", 10f, 18f, 0.45f, 0.32f, 0.92f, 0.7f),
+		PALM("tree3", 10f, 20f, 0.62f, 0.86f, 0.9f),
+		BUSH("tree4", 3f, 7f, 1.1f, 0.7f, 0.9f);
+
+		final String texture;
+		final float minHeight, maxHeight, widthRatio, rimHeight, apexHeight, topScale;
+
+		Type(String texture, float minHeight, float maxHeight, float widthRatio, float topHeight, float topScale) {
+			this(texture, minHeight, maxHeight, widthRatio, topHeight - 0.14f, topHeight + 0.06f, topScale);
+		}
+
+		Type(String texture, float minHeight, float maxHeight, float widthRatio, float rimHeight, float apexHeight,
+				float topScale) {
+			this.texture = texture;
+			this.minHeight = minHeight;
+			this.maxHeight = maxHeight;
+			this.widthRatio = widthRatio;
+			this.rimHeight = rimHeight;
+			this.apexHeight = apexHeight;
+			this.topScale = topScale;
+		}
+
+		public String sidePath() {
+			return "Textures/Terrain/custom/" + texture + ".png";
+		}
+
+		public String topPath() {
+			return "Textures/Terrain/custom/" + texture + "_top.png";
+		}
+
+		public float widthRatio() {
+			return widthRatio;
+		}
+	}
+
+	/** A tree to be placed: jME position, size, rotation about Y and colour tint. */
+	public record TreeInstance(float x, float y, float z, float w, float h, float rot, float r, float g, float b) {
+	}
+
+	private TreeScatter() {
+	}
+
+	static Node create(TerrainMap terrain, TerrainQuad terrainQuad, AssetManager assetManager, long seed) {
+		return create(terrain, terrainQuad, assetManager, seed, null);
+	}
+
+	static Node create(
+		TerrainMap terrain, TerrainQuad terrainQuad, AssetManager assetManager, long seed, Camera camera) {
+		Node treeNode = new Node("trees");
+		var rng = new Random(seed);
+		long startTime = System.currentTimeMillis();
+		Type[] types = Type.values();
+
+		List<List<TreeInstance>> perType = new ArrayList<>();
+		for (int i = 0; i < types.length; i++)
+			perType.add(new ArrayList<>());
+
+		double cellSize = terrain.getCellSize();
+		double originX = terrain.getOriginX();
+		double originY = terrain.getOriginY();
+
+		int placed = 0;
+		int gridCols = (int) (terrain.worldWidth() / BASE_SPACING);
+		int gridRows = (int) (terrain.worldHeight() / BASE_SPACING);
+
+		for (int gr = 0; gr < gridRows && placed < MAX_TREES; gr++) {
+			for (int gc = 0; gc < gridCols && placed < MAX_TREES; gc++) {
+				double wx = originX + (gc + rng.nextFloat()) * BASE_SPACING;
+				double wy = originY + (gr + rng.nextFloat()) * BASE_SPACING;
+
+				float elev = (float) terrain.elevationAt(wx, wy);
+				if (elev < MIN_ELEVATION)
+					continue;
+
+				double e1 = terrain.elevationAt(wx + cellSize, wy);
+				double e2 = terrain.elevationAt(wx, wy + cellSize);
+				double dzdx = (e1 - elev) / cellSize;
+				double dzdy = (e2 - elev) / cellSize;
+				float slopeDeg = (float) Math.toDegrees(Math.atan(Math.sqrt(dzdx * dzdx + dzdy * dzdy)));
+				if (slopeDeg > MAX_SLOPE_DEG)
+					continue;
+
+				double density = noiseDensity(wx, wy, seed);
+				if (rng.nextFloat() > density)
+					continue;
+
+				// Elevation-based type selection
+				Type type;
+				if (elev < 20) {
+					// Coastal zone: palms and bushes along the beach edge
+					type = rng.nextFloat() < 0.65f ? Type.PALM : Type.BUSH;
+				} else if (elev < 50) {
+					float roll = rng.nextFloat();
+					if (roll < 0.40f)
+						type = Type.BROADLEAF;
+					else if (roll < 0.75f)
+						type = Type.CONIFER;
+					else if (roll < 0.85f)
+						type = Type.PALM;
+					else
+						type = Type.BUSH;
+				} else {
+					type = rng.nextFloat() < 0.7f ? (rng.nextBoolean() ? Type.BROADLEAF : Type.CONIFER) : Type.BUSH;
+				}
+
+				// Raycast for ground height
+				float jmeX = (float) wx;
+				float jmeZ = (float) -wy;
+				var ray = new com.jme3.math.Ray(new Vector3f(jmeX, 1000, jmeZ), new Vector3f(0, -1, 0));
+				var hits = new com.jme3.collision.CollisionResults();
+				terrainQuad.collideWith(ray, hits);
+				float groundY = hits.size() > 0 ? hits.getClosestCollision().getContactPoint().y : elev;
+
+				perType.get(type.ordinal())
+						.add(instance(type, rng, jmeX, groundY, jmeZ, 1f - Math.min(elev / 300f, 0.3f)));
+				placed++;
+			}
+		}
+
+		IslandForestControl detail = new IslandForestControl(treeNode, perType, assetManager, camera, seed);
+		treeNode.addControl(detail);
+
+		Geometry contactShadows = TreeContactShadows.create(perType, terrainQuad, assetManager);
+		if (contactShadows != null)
+			treeNode.attachChild(contactShadows);
+
+		long elapsed = System.currentTimeMillis() - startTime;
+		System.out.printf("TreeScatter: placed %d trees in %dms (%d spatial cells, bounded modeled detail)%n", placed,
+				elapsed, treeNode.getQuantity());
+		return treeNode;
+	}
+
+	/**
+	 * A random tree of the given type at a position; {@code heightScale} shrinks trees with
+	 * altitude.
+	 */
+	public static TreeInstance instance(Type type, Random rng, float x, float y, float z, float heightScale) {
+		float height = (type.minHeight + rng.nextFloat() * (type.maxHeight - type.minHeight)) * heightScale;
+		float width = height * type.widthRatio * (0.88f + rng.nextFloat() * 0.24f);
+		float rotation = rng.nextFloat() * FastMath.TWO_PI;
+		// Tint: mostly brightness, with a little hue drift towards yellow or blue-green
+		float bright = 0.78f + rng.nextFloat() * 0.34f;
+		float warm = (rng.nextFloat() - 0.5f) * 0.2f;
+		return new TreeInstance(x, y, z, width, height, rotation, bright * (1f + warm), bright,
+				bright * (1f - warm * 0.8f));
+	}
+
+	private static Geometry geometry(String name, Mesh mesh, Material material) {
+		Geometry geom = new Geometry(name, mesh);
+		geom.setMaterial(material);
+		geom.setQueueBucket(RenderQueue.Bucket.Opaque); // alpha-tested, so no sorting needed
+		return geom;
+	}
+
+	/** Two crossed vertical quads per tree, baked into one mesh. */
+	public static Mesh buildCrossMesh(List<TreeInstance> trees) {
+		var b = new MeshBuffers(trees.size() * 2);
+		for (var tree : trees) {
+			for (int q = 0; q < 2; q++) {
+				float ang = tree.rot + q * FastMath.HALF_PI;
+				float cos = FastMath.cos(ang), sin = FastMath.sin(ang);
+				float hw = tree.w / 2;
+				float[] dx = {-hw, hw, hw, -hw}, dy = {0, 0, tree.h, tree.h};
+				float[] u = {0, 1, 1, 0}, v = {0, 0, 1, 1};
+				for (int i = 0; i < 4; i++) {
+					float rx = dx[i] * cos, rz = dx[i] * sin;
+					// Puffed normal: up, leaning outwards from the trunk
+					float nx = rx / hw * 0.5f, nz = rz / hw * 0.5f;
+					float nl = FastMath.sqrt(nx * nx + 1 + nz * nz);
+					float ao = dy[i] > 0 ? 1f : 0.72f;
+					b.vertex(tree.x + rx, tree.y + dy[i], tree.z + rz, nx / nl, 1 / nl, nz / nl, u[i], v[i],
+							tree.r * ao, tree.g * ao, tree.b * ao);
+				}
+				b.quad();
+			}
+		}
+		return b.build();
+	}
+
+	/** Two crossed planes using model-derived views and the exact modeled archetype selection. */
+	public static Mesh buildImpostorCrossMesh(List<TreeInstance> trees, Type type, long seed) {
+		var b = new MeshBuffers(trees.size() * 8, trees.size() * 4, true);
+		for (var tree : trees) {
+			int variant = TreeImpostors.variantIndex(seed, tree, type);
+			for (int view = 0; view < 2; view++) {
+				float angle = tree.rot + view * FastMath.HALF_PI;
+				float cosine = FastMath.cos(angle), sine = FastMath.sin(angle);
+				float halfWidth = tree.w * TreeImpostors.SIDE_WIDTH_SCALE * .5f;
+				float[] x = {-halfWidth, halfWidth, halfWidth, -halfWidth};
+				float[] y = {0f, 0f, tree.h * TreeImpostors.SIDE_HEIGHT_SCALE,
+						tree.h * TreeImpostors.SIDE_HEIGHT_SCALE};
+				float[] u = {0f, 1f, 1f, 0f}, v = {0f, 0f, 1f, 1f};
+				for (int vertex = 0; vertex < 4; vertex++) {
+					b.impostorVertex(tree.x + x[vertex] * cosine, tree.y + y[vertex], tree.z + x[vertex] * sine, -sine,
+							0f, cosine, (variant + u[vertex]) / 4f, (3f - view + v[vertex]) / 4f,
+							(variant + 1f - u[vertex]) / 4f, (1f - view + v[vertex]) / 4f, cosine, 0f, sine, tree.r,
+							tree.g, tree.b);
+				}
+				b.quad();
+			}
+		}
+		return b.build();
+	}
+
+	/**
+	 * Eight triangles retain the regional masking budget. Top-down normals come from the actual
+	 * modeled foliage instead of the cap's proxy slope; every crown keeps the tree's yaw and tint.
+	 */
+	public static Mesh buildImpostorTopMesh(List<TreeInstance> trees, Type type, long seed) {
+		int sides = 8;
+		var b = new MeshBuffers(trees.size() * (sides + 1), trees.size() * sides, true);
+		for (var tree : trees) {
+			int variant = TreeImpostors.variantIndex(seed, tree, type);
+			float cosine = FastMath.cos(tree.rot), sine = FastMath.sin(tree.rot);
+			float radius = tree.w * TreeImpostors.SIDE_WIDTH_SCALE * .5f;
+			// Palm fronds occupy a shallow crown; a cone would stretch the captured top view.
+			float rimY = tree.y + tree.h * (type == Type.PALM ? .90f : type.rimHeight);
+			float apexY = tree.y + tree.h * (type == Type.PALM ? .90f : type.apexHeight);
+			float centerU = (variant + .5f) / 4f;
+			int apex = b.impostorVertex(tree.x, apexY, tree.z, 0f, 1f, 0f, centerU, .5f, centerU, .5f, cosine, 0f, sine,
+					tree.r, tree.g, tree.b);
+			int[] rim = new int[sides];
+			for (int side = 0; side < sides; side++) {
+				float local = side * FastMath.TWO_PI / sides;
+				float localCosine = FastMath.cos(local), localSine = FastMath.sin(local);
+				float u = (variant + .5f + .5f * localCosine) / 4f, v = .5f - .5f * localSine;
+				rim[side] = b.impostorVertex(tree.x + radius * (localCosine * cosine - localSine * sine), rimY,
+						tree.z + radius * (localCosine * sine + localSine * cosine), 0f, 1f, 0f, u, v, u, v, cosine, 0f,
+						sine, tree.r, tree.g, tree.b);
+			}
+			for (int side = 0; side < sides; side++)
+				b.tri(apex, rim[(side + 1) % sides], rim[side]);
+		}
+		return b.build();
+	}
+
+	/**
+	 * One eight-sided cap per tree, textured with the top-down cutout: a tall cone for conifers and
+	 * a low dome for the other crowns. From above it reads as a full crown; from the side its
+	 * sloped faces sit inside the silhouette of the crossed quads instead of cutting across them
+	 * like a flat plate would. Wound so the face normals point up and out: the material culls back
+	 * faces, so nothing renders when the camera is below the rim.
+	 */
+	public static Mesh buildTopMesh(List<TreeInstance> trees, Type type) {
+		int sides = 8;
+		var b = new MeshBuffers(trees.size() * (sides + 1), trees.size() * sides);
+		for (var tree : trees) {
+			float hw = tree.w / 2 * type.topScale;
+			float rimY = tree.y + tree.h * type.rimHeight, apexY = tree.y + tree.h * type.apexHeight;
+			// Follow the conifer's cone slope; keep the softer existing dome lighting for other trees.
+			float normalSlope = type == Type.CONIFER ? (apexY - rimY) / hw : 0.6f;
+			float nl = FastMath.sqrt(normalSlope * normalSlope + 1f);
+			float apexShade = 1f, rimShade = 0.86f; // soft canopy occlusion instead of a conspicuous dark skirt
+			int apex = b.vertex(tree.x, apexY, tree.z, 0, 1, 0, 0.5f, 0.5f, tree.r * apexShade, tree.g * apexShade,
+					tree.b * apexShade);
+			int[] rim = new int[sides];
+			for (int i = 0; i < sides; i++) {
+				float localAngle = i * FastMath.TWO_PI / sides;
+				float a = tree.rot + localAngle;
+				float cx = FastMath.cos(a), cz = FastMath.sin(a);
+				rim[i] = b.vertex(tree.x + cx * hw, rimY, tree.z + cz * hw, cx * normalSlope / nl, 1f / nl,
+						cz * normalSlope / nl, 0.5f + 0.5f * FastMath.cos(localAngle),
+						0.5f - 0.5f * FastMath.sin(localAngle), tree.r * rimShade, tree.g * rimShade,
+						tree.b * rimShade);
+			}
+			for (int i = 0; i < sides; i++)
+				b.tri(apex, rim[(i + 1) % sides], rim[i]);
+		}
+		return b.build();
+	}
+
+	/** Material for the crown quads: as {@link #createTreeMaterial} but only visible from above. */
+	public static Material createTopMaterial(AssetManager am, String texturePath) {
+		Material mat = createTreeMaterial(am, texturePath);
+		mat.getAdditionalRenderState().setFaceCullMode(RenderState.FaceCullMode.Back);
+		return mat;
+	}
+
+	/**
+	 * Lit, alpha-tested cutout material: the texture supplies the colour, vertex colours the
+	 * per-tree tint.
+	 */
+	public static Material createTreeMaterial(AssetManager am, String texturePath) {
+		Material mat = new Material(am, "Common/MatDefs/Light/Lighting.j3md");
+		mat.setTexture("DiffuseMap", FoliageMipmaps.load(am, texturePath));
+		mat.setBoolean("UseMaterialColors", true);
+		mat.setColor("Diffuse", ColorRGBA.White);
+		mat.setColor("Ambient", ColorRGBA.White);
+		mat.setColor("Specular", ColorRGBA.Black);
+		mat.setFloat("Shininess", 1f);
+		mat.setBoolean("UseVertexColor", true);
+		mat.setFloat("AlphaDiscardThreshold", FoliageMipmaps.ALPHA_DISCARD);
+		mat.getAdditionalRenderState().setFaceCullMode(RenderState.FaceCullMode.Off);
+		return mat;
+	}
+
+	/** Accumulates triangles into position / normal / texcoord / colour / index buffers. */
+	private static final class MeshBuffers {
+		final float[] pos, norm, tc, col;
+		final float[] backTc, tangents;
+		final int[] idx;
+		int vi, ii;
+
+		MeshBuffers(int quads) {
+			this(quads * 4, quads * 2);
+		}
+
+		MeshBuffers(int vertices, int triangles) {
+			this(vertices, triangles, false);
+		}
+
+		MeshBuffers(int vertices, int triangles, boolean impostor) {
+			pos = new float[vertices * 3];
+			norm = new float[vertices * 3];
+			tc = new float[vertices * 2];
+			col = new float[vertices * 4];
+			backTc = impostor ? new float[vertices * 2] : null;
+			tangents = impostor ? new float[vertices * 4] : null;
+			idx = new int[triangles * 3];
+		}
+
+		/** Appends a vertex and returns its index. */
+		int vertex(
+			float x, float y, float z, float nx, float ny, float nz, float u, float v, float r, float g, float b) {
+			int p = vi * 3, t = vi * 2, c = vi * 4;
+			pos[p] = x;
+			pos[p + 1] = y;
+			pos[p + 2] = z;
+			norm[p] = nx;
+			norm[p + 1] = ny;
+			norm[p + 2] = nz;
+			tc[t] = u;
+			tc[t + 1] = v;
+			col[c] = r;
+			col[c + 1] = g;
+			col[c + 2] = b;
+			col[c + 3] = 1f;
+			return vi++;
+		}
+
+		int impostorVertex(
+			float x, float y, float z, float nx, float ny, float nz, float u, float v, float backU, float backV,
+			float tx, float ty, float tz, float r, float g, float b) {
+			int vertex = vertex(x, y, z, nx, ny, nz, u, v, r, g, b);
+			backTc[vertex * 2] = backU;
+			backTc[vertex * 2 + 1] = backV;
+			tangents[vertex * 4] = tx;
+			tangents[vertex * 4 + 1] = ty;
+			tangents[vertex * 4 + 2] = tz;
+			tangents[vertex * 4 + 3] = 1f;
+			return vertex;
+		}
+
+		void tri(int a, int b, int c) {
+			idx[ii++] = a;
+			idx[ii++] = b;
+			idx[ii++] = c;
+		}
+
+		/** Closes the quad formed by the last four vertices. */
+		void quad() {
+			int base = vi - 4;
+			tri(base, base + 1, base + 2);
+			tri(base, base + 2, base + 3);
+		}
+
+		Mesh build() {
+			Mesh mesh = new Mesh();
+			mesh.setBuffer(VertexBuffer.Type.Position, 3, BufferUtils.createFloatBuffer(pos));
+			mesh.setBuffer(VertexBuffer.Type.Normal, 3, BufferUtils.createFloatBuffer(norm));
+			mesh.setBuffer(VertexBuffer.Type.TexCoord, 2, BufferUtils.createFloatBuffer(tc));
+			mesh.setBuffer(VertexBuffer.Type.Color, 4, BufferUtils.createFloatBuffer(col));
+			if (backTc != null) {
+				mesh.setBuffer(VertexBuffer.Type.TexCoord2, 2, BufferUtils.createFloatBuffer(backTc));
+				mesh.setBuffer(VertexBuffer.Type.Tangent, 4, BufferUtils.createFloatBuffer(tangents));
+			}
+			mesh.setBuffer(VertexBuffer.Type.Index, 3, BufferUtils.createIntBuffer(idx));
+			mesh.updateBound();
+			return mesh;
+		}
+	}
+
+	private static double noiseDensity(double wx, double wy, long seed) {
+		double n1 = Math.sin(wx * 0.007 + seed * 0.001) * Math.cos(wy * 0.008 + seed * 0.002);
+		double n2 = Math.sin(wx * 0.025 + wy * 0.02 + seed * 0.003) * 0.4;
+		double n3 = Math.sin(wx * 0.06 + wy * 0.05) * 0.15;
+		double density = 0.8 + n1 * 0.18 + n2 * 0.10 + n3 * 0.08;
+		return Math.max(0, Math.min(1, density));
+	}
+}

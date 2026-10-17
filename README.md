@@ -75,14 +75,20 @@ Java > Code Style > Formatter > Import.
 
 ```bash
 # macOS
-java -XstartOnFirstThread -jar searobots-viewer-<version>.jar
+java -XstartOnFirstThread -XX:+UseZGC -Xmx2g -jar searobots-viewer-<version>.jar
 # Linux / Windows
-java -jar searobots-viewer-<version>.jar
+java -XX:+UseZGC -Xmx2g -jar searobots-viewer-<version>.jar
 ```
 
 To start on a specific seed, pass it in hex (as the viewer shows it in its title bar and the F2
 dialog), e.g. `java -jar searobots-viewer-<version>.jar 2c`. A `.srl` file instead replays a
 recorded match.
+
+Press **F3** to adjust rendering settings. See [Viewer rendering](docs/viewer-rendering.md)
+for island scenery details, the shoreline showcase, and visual asset tools.
+
+Generational ZGC keeps garbage collection pauses short; on Java 25 it is enabled with
+`-XX:+UseZGC`. Source launches below select it automatically with a 2 GB maximum heap.
 
 **From source:**
 
@@ -141,7 +147,7 @@ mvn exec:exec -pl searobots-viewer
 
 #### Camera Modes
 
-- **Orbit**: free orbit around the selected entity
+- **Orbit**: free orbit around the selected entity, starting 100 metres away
 - **Chase**: trailing camera behind the sub along its heading
 - **Target**: chase camera looking toward the tracked contact
 - **Periscope**: first-person from the conning tower
@@ -149,7 +155,8 @@ mvn exec:exec -pl searobots-viewer
 - **Fly-by**: static camera watching the entity pass by
 - **Director** (default): automatic cinematic camera with event-driven
   cuts. Low bow-quarter passes, close fly-bys, and rising orbits reveal
-  hull details; torpedo tracking uses the same push-in/pull-back at
+  hull details. The orbit closes to a broadside view sized to keep the hull in frame
+  while making its name readable; torpedo tracking uses the same push-in/pull-back at
   torpedo scale. Terminal approaches keep the weapon and target framed
   from the same side of the action. A north-up tactical view returns
   roughly every 30 seconds and holds both submarines in view for at least
@@ -459,6 +466,8 @@ progress and next steps.
 
 ## Documentation
 
+- **[Viewer Rendering](docs/viewer-rendering.md):** island scenery, render settings,
+  shoreline showcase, and tree atlas generation.
 - **[Design Document](docs/DESIGN.md):** architecture, execution model,
   control interfaces, physics, sonar, damage model, and design principles.
 - **[Physics Research](docs/physics-research.md):** research notes on

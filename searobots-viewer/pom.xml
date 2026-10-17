@@ -16,6 +16,7 @@
 
     <properties>
         <jme.version>3.8.1-stable</jme.version>
+        <exec.mainClass>se.hirt.searobots.viewer.SubmarineScene3D</exec.mainClass>
     </properties>
 
     <dependencies>
@@ -42,6 +43,11 @@
         <dependency>
             <groupId>org.jmonkeyengine</groupId>
             <artifactId>jme3-effects</artifactId>
+            <version>${jme.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.jmonkeyengine</groupId>
+            <artifactId>jme3-terrain</artifactId>
             <version>${jme.version}</version>
         </dependency>
         <dependency>
@@ -101,9 +107,11 @@
                     <executable>java</executable>
                     <arguments>
                         <argument>${exec.jvmArgs}</argument>
+                        <argument>-XX:+UseZGC</argument>
+                        <argument>-Xmx2g</argument>
                         <argument>-cp</argument>
                         <classpath/>
-                        <argument>se.hirt.searobots.viewer.SubmarineScene3D</argument>
+                        <argument>${exec.mainClass}</argument>
                     </arguments>
                 </configuration>
             </plugin>
