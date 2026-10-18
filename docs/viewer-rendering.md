@@ -47,6 +47,26 @@ underwater fog distance 700 to retain depth cues while keeping nearby hull marki
 F3's Atmosphere toggle disables air and underwater fog, daylight shading, local sun shadows, and nearby
 ambient occlusion; the water and clouded HDR sky remain visible in either mode.
 
+
+## Sonar and underwater effects
+
+**S** toggles sonar pings in both the map and the 3D view. A faint spherical grid expands
+from the submarine's position when it pinged, with a brighter contour where the wave reaches
+the seabed. The bottom stays unlit until the sphere reaches it; terrain blocks the visual
+wave from its source, including underwater ridges. The pulse uses simulation time, so pause,
+step, replay, and playback speed apply to it. The animation depicts the outgoing ping;
+the engine's sonar contacts still resolve immediately and use acoustic attenuation.
+
+Bubble wakes render after the water surface so they remain visible when looking upward.
+Their own material fades each particle with distance and the length of the underwater
+viewing path, including crossings of the surface. Atmosphere and water settings also apply
+to this attenuation.
+
+The HUD uses bounded panels that adapt to the window width. **H** shows the full control
+reference; the compact control strip stays visible during normal viewing.
+**I** hides or shows the telemetry and tactical panels together with available competition
+scores and details. These panels are hidden by default. The top-center playback panel stays
+visible when toggling this information.
 ## Shoreline showcase
 
 The standalone shoreline showcase is a small coastal cove for evaluating detailed scenery.

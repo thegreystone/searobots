@@ -97,6 +97,10 @@ mvn clean install -DskipTests
 mvn exec:exec -pl searobots-viewer
 ```
 
+In IntelliJ IDEA, select the shared **SeaRobots Viewer (Maven)** run configuration
+and click **Run**. It runs `mvn install -DskipTests` before launching the viewer,
+so changes in all modules are built automatically. Use Java 25+ as the Maven runner JRE.
+
 #### Viewer Controls
 
 **Simulation:**
@@ -127,13 +131,15 @@ mvn exec:exec -pl searobots-viewer
 | Key | Action                     |
 |-----|----------------------------|
 | M   | Toggle 2D map overlay      |
+| S   | Toggle sonar pings (2D + 3D) |
+| H   | Show / hide full controls  |
 | T   | Toggle trails              |
 | R   | Toggle route visualization |
 | E   | Toggle contact estimates   |
 | W   | Toggle waypoints           |
 | G   | Toggle strategic waypoints |
 | B   | Toggle collision volumes   |
-| I   | Toggle score details       |
+| I   | Toggle side info panels and available scores (off by default; center playback stays visible) |
 | D   | Pause on sub death         |
 | F   | Pause on firing solution   |
 | L   | Pause on torpedo launch    |

@@ -113,7 +113,7 @@ final class MapRenderer implements se.hirt.searobots.engine.SimulationListener {
 	}
 
 	// Ping animations
-	record PingAnimation(double x, double y, long startTick, Color color, int sourceId) {
+	record PingAnimation(double x, double y, double z, long startTick, Color color, int sourceId) {
 	}
 
 	final java.util.concurrent.CopyOnWriteArrayList<PingAnimation> pingAnimations = new java.util.concurrent.CopyOnWriteArrayList<>();
@@ -248,14 +248,15 @@ final class MapRenderer implements se.hirt.searobots.engine.SimulationListener {
 
 			// Detect ping
 			if (subs.get(i).pingRequested()) {
-				pingAnimations.add(new PingAnimation(pos.x(), pos.y(), tick, subs.get(i).color(), subs.get(i).id()));
+				pingAnimations
+						.add(new PingAnimation(pos.x(), pos.y(), pos.z(), tick, subs.get(i).color(), subs.get(i).id()));
 			}
 		}
 
 		// Check if any ping ring just swept over a sub this tick
 		for (var ping : pingAnimations) {
-			double elapsed = (tick - ping.startTick) / 50.0;
-			double prevElapsed = (tick - 1 - ping.startTick) / 50.0;
+			double elapsed = pingElapsedSeconds(tick, ping.startTick);
+			double prevElapsed = pingElapsedSeconds(tick - 1, ping.startTick);
 			if (prevElapsed < 0)
 				continue;
 			double ringNow = elapsed * PING_VISUAL_SPEED;
@@ -303,7 +304,7 @@ final class MapRenderer implements se.hirt.searobots.engine.SimulationListener {
 
 		// Expire finished animations and old ping fix records
 		double maxTime = PING_MAX_RADIUS / PING_VISUAL_SPEED + 1.0;
-		pingAnimations.removeIf(p -> (tick - p.startTick) / 50.0 > maxTime);
+		pingAnimations.removeIf(p -> pingElapsedSeconds(tick, p.startTick) > maxTime);
 		detectionHighlights.removeIf(h -> (tick - h.startTick) / 50.0 > DETECTION_HIGHLIGHT_DURATION);
 		pingFixRecords.removeIf(r -> tick - r.tick > PING_FIX_EXPIRE_TICKS);
 
@@ -381,8 +382,10 @@ final class MapRenderer implements se.hirt.searobots.engine.SimulationListener {
 			drawWaypoints(g2);
 		drawTorpedoes(g2);
 		drawExplosions(g2);
-		drawPingAnimations(g2);
-		drawDetectionHighlights(g2);
+		if (overlayConfig.pings) {
+			drawPingAnimations(g2);
+			drawDetectionHighlights(g2);
+		}
 		drawFiringSolution(g2);
 		drawCompetitionObjectives(g2);
 
@@ -1064,12 +1067,16 @@ final class MapRenderer implements se.hirt.searobots.engine.SimulationListener {
 		}
 	}
 
+	double pingElapsedSeconds(long tick, long startTick) {
+		return (tick - startTick) / (double) world.config().tickRateHz();
+	}
+
 	private void drawPingAnimations(Graphics2D g2) {
 		// g2 is in world-coordinate transform
 		long tick = simTick;
 
 		for (var ping : pingAnimations) {
-			double elapsed = (tick - ping.startTick) / 50.0; // seconds
+			double elapsed = pingElapsedSeconds(tick, ping.startTick); // seconds
 			double leadingRadius = elapsed * PING_VISUAL_SPEED;
 			Color c = ping.color();
 			float progress = (float) Math.min(leadingRadius / PING_MAX_RADIUS, 1.0);

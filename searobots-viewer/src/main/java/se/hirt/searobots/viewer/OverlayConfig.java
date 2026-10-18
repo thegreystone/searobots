@@ -33,6 +33,7 @@ package se.hirt.searobots.viewer;
  * T/R/E/W/G toggles are consistent across views.
  */
 final class OverlayConfig {
+	volatile boolean pings = true;
 	volatile boolean trails = true;
 	volatile boolean route = false;
 	volatile boolean contactEstimates = true;

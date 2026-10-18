@@ -270,7 +270,7 @@ final class ExplosionCapture {
 		}
 		if (!hud)
 			for (Spatial s : gui.getChildren())
-				if (s instanceof BitmapText)
+				if (s instanceof BitmapText || s instanceof HudPanel)
 					s.setCullHint(Spatial.CullHint.Always);
 	}
 
