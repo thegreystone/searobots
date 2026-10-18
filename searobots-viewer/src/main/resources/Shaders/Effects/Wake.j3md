@@ -1,0 +1,28 @@
+MaterialDef Cavitation Wake {
+    MaterialParameters {
+        Texture2D Texture
+        Float WaterHeight : 0.0
+        Float WaterDensity : 0.0
+        Float FogDensity : 0.0
+        Float SurfaceEnabled : 0.0
+        Float SurfaceDensity : 0.0
+    }
+
+    Technique {
+        VertexShader GLSL300 GLSL150 GLSL120 GLSL100: Shaders/Effects/Wake.vert
+        FragmentShader GLSL300 GLSL150 GLSL120 GLSL100: Shaders/Effects/Wake.frag
+
+        WorldParameters {
+            WorldViewProjectionMatrix
+            WorldMatrix
+            CameraPosition
+        }
+
+        RenderState {
+            Blend AlphaAdditive
+            DepthTest On
+            DepthWrite Off
+            FaceCull Off
+        }
+    }
+}

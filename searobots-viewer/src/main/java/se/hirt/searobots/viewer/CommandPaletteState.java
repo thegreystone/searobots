@@ -50,9 +50,11 @@ final class CommandPaletteState extends BaseAppState {
 	Runnable onLIsland;
 	Runnable onSeedInput;
 	Runnable onLoadReplay;
+	Runnable onHelp;
 
 	// Toggle state references
 	SimulationManager simManager;
+	OverlayConfig overlays;
 
 	@Override
 	protected void initialize(Application app) {
@@ -81,6 +83,10 @@ final class CommandPaletteState extends BaseAppState {
 		window.addChild(new Label("")); // spacer
 		window.addChild(new Label("-- Options --"));
 
+		addAction(window, "[H] Controls", onHelp);
+		if (overlays != null)
+			addToggle(window, "[S] Sonar pings", overlays.pings, v -> overlays.pings = v);
+
 		// Toggles
 		if (simManager != null) {
 			addToggle(window, "Pause on ship death", simManager.pauseOnDeath, v -> simManager.pauseOnDeath = v);
@@ -103,10 +109,25 @@ final class CommandPaletteState extends BaseAppState {
 		var quitBtn = window.addChild(new Button("Quit"));
 		quitBtn.addClickCommands(b -> getApplication().stop());
 
-		// Center on screen
-		window.setLocalTranslation(app.getCamera().getWidth() * 0.3f, app.getCamera().getHeight() * 0.75f, 10);
-
 		app.getGuiNode().attachChild(window);
+		layoutWindow();
+	}
+
+	@Override
+	public void update(float tpf) {
+		if (window != null)
+			layoutWindow();
+	}
+
+	private void layoutWindow() {
+		var camera = getApplication().getCamera();
+		var size = window.getPreferredSize();
+		float scale = Math.min(1f, Math.min((camera.getWidth() - 24f) / Math.max(1, size.x),
+				(camera.getHeight() - 24f) / Math.max(1, size.y)));
+		scale = Math.max(.1f, scale);
+		window.setLocalScale(scale);
+		window.setLocalTranslation((camera.getWidth() - size.x * scale) * .5f,
+				(camera.getHeight() + size.y * scale) * .5f, 10);
 	}
 
 	private void addAction(Container parent, String label, Runnable action) {

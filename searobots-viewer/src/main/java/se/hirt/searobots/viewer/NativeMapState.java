@@ -137,6 +137,8 @@ final class NativeMapState extends BaseAppState {
 	private Node hudNode;
 	private BitmapText infoText;
 	private BitmapText subHudText;
+	private HudPanel infoPanel, rosterSummaryPanel, compPanel, mapControlsPanel;
+	private final List<HudPanel> rosterPanels = new ArrayList<>();
 	private BitmapText compText;
 	private BitmapFont font;
 
@@ -244,6 +246,14 @@ final class NativeMapState extends BaseAppState {
 	 */
 	boolean isFullscreen() {
 		return mode == MapMode.FULLSCREEN;
+	}
+
+	float minimapRight() {
+		return mode == MapMode.MINIMAP ? quadX + quadW : 0;
+	}
+
+	float minimapTop() {
+		return mode == MapMode.MINIMAP ? quadY + quadH : 0;
 	}
 
 	/**
@@ -378,9 +388,10 @@ final class NativeMapState extends BaseAppState {
 		displayMaterial.getAdditionalRenderState()
 				.setBlendMode(currentAlpha >= 1f ? RenderState.BlendMode.Off : RenderState.BlendMode.Alpha);
 
-		// HUD text only in fullscreen mode
-		hudNode.setCullHint(
-				mode == MapMode.FULLSCREEN && currentAlpha > 0.5f ? Spatial.CullHint.Inherit : Spatial.CullHint.Always);
+		// HUD text only in fullscreen mode, with controls taking precedence.
+		boolean helpVisible = getApplication() instanceof SubmarineScene3D scene && scene.isHudHelpVisible();
+		hudNode.setCullHint(mode == MapMode.FULLSCREEN && currentAlpha > 0.5f && !helpVisible ? Spatial.CullHint.Inherit
+				: Spatial.CullHint.Always);
 
 		// Zoom animation
 		if (zooming) {
@@ -477,7 +488,6 @@ final class NativeMapState extends BaseAppState {
 
 		displayMaterial.setTexture("ColorMap", renderTexture);
 		minimapMesh = buildMinimapMesh();
-		repositionHud(w, h);
 
 		// Recompute targets for current mode
 		if (mode == MapMode.MINIMAP) {
@@ -569,24 +579,24 @@ final class NativeMapState extends BaseAppState {
 		infoText = makeBitmapText(new ColorRGBA(0.78f, 0.86f, 1f, 1f));
 		subHudText = makeBitmapText(ColorRGBA.White);
 		compText = makeBitmapText(new ColorRGBA(0.75f, 0.82f, 0.9f, 1f));
-		hudNode.attachChild(infoText);
-		hudNode.attachChild(subHudText);
-		hudNode.attachChild(compText);
+		infoPanel = new HudPanel(am, infoText);
+		rosterSummaryPanel = new HudPanel(am, subHudText);
+		compPanel = new HudPanel(am, compText);
+		BitmapText controls = makeBitmapText(new ColorRGBA(.77f, .84f, .89f, 1));
+		controls.setText("[M] Change map view   [H] Controls   [S] Sonar   Drag to pan / scroll to zoom");
+		mapControlsPanel = new HudPanel(am, controls);
+		hudNode.attachChild(infoPanel);
+		hudNode.attachChild(rosterSummaryPanel);
+		hudNode.attachChild(compPanel);
+		hudNode.attachChild(mapControlsPanel);
 
-		repositionHud(app.getCamera().getWidth(), app.getCamera().getHeight());
 	}
 
 	private BitmapText makeBitmapText(ColorRGBA color) {
 		var bt = new BitmapText(font);
-		bt.setSize(font.getCharSet().getRenderedSize());
+		bt.setSize(14);
 		bt.setColor(color);
 		return bt;
-	}
-
-	private void repositionHud(int w, int h) {
-		infoText.setLocalTranslation(10, h - 10, 0);
-		subHudText.setLocalTranslation(w - 320, h - 10, 0);
-		compText.setLocalTranslation(w - 350, h - 300, 0);
 	}
 
 	// ═══════════════════════════════════════════════════════════════
@@ -1038,7 +1048,9 @@ final class NativeMapState extends BaseAppState {
 
 		// Ping rings
 		for (var ping : data.pingAnimations) {
-			double elapsed = (tick - ping.startTick()) / 50.0;
+			if (!data.overlayConfig.pings)
+				break;
+			double elapsed = data.pingElapsedSeconds(tick, ping.startTick());
 			double leadR = elapsed * 1500.0;
 			if (leadR <= 0 || leadR > 10000)
 				continue;
@@ -1094,6 +1106,8 @@ final class NativeMapState extends BaseAppState {
 
 		// Detection highlights
 		for (var h : data.detectionHighlights) {
+			if (!data.overlayConfig.pings)
+				break;
 			double elapsed = (tick - h.startTick()) / 50.0;
 			float t = (float) (elapsed / 1.5);
 			if (t > 1f)
@@ -1133,70 +1147,89 @@ final class NativeMapState extends BaseAppState {
 	private void updateHud() {
 		float alpha = currentAlpha;
 		var world = data.getWorld();
+		float width = getApplication().getCamera().getWidth();
+		float height = getApplication().getCamera().getHeight();
+		float margin = 12, gap = 10;
+		float contentWidth = Math.max(1, width - 2 * margin);
+		boolean stacked = contentWidth < 650;
+		float column = stacked ? contentWidth : Math.min(390, (contentWidth - gap) / 2);
+		float footerHeight = mapControlsPanel.layout(margin, 90, Math.min(720, contentWidth), 62, alpha);
+		mapControlsPanel.setLocalTranslation(margin, margin + footerHeight, 0);
+		float bottom = margin + footerHeight + gap;
 
-		// Info text (top-left)
-		var sb = new StringBuilder();
-		sb.append("Seed: ").append(Long.toHexString(world.config().worldSeed())).append('\n');
+		var sb = new StringBuilder("TACTICAL MAP\n");
 		long tick = data.simTick;
-		long hz = world.config().tickRateHz();
-		sb.append(String.format("Tick: %d", tick));
+		long seconds = tick / world.config().tickRateHz();
 		boolean paused = data.simPausedSupplier != null && data.simPausedSupplier.getAsBoolean();
 		double speed = data.simSpeedSupplier != null ? data.simSpeedSupplier.getAsDouble() : 1;
-		sb.append(paused ? "  PAUSED" : String.format("  %.0fx", speed)).append('\n');
-		long totalSec = tick / hz;
-		sb.append(String.format("Time: %d:%02d", totalSec / 60, totalSec % 60)).append('\n');
+		String playback = paused ? "PAUSED" : speed >= 1_000_000 ? "MAX SPEED" : String.format("%.0fx", speed);
+		sb.append(
+				String.format("%s   |   %02d:%02d:%02d\n", playback, seconds / 3600, seconds / 60 % 60, seconds % 60));
+		sb.append("Seed ").append(Long.toHexString(world.config().worldSeed())).append('\n');
 		for (int i = 0; i < world.thermalLayers().size(); i++) {
-			var tl = world.thermalLayers().get(i);
-			sb.append(String.format("Thermocline %d: %.0fm  %.1f/%.1f C", i + 1, -tl.depth(), tl.temperatureAbove(),
-					tl.temperatureBelow()));
-			sb.append('\n');
+			var layer = world.thermalLayers().get(i);
+			sb.append(String.format("Thermocline %d   %.0f m   %.1f / %.1f C\n", i + 1, -layer.depth(),
+					layer.temperatureAbove(), layer.temperatureBelow()));
 		}
-		sb.append("Spawns: ").append(world.spawnPoints().size());
-		infoText.setText(sb.toString());
-		infoText.setColor(new ColorRGBA(0.78f, 0.86f, 1f, alpha));
+		infoText.setText(sb.toString().stripTrailing());
+		infoText.setColor(new ColorRGBA(.78f, .86f, 1, alpha));
+		float infoHeight = infoPanel.layout(margin, height - margin, column, Math.min(200, height - bottom - margin),
+				alpha);
 
-		// Sub HUD text (top-right)
 		var subs = data.submarines;
-		if (!subs.isEmpty()) {
-			var sh = new StringBuilder();
-			for (var sub : subs) {
-				var pos = sub.pose().position();
-				var c = sub.forfeited() ? java.awt.Color.DARK_GRAY : sub.color();
-				String label = sub.forfeited() ? "FORFEIT" : sub.hp() <= 0 ? "DEAD" : "";
-				sh.append(String.format("%s (#%d)  HP %d  %s\n", sub.name(), sub.id(), sub.hp(), label));
-				sh.append(String.format("  %.1f m/s  depth %.0fm  hdg %.1f\n", sub.speed(), -pos.z(),
-						Math.toDegrees(sub.pose().heading())));
-				double noiseDb = 80 + 20 * Math.log10(Math.max(sub.noiseLevel(), 0.001));
-				sh.append(String.format("  noise:%.0f dB  throttle:%+.0f%%  torps:%d\n", noiseDb, sub.throttle() * 100,
-						sub.torpedoesRemaining()));
-				if (sub.status() != null && !sub.status().isEmpty())
-					sh.append("  ").append(sub.status()).append('\n');
-			}
-			subHudText.setText(sh.toString());
-		} else {
-			subHudText.setText("");
+		var results = data.competitionResults;
+		String phase = data.competitionPhase;
+		boolean competition = results != null && !results.isEmpty() || phase != null && !phase.isEmpty();
+		float top = stacked ? height - margin - infoHeight - gap : height - margin;
+		float x = stacked ? margin : width - margin - column;
+		float reserved = competition ? 100 : 0;
+		float entryHeight = 5 * subHudText.getLineHeight() + 2 * HudPanel.PADDING;
+		int visible = Math.min(subs.size(), Math.max(0, (int) ((top - bottom - reserved) / (entryHeight + gap))));
+		if (visible < subs.size() && visible > 0 && top - bottom - reserved - visible * (entryHeight + gap) < 42)
+			visible--;
+		while (rosterPanels.size() > visible)
+			rosterPanels.removeLast().removeFromParent();
+		while (rosterPanels.size() < visible) {
+			HudPanel panel = new HudPanel(am, makeBitmapText(ColorRGBA.White));
+			rosterPanels.add(panel);
+			hudNode.attachChild(panel);
 		}
-		subHudText.setColor(new ColorRGBA(1, 1, 1, alpha));
+		for (int i = 0; i < visible; i++) {
+			var sub = subs.get(i);
+			HudPanel panel = rosterPanels.get(i);
+			String condition = sub.forfeited() ? "  /  FORFEIT" : sub.hp() <= 0 ? "  /  SUNK" : "";
+			String status = sub.status() == null ? "" : sub.status();
+			double heading = (Math.toDegrees(sub.pose().heading()) % 360 + 360) % 360;
+			double noise = 80 + 20 * Math.log10(Math.max(.001, sub.noiseLevel()));
+			panel.text().setText(String.format(
+					"%s  #%d%s\nHP %d   Torpedoes %d\n%.1f m/s   Depth %.0f m   %03.0f\u00b0\nNoise %.0f dB   Throttle %+.0f%%\n%s",
+					sub.name(), sub.id(), condition, sub.hp(), sub.torpedoesRemaining(), sub.speed(),
+					-sub.pose().position().z(), heading, noise, sub.throttle() * 100, status));
+			var color = sub.forfeited() ? java.awt.Color.GRAY : sub.color();
+			panel.text().setColor(new ColorRGBA(.35f + .65f * color.getRed() / 255f,
+					.35f + .65f * color.getGreen() / 255f, .35f + .65f * color.getBlue() / 255f, alpha));
+			top -= panel.layout(x, top, column, entryHeight, alpha) + gap;
+		}
+		subHudText.setText(visible < subs.size() ? String.format("+ %d more vessels", subs.size() - visible) : "");
+		float summaryHeight = rosterSummaryPanel.layout(x, top, column, Math.max(0, top - bottom), alpha);
+		if (summaryHeight > 0)
+			top -= summaryHeight + gap;
 
-		// Competition text
-		var compResults = data.competitionResults;
-		var compPhase = data.competitionPhase;
-		if ((compResults != null && !compResults.isEmpty()) || (compPhase != null && !compPhase.isEmpty())) {
-			var ct = new StringBuilder();
-			if (compPhase != null && !compPhase.isEmpty())
-				ct.append(compPhase).append('\n');
-			if (compResults != null) {
-				int start = Math.max(0, compResults.size() - 20);
-				for (int i = start; i < compResults.size(); i++)
-					ct.append(compResults.get(i)).append('\n');
+		if (competition) {
+			var details = new StringBuilder(phase == null || phase.isBlank() ? "COMPETITION" : phase);
+			int availableLines = Math.max(0,
+					(int) ((top - bottom - 2 * HudPanel.PADDING) / compText.getLineHeight()) - 1);
+			if (results != null) {
+				int first = Math.max(0, results.size() - availableLines);
+				for (int i = first; i < results.size(); i++)
+					details.append('\n').append(results.get(i));
 			}
-			compText.setText(ct.toString());
+			compText.setText(details.toString());
 		} else {
 			compText.setText("");
 		}
-		compText.setColor(new ColorRGBA(0.75f, 0.82f, 0.9f, alpha));
+		compPanel.layout(x, top, column, Math.max(0, top - bottom), alpha);
 	}
-
 	// ═══════════════════════════════════════════════════════════════
 	//  Mesh utilities
 	// ═══════════════════════════════════════════════════════════════

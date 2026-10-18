@@ -180,6 +180,8 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 	// With -Dsearobots.fastForwardTo=TICK, the match runs fast until that tick, then at normal speed (0: done)
 	private volatile long fastForwardTo = Long.getLong("searobots.fastForwardTo", 0L);
 	private WreckEmissions wrecks; // oil and bubbles from dead submarines
+	private Material wakeMaterial;
+	private SonarPingEffects sonarPings;
 	private final Map<Integer, ParticleEmitter> torpedoBubbles = new HashMap<>(); // torpedo wake
 	private final Map<Integer, Float> deathPropSpin = new HashMap<>(); // decaying prop spin rate
 	// Team lights: the row of small lights along each flank (model group TeamLights) shine in the submarine's colour,
@@ -208,6 +210,11 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 	private BitmapText hudText;
 	private BitmapText tacticalText;
 	private BitmapText keysText;
+	private BitmapText controlsText;
+	private HudPanel hudPanel, tacticalPanel, playbackPanel, controlsPanel, helpPanel, togglePanel;
+	private HudPanel scorePanel, phasePanel, detailPanel;
+	private boolean hudHelpVisible;
+	private boolean hudInfoVisible = false;
 	private LoadingOverlay loadingOverlay;
 	private final java.util.concurrent.ExecutorService loadingWorker = java.util.concurrent.Executors
 			.newSingleThreadExecutor(Thread.ofPlatform().daemon().name("viewer-setup").factory());
@@ -245,7 +252,6 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 	private BitmapText competitionScoreText; // compact score at top
 	private BitmapText competitionPhaseText; // current phase label below score
 	private BitmapText competitionDetailText; // detailed breakdown, toggleable
-	private boolean showCompetitionDetails = false;
 	private final java.util.concurrent.CopyOnWriteArrayList<String> competitionDetailLines = new java.util.concurrent.CopyOnWriteArrayList<>();
 	private CompetitionRunner activeCompetition;
 	private MapRenderer standaloneMapRenderer;
@@ -855,11 +861,12 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 		keysText = new BitmapText(guiFont);
 		keysText.setSize(guiFont.getCharSet().getRenderedSize());
 		keysText.setColor(new ColorRGBA(0.7f, 0.7f, 0.7f, 1f));
-		keysText.setText("[1-6] Speed  [0] Max  [P] Pause  [N] Step  [.] FFW to event  [F11] Fullscreen\n"
-				+ "[Tab] Cycle sub  [V] Camera  [Space] New map  [Esc] Menu\n"
-				+ "[T] Trails  [R] Route  [E] Contacts  [W] Waypoints  [G] Strategic\n"
-				+ "[B] Collision  [D] Pause death  [F] Pause solution  [L] Pause launch\n"
-				+ "[I] Score details  [F2] Config  [F3] Render  [Ctrl+C] Copy seed");
+		keysText.setText("CONTROLS  [H] Close\n" + "[P] Pause / resume   [N] Single step\n"
+				+ "[1-6] Speed   [0] Maximum   [.] Next event\n" + "[Tab] Follow next entity   [V] Camera\n"
+				+ "[M] Map   [S] Sonar pulses   [F11] Fullscreen\n" + "[T] Trails   [R] Route   [E] Contact estimates\n"
+				+ "[W] Waypoints   [G] Strategic waypoints\n" + "[B] Collision volumes   [I] Info / scores\n"
+				+ "Pause on: [D] Death   [F] Solution   [L] Launch\n" + "[Space] New map   [Ctrl+R] Re-run seed\n"
+				+ "[F2] Simulation   [F3] Rendering\n" + "[Ctrl+C] Copy seed   [Esc] Menu");
 		float keysWidth = keysText.getLineWidth();
 		float keysHeight = keysText.getHeight();
 		keysText.setLocalTranslation(settings.getWidth() - keysWidth - 10, keysHeight + 10, 0);
@@ -891,6 +898,26 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 		competitionDetailText.setColor(new ColorRGBA(0.85f, 0.9f, 1f, 0.85f));
 		competitionDetailText.setText("");
 		guiNode.attachChild(competitionDetailText);
+
+		controlsText = new BitmapText(guiFont);
+		controlsText.setSize(14);
+		controlsText.setColor(new ColorRGBA(.77f, .84f, .89f, 1));
+		controlsText.setText(
+				"[H] Controls   [I] Info   [P] Pause   [Tab] Follow   [V] Camera   [M] Map   [S] Sonar   [Esc] Menu");
+		keysText.setSize(14);
+		keysText.setColor(new ColorRGBA(.82f, .89f, .93f, 1));
+		speedText.setSize(15);
+		toggleStatusText.setSize(13);
+		hudPanel = addHudPanel(hudText);
+		tacticalPanel = addHudPanel(tacticalText);
+		playbackPanel = addHudPanel(speedText);
+		controlsPanel = addHudPanel(controlsText);
+		helpPanel = addHudPanel(keysText);
+		helpPanel.setBackgroundOpacity(1);
+		togglePanel = addHudPanel(toggleStatusText);
+		scorePanel = addHudPanel(competitionScoreText);
+		phasePanel = addHudPanel(competitionPhaseText);
+		detailPanel = addHudPanel(competitionDetailText);
 
 		// Firing solution crosshair (solid circle + cross, built from triangle strips)
 		crosshairNode = new Node("crosshair");
@@ -961,6 +988,8 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 		explosions = new ExplosionEffects(assetManager, rootNode, guiNode, cam);
 		explosions.preload(renderManager);
 		wrecks = new WreckEmissions(assetManager, rootNode, cam);
+		wakeMaterial = WakeMaterial.create(assetManager);
+		sonarPings = new SonarPingEffects(assetManager, rootNode);
 		capture = ExplosionCapture.fromSystemProperties(stateManager, guiNode, this::getActiveSim,
 				() -> latestTorpedoSnapshots, () -> latestSnapshots, this::stop);
 		if (capture != null) {
@@ -1033,6 +1062,8 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 
 			var palette = new CommandPaletteState();
 			palette.simManager = standaloneSimManager;
+			palette.overlays = overlayConfig;
+			palette.onHelp = this::toggleHudHelp;
 			palette.onNewMap = () -> {
 				standaloneSeed = java.util.concurrent.ThreadLocalRandom.current().nextLong();
 				restartSim();
@@ -1604,15 +1635,15 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 	}
 
 	private void updateDetailHud() {
-		if (!showCompetitionDetails)
-			return;
 		enqueue(() -> {
+			var lines = List.copyOf(competitionDetailLines);
 			var sb = new StringBuilder();
-			for (var line : competitionDetailLines) {
-				sb.append(line).append("\n");
-			}
-			competitionDetailText.setText(sb.toString());
-			competitionDetailText.setLocalTranslation(10, cam.getHeight() * 0.85f, 0);
+			if (!lines.isEmpty())
+				sb.append("SCORE DETAILS  [I] Hide info\n");
+			int first = Math.max(0, lines.size() - 20);
+			for (int i = first; i < lines.size(); i++)
+				sb.append(lines.get(i)).append('\n');
+			competitionDetailText.setText(sb.toString().stripTrailing());
 			return null;
 		});
 	}
@@ -1717,12 +1748,12 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 		try {
 			// Auto-screenshot camera tour (only when -Dscreenshots=true)
 			if (AUTO_SCREENSHOTS && screenshotCountdown > 0 && screenshotsTaken < screenshotCount) {
+				// Restore effects on the frame after the tactical shot was rendered.
+				if (screenshotTacticalMode && screenshotsTaken >= 8)
+					screenshotTacticalMode = false;
 				screenshotCountdown--;
 				if (screenshotCountdown == 0) {
-					// Restore water/fog after tactical top-down shot
-					if (screenshotTacticalMode) {
-						screenshotTacticalMode = false;
-					}
+
 					screenshotState.takeScreenshot();
 					screenshotsTaken++;
 					System.out.println("Auto-screenshot " + screenshotsTaken + "/" + screenshotCount + " saved");
@@ -1807,23 +1838,23 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 			updateHud();
 			updateCrosshair();
 			updateOverlays();
+			if (sonarPings != null && standaloneMapRenderer != null)
+				sonarPings.update(standaloneMapRenderer, displayedTerrain,
+						standaloneMapRenderer.getWorld().config().tickRateHz(), overlayConfig.pings);
 			updateFastForward();
 			updateReplayLabel(tpf);
-			if (capture != null)
-				capture.update(tpf);
 			updateFastForwardTo();
 			// Keep sun billboard centered on camera (infinitely far away)
 			if (sunBillboard != null) {
 				Vector3f sunPos = cam.getLocation().add(sun.getDirection().mult(-900f));
 				sunBillboard.setLocalTranslation(sunPos.subtract(200, 200, 0));
 			}
-			// Keep HUD anchored to current window size
-			hudText.setLocalTranslation(10, cam.getHeight() - 10, 0);
-			keysText.setLocalTranslation(cam.getWidth() - keysText.getLineWidth() - 10, keysText.getHeight() + 10, 0);
 
 			// Update toggle status indicators (all active toggles shown in green)
 			{
 				var sb = new StringBuilder();
+				if (overlayConfig.pings)
+					sb.append("[S] Sonar  ");
 				if (overlayConfig.trails)
 					sb.append("[T] Trails  ");
 				if (overlayConfig.route)
@@ -1836,8 +1867,8 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 					sb.append("[G] Strategic  ");
 				if (showCollisionEllipsoids)
 					sb.append("[B] Collision  ");
-				if (showCompetitionDetails)
-					sb.append("[I] Details  ");
+				if (hudInfoVisible)
+					sb.append("[I] Info  ");
 				if (standaloneSimManager != null && standaloneSimManager.pauseOnDeath)
 					sb.append("[D] Death  ");
 				if (standaloneSimManager != null && standaloneSimManager.pauseOnTorpedoSolution)
@@ -1845,16 +1876,16 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 				if (standaloneSimManager != null && standaloneSimManager.pauseOnTorpedoLaunch)
 					sb.append("[L] Launch  ");
 				toggleStatusText.setText(sb.toString());
-				toggleStatusText.setColor(new ColorRGBA(0.3f, 1f, 0.4f, 0.9f));
-				toggleStatusText.setLocalTranslation(cam.getWidth() - toggleStatusText.getLineWidth() - 10,
-						keysText.getHeight() + keysText.getLineHeight() + 14, 0);
+				toggleStatusText.setColor(new ColorRGBA(.51f, .72f, .76f, 1f));
+
 			}
-			// Toggle competition detail visibility
-			competitionDetailText
-					.setCullHint(showCompetitionDetails ? Spatial.CullHint.Never : Spatial.CullHint.Always);
+			layoutHud();
+			if (capture != null)
+				capture.update(tpf);
 
 			sunHour = (startTime.toSecondOfDay() / 3600f + latestTick / 50f / 3600f) % 24f;
 			updateAtmosphere();
+			WakeMaterial.update(wakeMaterial, waterFilter, fogFilter, atmosphereEnabled);
 		} catch (Throwable t) {
 			System.err.println("EXCEPTION in simpleUpdate (frame " + frameCount + "):");
 			t.printStackTrace(System.err);
@@ -1964,6 +1995,8 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 
 		TerrainMap terrain = world.terrain();
 		displayedTerrain = terrain;
+		if (sonarPings != null)
+			sonarPings.clear();
 		terrainQuad = prepared.quad();
 		terrainQuad.setShadowMode(RenderQueue.ShadowMode.CastAndReceive);
 		terrainGeometry = terrainQuad;
@@ -2150,7 +2183,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 			return;
 		}
 
-		fogFilter.setEnabled(!directorHidesWater);
+		fogFilter.setEnabled(!directorHidesWater && !screenshotTacticalMode);
 		float camY = cam.getLocation().y; // jME Y = sim depth (negative = underwater)
 
 		// Scale sun intensity by elevation (dimmer near horizon)
@@ -2191,6 +2224,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 	// ---- HUD ----
 
 	private void updateHud() {
+		updatePlaybackHud();
 		var snapshots = latestSnapshots;
 		var torpSnapshots = latestTorpedoSnapshots;
 
@@ -2214,33 +2248,14 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 			hdgDeg += 360;
 		double pitchDeg = Math.toDegrees(snap.pose().pitch());
 		double rollDeg = Math.toDegrees(snap.pose().roll());
-		long tick = latestTick;
-		var elapsed = java.time.Duration.ofMillis((long) (tick * 1000.0 / 50));
-		var tod = startTime.plusSeconds((long) (tick / 50.0));
-		hudText.setText(String.format("%s  |  Speed: %.1f kn  Depth: %.0f m  Throttle: %.0f%%  HP: %d  Torps: %d\n"
-				+ "Heading: %03.0f\u00b0  Pitch: %+.1f\u00b0  Roll: %+.1f\u00b0  Rudder: %+.0f%%  Planes: %+.0f%%\n"
-				+ "Tick: %d  Elapsed: %02d:%02d:%02d  ToD: %s  Cam: %s", snap.name(), snap.speed(), -pos.z(),
-				snap.throttle() * 100, snap.hp(), snap.torpedoesRemaining(), hdgDeg, pitchDeg, rollDeg,
-				snap.rudder() * 100, snap.sternPlanes() * 100, tick, elapsed.toHoursPart(), elapsed.toMinutesPart(),
-				elapsed.toSecondsPart(), tod.toString(), camLabel()));
 
-		// Speed/pause indicator (separate text, top center, colored)
-		{
-			var sim = getActiveSim();
-			if (sim != null && sim.isPaused()) {
-				speedText.setText("PAUSED");
-				speedText.setColor(new ColorRGBA(1f, 0.3f, 0.3f, 0.95f));
-			} else if (sim != null && sim.getSpeedMultiplier() > 1) {
-				int mult = (int) sim.getSpeedMultiplier();
-				speedText.setText(mult >= 1_000_000 ? "MAX SPEED" : mult + "x");
-				speedText.setColor(new ColorRGBA(1f, 0.9f, 0.3f, 0.9f));
-			} else {
-				speedText.setText("");
-			}
-			// Position top center
-			float sw = speedText.getLineWidth();
-			speedText.setLocalTranslation((cam.getWidth() - sw) / 2f, cam.getHeight() - 10, 0);
-		}
+		hudText.setText(String.format(
+				"%s%s\n" + "Speed %.1f m/s   Depth %.0f m\n" + "HP %d   Torpedoes %d   Heading %03.0f\u00b0\n"
+						+ "Throttle %.0f%%   Rudder %+.0f%%   Planes %+.0f%%\n"
+						+ "Pitch %+.1f\u00b0   Roll %+.1f\u00b0",
+				snap.name(), snap.forfeited() ? "  /  FORFEIT" : snap.hp() <= 0 ? "  /  SUNK" : "", snap.speed(),
+				-pos.z(), snap.hp(), snap.torpedoesRemaining(), hdgDeg, snap.throttle() * 100, snap.rudder() * 100,
+				snap.sternPlanes() * 100, pitchDeg, rollDeg));
 
 		// Tactical info panel (top right)
 		updateTacticalHud(snap, pos);
@@ -2252,8 +2267,6 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 		if (hdgDeg < 0)
 			hdgDeg += 360;
 		double pitchDeg = Math.toDegrees(ts.pose().pitch());
-		long tick = latestTick;
-		var elapsed = java.time.Duration.ofMillis((long) (tick * 1000.0 / 50));
 
 		// Find owner name
 		String ownerName = "?";
@@ -2279,12 +2292,10 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 		}
 
 		hudText.setText(String.format(
-				"TORPEDO #%d (from %s)  |  Speed: %.1f m/s  Depth: %.0f m\n"
-						+ "Heading: %03.0f\u00b0  Pitch: %+.1f\u00b0  %s\n"
-						+ "Fuel: %.0fs  Noise: %.0f dB  Tick: %d  Elapsed: %02d:%02d:%02d  Cam: %s",
-				ts.id(), ownerName, ts.speed(), -pos.z(), hdgDeg, pitchDeg, targetLine, ts.fuelRemaining(),
-				ts.sourceLevelDb(), tick, elapsed.toHoursPart(), elapsed.toMinutesPart(), elapsed.toSecondsPart(),
-				camLabel()));
+				"TORPEDO #%d  /  %s\n" + "Speed %.1f m/s   Depth %.0f m\n"
+						+ "Heading %03.0f\u00b0   Pitch %+.1f\u00b0\n" + "Fuel %.0f s   Noise %.0f dB\n%s",
+				ts.id(), ownerName, ts.speed(), -pos.z(), hdgDeg, pitchDeg, ts.fuelRemaining(), ts.sourceLevelDb(),
+				targetLine));
 		tacticalText.setText("");
 	}
 
@@ -2293,7 +2304,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 
 		// Status
 		String status = snap.status() != null ? snap.status() : "---";
-		sb.append(String.format("STATUS: %s%n", status));
+		sb.append(String.format("TACTICAL  /  %s%n", status));
 		sb.append(String.format("Noise: %.0f dB%n", 80 + 20 * Math.log10(Math.max(0.01, snap.noiseLevel()))));
 
 		// Active nav waypoint
@@ -2317,7 +2328,15 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 		var strats = snap.strategicWaypoints();
 		if (strats != null && !strats.isEmpty()) {
 			sb.append(String.format("%nTACTICAL PLAN:%n"));
+			int first = 0;
 			for (int i = 0; i < strats.size(); i++) {
+				if (strats.get(i).waypoint().active()) {
+					first = i;
+					break;
+				}
+			}
+			int end = Math.min(first + 4, strats.size());
+			for (int i = first; i < end; i++) {
 				var sw = strats.get(i);
 				var wp = sw.waypoint();
 				double dx = wp.x() - pos.x();
@@ -2330,13 +2349,17 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 				sb.append(String.format("%s%d. %-10s %03.0f\u00b0 %5.0fm%n", marker, i + 1, sw.purpose().name(),
 						bearing, dist));
 			}
+			if (end < strats.size())
+				sb.append("  + ").append(strats.size() - end).append(" later waypoints\n");
 		}
 
 		// Contact count
 		var contacts = snap.contactEstimates();
 		if (contacts != null && !contacts.isEmpty()) {
 			sb.append(String.format("%nCONTACTS: %d%n", contacts.size()));
-			for (var c : contacts) {
+			for (var c : contacts.stream()
+					.sorted(java.util.Comparator.comparingDouble(c -> Math.hypot(c.x() - pos.x(), c.y() - pos.y())))
+					.limit(4).toList()) {
 				double dx = c.x() - pos.x();
 				double dy = c.y() - pos.y();
 				double dist = Math.sqrt(dx * dx + dy * dy);
@@ -2345,11 +2368,103 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 					bearing += 360;
 				sb.append(String.format("  %03.0f\u00b0  %.0fm%n", bearing, dist));
 			}
+			if (contacts.size() > 4)
+				sb.append("  + ").append(contacts.size() - 4).append(" farther contacts\n");
 		}
 
 		tacticalText.setText(sb.toString());
-		// Position relative to top-right corner
-		tacticalText.setLocalTranslation(cam.getWidth() - 420, cam.getHeight() - 10, 0);
+
+	}
+
+	private HudPanel addHudPanel(BitmapText text) {
+		HudPanel panel = new HudPanel(assetManager, text);
+		guiNode.attachChild(panel);
+		return panel;
+	}
+
+	boolean isHudHelpVisible() {
+		return hudHelpVisible;
+	}
+
+	private void toggleHudHelp() {
+		hudHelpVisible = !hudHelpVisible;
+	}
+
+	private void updatePlaybackHud() {
+		var sim = getActiveSim();
+		boolean paused = sim != null && sim.isPaused();
+		double speed = sim == null ? 1 : sim.getSpeedMultiplier();
+		String playback = paused ? "PAUSED" : speed >= 1_000_000 ? "MAX SPEED" : String.format("%.0fx", speed);
+		var world = standaloneMapRenderer == null ? standaloneWorld : standaloneMapRenderer.getWorld();
+		long tickRate = world == null ? 50 : world.config().tickRateHz();
+		long seconds = latestTick / tickRate;
+		speedText.setText(String.format("%s   |   %02d:%02d:%02d   |   %s\nTick %d   /   Time of day %s", playback,
+				seconds / 3600, seconds / 60 % 60, seconds % 60, camLabel(), latestTick,
+				startTime.plusSeconds(seconds)));
+		speedText.setColor(paused ? new ColorRGBA(1, .68f, .38f, 1) : new ColorRGBA(.83f, .91f, .95f, 1));
+	}
+
+	/** All positions use the current viewport, including during pause and replay. */
+	private void layoutHud() {
+		float margin = 12, gap = 10;
+		float width = Math.max(1, cam.getWidth() - 2 * margin);
+		float height = cam.getHeight();
+		float playbackWidth = Math.min(680, width);
+		float playbackHeight = playbackPanel.layout((cam.getWidth() - playbackWidth) / 2, height - margin,
+				playbackWidth, 3 * speedText.getLineHeight() + 2 * HudPanel.PADDING, 1);
+		float top = height - margin - playbackHeight - gap;
+		float scoreHeight = scorePanel.layout((cam.getWidth() - playbackWidth) / 2, top, playbackWidth, 48, 1);
+		if (scoreHeight > 0)
+			top -= scoreHeight + 4;
+		float phaseHeight = phasePanel.layout((cam.getWidth() - playbackWidth) / 2, top, playbackWidth, 40, 1);
+		if (phaseHeight > 0)
+			top -= phaseHeight + gap;
+		NativeMapState map = stateManager.getState(NativeMapState.class);
+		float footerLeft = map == null ? margin : Math.max(margin, map.minimapRight() + gap);
+		float footerWidth = Math.max(1, cam.getWidth() - footerLeft - margin);
+		float footerPanelWidth = Math.min(840, footerWidth);
+		float controlsHeight = controlsPanel.layout(footerLeft, 100, footerPanelWidth, 64, 1);
+		float toggleHeight = togglePanel.layout(footerLeft, 100, footerPanelWidth, 58, 1);
+		float footerPanelHeight = Math.max(controlsHeight, toggleHeight);
+		controlsPanel.setBackgroundSize(footerPanelWidth, footerPanelHeight);
+		togglePanel.setBackgroundSize(footerPanelWidth, footerPanelHeight);
+		controlsHeight = controlsHeight > 0 ? footerPanelHeight : 0;
+		toggleHeight = toggleHeight > 0 ? footerPanelHeight : 0;
+		controlsPanel.setLocalTranslation(footerLeft, margin + controlsHeight, 0);
+		float footerTop = margin + controlsHeight + gap;
+		togglePanel.setLocalTranslation(footerLeft, footerTop + toggleHeight, 0);
+		footerTop += toggleHeight + gap;
+		float column = Math.min(440, (width - gap) / 2);
+		boolean stacked = width < 650;
+		if (stacked)
+			column = width;
+		float contentBottom = map == null ? footerTop : Math.max(footerTop, map.minimapTop() + gap);
+		float available = Math.max(0, top - contentBottom);
+		float telemetryHeight = hudPanel.layout(margin, top, column, Math.min(available, 170), 1);
+		float tacticalTop = stacked ? top - telemetryHeight - gap : top;
+		tacticalPanel.layout(stacked ? margin : cam.getWidth() - margin - column, tacticalTop, column,
+				Math.min(320, Math.max(0, tacticalTop - footerTop)), 1);
+		float detailTop = top - telemetryHeight - gap;
+		if (hudInfoVisible && !competitionDetailText.getText().isBlank()) {
+			if (stacked)
+				tacticalPanel.setCullHint(Spatial.CullHint.Always);
+			detailPanel.layout(margin, detailTop, column, Math.max(0, detailTop - contentBottom), 1);
+		} else
+			detailPanel.setCullHint(Spatial.CullHint.Always);
+		if (!hudInfoVisible || hudHelpVisible) {
+			for (HudPanel panel : List.of(hudPanel, tacticalPanel, scorePanel, phasePanel, detailPanel))
+				panel.setCullHint(Spatial.CullHint.Always);
+		}
+		if (hudHelpVisible) {
+			playbackPanel.setCullHint(Spatial.CullHint.Always);
+			helpPanel.setLocalTranslation(0, 0, 8);
+			float helpWidth = Math.min(540, width);
+			helpPanel.layout((cam.getWidth() - helpWidth) / 2, height - margin, helpWidth, height - 2 * margin, 1);
+		} else {
+			helpPanel.setCullHint(Spatial.CullHint.Always);
+		}
+		if (replayLabel != null)
+			replayLabel.setLocalTranslation(footerLeft, footerTop + replayLabel.getHeight(), 0);
 	}
 
 	// ---- crosshair ----
@@ -2737,11 +2852,8 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 			}
 			if (bubbles == null) {
 				bubbles = new ParticleEmitter("bubbles-" + snap.id(), ParticleMesh.Type.Triangle, 200);
-				Material bubbleMat = new Material(assetManager, "Common/MatDefs/Misc/Particle.j3md");
-				bubbleMat.setTexture("Texture", assetManager.loadTexture("Effects/Explosion/smoketrail.png"));
-				bubbleMat.getAdditionalRenderState().setBlendMode(RenderState.BlendMode.Additive);
-				bubbleMat.getAdditionalRenderState().setFaceCullMode(com.jme3.material.RenderState.FaceCullMode.Off);
-				bubbles.setMaterial(bubbleMat);
+
+				bubbles.setMaterial(wakeMaterial);
 				bubbles.setQueueBucket(RenderQueue.Bucket.Translucent);
 				bubbles.setImagesX(1);
 				bubbles.setImagesY(3);
@@ -2764,7 +2876,9 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 			float noise = (float) snap.noiseLevel();
 			float emitRate = Math.max(0, (noise - 1.5f) * 30f); // no bubbles below noise 1.5
 			var simL = getActiveSim();
-			bubbles.setParticlesPerSec(simL != null && simL.isPaused() ? 0 : emitRate);
+			boolean bubblesFrozen = (simL != null && simL.isPaused()) || (capture != null && capture.freezing());
+			bubbles.setEnabled(!bubblesFrozen);
+			bubbles.setParticlesPerSec(bubblesFrozen ? 0 : emitRate);
 
 			// Debug collision ellipsoid
 			Geometry ellGeom = ellipsoidGeoms.get(snap.id());
@@ -2920,11 +3034,8 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 			ParticleEmitter torpBub = torpedoBubbles.get(ts.id());
 			if (torpBub == null) {
 				torpBub = new ParticleEmitter("torpWake-" + ts.id(), ParticleMesh.Type.Triangle, 150);
-				Material bMat = new Material(assetManager, "Common/MatDefs/Misc/Particle.j3md");
-				bMat.setTexture("Texture", assetManager.loadTexture("Effects/Explosion/smoketrail.png"));
-				bMat.getAdditionalRenderState().setBlendMode(RenderState.BlendMode.Additive);
-				bMat.getAdditionalRenderState().setFaceCullMode(com.jme3.material.RenderState.FaceCullMode.Off);
-				torpBub.setMaterial(bMat);
+
+				torpBub.setMaterial(wakeMaterial);
 				torpBub.setQueueBucket(RenderQueue.Bucket.Translucent);
 				torpBub.setImagesX(1);
 				torpBub.setImagesY(3);
@@ -2932,7 +3043,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 				torpBub.setEndColor(new ColorRGBA(0.7f, 0.85f, 1f, 0f));
 				torpBub.setStartSize(0.3f);
 				torpBub.setEndSize(2f);
-				torpBub.setGravity(0, 3f, 0); // bubbles float up
+				torpBub.setGravity(0, -3f, 0); // jME subtracts gravity: negative Y makes bubbles rise
 				torpBub.setLowLife(0.3f);
 				torpBub.setHighLife(1.5f);
 				torpBub.getParticleInfluencer().setInitialVelocity(new Vector3f(0, 2f, 0));
@@ -2958,9 +3069,10 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 			float sternSimZ = -sinP * halfLen;
 			torpBub.setLocalTranslation(modelPos.x + sternSimX, modelPos.y + sternSimZ, // JME Y = sim Z
 					modelPos.z - sternSimY); // JME Z = -sim Y
-			// Stop emission when paused (particles freeze in place)
+			// Freeze both emission and existing particles during pause or a scripted capture
 			var simLoop = getActiveSim();
-			boolean paused = simLoop != null && simLoop.isPaused();
+			boolean paused = (simLoop != null && simLoop.isPaused()) || (capture != null && capture.freezing());
+			torpBub.setEnabled(!paused);
 			torpBub.setParticlesPerSec(paused ? 0 : Math.max(0, (int) (ts.speed() * 4)));
 			// Torpedo collision cylinder (B key)
 			Geometry torpCollGeom = torpedoCollisionGeoms.get(ts.id());
@@ -3205,37 +3317,38 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 			}
 		}, "CycleCamera");
 
-		// T/R/E/W/G/B to toggle overlays (unified across 2D and 3D)
+		// Overlay and help toggles (unified across 2D and 3D)
+		inputManager.addMapping("ToggleSonar", new KeyTrigger(KeyInput.KEY_S));
+		inputManager.addMapping("ToggleHelp", new KeyTrigger(KeyInput.KEY_H));
 		inputManager.addMapping("ToggleTrails", new KeyTrigger(KeyInput.KEY_T));
 		inputManager.addMapping("ToggleRoute", new KeyTrigger(KeyInput.KEY_R));
 		inputManager.addMapping("ToggleContacts", new KeyTrigger(KeyInput.KEY_E));
 		inputManager.addMapping("ToggleWaypoints", new KeyTrigger(KeyInput.KEY_W));
 		inputManager.addMapping("ToggleStrategic", new KeyTrigger(KeyInput.KEY_G));
 		inputManager.addMapping("ToggleEllipsoids", new KeyTrigger(KeyInput.KEY_B));
-		inputManager.addMapping("ToggleDetails", new KeyTrigger(KeyInput.KEY_I));
+		inputManager.addMapping("ToggleInfo", new KeyTrigger(KeyInput.KEY_I));
 		inputManager.addMapping("ToggleMap", new KeyTrigger(KeyInput.KEY_M));
 		inputManager.addListener((ActionListener) (name, isPressed, tpf) -> {
 			if (!isPressed || dialogOpen)
 				return;
 			switch (name) {
+			case "ToggleSonar" -> overlayConfig.pings = !overlayConfig.pings;
+			case "ToggleHelp" -> toggleHudHelp();
 			case "ToggleTrails" -> overlayConfig.trails = !overlayConfig.trails;
 			case "ToggleRoute" -> overlayConfig.route = !overlayConfig.route;
 			case "ToggleContacts" -> overlayConfig.contactEstimates = !overlayConfig.contactEstimates;
 			case "ToggleWaypoints" -> overlayConfig.waypoints = !overlayConfig.waypoints;
 			case "ToggleStrategic" -> overlayConfig.strategicWaypoints = !overlayConfig.strategicWaypoints;
 			case "ToggleEllipsoids" -> showCollisionEllipsoids = !showCollisionEllipsoids;
-			case "ToggleDetails" -> {
-				showCompetitionDetails = !showCompetitionDetails;
-				updateDetailHud();
-			}
+			case "ToggleInfo" -> hudInfoVisible = !hudInfoVisible;
 			case "ToggleMap" -> {
 				var mapState = standalone ? stateManager.getState(NativeMapState.class) : null;
 				if (mapState != null)
 					mapState.toggle();
 			}
 			}
-		}, "ToggleTrails", "ToggleRoute", "ToggleContacts", "ToggleWaypoints", "ToggleStrategic", "ToggleEllipsoids",
-				"ToggleDetails", "ToggleMap");
+		}, "ToggleSonar", "ToggleHelp", "ToggleTrails", "ToggleRoute", "ToggleContacts", "ToggleWaypoints",
+				"ToggleStrategic", "ToggleEllipsoids", "ToggleInfo", "ToggleMap");
 
 		// Mouse orbit/zoom (Orbit and Free Look modes)
 		inputManager.addMapping("OrbitLeft", new MouseAxisTrigger(MouseInput.AXIS_X, true));
