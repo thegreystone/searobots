@@ -64,7 +64,14 @@ final class CinematicDirector {
 		IDLE_HERO("Bow-quarter Pass"),
 		IDLE_ORBIT("Orbit"),
 		IDLE_FLY_BY("Fly-by"),
-		IDLE_ESTABLISHING("Overview");
+		IDLE_ESTABLISHING("Overview"),
+		// Scripted shots, only ever cued (see cue): never chosen by the director itself
+		AERIAL("Aerial"),
+		SCENIC("Scenic Pass"),
+		TORPEDO_CHASE("Torpedo Chase"),
+		TORPEDO_POV("Torpedo POV"),
+		SONAR_WIDE("Sonar"),
+		OUTRO("Outro");
 
 		final String label;
 
@@ -185,6 +192,14 @@ final class CinematicDirector {
 	private float terminalPrevDist = Float.MAX_VALUE;
 	private float terminalRecedingTime;
 
+	// ── Scripted control (showreel): shots are cued from outside, never chosen here ──
+	private boolean scripted;
+	private final Vector3f cueFocus = new Vector3f();
+	private final Vector3f cueBackdrop = new Vector3f();
+	private final Vector3f aerialPath = new Vector3f(); // horizontal unit vector from focus towards backdrop
+	private boolean launchPassed; // the torpedo has glided past the launch camera, which now follows it
+	private float launchFollowTime;
+
 	// ── Random for idle variety ──
 
 	private final Random rng = new Random();
@@ -216,8 +231,19 @@ final class CinematicDirector {
 		directorTime += tpf;
 		overviewAge += tpf;
 		detectEvents(snapshots, torpSnapshots);
-		prunePendingShots(snapshots, torpSnapshots);
-		evaluateShot(tpf);
+		if (scripted) {
+			// Event detection keeps its bookkeeping, but only cues change the shot
+			pendingShots.clear();
+			pendingSince.clear();
+			if (currentShot == null) {
+				outPos.set(lastCamPos);
+				outLookAt.set(lastCamLookAt);
+				return -1;
+			}
+		} else {
+			prunePendingShots(snapshots, torpSnapshots);
+			evaluateShot(tpf);
+		}
 
 		if (currentShot == null) {
 			// Start with a cinematic fly-around of the battle area:
@@ -369,6 +395,66 @@ final class CinematicDirector {
 	 */
 	float waterOpacity() {
 		return waterOpacity;
+	}
+
+	/**
+	 * Hands shot selection to the caller: from now on the director only frames the shots given to
+	 * {@link #cue}, and never cuts on its own.
+	 */
+	void setScripted(boolean scripted) {
+		this.scripted = scripted;
+	}
+
+	/** Lengthens the current shot, so a following beat can continue it without a cut. */
+	void extendShot(float seconds) {
+		if (currentShot != null)
+			currentShot = new Shot(currentShot.type, currentShot.subjectId, currentShot.secondaryId,
+					currentShot.duration + seconds, currentShot.minDuration + seconds, currentShot.transition);
+	}
+
+	/** Makes the director's choices (which side of a hull to film, say) repeatable. */
+	void reseed(long seed) {
+		rng.setSeed(seed);
+	}
+
+	/**
+	 * Switches to a shot chosen by the caller. {@code focus} is the point a detonation, aerial or
+	 * outro shot is built around; {@code backdrop} is what to frame behind it: an island for an
+	 * aerial or outro shot, the terrain feature for a scenic pass. Both are in jME coordinates and
+	 * may be null for other shots. A hard cut also switches the water at once, so an overhead shot
+	 * shows the seabed from its first frame.
+	 */
+	void cue(
+		ShotType type, int subjectId, int secondaryId, float duration, TransitionType transition, Vector3f focus,
+		Vector3f backdrop) {
+		if (focus != null) {
+			cueFocus.set(focus);
+			if (type == ShotType.DETONATION)
+				detonationPositions.put(subjectId, focus.clone());
+		}
+		if (backdrop != null)
+			cueBackdrop.set(backdrop);
+		if (type == ShotType.AERIAL || type == ShotType.OUTRO) {
+			aerialPath.set(cueBackdrop).subtractLocal(cueFocus).setY(0);
+			if (aerialPath.lengthSquared() < 1f)
+				aerialPath.set(0, 0, -1);
+			aerialPath.normalizeLocal();
+		}
+		boolean overhead = type == ShotType.CONTEXT_WIDE || type == ShotType.IDLE_ESTABLISHING;
+		if (transition == TransitionType.HARD_CUT) {
+			overviewEnteredFromAbove = true;
+			waterOpacity = overhead ? 0f : 1f;
+			waterOpacityTarget = waterOpacity;
+			centroidInitialized = false;
+		}
+		switchToShot(new Shot(type, subjectId, secondaryId, duration, duration, transition));
+		if (type == ShotType.DETONATION && focus != null)
+			detonationPos.set(focus);
+		if (transition == TransitionType.HARD_CUT) {
+			// Nothing to blend from: the first frame of a cut is the shot itself
+			transitionTimer = 0;
+			descentHoldTimer = 0;
+		}
 	}
 
 	// ── Entity list for idle cycling ──
@@ -642,13 +728,16 @@ final class CinematicDirector {
 		// If leaving an overhead shot, force a slow descent transition
 		// so the camera glides back into the water smoothly.
 		boolean leavingOverhead = currentShot != null && (currentShot.type == ShotType.IDLE_ESTABLISHING
-				|| currentShot.type == ShotType.CONTEXT_WIDE || currentShot.type == ShotType.OPENING_FLYAROUND);
+				|| currentShot.type == ShotType.CONTEXT_WIDE || currentShot.type == ShotType.OPENING_FLYAROUND
+				|| currentShot.type == ShotType.AERIAL || currentShot.type == ShotType.OUTRO);
 		if (leavingOverhead && shot.transition != TransitionType.HARD_CUT
 				&& shot.transition != TransitionType.SLOW_DESCENT) {
 			shot = new Shot(shot.type, shot.subjectId, shot.secondaryId, shot.duration, shot.minDuration,
 					TransitionType.SLOW_DESCENT);
 		}
-		descentHoldTimer = (leavingOverhead && isUnderwaterShot(shot.type)) ? DESCENT_HOLD_DURATION : 0f;
+		// Hold above the surface only while the water still has to fade back in
+		descentHoldTimer = (leavingOverhead && isUnderwaterShot(shot.type) && waterOpacity < 0.99f)
+				? DESCENT_HOLD_DURATION : 0f;
 
 		// Capture the actual camera position from last frame as the transition start
 		fromPos.set(lastCamPos);
@@ -667,7 +756,8 @@ final class CinematicDirector {
 		// Save the lead-in before its timers count down, so the beauty pass starts after arrival.
 		closePassDelay = transitionTimer + descentHoldTimer;
 		if (shot.type == ShotType.IDLE_ORBIT || shot.type == ShotType.IDLE_HERO || shot.type == ShotType.IDLE_FLY_BY
-				|| shot.type == ShotType.TORPEDO_TRACK || shot.type == ShotType.TORPEDO_LAUNCH)
+				|| shot.type == ShotType.TORPEDO_TRACK || shot.type == ShotType.TORPEDO_LAUNCH
+				|| shot.type == ShotType.TORPEDO_CHASE || shot.type == ShotType.TORPEDO_POV)
 			closeOrbitSide = rng.nextBoolean() ? 1f : -1f;
 
 		// Compute tangent at transition start. For overhead shots (looking
@@ -700,6 +790,10 @@ final class CinematicDirector {
 			if (position != null)
 				detonationPos.set(position);
 			detonationPullback = 0;
+		}
+		if (shot.type == ShotType.TORPEDO_LAUNCH) {
+			launchPassed = false;
+			launchFollowTime = 0;
 		}
 		if (shot.type == ShotType.TORPEDO_TERMINAL) {
 			terminalClosestDist = Float.MAX_VALUE;
@@ -750,7 +844,7 @@ final class CinematicDirector {
 		case SUB_DEATH -> computeSubDeath(tpf, subs, outPos, outLookAt);
 		case TORPEDO_TERMINAL -> computeTorpedoTerminal(tpf, subs, torps, outPos, outLookAt);
 		case NEAR_MISS -> computeChaseShot(subs, outPos, outLookAt, 150f, 30f);
-		case TORPEDO_LAUNCH -> computeLaunch(subs, outPos, outLookAt);
+		case TORPEDO_LAUNCH -> computeLaunch(tpf, subs, torps, outPos, outLookAt);
 		case TORPEDO_TRACK -> computeCloseOrbit(subs, outPos, outLookAt);
 		case PING_DETECTION -> computeChaseShot(subs, outPos, outLookAt, 200f, 40f);
 		case OPENING_FLYAROUND -> computeOpeningFlyaround(tpf, outPos, outLookAt);
@@ -759,7 +853,174 @@ final class CinematicDirector {
 		case IDLE_HERO -> computeHeroPass(subs, outPos, outLookAt);
 		case IDLE_FLY_BY -> computeIdleFlyBy(tpf, subs, outPos, outLookAt);
 		case IDLE_ESTABLISHING -> computeIdleEstablishing(subs, outPos, outLookAt);
+		case AERIAL -> computeAerial(outPos, outLookAt);
+		case SCENIC -> computeScenicPass(subs, outPos, outLookAt);
+		case TORPEDO_CHASE -> computeTorpedoChase(subs, torps, outPos, outLookAt, false);
+		case TORPEDO_POV -> computeTorpedoChase(subs, torps, outPos, outLookAt, true);
+		case SONAR_WIDE -> computeSonarWide(subs, outPos, outLookAt);
+		case OUTRO -> computeOutro(outPos, outLookAt);
 		}
+		if (scripted && isUnderwaterShot(currentShot.type))
+			keepOutOfHulls(outPos);
+	}
+
+	/**
+	 * Moves a camera position that ended up inside a hull (a weapon leaving its tube passes right
+	 * through the launcher's bow) out to just beyond the hull's envelope.
+	 */
+	private void keepOutOfHulls(Vector3f position) {
+		for (Node node : subNodes.values()) {
+			Vector3f local = node.getLocalRotation().inverse().mult(position.subtract(node.getLocalTranslation()));
+			// Model axes: x beam, y length, z height; a little roomier than the hull itself
+			float nx = local.x / 9f, ny = local.y / 44f, nz = local.z / 11f;
+			float d = nx * nx + ny * ny + nz * nz;
+			if (d >= 1f)
+				continue;
+			if (d < 1e-4f)
+				local.set(9f, 0, 0);
+			else
+				local.multLocal(1f / FastMath.sqrt(d));
+			position.set(node.getLocalRotation().mult(local)).addLocal(node.getLocalTranslation());
+		}
+	}
+
+	/**
+	 * A low flight over the water towards an island: from high behind the focus point, the camera
+	 * glides down and forward until it skims the surface right above the focus, with the island
+	 * growing ahead. Ends looking down at the water ahead, ready to dive.
+	 */
+	private void computeAerial(Vector3f outPos, Vector3f outLookAt) {
+		float progress = FastMath.clamp(shotTimer / currentShot.duration, 0f, 1f);
+		float eased = progress * progress * (3f - 2f * progress);
+		float islandRange = Math.max(600f, cueFocus.distance(new Vector3f(cueBackdrop.x, 0, cueBackdrop.z)));
+		// A slow lateral sweep gives the island some parallax against the horizon
+		float sweep = FastMath.DEG_TO_RAD * (14f - 22f * eased);
+		Vector3f path = new Vector3f(aerialPath.x * FastMath.cos(sweep) - aerialPath.z * FastMath.sin(sweep), 0,
+				aerialPath.x * FastMath.sin(sweep) + aerialPath.z * FastMath.cos(sweep));
+		float behind = 950f - 1000f * eased; // ends 50 m past the focus
+		outPos.set(cueFocus.x - path.x * behind, 320f - 285f * eased, cueFocus.z - path.z * behind);
+		// Aim at the island's flank, then tip down towards the water ahead
+		float islandAim = Math.max(20f, cueBackdrop.y * 0.35f);
+		Vector3f island = new Vector3f(cueBackdrop.x, islandAim, cueBackdrop.z);
+		Vector3f water = new Vector3f(cueFocus.x + aerialPath.x * Math.min(islandRange * 0.3f, 260f), -40f,
+				cueFocus.z + aerialPath.z * Math.min(islandRange * 0.3f, 260f));
+		float tip = FastMath.clamp((progress - 0.62f) / 0.38f, 0f, 1f);
+		tip = tip * tip * (3f - 2f * tip);
+		outLookAt.set(island).interpolateLocal(water, tip);
+	}
+
+	/**
+	 * The reverse of the aerial: from just above the water over the focus (where the fight ended),
+	 * the camera rises and pulls back, turning to take in the island and the horizon.
+	 */
+	private void computeOutro(Vector3f outPos, Vector3f outLookAt) {
+		float progress = FastMath.clamp(shotTimer / currentShot.duration, 0f, 1f);
+		float eased = progress * progress * (3f - 2f * progress);
+		float back = 450f + 550f * eased;
+		outPos.set(cueFocus.x - aerialPath.x * back, 55f + 210f * eased, cueFocus.z - aerialPath.z * back);
+		Vector3f water = new Vector3f(cueFocus.x + aerialPath.x * 300f, 0f, cueFocus.z + aerialPath.z * 300f);
+		Vector3f island = new Vector3f(cueBackdrop.x, Math.max(20f, cueBackdrop.y * 0.35f), cueBackdrop.z);
+		outLookAt.set(water).interpolateLocal(island, Math.min(1f, 0.35f + eased * 1.2f));
+	}
+
+	/**
+	 * The submarine passing in front of a cliff or ridge: the camera stands off on the open side,
+	 * low, so the terrain feature fills the background, and drifts along as the hull slides by.
+	 */
+	private void computeScenicPass(List<SubmarineSnapshot> subs, Vector3f outPos, Vector3f outLookAt) {
+		Node node = findEntityNode(currentShot.subjectId);
+		if (node == null) {
+			computeCloseOrbit(subs, outPos, outLookAt);
+			return;
+		}
+		float progress = passProgress();
+		Vector3f pos = node.getLocalTranslation();
+		// From the hull towards the feature (backdrop is its position)
+		Vector3f feature = cueBackdrop.subtract(pos).setY(0);
+		if (feature.lengthSquared() < 1f)
+			feature.set(node.getLocalRotation().mult(Vector3f.UNIT_X)).setY(0);
+		feature.normalizeLocal();
+		Vector3f forward = node.getLocalRotation().mult(new Vector3f(0, -1, 0)).setY(0);
+		if (forward.lengthSquared() < 0.01f)
+			forward.set(0, 0, -1);
+		forward.normalizeLocal();
+		outPos.set(pos).addLocal(feature.mult(-95f)).addLocal(forward.mult(55f - 110f * progress));
+		outPos.y += 6f + 10f * progress;
+		outLookAt.set(pos).addLocal(feature.mult(25f));
+		outLookAt.y += 3f;
+		frameCloseEntity(subs, outPos, outLookAt, currentShot.subjectId);
+	}
+
+	/**
+	 * Standing well off a submarine as it pings, high enough to take in the seabed around it, so
+	 * the pulse can be seen swelling out from the hull and sweeping the bottom (best in slow
+	 * motion).
+	 */
+	private void computeSonarWide(List<SubmarineSnapshot> subs, Vector3f outPos, Vector3f outLookAt) {
+		Node node = findEntityNode(currentShot.subjectId);
+		if (node == null) {
+			computeCloseOrbit(subs, outPos, outLookAt);
+			return;
+		}
+		Vector3f side = node.getLocalRotation().mult(Vector3f.UNIT_X).multLocal(closeOrbitSide);
+		float angle = FastMath.atan2(side.x, side.z) + (passProgress() - 0.5f) * 0.35f;
+		float elevation = FastMath.DEG_TO_RAD * 26f, distance = 150f;
+		Vector3f pos = node.getLocalTranslation();
+		outLookAt.set(pos.x, pos.y - 25f, pos.z);
+		outPos.set(pos.x + distance * FastMath.cos(elevation) * FastMath.sin(angle),
+				pos.y + distance * FastMath.sin(elevation),
+				pos.z + distance * FastMath.cos(elevation) * FastMath.cos(angle));
+	}
+
+	/**
+	 * Riding behind a torpedo: just above and beside its tail, looking past the weapon towards its
+	 * target, so the run and what it is closing on share the frame.
+	 */
+	private void computeTorpedoChase(
+		List<SubmarineSnapshot> subs, List<TorpedoSnapshot> torps, Vector3f outPos, Vector3f outLookAt, boolean pov) {
+		Node weapon = torpedoNodes.get(currentShot.subjectId);
+		TorpedoSnapshot snap = null;
+		for (var t : torps)
+			if (t.id() == currentShot.subjectId)
+				snap = t;
+		if (weapon == null || snap == null) {
+			Node target = subNodes.get(currentShot.secondaryId);
+			if (target != null && currentShot.secondaryId >= 0) {
+				// The torpedo is gone; hold on its target
+				outLookAt.set(target.getLocalTranslation());
+				outPos.set(lastCamPos);
+			} else {
+				outPos.set(lastCamPos);
+				outLookAt.set(lastCamLookAt);
+			}
+			return;
+		}
+		float heading = (float) snap.pose().heading(), pitch = (float) snap.pose().pitch();
+		Vector3f forward = new Vector3f(FastMath.sin(heading) * FastMath.cos(pitch), FastMath.sin(pitch),
+				-FastMath.cos(heading) * FastMath.cos(pitch));
+		Vector3f side = new Vector3f(-forward.z, 0, forward.x);
+		if (side.lengthSquared() < 1e-4f)
+			side.set(1, 0, 0);
+		side.normalizeLocal().multLocal(closeOrbitSide);
+		Vector3f pos = weapon.getLocalTranslation();
+		float progress = passProgress();
+		Node target = subNodes.get(currentShot.secondaryId);
+		if (pov && target != null) {
+			// Over the weapon's shoulder, looking at what it is about to hit: the weapon large in the
+			// foreground, the target growing behind it
+			Vector3f toTarget = target.getLocalTranslation().subtract(pos);
+			Vector3f back = toTarget.lengthSquared() > 1f ? toTarget.normalize() : forward;
+			outPos.set(pos).addLocal(back.mult(-11f)).addLocal(side.mult(3.2f));
+			outPos.y += 2.2f;
+			outLookAt.set(pos).interpolateLocal(target.getLocalTranslation(), 0.7f);
+			return;
+		}
+		outPos.set(pos).addLocal(forward.mult(-16f + 4f * progress)).addLocal(side.mult(4.5f));
+		outPos.y += 2.5f;
+		Vector3f ahead = pos.add(forward.mult(45f));
+		if (target != null && target.getLocalTranslation().distance(pos) < 900f)
+			ahead.interpolateLocal(target.getLocalTranslation(), 0.25f);
+		outLookAt.set(ahead);
 	}
 
 	private void computeOpeningFlyaround(float tpf, Vector3f outPos, Vector3f outLookAt) {
@@ -866,6 +1127,20 @@ final class CinematicDirector {
 		}
 		Vector3f weaponPos = weapon.getLocalTranslation();
 		Vector3f targetPos = target.getLocalTranslation();
+		if (scripted) {
+			// Incoming: over the target's shoulder towards the weapon closing on it, the hull large in
+			// the foreground and the torpedo's wake running at it
+			Vector3f threat = weaponPos.subtract(targetPos).setY(0);
+			if (threat.lengthSquared() < 1f)
+				threat.set(0, 0, -1);
+			threat.normalizeLocal();
+			Vector3f across = new Vector3f(-threat.z, 0, threat.x).multLocal(closeOrbitSide);
+			float progress = passProgress();
+			outPos.set(targetPos).addLocal(threat.mult(-48f + 10f * progress)).addLocal(across.mult(30f));
+			outPos.y += 14f;
+			outLookAt.set(targetPos).interpolateLocal(weaponPos, 0.55f);
+			return;
+		}
 		outLookAt.set(weaponPos).addLocal(targetPos).multLocal(0.5f);
 
 		// Stay on the same side of the action axis, including after a missed pass.
@@ -887,7 +1162,8 @@ final class CinematicDirector {
 		frameEntities(subs, outPos, outLookAt, currentShot.subjectId, currentShot.secondaryId);
 	}
 
-	private void computeLaunch(List<SubmarineSnapshot> subs, Vector3f outPos, Vector3f outLookAt) {
+	private void computeLaunch(
+		float tpf, List<SubmarineSnapshot> subs, List<TorpedoSnapshot> torps, Vector3f outPos, Vector3f outLookAt) {
 		Node launcher = subNodes.get(currentShot.subjectId);
 		if (launcher == null) {
 			computeCloseOrbit(subs, outPos, outLookAt);
@@ -895,10 +1171,93 @@ final class CinematicDirector {
 		}
 		Vector3f forward = launcher.getLocalRotation().mult(new Vector3f(0, -1, 0));
 		Vector3f side = launcher.getLocalRotation().mult(Vector3f.UNIT_X).multLocal(closeOrbitSide);
+		if (scripted) {
+			computeLaunchAndFollow(tpf, launcher, forward, side, torps, outPos, outLookAt);
+			return;
+		}
 		outLookAt.set(launcher.getLocalTranslation()).addLocal(forward.mult(12f));
 		outPos.set(launcher.getLocalTranslation()).addLocal(forward.mult(65f)).addLocal(side.mult(75f));
 		outPos.y += 10f;
 		frameEntities(subs, outPos, outLookAt, currentShot.subjectId, currentShot.secondaryId);
+	}
+
+	/** Bow tip, along the hull from the model's origin. */
+	private static final float BOW = 33f;
+	/**
+	 * Where the launch camera waits: this far ahead of the bow, and this far off the torpedoes'
+	 * path.
+	 */
+	private static final float LAUNCH_AHEAD = 20f, LAUNCH_OFF = 11f;
+	/**
+	 * Seconds over which the camera takes up the torpedo's speed, and over which it swings round
+	 * it.
+	 */
+	private static final float FOLLOW_EASE = 1.2f, FOLLOW_ORBIT = 3.4f;
+
+	/**
+	 * One continuous launch shot: the camera waits just off the torpedo's path ahead of the bow,
+	 * looking back at the tube doors; the weapon slides out and comes at the camera, and as it
+	 * glides past, the camera takes up its speed and swings slowly round it, from its beam past its
+	 * nose, close enough to read its markings.
+	 */
+	private void computeLaunchAndFollow(
+		float tpf, Node launcher, Vector3f forward, Vector3f side, List<TorpedoSnapshot> torps, Vector3f outPos,
+		Vector3f outLookAt) {
+		Vector3f origin = launcher.getLocalTranslation();
+		Vector3f bowTip = origin.add(forward.mult(BOW));
+		Vector3f anchor = bowTip.add(forward.mult(LAUNCH_AHEAD)).addLocal(side.mult(LAUNCH_OFF));
+		anchor.y -= 1.5f;
+		Vector3f look = bowTip.add(forward.mult(-3f));
+		look.y -= 0.5f;
+
+		Node weapon = torpedoNodes.get(currentShot.secondaryId);
+		TorpedoSnapshot snap = null;
+		for (var t : torps)
+			if (t.id() == currentShot.secondaryId && t.alive())
+				snap = t;
+		if (weapon == null || snap == null) {
+			if (launchPassed) { // the torpedo is gone; hold the last framing
+				outPos.set(lastCamPos);
+				outLookAt.set(lastCamLookAt);
+			} else {
+				outPos.set(anchor);
+				outLookAt.set(look);
+			}
+			return;
+		}
+		Vector3f weaponPos = weapon.getLocalTranslation();
+		float along = forward.dot(weaponPos.subtract(origin));
+		// Turn from the tube doors to the weapon as it leaves them
+		float emerged = FastMath.clamp((along - BOW) / 14f, 0f, 1f);
+		look.interpolateLocal(weaponPos, emerged * emerged * (3f - 2f * emerged));
+		if (!launchPassed && along > BOW + LAUNCH_AHEAD - 2f)
+			launchPassed = true;
+		if (!launchPassed) {
+			outPos.set(anchor);
+			outLookAt.set(look);
+			return;
+		}
+
+		launchFollowTime += tpf;
+		float heading = (float) snap.pose().heading();
+		Vector3f ahead = new Vector3f(FastMath.sin(heading), 0, -FastMath.cos(heading));
+		Vector3f beam = new Vector3f(-ahead.z, 0, ahead.x);
+		if (beam.dot(side) < 0)
+			beam.negateLocal(); // start on the side the camera waited on
+		float progress = FastMath.clamp(launchFollowTime / FOLLOW_ORBIT, 0f, 1f);
+		float eased = progress * progress * (3f - 2f * progress);
+		// 90 degrees is the beam, 180 dead ahead: from where it passed, round past the nose
+		float around = FastMath.DEG_TO_RAD * (90f + 105f * eased);
+		float elevation = FastMath.DEG_TO_RAD * (5f + 13f * FastMath.sin(FastMath.PI * progress));
+		float distance = 9f - 1.5f * FastMath.sin(FastMath.PI * progress);
+		Vector3f orbit = ahead.mult(-FastMath.cos(around)).addLocal(beam.mult(FastMath.sin(around)))
+				.multLocal(distance * FastMath.cos(elevation));
+		orbit.y = distance * FastMath.sin(elevation);
+		orbit.addLocal(weaponPos);
+		float take = FastMath.clamp(launchFollowTime / FOLLOW_EASE, 0f, 1f);
+		take = take * take * (3f - 2f * take);
+		outPos.set(anchor).interpolateLocal(orbit, take);
+		outLookAt.set(look).interpolateLocal(weaponPos.add(ahead.mult(0.6f)), take);
 	}
 
 	private void computeChaseShot(
@@ -1150,9 +1509,9 @@ final class CinematicDirector {
 	private boolean isUnderwaterShot(ShotType type) {
 		return switch (type) {
 		case IDLE_ORBIT, IDLE_HERO, IDLE_FLY_BY, TORPEDO_TRACK, TORPEDO_LAUNCH, TORPEDO_TERMINAL, NEAR_MISS,
-				PING_DETECTION, SUB_DEATH, DETONATION ->
+				PING_DETECTION, SUB_DEATH, DETONATION, SCENIC, TORPEDO_CHASE, TORPEDO_POV, SONAR_WIDE ->
 			true;
-		case OPENING_FLYAROUND, CONTEXT_WIDE, IDLE_ESTABLISHING -> false;
+		case OPENING_FLYAROUND, CONTEXT_WIDE, IDLE_ESTABLISHING, AERIAL, OUTRO -> false;
 		};
 	}
 

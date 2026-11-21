@@ -177,6 +177,10 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 	private static final double DETONATION_SKIP_SPEED = 100;
 	// Scripted screenshots of explosions, when started with -Dsearobots.capture.dir (see ExplosionCapture)
 	private ExplosionCapture capture;
+	// Offline showreel recording (see Showreel), or null
+	private Showreel showreel;
+	// While recording a showreel: vehicle smoothing for the next frames (1 snaps to the simulation), or -1
+	private float vehicleLerpOverride = -1;
 	// With -Dsearobots.fastForwardTo=TICK, the match runs fast until that tick, then at normal speed (0: done)
 	private volatile long fastForwardTo = Long.getLong("searobots.fastForwardTo", 0L);
 	private WreckEmissions wrecks; // oil and bubbles from dead submarines
@@ -374,6 +378,16 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 		if (System.getProperty("os.name", "").toLowerCase(java.util.Locale.ROOT).contains("mac"))
 			System.setProperty("java.awt.headless", "true");
 
+		// --showreel renders the README film offline instead (see Showreel)
+		if (args.length > 0 && args[0].equals("--showreel")) {
+			try {
+				Showreel.main(java.util.Arrays.copyOfRange(args, 1, args.length));
+			} catch (Exception e) {
+				System.err.println("Showreel failed: " + e);
+				e.printStackTrace(System.err);
+			}
+			return;
+		}
 		// A .srl path launches straight into replay of that recorded match; otherwise the
 		// first arg (if any) is a seed for a fresh match, in hex as the viewer shows it.
 		String replayPath = (args.length > 0 && args[0].toLowerCase().endsWith(".srl")) ? args[0] : null;
@@ -414,6 +428,35 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 		app.standaloneSeed = seed;
 		app.standaloneGenerator = new se.hirt.searobots.engine.WorldGenerator();
 
+		app.start();
+	}
+
+	/**
+	 * Opens the viewer on a recorded match for {@link Showreel} to film: a fixed-size window, no
+	 * frame cap or vsync (frames are paced by the recording, not the display).
+	 */
+	static void startShowreel(java.nio.file.Path replay, Showreel showreel, int width, int height) {
+		if (System.getProperty("os.name", "").toLowerCase(java.util.Locale.ROOT).contains("mac"))
+			System.setProperty("java.awt.headless", "true");
+		var app = new SubmarineScene3D();
+		app.standalone = true;
+		app.replayPath = replay.toString();
+		app.showreel = showreel;
+		showreel.attach(app);
+		var settings = new AppSettings(true);
+		settings.setWidth(width);
+		settings.setHeight(height);
+		settings.setTitle("SeaRobots showreel");
+		settings.setFrameRate(-1);
+		settings.setVSync(false);
+		settings.setSamples(4);
+		settings.setGammaCorrection(true);
+		settings.setResizable(false);
+		loadIcons(settings);
+		app.setSettings(settings);
+		app.setShowSettings(false);
+		app.setPauseOnLostFocus(false);
+		app.standaloneGenerator = new se.hirt.searobots.engine.WorldGenerator();
 		app.start();
 	}
 
@@ -537,7 +580,8 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 					if (resumeAfterLoading && standaloneSimManager != null) {
 						resumeAfterLoading = false;
 						waitingForFirstTick = true;
-						standaloneSimManager.play();
+						if (showreel == null) // a showreel steps the replay itself
+							standaloneSimManager.play();
 					}
 					loadingFinishedFrame = -1;
 					loadingStatus = new LoadingStatus(.97f, "Starting simulation...");
@@ -1625,6 +1669,99 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 	}
 
 	/**
+	 * Whether bubbles, wreck emissions and explosions should hold still: while the simulation is
+	 * paused (but not when a showreel steps the paused replay itself), or during a scripted
+	 * explosion capture.
+	 */
+	private boolean effectsPaused(se.hirt.searobots.engine.SimClock sim) {
+		return (sim != null && sim.isPaused() && showreel == null) || (capture != null && capture.freezing());
+	}
+
+	// ── Showreel access (see Showreel) ──
+
+	/**
+	 * Loaded, the first frame shown, the environment lighting baked, and the loading screen gone.
+	 */
+	boolean showreelSceneReady() {
+		return sceneReady && !isLoading() && loadingFinishedFrame >= 0 && frameCount - loadingFinishedFrame >= 20
+				&& islandProbe != null && islandProbe.isReady();
+	}
+
+	/** Whether trees or island scenery near the camera are still being prepared. */
+	boolean sceneryBusy() {
+		boolean busy = trees != null && trees.getControl(IslandForestControl.class).statistics().pendingJobs() > 0;
+		return busy || islandScenery != null
+				&& islandScenery.getControl(IslandSceneryControl.class).statistics().pendingJobs() > 0;
+	}
+
+	com.jme3.renderer.Camera showreelCamera() {
+		return cam;
+	}
+
+	se.hirt.searobots.engine.SimClock showreelClock() {
+		return getActiveSim();
+	}
+
+	long showreelTick() {
+		return latestTick;
+	}
+
+	boolean showreelHasTicked() {
+		return !latestSnapshots.isEmpty();
+	}
+
+	int showreelFirstSubmarine() {
+		var subs = latestSnapshots;
+		return subs.isEmpty() ? 0 : subs.getFirst().id();
+	}
+
+	OverlayConfig overlayConfig() {
+		return overlayConfig;
+	}
+
+	/** Sonar pulses drawn boldly enough to read in the overview. */
+	void showreelEmphasizePings() {
+		if (sonarPings != null)
+			sonarPings.setEmphasis(true);
+	}
+
+	/** The Director, created if the camera has not needed it yet. */
+	CinematicDirector showreelDirector() {
+		cameraMode = CameraMode.DIRECTOR;
+		if (cinematicDirector == null)
+			cinematicDirector = new CinematicDirector(() -> latestSnapshots, () -> latestTorpedoSnapshots, subNodes,
+					torpedoNodes, standaloneWorld != null ? standaloneWorld.terrain() : null, cam);
+		return cinematicDirector;
+	}
+
+	/**
+	 * Vehicle smoothing from now on: 1 follows the simulation exactly, a negative value restores
+	 * the default.
+	 */
+	void showreelVehicleLerp(float lerp) {
+		vehicleLerpOverride = lerp;
+	}
+
+	void clearTrails() {
+		trailBuffers.values().forEach(java.util.Deque::clear);
+		lastTrailTick = -1;
+	}
+
+	/**
+	 * Hides the HUD and debugging markers, leaving only {@code keep} (the showreel's overlay) on
+	 * screen.
+	 */
+	void hideForShowreel(Spatial keep) {
+		for (Spatial child : guiNode.getChildren())
+			if (child != keep)
+				child.setCullHint(Spatial.CullHint.Always);
+		if (crosshairNode != null)
+			crosshairNode.setCullHint(Spatial.CullHint.Always);
+		if (interceptMarker != null)
+			interceptMarker.setCullHint(Spatial.CullHint.Always);
+	}
+
+	/**
 	 * Returns the active clock (competition loop, free-patrol loop, or replay player).
 	 */
 	private se.hirt.searobots.engine.SimClock getActiveSim() {
@@ -1833,11 +1970,17 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 				}
 			}
 
+			if (showreel != null)
+				showreel.beforeVehicles();
 			updateVehicles();
+			if (showreel != null)
+				showreel.beforeCamera();
 			updateCamera(tpf);
 			updateHud();
 			updateCrosshair();
 			updateOverlays();
+			if (showreel != null)
+				updateShowreelMarkers();
 			if (sonarPings != null && standaloneMapRenderer != null)
 				sonarPings.update(standaloneMapRenderer, displayedTerrain,
 						standaloneMapRenderer.getWorld().config().tickRateHz(), overlayConfig.pings);
@@ -1882,6 +2025,8 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 			layoutHud();
 			if (capture != null)
 				capture.update(tpf);
+			if (showreel != null)
+				showreel.afterUpdate();
 
 			sunHour = (startTime.toSecondOfDay() / 3600f + latestTick / 50f / 3600f) % 24f;
 			updateAtmosphere();
@@ -2003,7 +2148,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 		rootNode.attachChild(terrainGeometry);
 
 		// Read start time from config
-		startTime = world.config().startTime();
+		startTime = showreel != null ? showreel.timeOfDay() : world.config().startTime();
 
 		// Clear previous vehicle models and overlays
 		for (Node n : subNodes.values())
@@ -2218,6 +2363,13 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 			float skyBlend = sunIntensity;
 			fogFilter.setFogColor(new ColorRGBA(0.5f * skyBlend, 0.6f * skyBlend, 0.75f * skyBlend, 1f));
 			viewPort.setBackgroundColor(new ColorRGBA(0.4f * skyBlend, 0.55f * skyBlend, 0.7f * skyBlend, 1f));
+			if (showreel != null && isTacticalOverlayActive()) {
+				// The showreel's overview lights the seabed as if seen through clear water, so it reads
+				// as ocean floor rather than a grey moonscape, and the team colours stand out against it
+				sun.setColor(new ColorRGBA(0.50f, 0.78f, 1.0f, 1f).multLocal(0.4f + 0.7f * sunIntensity));
+				fill.setColor(new ColorRGBA(0.04f, 0.16f, 0.26f, 1f));
+				ambient.setColor(new ColorRGBA(0.05f, 0.18f, 0.30f, 1f));
+			}
 		}
 	}
 
@@ -2544,8 +2696,8 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 			if (overlayConfig.trails && trail.size() >= 2 && historyNeedsUpdate(trailNode, tick)) {
 				TacticalPath path = (TacticalPath) trailNode.getChild("trailLine");
 				if (path == null) {
-					path = new TacticalPath(assetManager, "trailLine", List.copyOf(trail), color, 3f, 0.05f, 0.85f,
-							TacticalPath.WorldStyle.LINE);
+					path = new TacticalPath(assetManager, "trailLine", List.copyOf(trail), color,
+							showreel != null ? 7f : 3f, 0.05f, 0.85f, TacticalPath.WorldStyle.LINE);
 					trailNode.attachChild(path);
 				} else {
 					path.setPoints(List.copyOf(trail));
@@ -2717,6 +2869,87 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 		}
 	}
 
+	// Showreel: team-coloured markers that keep vehicles visible in the tactical overview
+	private final Map<Integer, Geometry> showreelMarkers = new HashMap<>();
+
+	private void updateShowreelMarkers() {
+		boolean tactical = isTacticalOverlayActive();
+		var present = new java.util.HashSet<Integer>();
+		for (var snap : latestSnapshots) {
+			Node node = subNodes.get(snap.id());
+			if (node != null)
+				placeShowreelMarker(snap.id(), node.getLocalTranslation(), snap.color(), true,
+						tactical && snap.hp() > 0, present);
+		}
+		for (var torpedo : latestTorpedoSnapshots) {
+			Node node = torpedoNodes.get(torpedo.id());
+			if (node != null && torpedo.alive())
+				placeShowreelMarker(torpedo.id(), node.getLocalTranslation(), torpedo.color(), false, tactical,
+						present);
+		}
+		showreelMarkers.entrySet().removeIf(entry -> {
+			if (present.contains(entry.getKey()))
+				return false;
+			entry.getValue().removeFromParent();
+			return true;
+		});
+	}
+
+	private void placeShowreelMarker(
+		int id, Vector3f position, java.awt.Color awtColor, boolean submarine, boolean visible,
+		java.util.Set<Integer> present) {
+		present.add(id);
+		Geometry marker = showreelMarkers.computeIfAbsent(id, k -> {
+			var color = new ColorRGBA(awtColor.getRed() / 255f, awtColor.getGreen() / 255f, awtColor.getBlue() / 255f,
+					0.95f).interpolateLocal(ColorRGBA.White, submarine ? 0.15f : 0.35f);
+			color.a = 0.95f;
+			Geometry g = ringMarker("showreel-marker-" + k, submarine ? 60f : 18f, submarine ? 16f : 18f, color);
+			g.setUserData("pixelRadius", submarine ? 13f : 5f);
+			rootNode.attachChild(g);
+			return g;
+		});
+		marker.setLocalTranslation(position);
+		marker.setCullHint(visible ? Spatial.CullHint.Never : Spatial.CullHint.Always);
+		if (visible) {
+			float radius = marker.getUserData("radius");
+			float pixels = marker.getUserData("pixelRadius");
+			marker.setLocalScale(overlayMarkerScale(cam, position, radius, pixels));
+		}
+	}
+
+	/** A billboard ring (a disc when {@code halfWidth} reaches the radius) drawn over the scene. */
+	private Geometry ringMarker(String name, float radius, float halfWidth, ColorRGBA color) {
+		int segments = 40;
+		float inner = Math.max(0, radius - halfWidth), outer = radius + (inner > 0 ? halfWidth : 0);
+		float[] positions = new float[(segments + 1) * 6];
+		for (int i = 0; i <= segments; i++) {
+			float angle = FastMath.TWO_PI * i / segments;
+			float cos = FastMath.cos(angle), sin = FastMath.sin(angle);
+			positions[i * 6] = inner * cos;
+			positions[i * 6 + 1] = inner * sin;
+			positions[i * 6 + 3] = outer * cos;
+			positions[i * 6 + 4] = outer * sin;
+		}
+		Mesh mesh = new Mesh();
+		mesh.setMode(Mesh.Mode.TriangleStrip);
+		mesh.setBuffer(VertexBuffer.Type.Position, 3, positions);
+		mesh.updateBound();
+		Geometry marker = new Geometry(name, mesh);
+		Material material = new Material(assetManager, "Common/MatDefs/Misc/Unshaded.j3md");
+		material.setColor("Color", color);
+		var state = material.getAdditionalRenderState();
+		state.setFaceCullMode(RenderState.FaceCullMode.Off);
+		state.setBlendMode(RenderState.BlendMode.Alpha);
+		state.setDepthTest(false);
+		state.setDepthWrite(false);
+		marker.setMaterial(material);
+		marker.setQueueBucket(RenderQueue.Bucket.Transparent);
+		marker.setShadowMode(RenderQueue.ShadowMode.Off);
+		marker.addControl(new BillboardControl());
+		marker.setUserData("radius", outer);
+		return marker;
+	}
+
 	private boolean isTacticalOverlayActive() {
 		// Water reflections use a different camera, so screen-space geometry is only
 		// suitable once the tactical shot has hidden the water.
@@ -2748,7 +2981,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 			return;
 
 		float tpf = timer.getTimePerFrame();
-		float lerpFactor = Math.min(1f, tpf * LERP_SPEED);
+		float lerpFactor = vehicleLerpOverride >= 0 ? vehicleLerpOverride : Math.min(1f, tpf * LERP_SPEED);
 
 		for (var snap : snapshots) {
 			Node subNode = subNodes.get(snap.id());
@@ -2811,7 +3044,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 			// Wreck: oil, bubbles and belches of air from a dead submarine
 			if (snap.hp() <= 0) {
 				var simW = getActiveSim();
-				wrecks.update(snap.id(), subNode, tpf, simW != null && simW.isPaused());
+				wrecks.update(snap.id(), subNode, tpf, effectsPaused(simW));
 			}
 
 			// Animate control surfaces with inertia (slerp toward target)
@@ -2876,7 +3109,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 			float noise = (float) snap.noiseLevel();
 			float emitRate = Math.max(0, (noise - 1.5f) * 30f); // no bubbles below noise 1.5
 			var simL = getActiveSim();
-			boolean bubblesFrozen = (simL != null && simL.isPaused()) || (capture != null && capture.freezing());
+			boolean bubblesFrozen = effectsPaused(simL);
 			bubbles.setEnabled(!bubblesFrozen);
 			bubbles.setParticlesPerSec(bubblesFrozen ? 0 : emitRate);
 
@@ -3071,7 +3304,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 					modelPos.z - sternSimY); // JME Z = -sim Y
 			// Freeze both emission and existing particles during pause or a scripted capture
 			var simLoop = getActiveSim();
-			boolean paused = (simLoop != null && simLoop.isPaused()) || (capture != null && capture.freezing());
+			boolean paused = effectsPaused(simLoop);
 			torpBub.setEnabled(!paused);
 			torpBub.setParticlesPerSec(paused ? 0 : Math.max(0, (int) (ts.speed() * 4)));
 			// Torpedo collision cylinder (B key)
@@ -3160,8 +3393,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 
 		// Animate the explosions; they hold still while the simulation is paused
 		var simForExplosions = getActiveSim();
-		explosions.update(tpf,
-				(simForExplosions != null && simForExplosions.isPaused()) || (capture != null && capture.freezing()));
+		explosions.update(tpf, effectsPaused(simForExplosions));
 
 		// Update orbit center tracking (skip for island orbit - stays on island peak)
 		if (cameraMode == CameraMode.ISLAND_ORBIT && islandOrbitState != null) {
