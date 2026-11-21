@@ -55,6 +55,17 @@ final class SonarPingEffects {
 	private final Map<MapRenderer.PingAnimation, Pulse> pulses = new HashMap<>();
 	private TerrainMap terrain;
 	private SonarTerrainVisibility visibility;
+	// Bolder lines in the team colour, for the showreel
+	private boolean emphasis;
+	private float sphereAlpha = 0.16f, bottomAlpha = 0.75f;
+
+	/** Draws pulses boldly, in the team colour (for the showreel). */
+	void setEmphasis(boolean emphasis) {
+		this.emphasis = emphasis;
+		sphereAlpha = emphasis ? 0.4f : 0.16f;
+		bottomAlpha = emphasis ? 1f : 0.75f;
+		clear();
+	}
 
 	SonarPingEffects(AssetManager assets, Node sceneRoot) {
 		this.assets = assets;
@@ -113,11 +124,12 @@ final class SonarPingEffects {
 		Pulse(MapRenderer.PingAnimation event, TerrainMap terrain) {
 			geometry = new SonarPingGeometry(terrain, event.x(), event.y(), event.z(), visibility);
 			var c = event.color();
-			sphereColor = new ColorRGBA(c.getRed() / 255f, c.getGreen() / 255f, c.getBlue() / 255f, 0.16f);
-			bottomColor = new ColorRGBA((c.getRed() / 255f + 1) * 0.5f, (c.getGreen() / 255f + 1) * 0.5f,
-					(c.getBlue() / 255f + 1) * 0.5f, 0.75f);
-			sphere = createLines("sonar-sphere", sphereColor, 1, spherePositions);
-			bottom = createLines("sonar-bottom", bottomColor, 2, bottomPositions);
+			sphereColor = new ColorRGBA(c.getRed() / 255f, c.getGreen() / 255f, c.getBlue() / 255f, sphereAlpha);
+			float white = emphasis ? 0.25f : 0.5f;
+			bottomColor = new ColorRGBA(c.getRed() / 255f * (1 - white) + white,
+					c.getGreen() / 255f * (1 - white) + white, c.getBlue() / 255f * (1 - white) + white, bottomAlpha);
+			sphere = createLines("sonar-sphere", sphereColor, emphasis ? 2 : 1, spherePositions);
+			bottom = createLines("sonar-bottom", bottomColor, emphasis ? 4 : 2, bottomPositions);
 			node.attachChild(sphere);
 			node.attachChild(bottom);
 		}
@@ -127,8 +139,8 @@ final class SonarPingEffects {
 				return;
 			previousRadius = radius;
 			float fade = (float) (1 - radius / SonarPingGeometry.MAX_RADIUS);
-			sphereColor.a = 0.16f * fade;
-			bottomColor.a = 0.75f * fade;
+			sphereColor.a = sphereAlpha * fade;
+			bottomColor.a = bottomAlpha * fade;
 			sphere.getMaterial().setColor("Color", sphereColor);
 			bottom.getMaterial().setColor("Color", bottomColor);
 			geometry.sphere(radius, lines);

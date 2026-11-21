@@ -59,6 +59,8 @@ public final class SimulationLoop implements SimClock {
 	private int nextTorpedoId = 1000; // torpedo IDs start at 1000 to avoid conflict with sub IDs
 	private final java.util.Map<Integer, Integer> nextTube = new java.util.HashMap<>(); // per submarine: tubes fired
 	private final TorpedoPhysics torpedoPhysics = new TorpedoPhysics();
+	// Ticks to keep simulating once the outcome is decided (see setTicksAfterDecision)
+	private volatile long ticksAfterDecision;
 
 	public SimulationLoop() {
 		this(new ClockControl());
@@ -127,6 +129,7 @@ public final class SimulationLoop implements SimClock {
 		// Main loop (try-finally ensures onMatchEnd always fires,
 		// even if the thread is interrupted during a control wait)
 		boolean matchStarted = false;
+		long decidedAt = -1;
 		try {
 			for (long tick = 0; tick < config.matchDurationTicks(); tick++) {
 				// The simulation may start paused so viewers can register before the first tick.
@@ -457,11 +460,14 @@ public final class SimulationLoop implements SimClock {
 
 					// End the match as soon as the outcome is decided: no point simulating
 					// a lone survivor for the remaining duration.
-					if (matchDecided(entities, torpedoes)) {
-						System.out.printf("[Match] Outcome decided at tick %d (%ds): ending early%n", tick,
-								tick / config.tickRateHz());
-						break;
+					if (decidedAt < 0 && matchDecided(entities, torpedoes)) {
+						decidedAt = tick;
+						System.out.printf("[Match] Outcome decided at tick %d (%ds): ending %s%n", tick,
+								tick / config.tickRateHz(),
+								ticksAfterDecision > 0 ? "after " + ticksAfterDecision + " more ticks" : "early");
 					}
+					if (decidedAt >= 0 && tick - decidedAt >= ticksAfterDecision)
+						break;
 				} finally {
 					SimulationJfrEvents.finishTick(tickEvent, correlationId, config.worldSeed(), tick, entities.size(),
 							torpedoes.size());
@@ -700,6 +706,17 @@ public final class SimulationLoop implements SimClock {
 	/** Check whether the full oriented hull ellipsoids intersect, including tangent contact. */
 	static boolean ellipsoidsOverlap(SubmarineEntity a, SubmarineEntity b) {
 		return HullOverlap.overlaps(a, b);
+	}
+
+	/**
+	 * Keeps the match running for this many ticks after its outcome is decided, instead of ending
+	 * on the deciding tick. A recording then includes the aftermath, such as a wreck sinking.
+	 * Default 0. The match still ends at its configured duration.
+	 */
+	public void setTicksAfterDecision(long ticks) {
+		if (ticks < 0)
+			throw new IllegalArgumentException("ticks must not be negative");
+		ticksAfterDecision = ticks;
 	}
 
 	public double getSpeedMultiplier() {
