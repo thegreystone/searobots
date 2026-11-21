@@ -451,6 +451,9 @@ public class SubmarineCompetition {
 		for (var comp : competitors)
 			winCounts.put(comp.name(), 0);
 
+		// TODO: Keep 2-way H2H for now, but extend competitions (and simulation setup) to allow
+		// adding an arbitrary number of vessels into the water—including 3+ submarines and
+		// non-combatant surface traffic such as cargo ships—with generalized scoring.
 		if (competitors.size() == 2) {
 			String nameA = competitors.get(0).name();
 			String nameB = competitors.get(1).name();
