@@ -62,7 +62,7 @@ public final class ShowreelPlan {
 		SCENIC,
 		/** North-up overview of the whole fight, seabed visible, with tracks. */
 		TACTICAL,
-		/** Well off a submarine as it pings, the pulse swelling out and sweeping the seabed. */
+		/** Well off a submarine as it pings, the pulse swelling out from the hull. */
 		SONAR,
 		/**
 		 * The launcher's bow as its tube doors open and the torpedo leaves; as the weapon glides
@@ -358,8 +358,8 @@ public final class ShowreelPlan {
 						mid = w;
 						break;
 					}
-			// A ping seen from above: the time-lapse slows to real time as one goes out, and the
-			// pulse sweeps across the seabed
+			// A ping: the time-lapse slows as one goes out, and the pulse is followed in slow
+			// motion
 			final long pingFrom = cursor + ticks(40), pingTo = launchShot - ticks(70);
 			final ScenicWindow scenic = mid;
 			var ping = index.events(Kind.PING).stream()
@@ -473,7 +473,7 @@ public final class ShowreelPlan {
 			if (at < cursor)
 				return;
 			add(new Beat("sonar", Shot.SONAR, ping.subject(), -1, 4.5, at, 0.1, 0.1, Entry.CUT, Card.NONE,
-					"ACTIVE SONAR|a ping sweeps the seabed", false, true, null, null));
+					"ACTIVE SONAR|a ping reaches out for the enemy", false, true, null, null));
 		}
 
 		/**

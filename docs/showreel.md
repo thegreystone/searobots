@@ -98,10 +98,11 @@ Besides its own shots, the Director has a few that are only cued by the showreel
 - **Launch**: the camera waits just off the torpedoes' path ahead of the bow. The tube doors
   open, the weapon slides out and comes at the camera, and as it glides past, the camera takes
   up its speed and swings round it, close enough to read its markings.
-- **Sonar**: well off a pinging submarine, in slow motion, as the pulse swells out of the hull,
-  breaks the surface and spreads across it as a widening circle, and sweeps the seabed. For a
-  ping from deep water, which would not reach the surface during the shot, the camera looks
-  down on the seabed instead.
+- **Sonar**: well off a pinging submarine, in slow motion, as the pulse swells out of the hull
+  and breaks the surface to spread across it as a widening circle. The camera orbits the
+  submarine and descends as it goes: from a little above, looking down across it, to a little
+  below, looking up across it at the surface. For a ping from deep water, which would not reach
+  the surface during the shot, it stays above.
 - **Scenic pass**: a submarine in front of the cliff or ridge its index entry points at.
 - **Incoming**: over the target's shoulder towards the torpedo closing on it.
 - **Torpedo chase** and **impact**: riding behind a torpedo, and over its shoulder at the hull

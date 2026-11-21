@@ -963,12 +963,12 @@ final class CinematicDirector {
 
 	/**
 	 * Standing well off a submarine as it pings, so the pulse can be seen swelling out from the
-	 * hull (best in slow motion). From shallow water the camera looks level, a little up: the top
-	 * of the sphere breaks the surface and spreads across it as a circle above, while the bottom
-	 * sweeps over the seabed below. From deep water, where the pulse would not reach the surface in
-	 * time, it looks down on the seabed instead. The camera orbits slowly, in film time when that
-	 * is known, so it keeps moving while the pulse is slowed, and the parallax shows the sphere's
-	 * depth.
+	 * hull (best in slow motion). The camera orbits, in film time when that is known, so it keeps
+	 * moving while the pulse is slowed, and the parallax shows the sphere's depth. From shallow
+	 * water it also descends as it goes round: it starts a little above the submarine, looking down
+	 * across it, and ends a little below, looking up across it as the top of the sphere spreads
+	 * over the surface as a circle. From deep water, where the pulse would not reach the surface in
+	 * time, it stays above, looking down across the submarine.
 	 */
 	private void computeSonarWide(List<SubmarineSnapshot> subs, Vector3f outPos, Vector3f outLookAt) {
 		Node node = findEntityNode(currentShot.subjectId);
@@ -981,9 +981,12 @@ final class CinematicDirector {
 		float angle = FastMath.atan2(side.x, side.z) + (progress - 0.5f) * SONAR_ORBIT * closeOrbitSide;
 		Vector3f pos = node.getLocalTranslation();
 		float tilt = sonarSurfaceTilt(-pos.y);
-		float elevation = FastMath.DEG_TO_RAD * FastMath.interpolateLinear(tilt, 26f, 10f);
+		// From shallow water: from 22 degrees above, looking down across the hull, to 4 below, looking up
+		float shallowElevation = FastMath.interpolateLinear(progress, 22f, -4f);
+		float shallowLook = FastMath.interpolateLinear(progress, -15f, 22f);
+		float elevation = FastMath.DEG_TO_RAD * FastMath.interpolateLinear(tilt, 26f, shallowElevation);
 		float distance = FastMath.interpolateLinear(tilt, 150f, 190f);
-		outLookAt.set(pos.x, pos.y + FastMath.interpolateLinear(tilt, -25f, 30f), pos.z);
+		outLookAt.set(pos.x, pos.y + FastMath.interpolateLinear(tilt, -25f, shallowLook), pos.z);
 		outPos.set(pos.x + distance * FastMath.cos(elevation) * FastMath.sin(angle),
 				pos.y + distance * FastMath.sin(elevation),
 				pos.z + distance * FastMath.cos(elevation) * FastMath.cos(angle));
@@ -1219,8 +1222,8 @@ final class CinematicDirector {
 	 * it.
 	 */
 	private static final float FOLLOW_EASE = 1.2f, FOLLOW_ORBIT = 3.4f;
-	/** How far round a pinging submarine the sonar shot orbits, in radians (about 55 degrees). */
-	private static final float SONAR_ORBIT = 0.95f;
+	/** How far round a pinging submarine the sonar shot orbits, in radians (about 110 degrees). */
+	private static final float SONAR_ORBIT = 1.9f;
 
 	/**
 	 * One continuous launch shot: the camera waits just off the torpedo's path ahead of the bow,
