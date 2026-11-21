@@ -58,6 +58,18 @@ final class SonarPingEffects {
 	// Bolder lines in the team colour, for the showreel
 	private boolean emphasis;
 	private float sphereAlpha = 0.16f, bottomAlpha = 0.75f;
+	private int featuredSource = -1;
+	private long featuredFrom;
+
+	/**
+	 * Shows only the pulses {@code sourceId} sends from {@code fromTick} on, or all pulses if
+	 * {@code sourceId} is negative. A shot about one ping (in the showreel) is not cluttered by the
+	 * others: older wavefronts kilometres away still cross the surface, edge-on near the horizon.
+	 */
+	void feature(int sourceId, long fromTick) {
+		featuredSource = sourceId;
+		featuredFrom = fromTick;
+	}
 
 	/** Draws pulses boldly, in the team colour (for the showreel). */
 	void setEmphasis(boolean emphasis) {
@@ -73,6 +85,15 @@ final class SonarPingEffects {
 	}
 
 	void update(MapRenderer data, TerrainMap terrain, double tickRateHz, boolean enabled) {
+		update(data, terrain, tickRateHz, enabled, data.simTick);
+	}
+
+	/**
+	 * As {@link #update(MapRenderer, TerrainMap, double, boolean)}, at a simulation time between
+	 * ticks. In slow motion a tick spans many frames, and a wavefront moved only on whole ticks
+	 * stands still and then jumps.
+	 */
+	void update(MapRenderer data, TerrainMap terrain, double tickRateHz, boolean enabled, double tick) {
 		if (this.terrain != terrain) {
 			clear();
 			this.terrain = terrain;
@@ -83,9 +104,9 @@ final class SonarPingEffects {
 			clear();
 			return;
 		}
-		long tick = data.simTick;
 		// CopyOnWriteArrayList supplies a stable snapshot while the simulation publishes ticks.
-		var events = List.copyOf(data.pingAnimations);
+		var events = featuredSource < 0 ? List.copyOf(data.pingAnimations) : data.pingAnimations.stream()
+				.filter(e -> e.sourceId() == featuredSource && e.startTick() >= featuredFrom).toList();
 		var keep = new HashSet<MapRenderer.PingAnimation>();
 		int first = Math.max(0, events.size() - MAX_VISIBLE_PULSES);
 		for (int i = first; i < events.size(); i++) {
@@ -103,6 +124,7 @@ final class SonarPingEffects {
 				return false;
 			entry.getValue().sphere.removeFromParent();
 			entry.getValue().bottom.removeFromParent();
+			entry.getValue().surface.removeFromParent();
 			return true;
 		});
 	}
@@ -115,9 +137,11 @@ final class SonarPingEffects {
 	private final class Pulse {
 		final SonarPingGeometry geometry;
 		final SonarPingGeometry.Lines lines = new SonarPingGeometry.Lines();
-		final Geometry sphere, bottom;
+		// The bright lines where the wavefront meets the seabed, and the water surface
+		final Geometry sphere, bottom, surface;
 		final FloatBuffer spherePositions = BufferUtils.createFloatBuffer(lines.positions.length);
 		final FloatBuffer bottomPositions = BufferUtils.createFloatBuffer(lines.positions.length);
+		final FloatBuffer surfacePositions = BufferUtils.createFloatBuffer(lines.positions.length);
 		final ColorRGBA sphereColor, bottomColor;
 		double previousRadius = -1;
 
@@ -130,8 +154,10 @@ final class SonarPingEffects {
 					c.getGreen() / 255f * (1 - white) + white, c.getBlue() / 255f * (1 - white) + white, bottomAlpha);
 			sphere = createLines("sonar-sphere", sphereColor, emphasis ? 2 : 1, spherePositions);
 			bottom = createLines("sonar-bottom", bottomColor, emphasis ? 4 : 2, bottomPositions);
+			surface = createLines("sonar-surface", bottomColor, emphasis ? 4 : 2, surfacePositions);
 			node.attachChild(sphere);
 			node.attachChild(bottom);
+			node.attachChild(surface);
 		}
 
 		void update(double radius) {
@@ -143,10 +169,13 @@ final class SonarPingEffects {
 			bottomColor.a = bottomAlpha * fade;
 			sphere.getMaterial().setColor("Color", sphereColor);
 			bottom.getMaterial().setColor("Color", bottomColor);
+			surface.getMaterial().setColor("Color", bottomColor);
 			geometry.sphere(radius, lines);
 			upload(sphere, spherePositions, lines);
 			geometry.bottom(radius, lines);
 			upload(bottom, bottomPositions, lines);
+			geometry.surface(radius, lines);
+			upload(surface, surfacePositions, lines);
 		}
 	}
 

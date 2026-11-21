@@ -194,6 +194,7 @@ final class CinematicDirector {
 
 	// ── Scripted control (showreel): shots are cued from outside, never chosen here ──
 	private boolean scripted;
+	private float filmProgress = -1; // see setFilmProgress
 	private final Vector3f cueFocus = new Vector3f();
 	private final Vector3f cueBackdrop = new Vector3f();
 	private final Vector3f aerialPath = new Vector3f(); // horizontal unit vector from focus towards backdrop
@@ -403,6 +404,15 @@ final class CinematicDirector {
 	 */
 	void setScripted(boolean scripted) {
 		this.scripted = scripted;
+	}
+
+	/**
+	 * How far the caller's current shot has got in film time, 0..1, or negative if unknown. Shot
+	 * timing otherwise runs on the frame time step, which slow motion slows too; a camera move that
+	 * should keep going while the action is slowed, like the orbit round a ping, uses this.
+	 */
+	void setFilmProgress(float progress) {
+		filmProgress = progress;
 	}
 
 	/** Lengthens the current shot, so a following beat can continue it without a cut. */
@@ -952,9 +962,13 @@ final class CinematicDirector {
 	}
 
 	/**
-	 * Standing well off a submarine as it pings, high enough to take in the seabed around it, so
-	 * the pulse can be seen swelling out from the hull and sweeping the bottom (best in slow
-	 * motion).
+	 * Standing well off a submarine as it pings, so the pulse can be seen swelling out from the
+	 * hull (best in slow motion). The camera orbits, in film time when that is known, so it keeps
+	 * moving while the pulse is slowed, and the parallax shows the sphere's depth. From shallow
+	 * water it also descends as it goes round: it starts a little above the submarine, looking down
+	 * across it, and ends a little below, looking up across it as the top of the sphere spreads
+	 * over the surface as a circle. From deep water, where the pulse would not reach the surface in
+	 * time, it stays above, looking down across the submarine.
 	 */
 	private void computeSonarWide(List<SubmarineSnapshot> subs, Vector3f outPos, Vector3f outLookAt) {
 		Node node = findEntityNode(currentShot.subjectId);
@@ -963,13 +977,28 @@ final class CinematicDirector {
 			return;
 		}
 		Vector3f side = node.getLocalRotation().mult(Vector3f.UNIT_X).multLocal(closeOrbitSide);
-		float angle = FastMath.atan2(side.x, side.z) + (passProgress() - 0.5f) * 0.35f;
-		float elevation = FastMath.DEG_TO_RAD * 26f, distance = 150f;
+		float progress = filmProgress >= 0 ? filmProgress : passProgress();
+		float angle = FastMath.atan2(side.x, side.z) + (progress - 0.5f) * SONAR_ORBIT * closeOrbitSide;
 		Vector3f pos = node.getLocalTranslation();
-		outLookAt.set(pos.x, pos.y - 25f, pos.z);
+		float tilt = sonarSurfaceTilt(-pos.y);
+		// From shallow water: from 22 degrees above, looking down across the hull, to 4 below, looking up
+		float shallowElevation = FastMath.interpolateLinear(progress, 22f, -4f);
+		float shallowLook = FastMath.interpolateLinear(progress, -15f, 22f);
+		float elevation = FastMath.DEG_TO_RAD * FastMath.interpolateLinear(tilt, 26f, shallowElevation);
+		float distance = FastMath.interpolateLinear(tilt, 150f, 190f);
+		outLookAt.set(pos.x, pos.y + FastMath.interpolateLinear(tilt, -25f, shallowLook), pos.z);
 		outPos.set(pos.x + distance * FastMath.cos(elevation) * FastMath.sin(angle),
 				pos.y + distance * FastMath.sin(elevation),
 				pos.z + distance * FastMath.cos(elevation) * FastMath.cos(angle));
+	}
+
+	/**
+	 * How far the sonar shot turns up towards the surface for a pulse sent from {@code depth}
+	 * metres, 0..1: fully where the wavefront breaks the surface early in a slow-motion shot, not
+	 * at all where it would not get there before the shot ends.
+	 */
+	static float sonarSurfaceTilt(float depth) {
+		return FastMath.clamp((600f - depth) / 150f, 0f, 1f);
 	}
 
 	/**
@@ -1193,6 +1222,8 @@ final class CinematicDirector {
 	 * it.
 	 */
 	private static final float FOLLOW_EASE = 1.2f, FOLLOW_ORBIT = 3.4f;
+	/** How far round a pinging submarine the sonar shot orbits, in radians (about 110 degrees). */
+	private static final float SONAR_ORBIT = 1.9f;
 
 	/**
 	 * One continuous launch shot: the camera waits just off the torpedo's path ahead of the bow,

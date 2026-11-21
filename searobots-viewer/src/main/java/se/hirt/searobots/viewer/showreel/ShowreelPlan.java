@@ -62,7 +62,7 @@ public final class ShowreelPlan {
 		SCENIC,
 		/** North-up overview of the whole fight, seabed visible, with tracks. */
 		TACTICAL,
-		/** Well off a submarine as it pings, the pulse swelling out and sweeping the seabed. */
+		/** Well off a submarine as it pings, the pulse swelling out from the hull. */
 		SONAR,
 		/**
 		 * The launcher's bow as its tube doors open and the torpedo leaves; as the weapon glides
@@ -189,6 +189,8 @@ public final class ShowreelPlan {
 
 	/** Fastest time-lapse: beyond this, a beat skips ahead rather than racing. */
 	private static final double MAX_SPEED = 160;
+	/** The run into a blast: video seconds, and the speed it slows to from real time. */
+	private static final double IMPACT_KILL = 4, IMPACT_KILL_END = 0.25, IMPACT_HIT = 3.5, IMPACT_HIT_END = 0.3;
 
 	/**
 	 * Plans a film of about {@code targetSeconds} from a match: an aerial title over the islands,
@@ -280,9 +282,7 @@ public final class ShowreelPlan {
 			if (!deaths.isEmpty()) {
 				var death = deaths.getFirst();
 				kill = death;
-				climax = hits.stream()
-						.filter(h -> h.other() == death.subject() && Math.abs(h.tick() - death.tick()) <= rate)
-						.findFirst().orElse(null);
+				climax = blowAt(hits, death);
 			}
 			if (climax == null && !hits.isEmpty())
 				climax = hits.getLast();
@@ -358,8 +358,8 @@ public final class ShowreelPlan {
 						mid = w;
 						break;
 					}
-			// A ping seen from above: the time-lapse slows to real time as one goes out, and the
-			// pulse sweeps across the seabed
+			// A ping: the time-lapse slows as one goes out, and the pulse is followed in slow
+			// motion
 			final long pingFrom = cursor + ticks(40), pingTo = launchShot - ticks(70);
 			final ScenicWindow scenic = mid;
 			var ping = index.events(Kind.PING).stream()
@@ -416,27 +416,40 @@ public final class ShowreelPlan {
 
 			// ── First hit, short of the kill ──
 			if (firstHit != null)
-				strike(firstHit, false, null);
+				strike(firstHit, false, null, Long.MAX_VALUE);
 
 			// ── Climax ──
 			if (climax != null) {
 				String caption = null;
-				if (kill != null && climax.other() == kill.subject()) {
+				boolean killing = kill != null && climax.other() == kill.subject();
+				if (killing) {
 					int victim = kill.subject();
 					int winner = subs.stream().filter(id -> id != victim).findFirst().orElse(-1);
 					boolean mutual = deaths.size() > 1;
 					caption = index.name(kill.subject()).toUpperCase(Locale.ROOT) + " DESTROYED|"
 							+ (winner >= 0 && !mutual ? index.name(winner) + " wins" : "");
 				}
-				strike(climax, true, caption);
-				if (kill != null && deaths.size() > 1 && deaths.get(1).tick() - kill.tick() < ticks(150)) {
-					var second = deaths.get(1);
-					var finalBlow = hits.stream()
-							.filter(h -> h.other() == second.subject() && Math.abs(h.tick() - second.tick()) <= rate)
-							.findFirst().orElse(null);
-					if (finalBlow != null)
-						strike(finalBlow, true,
-								index.name(second.subject()).toUpperCase(Locale.ROOT) + " DESTROYED|no survivors");
+				// When both die, the second kill follows the first: with its run-in if there is time
+				// (the first sinking cut short to make room), else its blast, else its wreck
+				Event second = killing && deaths.size() > 1 && deaths.get(1).tick() - kill.tick() < ticks(150)
+						? deaths.get(1) : null;
+				Event finalBlow = second != null ? blowAt(hits, second) : null;
+				long holdUntil = Long.MAX_VALUE;
+				if (finalBlow != null) {
+					long firstBlastEnd = blastBeat(climax, true, null).toTick(rate);
+					long run = impactFrom(finalBlow.tick(), true);
+					holdUntil = run >= firstBlastEnd ? run : Math.max(firstBlastEnd, finalBlow.tick());
+				}
+				strike(climax, killing, caption, holdUntil);
+				if (second != null) {
+					String last = index.name(second.subject()).toUpperCase(Locale.ROOT) + " DESTROYED|no survivors";
+					if (finalBlow != null && impactFrom(finalBlow.tick(), true) >= cursor) {
+						strike(finalBlow, true, last, Long.MAX_VALUE);
+					} else {
+						if (finalBlow != null && finalBlow.tick() >= cursor)
+							add(blastBeat(finalBlow, true, null));
+						sinking(second.subject(), last, 5);
+					}
 				}
 			}
 			var lastBlast = beats.reversed().stream().filter(b -> b.shot() == Shot.DETONATION).findFirst();
@@ -451,10 +464,6 @@ public final class ShowreelPlan {
 		}
 
 		/**
-		 * A torpedo strike: time-lapse up to it, the run in, the approach slowing to slow motion,
-		 * the blast on a flash, and, if it kills, the sinking.
-		 */
-		/**
 		 * The time-lapse slowing towards a ping, then the pulse leaving the submarine in slow
 		 * motion: sound crosses a kilometre a second here, too fast to follow at real time.
 		 */
@@ -464,15 +473,19 @@ public final class ShowreelPlan {
 			if (at < cursor)
 				return;
 			add(new Beat("sonar", Shot.SONAR, ping.subject(), -1, 4.5, at, 0.1, 0.1, Entry.CUT, Card.NONE,
-					"ACTIVE SONAR|a ping sweeps the seabed", false, true, null, null));
+					"ACTIVE SONAR|a ping reaches out for the enemy", false, true, null, null));
 		}
 
-		void strike(Event detonation, boolean kill, String sinkCaption) {
+		/**
+		 * A torpedo strike: time-lapse up to it, the run in, the approach slowing to slow motion,
+		 * the blast on a flash, and, if it kills, the sinking, ending by {@code holdUntil}.
+		 */
+		void strike(Event detonation, boolean kill, String sinkCaption, long holdUntil) {
 			int torpedo = detonation.subject(), target = detonation.other();
 			long blast = detonation.tick();
 			// Over the weapon's shoulder into slow motion, landing on the detonation tick
-			double impactSeconds = kill ? 4 : 3.5, impactEnd = kill ? 0.25 : 0.3;
-			long impactFrom = blast - Math.round(impactSeconds * (1 + impactEnd) / 2 * rate);
+			double impactSeconds = kill ? IMPACT_KILL : IMPACT_HIT, impactEnd = kill ? IMPACT_KILL_END : IMPACT_HIT_END;
+			long impactFrom = impactFrom(blast, kill);
 			double leadSeconds = kill ? 3.5 : 2.5;
 			long leadFrom = impactFrom - ticks(leadSeconds);
 			boolean lead = leadFrom > cursor + ticks(1);
@@ -488,17 +501,51 @@ public final class ShowreelPlan {
 					Card.NONE, null, false, false, null, null));
 			// Land exactly on the detonation tick
 			cursor = Math.min(cursor, blast);
+			if (kill) {
+				var boom = blastBeat(detonation, true, null);
+				double sink = Math.min(5, (holdUntil - boom.toTick(rate)) / (double) rate);
+				if (sink < 1.5) {
+					add(blastBeat(detonation, true, sinkCaption)); // no time to watch it sink
+				} else {
+					add(boom);
+					sinking(target, sinkCaption, sink);
+				}
+				return;
+			}
 			// Count every hit landing while the blast is on screen (salvoes often arrive in pairs)
 			long blastEnd = blast + ticks(2.5);
 			long hitsInBeat = index.events(Kind.HIT).stream()
 					.filter(h -> h.subject() == target && h.tick() >= blast && h.tick() <= blastEnd).count();
-			String caption = kill ? null : (hitsInBeat > 1 ? "DOUBLE HIT|" : "DIRECT HIT|") + index.name(target)
-					+ " hull at " + hullAfter(target, blastEnd) + "%";
-			add(new Beat(kill ? "kill" : "hit", Shot.DETONATION, torpedo, target, kill ? 3.2 : 3.5, blast,
-					kill ? 0.2 : 0.25, kill ? 0.8 : 1.0, Entry.FLASH, Card.NONE, caption, false, false,
-					new double[] {detonation.x(), detonation.y(), detonation.z()}, null));
-			if (kill)
-				add(beat("sinking", Shot.SINKING, target, -1, 5, cursor, 1, Entry.CUT, sinkCaption));
+			String name = index.name(target);
+			add(blastBeat(detonation, false,
+					hitsInBeat == 0 ? "NEAR MISS|" + name + " survives"
+							: (hitsInBeat > 1 ? "DOUBLE HIT|" : "DIRECT HIT|") + name + " hull at "
+									+ hullAfter(target, blastEnd) + "%"));
+		}
+
+		/** Where the over-the-shoulder run into a blast at {@code blast} starts. */
+		long impactFrom(long blast, boolean kill) {
+			double seconds = kill ? IMPACT_KILL : IMPACT_HIT, end = kill ? IMPACT_KILL_END : IMPACT_HIT_END;
+			return blast - Math.round(seconds * (1 + end) / 2 * rate);
+		}
+
+		/** The blast, on a flash, in slow motion. */
+		Beat blastBeat(Event detonation, boolean kill, String caption) {
+			return new Beat(kill ? "kill" : "hit", Shot.DETONATION, detonation.subject(), detonation.other(),
+					kill ? 3.2 : 3.5, detonation.tick(), kill ? 0.2 : 0.25, kill ? 0.8 : 1.0, Entry.FLASH, Card.NONE,
+					caption, false, false, new double[] {detonation.x(), detonation.y(), detonation.z()}, null);
+		}
+
+		void sinking(int target, String caption, double seconds) {
+			add(beat("sinking", Shot.SINKING, target, -1, seconds, cursor, 1, Entry.CUT, caption));
+		}
+
+		/**
+		 * The damaging detonation on {@code death}'s submarine nearest the moment it died, or null.
+		 */
+		Event blowAt(List<Event> hits, Event death) {
+			return hits.stream().filter(h -> h.other() == death.subject() && Math.abs(h.tick() - death.tick()) <= rate)
+					.min(Comparator.comparingLong(h -> Math.abs(h.tick() - death.tick()))).orElse(null);
 		}
 
 		void outro(double[] focus) {

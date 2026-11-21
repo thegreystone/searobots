@@ -90,10 +90,68 @@ class SonarPingEffectsTest {
 	}
 
 	@Test
+	void wavefrontBecomesACircleOnTheSurfaceAndTheSphereEndsOnIt() {
+		var geometry = new SonarPingGeometry(flat(), 0, 0, -100);
+		var lines = new SonarPingGeometry.Lines();
+		geometry.surface(99, lines);
+		assertEquals(0, lines.size, "The pulse has not risen 100 m yet");
+
+		geometry.surface(200, lines);
+		double ring = Math.sqrt(200 * 200 - 100 * 100), length = 0;
+		assertTrue(lines.size > 0);
+		for (int i = 0; i < lines.size; i += 6) {
+			for (int end = i; end <= i + 3; end += 3) {
+				assertEquals(ring, Math.hypot(lines.positions[end], lines.positions[end + 2]), 0.01, "On the circle");
+				assertEquals(0.8, lines.positions[end + 1], 1e-6, "Just above the waves");
+			}
+			length += Math.hypot(lines.positions[i + 3] - lines.positions[i],
+					lines.positions[i + 5] - lines.positions[i + 2]);
+		}
+		assertEquals(2 * Math.PI * ring, length, 0.002 * 2 * Math.PI * ring, "A closed circle over open water");
+
+		geometry.sphere(200, lines);
+		int atSurface = 0;
+		for (int i = 0; i < lines.size; i += 3) {
+			assertTrue(lines.positions[i + 1] <= 1e-3, "The sphere stays underwater");
+			if (Math.abs(lines.positions[i + 1]) < 1e-3) {
+				atSurface++;
+				assertEquals(ring, Math.hypot(lines.positions[i], lines.positions[i + 2]), 1, "Ends on the circle");
+			}
+		}
+		assertTrue(atSurface >= 8, "The meridians reach the surface: " + atSurface);
+	}
+
+	@Test
+	void islandBreaksTheSurfaceCircleOverItAndInItsLee() {
+		double[] elevations = new double[81 * 81];
+		Arrays.fill(elevations, -300);
+		for (int row = 38; row <= 42; row++)
+			for (int col = 50; col <= 55; col++)
+				elevations[row * 81 + col] = 20; // x 100..150, y -20..20
+		var geometry = new SonarPingGeometry(new TerrainMap(elevations, 81, 81, -400, -400, 10), 0, 0, -100);
+		var lines = new SonarPingGeometry.Lines();
+		geometry.surface(200, lines); // a 173 m circle, beyond the island
+		double ring = Math.sqrt(200 * 200 - 100 * 100), length = 0;
+		for (int i = 0; i < lines.size; i += 6) {
+			for (int end = i; end <= i + 3; end += 3) {
+				double x = lines.positions[end], y = -lines.positions[end + 2];
+				assertFalse(x > 0 && Math.abs(Math.atan2(y, x)) < Math.toRadians(5),
+						"In the island's lee: " + x + ", " + y);
+			}
+			length += Math.hypot(lines.positions[i + 3] - lines.positions[i],
+					lines.positions[i + 5] - lines.positions[i + 2]);
+		}
+		assertTrue(length > 0.85 * 2 * Math.PI * ring && length < 0.97 * 2 * Math.PI * ring,
+				"Most of the circle, with a gap behind the island: " + length / (2 * Math.PI * ring));
+	}
+
+	@Test
 	void simulationClockControlsRadiusAtNonDefaultTickRates() {
 		assertEquals(1500, SonarPingGeometry.radius(150, 50, 100));
 		assertEquals(1500, SonarPingGeometry.radius(100, 50, 50));
 		assertEquals(0, SonarPingGeometry.radius(50, 50, 50));
+		// Between ticks, for smooth slow motion
+		assertEquals(1515, SonarPingGeometry.radius(100.5, 50, 50), 1e-9);
 	}
 
 	@Test
@@ -106,7 +164,7 @@ class SonarPingEffectsTest {
 		data.simTick = 10;
 		effects.update(data, terrain, 50, true);
 		Node node = (Node) root.getChild("sonar-pings");
-		assertEquals(2, node.getQuantity());
+		assertEquals(3, node.getQuantity(), "Sphere, seabed and surface lines");
 		Geometry bottom = (Geometry) node.getChild("sonar-bottom");
 		var positions = bottom.getMesh().getBuffer(VertexBuffer.Type.Position).getData();
 		int vertices = bottom.getMesh().getVertexCount();
@@ -121,10 +179,31 @@ class SonarPingEffectsTest {
 		effects.update(data, terrain, 50, false);
 		assertEquals(0, node.getQuantity());
 		effects.update(data, terrain, 50, true);
-		assertEquals(2, node.getQuantity());
+		assertEquals(3, node.getQuantity());
 		data.simTick = 1000;
 		effects.update(data, terrain, 50, true);
 		assertEquals(0, node.getQuantity(), "Fast-forward must not allocate meshes for stale pulses");
+	}
+
+	@Test
+	void featuringOnePingHidesTheOthers() {
+		var terrain = flat();
+		var data = new MapRenderer(world(terrain), new OverlayConfig());
+		var root = new Node();
+		var effects = new SonarPingEffects(new DesktopAssetManager(true), root);
+		data.pingAnimations.add(new MapRenderer.PingAnimation(0, 0, -100, 0, Color.CYAN, 7));
+		data.pingAnimations.add(new MapRenderer.PingAnimation(100, 0, -100, 2, Color.RED, 8));
+		data.pingAnimations.add(new MapRenderer.PingAnimation(0, 100, -100, 4, Color.CYAN, 7));
+		data.simTick = 10;
+		effects.update(data, terrain, 50, true);
+		Node node = (Node) root.getChild("sonar-pings");
+		assertEquals(9, node.getQuantity(), "Three pulses of three line sets");
+		effects.feature(7, 3);
+		effects.update(data, terrain, 50, true);
+		assertEquals(3, node.getQuantity(), "Only source 7's pulse from tick 3 on");
+		effects.feature(-1, 0);
+		effects.update(data, terrain, 50, true);
+		assertEquals(9, node.getQuantity());
 	}
 
 	@Test
