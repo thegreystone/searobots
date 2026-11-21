@@ -34,6 +34,7 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.ByteBuffer;
 import java.nio.file.Files;
+import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -96,18 +97,36 @@ public final class FrameRecorder implements SceneProcessor {
 		if (configured != null && !configured.isBlank())
 			return configured;
 		String env = System.getenv("FFMPEG");
-		if (env != null && !env.isBlank() && Files.isExecutable(Path.of(env)))
-			return env;
+		if (env != null && !env.isBlank()) {
+			Path executable = path(env, "");
+			if (executable != null && Files.isExecutable(executable))
+				return executable.toString();
+		}
 		String path = System.getenv("PATH");
 		if (path == null)
 			return null;
 		boolean windows = System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("win");
 		for (String dir : path.split(File.pathSeparator)) {
-			Path candidate = Path.of(dir.isBlank() ? "." : dir, windows ? "ffmpeg.exe" : "ffmpeg");
-			if (Files.isExecutable(candidate))
+			Path candidate = path(dir.isBlank() ? "." : dir, windows ? "ffmpeg.exe" : "ffmpeg");
+			if (candidate != null && Files.isExecutable(candidate))
 				return candidate.toString();
 		}
 		return null;
+	}
+
+	/**
+	 * {@code dir/file}, or null if it is not a valid path here. Windows allows quoted PATH entries,
+	 * and a PATH may hold entries no path can be made of.
+	 */
+	private static Path path(String dir, String file) {
+		String unquoted = dir.strip();
+		if (unquoted.length() >= 2 && unquoted.startsWith("\"") && unquoted.endsWith("\""))
+			unquoted = unquoted.substring(1, unquoted.length() - 1);
+		try {
+			return file.isEmpty() ? Path.of(unquoted) : Path.of(unquoted, file);
+		} catch (InvalidPathException e) {
+			return null;
+		}
 	}
 
 	/** Grabs the frame currently being rendered once it is complete. */
@@ -211,7 +230,8 @@ public final class FrameRecorder implements SceneProcessor {
 			Files.createDirectories(output);
 			sink = null;
 		}
-		writer = Thread.ofPlatform().name("showreel-encoder").start(() -> encode(sink));
+		// A daemon, so a failure that skips finish() cannot keep the process alive; finish() joins it
+		writer = Thread.ofPlatform().name("showreel-encoder").daemon().start(() -> encode(sink));
 	}
 
 	private void encode(OutputStream sink) {

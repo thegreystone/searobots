@@ -208,6 +208,13 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 	private CinematicDirector cinematicDirector;
 	private volatile List<SubmarineSnapshot> latestSnapshots = List.of();
 	private volatile long latestTick;
+	/**
+	 * The last tick whose submarines, torpedoes and detonations have all been taken in; -1 before
+	 * any.
+	 */
+	private volatile long completedTick = -1;
+	/** The showreel's exact simulation time this frame, in ticks, between ticks; NaN otherwise. */
+	private double showreelTickTime = Double.NaN;
 	private int selectedSubId = 0;
 	private static final float LERP_SPEED = 8f; // higher = snappier tracking
 	private static final float SURFACE_SPEED = 2f; // control surface actuator lerp rate
@@ -1702,12 +1709,24 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 		return getActiveSim();
 	}
 
+	/**
+	 * The last tick taken in completely. The showreel waits on this rather than on
+	 * {@code latestTick}, which is published before the snapshots of its tick.
+	 */
 	long showreelTick() {
-		return latestTick;
+		return completedTick;
 	}
 
 	boolean showreelHasTicked() {
-		return !latestSnapshots.isEmpty();
+		return completedTick >= 0;
+	}
+
+	/**
+	 * The exact simulation time of this frame, in ticks. The replay is stepped to the nearest tick;
+	 * effects that would visibly step in slow motion, such as sonar wavefronts, use this.
+	 */
+	void showreelTickTime(double tick) {
+		showreelTickTime = tick;
 	}
 
 	int showreelFirstSubmarine() {
@@ -1723,6 +1742,12 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 	void showreelEmphasizePings() {
 		if (sonarPings != null)
 			sonarPings.setEmphasis(true);
+	}
+
+	/** Only the pulses {@code sourceId} sends from {@code fromTick} on; all if it is negative. */
+	void showreelFeaturePing(int sourceId, long fromTick) {
+		if (sonarPings != null)
+			sonarPings.feature(sourceId, fromTick);
 	}
 
 	/** The Director, created if the camera has not needed it yet. */
@@ -1983,7 +2008,8 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 				updateShowreelMarkers();
 			if (sonarPings != null && standaloneMapRenderer != null)
 				sonarPings.update(standaloneMapRenderer, displayedTerrain,
-						standaloneMapRenderer.getWorld().config().tickRateHz(), overlayConfig.pings);
+						standaloneMapRenderer.getWorld().config().tickRateHz(), overlayConfig.pings,
+						Double.isNaN(showreelTickTime) ? standaloneMapRenderer.simTick : showreelTickTime);
 			updateFastForward();
 			updateReplayLabel(tpf);
 			updateFastForwardTo();
@@ -2103,6 +2129,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 			for (var t : torpedoes)
 				if (t.detonated())
 					pendingDetonations.add(new Detonation(tick, t, submarines));
+		completedTick = tick; // last: everything of this tick is in place
 	}
 
 	@Override
@@ -2175,6 +2202,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 		routeBuffers.clear();
 		lastTrailTick = -1;
 		latestSnapshots = List.of();
+		completedTick = -1;
 
 		// Position orbit camera at first spawn
 		float worldW = (float) terrain.worldWidth();

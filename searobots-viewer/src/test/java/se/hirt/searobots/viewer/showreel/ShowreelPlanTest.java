@@ -38,6 +38,8 @@ import java.util.List;
 
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import se.hirt.searobots.viewer.showreel.MatchIndex.Kind;
 import se.hirt.searobots.viewer.showreel.ShowreelPlan.Beat;
@@ -68,7 +70,7 @@ class ShowreelPlanTest {
 	@Test
 	void indexRecordsTheStrikeInOrder() {
 		var launch = index.events(Kind.LAUNCH);
-		assertEquals(1, launch.size());
+		assertEquals(2, launch.size(), "A pair");
 		assertEquals(SyntheticMatch.LAUNCH, launch.getFirst().tick());
 		assertEquals(0, launch.getFirst().other(), "The launcher");
 		var terminal = index.events(Kind.TERMINAL).getFirst();
@@ -80,6 +82,7 @@ class ShowreelPlanTest {
 		assertEquals(SyntheticMatch.BLAST, death.tick());
 		assertEquals(1, death.subject());
 		assertTrue(index.hit(SyntheticMatch.TORPEDO));
+		assertFalse(index.hit(SyntheticMatch.STRAGGLER), "Arriving at the wreck after the kill is not a hit");
 		assertEquals(SyntheticMatch.END, index.endTick());
 		assertFalse(index.events(Kind.PING).isEmpty());
 	}
@@ -124,12 +127,41 @@ class ShowreelPlanTest {
 		assertTrue(impact.endSpeed() < 1, "The approach slows into the hit");
 		Beat blast = find(beats, Shot.DETONATION);
 		assertEquals(SyntheticMatch.BLAST, blast.fromTick(), "The blast beat starts on the detonation");
+		assertEquals(SyntheticMatch.TORPEDO, blast.subject(), "The torpedo that killed, not the one that came after");
 		assertEquals(Entry.FLASH, blast.entry());
 		Beat sinking = find(beats, Shot.SINKING);
 		assertEquals(1, sinking.subject());
 		assertTrue(sinking.caption().startsWith("CODEX SUB DESTROYED"), sinking.caption());
 		assertTrue(beats.stream().anyMatch(b -> b.shot() == Shot.TACTICAL && b.startSpeed() > 4),
 				"The hunt is shown in time-lapse");
+	}
+
+	/**
+	 * Both die, the second {@code gap} seconds after the first: the film shows the second death as
+	 * fully as the time allows, with its run-in, its blast, or at least its wreck.
+	 */
+	@ParameterizedTest(name = "second death {0} s after the first")
+	@ValueSource(doubles = {0.2, 3, 6, 20})
+	void mutualKillShowsBothDeaths(double gap) {
+		var mutual = new MatchIndex(survey, SyntheticMatch.RATE);
+		SyntheticMatch.play(mutual, gap);
+		List<Beat> beats = ShowreelPlan.create(mutual, 42, 85, LocalTime.of(15, 0)).beats();
+		var described = beats.stream().map(b -> b.label() + " " + b.shot() + " " + b.subject() + "/" + b.secondary())
+				.toList().toString();
+
+		assertTrue(beats.stream().anyMatch(b -> b.caption() != null && b.caption().startsWith("CODEX SUB DESTROYED|")),
+				"The first kill is captioned: " + described);
+		var last = beats.stream().filter(b -> b.caption() != null && b.caption().endsWith("|no survivors")).toList();
+		assertEquals(1, last.size(), described);
+		Beat survivor = last.getFirst();
+		assertTrue(survivor.shot() == Shot.SINKING ? survivor.subject() == 0 : survivor.secondary() == 0,
+				"The second kill is Claude's: " + described);
+
+		boolean run = beats.stream().anyMatch(b -> b.shot() == Shot.IMPACT && b.subject() == SyntheticMatch.COUNTER);
+		boolean blast = beats.stream()
+				.anyMatch(b -> b.shot() == Shot.DETONATION && b.subject() == SyntheticMatch.COUNTER);
+		assertEquals(gap >= 6, run, "The counter torpedo's run-in: " + described);
+		assertEquals(gap >= 3, blast, "The counter torpedo's blast: " + described);
 	}
 
 	@Test

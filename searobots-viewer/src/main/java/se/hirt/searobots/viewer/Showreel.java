@@ -121,17 +121,21 @@ final class Showreel {
 		case RECORDING -> {
 			double time = frame / (double) fps;
 			int index = beatAt(time);
+			boolean jumped = false;
 			if (index != beatIndex) {
 				beatIndex = index;
 				beatStart = startOf(index);
-				enterBeat(plan.beats().get(index));
+				jumped = enterBeat(plan.beats().get(index));
 			}
 			var beat = plan.beats().get(beatIndex);
 			double local = time - beatStart;
-			long target = beat.fromTick() + Math.round(beat.simSecondsAt(local) * plan.tickRateHz());
-			advanceTo(target);
-			// Smooth sub-tick motion at real time and slower; at time-lapse speed follow the simulation exactly
-			scene.showreelVehicleLerp(beat.speedAt(local) > 2.5 ? 1f : -1f);
+			double exact = beat.fromTick() + beat.simSecondsAt(local) * plan.tickRateHz();
+			advanceTo(Math.round(exact));
+			scene.showreelTickTime(exact);
+			director.setFilmProgress((float) Math.min(1, local / beat.seconds()));
+			// Smooth sub-tick motion at real time and slower; at time-lapse speed follow the simulation
+			// exactly, and after a cut that skips ahead, put the hulls where they are instead of gliding
+			scene.showreelVehicleLerp(jumped || beat.speedAt(local) > 2.5 ? 1f : -1f);
 		}
 		case FINISHED -> {
 		}
@@ -154,6 +158,10 @@ final class Showreel {
 		scene.hideForShowreel(overlay != null ? overlay.root() : null);
 		if (phase != Phase.RECORDING || beatIndex < 0)
 			return; // recording starts with the next frame
+		if (frame >= totalFrames) {
+			finish(); // the last frame was grabbed when the previous update was rendered
+			return;
+		}
 		var beat = plan.beats().get(beatIndex);
 		double time = frame / (double) fps;
 		updateOverlay(beat, time - beatStart, time);
@@ -168,10 +176,10 @@ final class Showreel {
 		holds = 0;
 		recorder.captureNextFrame();
 		frame++;
-		if (frame % (fps * 5) == 0)
-			progress();
+		if (frame % (fps * 5) == 0 && !healthy())
+			return;
 		if (frame >= totalFrames) {
-			finish();
+			timer.next = 0; // one more update, frozen, to finish once this frame is grabbed
 			return;
 		}
 		var next = plan.beats().get(beatAt(frame / (double) fps));
@@ -242,17 +250,19 @@ final class Showreel {
 		}
 	}
 
-	private void progress() {
+	/** Logs progress; if the recording has failed, stops (closing ffmpeg) and returns false. */
+	private boolean healthy() {
 		double seconds = (System.nanoTime() - started) / 1e9;
 		double rate = frame / seconds;
 		log.printf(Locale.ROOT, "  %5.1f%%  frame %d/%d  %.1f fps  about %.0f s to go%n", 100.0 * frame / totalFrames,
 				frame, totalFrames, rate, (totalFrames - frame) / Math.max(0.1, rate));
 		try {
 			recorder.checkHealthy();
+			return true;
 		} catch (IOException e) {
 			log.println(e.getMessage());
-			phase = Phase.FINISHED;
-			scene.stop();
+			finish(); // ends the encoder and ffmpeg too, so the process can exit
+			return false;
 		}
 	}
 
@@ -276,21 +286,24 @@ final class Showreel {
 		return at;
 	}
 
-	private void enterBeat(Beat beat) {
+	/** Sets up a new beat; true if it skips more than a second ahead. */
+	private boolean enterBeat(Beat beat) {
 		var overlays = scene.overlayConfig();
 		overlays.trails = beat.trails();
 		overlays.pings = beat.pings();
+		// A shot about one ping shows that ping alone
+		if (beat.shot() == ShowreelPlan.Shot.SONAR)
+			scene.showreelFeaturePing(beat.subject(), beat.fromTick());
+		else
+			scene.showreelFeaturePing(-1, 0);
 		// The overview also shows where each submarine means to go
 		overlays.waypoints = beat.shot() == ShowreelPlan.Shot.TACTICAL;
-		// A hard cut may skip ahead; the hulls should be where they are, not glide there
 		long jump = beat.fromTick() - scene.showreelTick();
-		if (jump > plan.tickRateHz()) {
-			scene.showreelVehicleLerp(1f);
-			if (jump > 20L * plan.tickRateHz())
-				scene.clearTrails();
-		}
+		if (jump > 20L * plan.tickRateHz())
+			scene.clearTrails();
 		cuePending = true;
 		log.printf(Locale.ROOT, "  beat %-18s %-13s at %5.1f s%n", beat.label(), beat.shot(), beatStart);
+		return jump > plan.tickRateHz();
 	}
 
 	private void cue(Beat beat) {

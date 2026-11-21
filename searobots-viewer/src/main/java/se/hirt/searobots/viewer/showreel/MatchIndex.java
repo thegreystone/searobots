@@ -285,13 +285,16 @@ public final class MatchIndex implements SimulationListener {
 		return windows;
 	}
 
-	/** Whether a torpedo's detonation or closest pass actually damaged its target. */
+	/**
+	 * Whether a torpedo's detonation damaged its target. Damage lands on the detonation's own tick,
+	 * so a salvo's second weapon arriving at a wreck a moment later does not count.
+	 */
 	public boolean hit(int torpedoId) {
 		for (var d : events(Kind.DETONATION)) {
 			if (d.subject() != torpedoId)
 				continue;
 			for (var h : events(Kind.HIT))
-				if (h.subject() == d.other() && Math.abs(h.tick() - d.tick()) <= tickRateHz)
+				if (h.subject() == d.other() && Math.abs(h.tick() - d.tick()) <= 1)
 					return true;
 		}
 		return false;

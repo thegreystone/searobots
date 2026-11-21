@@ -154,6 +154,12 @@ class CinematicDirectorTest {
 				"An imminent impact must interrupt the overview's normal minimum hold");
 	}
 
+	@ParameterizedTest(name = "ping from {0} m")
+	@CsvSource({"120, 1", "450, 1", "525, 0.5", "600, 0", "800, 0"})
+	void sonarShotLooksUpAtTheSurfaceOnlyWhereThePulseGetsThere(float depth, float tilt) {
+		assertEquals(tilt, CinematicDirector.sonarSurfaceTilt(depth), 1e-6f);
+	}
+
 	@Test
 	void detonationInterruptsProtectedOverview() throws Exception {
 		Scene scene = new Scene(1920, 1080);

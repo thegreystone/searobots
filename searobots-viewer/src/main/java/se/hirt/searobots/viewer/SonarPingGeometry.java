@@ -36,6 +36,8 @@ final class SonarPingGeometry {
 	static final double MAX_RADIUS = 10000;
 	private static final double SURFACE_LIFT = 0.8;
 	private static final int ARC_STEPS = 96;
+	/** Most segments in the surface circle: about a terrain cell each, up to this. */
+	private static final int SURFACE_STEPS = 1440;
 	private static final int MERIDIAN_COUNT = 8;
 	private static final int LATITUDE_COUNT = 7;
 	private static final int ARC_COUNT = MERIDIAN_COUNT + LATITUDE_COUNT;
@@ -90,7 +92,8 @@ final class SonarPingGeometry {
 		}
 	}
 
-	static double radius(long tick, long startTick, double tickRateHz) {
+	/** The wavefront's radius at {@code tick}, which may fall between ticks. */
+	static double radius(double tick, long startTick, double tickRateHz) {
 		return (tick - startTick) * SPEED / tickRateHz;
 	}
 
@@ -101,8 +104,10 @@ final class SonarPingGeometry {
 		for (int arc = 0; arc < ARC_COUNT; arc++) {
 			for (int i = 0; i < ARC_STEPS; i++) {
 				int a = arc * (ARC_STEPS + 1) + i, b = a + 1;
-				if (radius > limits[a] || radius > limits[b] || radius > midpointLimits[arc * ARC_STEPS + i])
+				if (radius > limits[a] || radius > limits[b] || radius > midpointLimits[arc * ARC_STEPS + i]) {
+					cutAtSurface(a, b, radius, output);
 					continue;
+				}
 				int p = a * 3, q = b * 3;
 				double ax = x + directions[p] * radius, ay = y + directions[p + 1] * radius;
 				double az = z + directions[p + 2] * radius;
@@ -111,6 +116,83 @@ final class SonarPingGeometry {
 				output.segment(ax, ay, az, bx, by, bz);
 			}
 		}
+	}
+
+	/**
+	 * The part below the water of a sphere segment that crosses the surface, so the sphere ends on
+	 * the {@link #surface} circle instead of a whole segment short of it.
+	 */
+	private void cutAtSurface(int a, int b, double radius, Lines output) {
+		int p = a * 3, q = b * 3;
+		double az = z + directions[p + 2] * radius, bz = z + directions[q + 2] * radius;
+		if ((az > 0) == (bz > 0))
+			return;
+		int below = az > 0 ? b : a, above = az > 0 ? a : b;
+		if (radius > limits[below])
+			return; // the lower end is behind terrain too
+		int l = below * 3, u = above * 3;
+		double lx = x + directions[l] * radius, ly = y + directions[l + 1] * radius,
+				lz = z + directions[l + 2] * radius;
+		double ux = x + directions[u] * radius, uy = y + directions[u + 1] * radius,
+				uz = z + directions[u + 2] * radius;
+		double t = -lz / (uz - lz);
+		double cx = lx + (ux - lx) * t, cy = ly + (uy - ly) * t;
+		if (reachesSurface(cx, cy))
+			output.segment(lx, ly, lz, cx, cy, 0);
+	}
+
+	/**
+	 * Where the wavefront meets the water surface: a circle above the source once the pulse has
+	 * risen that far, over the open water it reaches, so not over land or in the lee of an island.
+	 */
+	void surface(double radius, Lines output) {
+		output.clear();
+		if (radius <= 0 || radius > MAX_RADIUS || z >= 0 || radius <= -z)
+			return;
+		double ring = Math.sqrt(radius * radius - z * z);
+		int steps = (int) Math.min(SURFACE_STEPS,
+				Math.max(ARC_STEPS, Math.ceil(2 * Math.PI * ring / terrain.getCellSize())));
+		double step = 2 * Math.PI / steps;
+		double previousX = x + ring, previousY = y;
+		boolean previousOpen = reachesSurface(previousX, previousY);
+		for (int i = 1; i <= steps; i++) {
+			double angle = i * step;
+			double px = x + Math.cos(angle) * ring, py = y + Math.sin(angle) * ring;
+			boolean open = reachesSurface(px, py);
+			if (previousOpen && open) {
+				output.segment(previousX, previousY, SURFACE_LIFT, px, py, SURFACE_LIFT);
+			} else if (previousOpen != open) {
+				// A shore or the edge of a shadow: find it, so the circle ends there
+				double low = angle - step, high = angle;
+				for (int k = 0; k < 10; k++) {
+					double middle = (low + high) * 0.5;
+					if (reachesSurface(x + Math.cos(middle) * ring, y + Math.sin(middle) * ring) == previousOpen)
+						low = middle;
+					else
+						high = middle;
+				}
+				double edge = previousOpen ? low : high;
+				double ex = x + Math.cos(edge) * ring, ey = y + Math.sin(edge) * ring;
+				if (previousOpen)
+					output.segment(previousX, previousY, SURFACE_LIFT, ex, ey, SURFACE_LIFT);
+				else
+					output.segment(ex, ey, SURFACE_LIFT, px, py, SURFACE_LIFT);
+			}
+			previousX = px;
+			previousY = py;
+			previousOpen = open;
+		}
+	}
+
+	/**
+	 * Whether the pulse reaches the water surface at {@code (px, py)}: open water, in sight of the
+	 * source.
+	 */
+	private boolean reachesSurface(double px, double py) {
+		if (px < terrain.getOriginX() || px > terrain.getOriginX() + terrain.worldWidth() || py < terrain.getOriginY()
+				|| py > terrain.getOriginY() + terrain.worldHeight())
+			return false;
+		return terrain.elevationAt(px, py) < 0 && visibility.clear(x, y, z, px, py, 0);
 	}
 
 	void bottom(double radius, Lines output) {
