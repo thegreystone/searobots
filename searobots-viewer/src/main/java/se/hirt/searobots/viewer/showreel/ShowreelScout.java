@@ -41,6 +41,7 @@ import java.util.SplittableRandom;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.function.Supplier;
 
 import se.hirt.searobots.api.MatchConfig;
 import se.hirt.searobots.api.SubmarineController;
@@ -51,8 +52,10 @@ import se.hirt.searobots.engine.WorldGenerator;
 import se.hirt.searobots.engine.replay.ReplayFrame;
 import se.hirt.searobots.engine.replay.ReplayReader;
 import se.hirt.searobots.engine.replay.ReplayWriter;
+import se.hirt.searobots.engine.ships.DefaultAttackSub;
 import se.hirt.searobots.engine.ships.claude.ClaudeAttackSub;
 import se.hirt.searobots.engine.ships.codex.CodexAttackSub;
+import se.hirt.searobots.engine.ships.gemini.GeminiAttackSub;
 
 /**
  * Finds a match worth filming. Surveys the terrain of many seeds (cheap), simulates the most
@@ -83,13 +86,60 @@ public final class ShowreelScout {
 	private final Path dir;
 	private final int threads;
 	private final long maxTicks;
+	private final List<Supplier<SubmarineController>> controllerFactories;
+	private final String replaySuffix;
 	private final PrintStream log;
 
 	public ShowreelScout(Path dir, int threads, long maxTicks, PrintStream log) {
+		this(dir, threads, maxTicks, defaultControllers(), log);
+	}
+
+	public ShowreelScout(Path dir, int threads, long maxTicks, List<Supplier<SubmarineController>> controllerFactories,
+			PrintStream log) {
 		this.dir = dir;
 		this.threads = Math.max(1, threads);
 		this.maxTicks = maxTicks;
+		this.controllerFactories = List.copyOf(controllerFactories);
+		this.replaySuffix = replaySuffix(this.controllerFactories);
 		this.log = log;
+	}
+
+	/** The viewer's default line-up: Claude in the first slot, Codex in the second. */
+	public static List<Supplier<SubmarineController>> defaultControllers() {
+		return List.of(ClaudeAttackSub::new, CodexAttackSub::new);
+	}
+
+	/**
+	 * Parses a two-ship matchup specification such as {@code gemini:claude} or
+	 * {@code claude,codex}.
+	 */
+	public static List<Supplier<SubmarineController>> parseShips(String spec) {
+		if (spec == null || spec.isBlank())
+			return defaultControllers();
+		String[] parts = spec.trim().split("\\s*[:,/]\\s*");
+		if (parts.length != 2)
+			throw new IllegalArgumentException(
+					"Expected two ships separated by ':' or ',' (e.g. gemini:claude), got: " + spec);
+		return List.of(controllerFactory(parts[0]), controllerFactory(parts[1]));
+	}
+
+	private static Supplier<SubmarineController> controllerFactory(String name) {
+		return switch (name.trim().toLowerCase(Locale.ROOT)) {
+		case "claude" -> ClaudeAttackSub::new;
+		case "codex" -> CodexAttackSub::new;
+		case "gemini" -> GeminiAttackSub::new;
+		case "default" -> DefaultAttackSub::new;
+		default -> throw new IllegalArgumentException(
+				"Unknown submarine '" + name + "' (expected claude, codex, gemini, or default)");
+		};
+	}
+
+	private static String replaySuffix(List<Supplier<SubmarineController>> factories) {
+		List<String> names = factories.stream()
+				.map(f -> f.get().name().toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9]+", "-")).toList();
+		if (names.equals(List.of("claude", "codex")))
+			return "";
+		return "-" + String.join("-vs-", names);
 	}
 
 	/**
@@ -144,14 +194,13 @@ public final class ShowreelScout {
 		var world = new WorldGenerator().generate(config);
 		var survey = new TerrainSurvey(world.terrain());
 		var index = new MatchIndex(survey, config.tickRateHz());
-		Path replay = dir.resolve("seed-" + Long.toHexString(seed) + ".srl");
+		Path replay = dir.resolve("seed-" + Long.toHexString(seed) + replaySuffix + ".srl");
 
 		var sim = new SimulationLoop();
 		sim.setSpeedMultiplier(1e9);
 		sim.setTicksAfterDecision((long) AFTERMATH_SECONDS * config.tickRateHz());
-		// The viewer's default line-up: Claude in the first slot, Codex in the second
-		List<SubmarineController> controllers = List.of(new ClaudeAttackSub(), new CodexAttackSub());
-		List<VehicleConfig> vehicles = List.of(VehicleConfig.submarine(), VehicleConfig.submarine());
+		List<SubmarineController> controllers = controllerFactories.stream().map(Supplier::get).toList();
+		List<VehicleConfig> vehicles = controllers.stream().map(c -> VehicleConfig.submarine()).toList();
 		try (var writer = new ReplayWriter(config, world.spawnPoints(), replay)) {
 			sim.run(world, controllers, vehicles, SimulationListeners.composite(index, writer));
 		}
@@ -213,17 +262,20 @@ public final class ShowreelScout {
 		long master = 0x5eab07L;
 		int terrain = 32, matches = 8;
 		Path dir = Path.of("target", "showreel", "scout");
+		String ships = null;
 		for (int i = 0; i < args.length; i++) {
 			switch (args[i]) {
 			case "--master" -> master = Long.parseUnsignedLong(args[++i], 16);
 			case "--terrain" -> terrain = Integer.parseInt(args[++i]);
 			case "--matches" -> matches = Integer.parseInt(args[++i]);
 			case "--dir" -> dir = Path.of(args[++i]);
+			case "--ships" -> ships = args[++i];
 			default -> throw new IllegalArgumentException("Unknown option " + args[i]);
 			}
 		}
 		var console = System.out;
-		var scout = new ShowreelScout(dir, Runtime.getRuntime().availableProcessors() / 2, 25L * 60 * 50, console);
+		var scout = new ShowreelScout(dir, Runtime.getRuntime().availableProcessors() / 2, 25L * 60 * 50,
+				parseShips(ships), console);
 		long m = master;
 		int t = terrain, n = matches;
 		Files.createDirectories(dir);

@@ -2273,6 +2273,28 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 
 	// ---- atmosphere ----
 
+	/**
+	 * Depth below the surface (in metres) at which dispersed underwater light casts no crisp sun
+	 * shadows.
+	 */
+	static final float SHADOW_DISPERSAL_DEPTH = 30f;
+
+	/**
+	 * Directional sun shadow intensity for the current atmosphere and camera altitude. Above water,
+	 * shadows follow sun elevation; underwater, scattering disperses direct sunlight so crisp
+	 * shadows fade smoothly to zero by {@link #SHADOW_DISPERSAL_DEPTH}.
+	 */
+	static float sunShadowIntensity(boolean debugMode, boolean atmosphereEnabled, float sunElev, float cameraY) {
+		if (debugMode || !atmosphereEnabled || sunElev <= 0f)
+			return 0f;
+		float depthFade = 1f;
+		if (cameraY < 0f) {
+			float remaining = Math.max(0f, 1f + cameraY / SHADOW_DISPERSAL_DEPTH);
+			depthFade = remaining * remaining;
+		}
+		return 0.65f * Math.min(1f, sunElev * 4f) * depthFade;
+	}
+
 	private void updateAtmosphere() {
 		waterFilter.setFogEnabled(atmosphereEnabled);
 		// Sun path: equator at equinox. Sun up from 6:00 to 18:00.
@@ -2286,11 +2308,11 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 		CoastalSky.updateDaylight(sky, sunUp ? Math.min(1f, sunElev * 3f) : 0f);
 		if (sunBillboard != null)
 			sunBillboard.setCullHint(sunUp ? Spatial.CullHint.Never : Spatial.CullHint.Always);
-		islandOcclusion
-				.setEnabled(!debugMode && atmosphereEnabled && cam.getLocation().y >= 0 && cam.getLocation().y < 180f);
-		islandShadows.setEnabled(!debugMode && atmosphereEnabled && sunUp);
-		islandShadows.setShadowIntensity(
-				debugMode || !atmosphereEnabled || !sunUp ? 0f : 0.65f * Math.min(1f, sunElev * 4f));
+		float camY = cam.getLocation().y; // jME Y = sim depth (negative = underwater)
+		islandOcclusion.setEnabled(!debugMode && atmosphereEnabled && camY >= 0 && camY < 180f);
+		float shadowIntensity = sunShadowIntensity(debugMode, atmosphereEnabled, sunElev, camY);
+		islandShadows.setEnabled(shadowIntensity > 0f);
+		islandShadows.setShadowIntensity(shadowIntensity);
 
 		// Sun direction: east-to-west arc through zenith
 		// jME: X=east, Y=up. Light direction = where light travels (opposite of sun position)
@@ -2357,7 +2379,6 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 		}
 
 		fogFilter.setEnabled(!directorHidesWater && !screenshotTacticalMode);
-		float camY = cam.getLocation().y; // jME Y = sim depth (negative = underwater)
 
 		// Scale sun intensity by elevation (dimmer near horizon)
 		float sunIntensity = sunUp ? Math.min(1f, sunElev * 2f) : 0f;

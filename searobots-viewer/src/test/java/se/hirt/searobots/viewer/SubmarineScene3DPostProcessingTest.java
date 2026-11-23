@@ -71,6 +71,26 @@ class SubmarineScene3DPostProcessingTest {
 				1);
 	}
 
+	@Test
+	void fadesSunShadowsOutUnderwaterAsLightDisperses() {
+		float surface = SubmarineScene3D.sunShadowIntensity(false, true, 0.7f, 0f);
+		float above = SubmarineScene3D.sunShadowIntensity(false, true, 0.7f, 40f);
+		float shallow = SubmarineScene3D.sunShadowIntensity(false, true, 0.7f, -10f);
+		float deeper = SubmarineScene3D.sunShadowIntensity(false, true, 0.7f, -20f);
+		float cutoff = SubmarineScene3D.sunShadowIntensity(false, true, 0.7f, -SubmarineScene3D.SHADOW_DISPERSAL_DEPTH);
+		float deep = SubmarineScene3D.sunShadowIntensity(false, true, 0.7f, -100f);
+
+		assertEquals(0.65f, surface, 1e-6f);
+		assertEquals(surface, above, 1e-6f);
+		assertTrue(shallow < surface && shallow > deeper);
+		assertTrue(deeper > 0f);
+		assertEquals(0f, cutoff, 1e-6f);
+		assertEquals(0f, deep, 1e-6f);
+		assertEquals(0f, SubmarineScene3D.sunShadowIntensity(true, true, 0.7f, 10f), 1e-6f);
+		assertEquals(0f, SubmarineScene3D.sunShadowIntensity(false, false, 0.7f, 10f), 1e-6f);
+		assertEquals(0f, SubmarineScene3D.sunShadowIntensity(false, true, 0f, 10f), 1e-6f);
+	}
+
 	private static void assertInitializesAndResizes(EnumSet<Caps> caps, int requestedSamples, int expectedSamples) {
 		NullRenderer renderer = new NullRenderer();
 		renderer.getCaps().clear();

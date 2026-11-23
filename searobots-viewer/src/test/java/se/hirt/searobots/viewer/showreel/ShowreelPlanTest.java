@@ -31,6 +31,8 @@ package se.hirt.searobots.viewer.showreel;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.time.LocalTime;
@@ -169,6 +171,25 @@ class ShowreelPlanTest {
 		var aerial = ShowreelPlan.create(index, 42, 85, LocalTime.of(9, 0)).beats().getFirst();
 		assertEquals(SyntheticMatch.ISLAND_X, aerial.backdrop()[0], 1);
 		assertEquals(SyntheticMatch.ISLAND_Y, aerial.backdrop()[1], 1);
+	}
+
+	@Test
+	void parseShipsResolvesBuiltInMatchupsAndCreatesFreshControllers() {
+		var defaults = ShowreelScout.parseShips(null);
+		assertEquals("Claude", defaults.get(0).get().name());
+		assertEquals("Codex", defaults.get(1).get().name());
+
+		var geminiVsClaude = ShowreelScout.parseShips("gemini:claude");
+		assertEquals("Gemini", geminiVsClaude.get(0).get().name());
+		assertEquals("Claude", geminiVsClaude.get(1).get().name());
+		assertNotSame(geminiVsClaude.get(0).get(), geminiVsClaude.get(0).get());
+
+		var commaForm = ShowreelScout.parseShips("Codex, Default");
+		assertEquals("Codex", commaForm.get(0).get().name());
+		assertEquals("Default", commaForm.get(1).get().name());
+
+		assertThrows(IllegalArgumentException.class, () -> ShowreelScout.parseShips("gemini"));
+		assertThrows(IllegalArgumentException.class, () -> ShowreelScout.parseShips("gemini:unknown"));
 	}
 
 	private static Beat find(List<Beat> beats, Shot shot) {

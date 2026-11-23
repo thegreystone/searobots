@@ -461,8 +461,9 @@ final class Showreel {
 		Files.createDirectories(work);
 
 		ShowreelScout.Candidate candidate;
+		var controllers = ShowreelScout.parseShips(options.ships);
 		var scout = new ShowreelScout(work.resolve("scout"),
-				Math.max(1, Runtime.getRuntime().availableProcessors() / 2), 25L * 60 * 50, console);
+				Math.max(1, Runtime.getRuntime().availableProcessors() / 2), 25L * 60 * 50, controllers, console);
 		if (options.replay != null) {
 			console.println("Indexing " + options.replay);
 			candidate = ShowreelScout.quietly(work.resolve("index.log"), () -> ShowreelScout.index(options.replay));
@@ -507,7 +508,7 @@ final class Showreel {
 		long master = 0x5eab07L;
 		int terrain = 64, matches = 16, width = 1920, height = 960, fps = 60, crf = 20;
 		double length = 85;
-		String ffmpeg;
+		String ffmpeg, ships;
 		LocalTime time = LocalTime.of(15, 0);
 		boolean planOnly;
 
@@ -519,6 +520,7 @@ final class Showreel {
 				case "--out" -> o.out = Path.of(args[++i]);
 				case "--replay" -> o.replay = Path.of(args[++i]);
 				case "--seed" -> o.seed = Long.parseUnsignedLong(strip(args[++i]), 16);
+				case "--ships" -> o.ships = args[++i];
 				case "--master" -> o.master = Long.parseUnsignedLong(strip(args[++i]), 16);
 				case "--scout" -> o.terrain = Integer.parseInt(args[++i]);
 				case "--matches" -> o.matches = Integer.parseInt(args[++i]);
@@ -558,6 +560,8 @@ final class Showreel {
 			  --out FILE        video to write (default target/showreel/searobots-showreel.mp4)
 			  --replay FILE     film this .srl replay instead of scouting
 			  --seed HEX        simulate and film this seed instead of scouting
+			  --ships A:B       submarines to pit against each other: claude, codex, gemini, default
+			                    (default claude:codex)
 			  --scout N         seeds whose terrain to survey (default 64)
 			  --matches N       of those, how many to simulate (default 16)
 			  --master HEX      seed for the scouting draw (default 5eab07)

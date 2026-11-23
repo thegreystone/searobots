@@ -588,7 +588,8 @@ public final class ShowreelPlan {
 			String name = index.name(sub);
 			String lower = name.toLowerCase(Locale.ROOT);
 			String what = lower.startsWith("claude") ? "Claude-authored attack submarine"
-					: lower.startsWith("codex") ? "Codex-authored attack submarine" : "autonomous submarine";
+					: lower.startsWith("codex") ? "Codex-authored attack submarine"
+							: lower.startsWith("gemini") ? "Gemini-authored attack submarine" : "autonomous submarine";
 			return name.toUpperCase(Locale.ROOT) + "|" + what;
 		}
 
