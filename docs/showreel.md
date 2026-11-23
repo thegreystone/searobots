@@ -49,6 +49,7 @@ their indexes.
 | `--out FILE`       | `target/showreel/…mp4`        | Video to write                                           |
 | `--seed HEX`       |                               | Film this seed instead of scouting                       |
 | `--replay FILE`    |                               | Film this `.srl` replay instead of scouting              |
+| `--ships A:B`      | `claude:codex`                | Submarines to fight (`claude`, `codex`, `gemini`, `default`) |
 | `--scout N`        | 64                            | Seeds whose terrain to survey                            |
 | `--matches N`      | 16                            | Of those, how many to simulate                           |
 | `--master HEX`     | `5eab07`                      | Seed for the scouting draw                               |

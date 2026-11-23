@@ -218,6 +218,7 @@ echo Showreel options (forwarded to se.hirt.searobots.viewer.Showreel):
 echo   --out FILE        video to write (default target\showreel\searobots-showreel.mp4)
 echo   --replay FILE     film this .srl replay instead of scouting
 echo   --seed HEX        simulate and film this seed instead of scouting
+echo   --ships A:B       submarines to fight: claude, codex, gemini, default (default claude:codex)
 echo   --scout N         seeds whose terrain to survey (default 64)
 echo   --matches N       of those, how many to simulate (default 16)
 echo   --master HEX      seed for the scouting draw (default 5eab07)
