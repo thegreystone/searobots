@@ -25,6 +25,15 @@ Options are passed to the jar after `--showreel`. Through Maven, give the whole 
 `exec.args`, for example
 `-Dexec.args="-Xmx4g -cp %classpath se.hirt.searobots.viewer.Showreel --seed 574e4f1ec676d60a"`.
 
+On Windows, `scripts\showreel.cmd` builds the project and launches the showreel from either Command
+Prompt or PowerShell, forwarding any options below (add `--skip-build` to reuse an existing build
+or `--clean` for a clean build):
+
+```cmd
+scripts\showreel.cmd
+scripts\showreel.cmd --seed 574e4f1ec676d60a
+```
+
 A viewer window opens while the film renders; leave it alone until it closes. The whole run
 takes a couple of minutes: about 40 seconds of scouting, then rendering at roughly 100 frames
 a second on a desktop GPU. Rendering is paced by the recording, not the display, so a slower
