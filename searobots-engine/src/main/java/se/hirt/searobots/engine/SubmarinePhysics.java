@@ -446,7 +446,7 @@ public final class SubmarinePhysics {
 
 		// 9. Battle area check
 		if (!battleArea.contains(newX, newY)) {
-			sub.setForfeited(true);
+			sub.forfeit("Left battle area");
 		}
 	}
 

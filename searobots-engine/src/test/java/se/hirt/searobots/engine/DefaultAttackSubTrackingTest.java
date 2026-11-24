@@ -29,6 +29,8 @@
 package se.hirt.searobots.engine;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.parallel.ResourceLock;
+import org.junit.jupiter.api.parallel.Resources;
 import se.hirt.searobots.api.ContactEstimate;
 import se.hirt.searobots.api.CurrentField;
 import se.hirt.searobots.api.EnvironmentSnapshot;
@@ -43,11 +45,32 @@ import se.hirt.searobots.engine.ships.DefaultAttackSub;
 import java.awt.Color;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Locale;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 /** The starter controller uses public measurements and elapsed time for its contact estimates. */
 class DefaultAttackSubTrackingTest {
+
+	@Test
+	@ResourceLock(Resources.LOCALE)
+	void missionDataKeepsFiveFieldsInCommaDecimalLocales() {
+		Locale previous = Locale.getDefault(Locale.Category.FORMAT);
+		try {
+			Locale.setDefault(Locale.Category.FORMAT, Locale.GERMANY);
+			var fixture = new Fixture();
+			TestHelpers.CapturedOutput output = null;
+			for (int tick = 0; tick < 4; tick++) {
+				output = fixture.tick(tick, 0.02, List.of(), List.of(active(0, 1500, 8, 0)));
+			}
+			assertNotNull(output.launchedTorpedo);
+			String[] fields = output.launchedTorpedo.missionData().split(",");
+			assertEquals(5, fields.length);
+			assertEquals(8, Double.parseDouble(fields[4]));
+		} finally {
+			Locale.setDefault(Locale.Category.FORMAT, previous);
+		}
+	}
 
 	@Test
 	void closeActiveFixesAreNotReplacedByAnInventedStandOffRange() {

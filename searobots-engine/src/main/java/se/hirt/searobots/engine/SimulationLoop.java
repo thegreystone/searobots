@@ -50,6 +50,21 @@ public final class SimulationLoop implements SimClock {
 	}
 
 	/**
+	 * Scoring state for a single submarine captured at the deciding tick (before any optional
+	 * replay aftermath).
+	 */
+	public record ControllerOutcome(int hp, boolean forfeited, int torpedoesFired, long cpuNanos,
+			String forfeitReason) {
+	}
+
+	/**
+	 * Resolved combat or timeout outcome captured at the deciding tick (before any optional replay
+	 * aftermath).
+	 */
+	public record MatchOutcome(long tick, List<ControllerOutcome> controllers) {
+	}
+
+	/**
 	 * Optional runtime guardrails for untrusted controllers (such as automated league matches).
 	 * Default is {@link #UNLIMITED}, which preserves standard local-development behavior where
 	 * exceptions propagate directly and CPU time is uncapped.
@@ -104,6 +119,7 @@ public final class SimulationLoop implements SimClock {
 	private volatile ControllerLimits controllerLimits = ControllerLimits.UNLIMITED;
 	private volatile long[] lastControllerCpuNanos = new long[0];
 	private volatile String[] lastForfeitReasons = new String[0];
+	private volatile MatchOutcome matchOutcome;
 
 	public SimulationLoop() {
 		this(new ClockControl());
@@ -131,6 +147,7 @@ public final class SimulationLoop implements SimClock {
 		GeneratedWorld world, List<SubmarineController> controllers, List<VehicleConfig> vehicleConfigs,
 		List<Double> headings, SimulationListener listener) {
 		Objects.requireNonNull(vehicleConfigs, "vehicleConfigs must not be null");
+		matchOutcome = null;
 		final long correlationId = SimulationJfrEvents.nextRunId();
 		clockControl.initialize();
 		var config = world.config();
@@ -569,6 +586,15 @@ public final class SimulationLoop implements SimClock {
 								tick / config.tickRateHz(),
 								ticksAfterDecision > 0 ? "after " + ticksAfterDecision + " more ticks" : "early");
 					}
+					if (matchOutcome == null && (decidedAt >= 0 || tick + 1 == config.matchDurationTicks())) {
+						var results = new ArrayList<ControllerOutcome>(entities.size());
+						for (var entity : entities) {
+							results.add(new ControllerOutcome(entity.hp(), entity.forfeited(),
+									config.torpedoCount() - entity.torpedoesRemaining(), cpuNanos[entity.id()],
+									entity.forfeitReason()));
+						}
+						matchOutcome = new MatchOutcome(tick, List.copyOf(results));
+					}
 					if (decidedAt >= 0 && tick - decidedAt >= ticksAfterDecision)
 						break;
 				} finally {
@@ -929,6 +955,14 @@ public final class SimulationLoop implements SimClock {
 
 	public ControllerLimits controllerLimits() {
 		return controllerLimits;
+	}
+
+	/**
+	 * Returns the resolved combat or timeout result captured before optional replay aftermath, or
+	 * {@code null} if the simulation has not yet resolved (e.g. stopped early).
+	 */
+	public MatchOutcome matchOutcome() {
+		return matchOutcome;
 	}
 
 	/** Cumulative CPU nanoseconds attributed to the given submarine id during the last run. */

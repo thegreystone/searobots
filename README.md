@@ -78,13 +78,13 @@ Java > Code Style > Formatter > Import.
 
 ```bash
 # macOS
-java -XstartOnFirstThread -XX:+UseZGC -Xmx2g -jar searobots-viewer-<version>.jar
+java -XstartOnFirstThread -XX:+UseZGC -Xmx2g -jar searobots-<version>.jar
 # Linux / Windows
-java -XX:+UseZGC -Xmx2g -jar searobots-viewer-<version>.jar
+java -XX:+UseZGC -Xmx2g -jar searobots-<version>.jar
 ```
 
 To start on a specific seed, pass it in hex (as the viewer shows it in its title bar and the F2
-dialog), e.g. `java -jar searobots-viewer-<version>.jar 2c`. A `.srl` file instead replays a
+dialog), e.g. `java -jar searobots-<version>.jar 2c`. A `.srl` file instead replays a
 recorded match.
 
 Press **F3** to adjust rendering settings. See [Viewer rendering](docs/viewer-rendering.md)
@@ -186,6 +186,20 @@ matches:
 
 Settings persist across seed changes and simulation restarts.
 
+External controllers can be loaded from a JAR or classes directory without rebuilding the viewer:
+
+```bash
+java -jar searobots-<version>.jar --extra-cp my-sub.jar \
+  --ship1 com.example.MySubmarine --ship2 claude --seed 2c
+```
+
+Controllers registered through
+`META-INF/services/se.hirt.searobots.api.SubmarineController` also appear in the F2 picker
+when their JAR or classes directory is supplied with `--extra-cp`.
+Use the GitHub release JAR above, or `searobots-viewer-<version>-standalone.jar` from a
+source build, for a self-contained launch. The Maven Central viewer artifact is a thin
+JAR whose dependencies are resolved by Maven.
+
 ### Running Engine Tests
 
 ```bash
@@ -241,8 +255,12 @@ Scoring per match:
 - Both die (mutual kill): 5 points each
 
 A combat match ends as soon as the outcome is decided: at most one submarine
-is alive and no torpedo fired by a dead submarine is still running. The
-2-hour limit only applies when neither side manages a kill.
+is alive and no torpedo is still running, including the survivor's own weapons.
+The configured 2-hour limit caps the match even if torpedoes remain in the water.
+
+Sparring replay recording can continue for 25 seconds after that decision to show the
+aftermath. Its score and match telemetry are frozen at the deciding tick; events in
+that extra footage do not change the result. The configured time limit still applies.
 
 The final standings combine navigation and combat points.
 
