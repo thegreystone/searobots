@@ -418,16 +418,22 @@ public final class TorpedoEntity {
 		return new TorpedoOutput() {
 			@Override
 			public void setRudder(double value) {
+				if (!Double.isFinite(value))
+					return;
 				cmdRudder = Math.clamp(value, -1, 1);
 			}
 
 			@Override
 			public void setSternPlanes(double value) {
+				if (!Double.isFinite(value))
+					return;
 				cmdSternPlanes = Math.clamp(value, -1, 1);
 			}
 
 			@Override
 			public void setThrottle(double value) {
+				if (!Double.isFinite(value))
+					return;
 				cmdThrottle = Math.clamp(value, 0, 1);
 			}
 
@@ -462,7 +468,7 @@ public final class TorpedoEntity {
 				diagIntX = intX;
 				diagIntY = intY;
 				diagIntZ = intZ;
-				diagPhase = phase;
+				diagPhase = SubmarineEntity.sanitizeText(phase, SubmarineEntity.MAX_STATUS_LENGTH);
 			}
 		};
 	}

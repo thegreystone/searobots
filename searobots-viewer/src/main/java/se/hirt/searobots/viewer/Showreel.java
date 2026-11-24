@@ -69,6 +69,7 @@ final class Showreel {
 	private final int fps, crf;
 	private final String ffmpeg;
 	private final LocalTime timeOfDay;
+	private final String title, tagline, url;
 	private final PrintStream log;
 
 	private enum Phase {
@@ -88,12 +89,21 @@ final class Showreel {
 	private long started;
 
 	Showreel(ShowreelPlan plan, Path output, int fps, int crf, String ffmpeg, LocalTime timeOfDay, PrintStream log) {
+		this(plan, output, fps, crf, ffmpeg, timeOfDay, ShowreelOverlay.DEFAULT_TITLE, ShowreelOverlay.DEFAULT_TAGLINE,
+				URL, log);
+	}
+
+	Showreel(ShowreelPlan plan, Path output, int fps, int crf, String ffmpeg, LocalTime timeOfDay, String title,
+			String tagline, String url, PrintStream log) {
 		this.plan = plan;
 		this.output = output;
 		this.fps = fps;
 		this.crf = crf;
 		this.ffmpeg = ffmpeg;
 		this.timeOfDay = timeOfDay;
+		this.title = title;
+		this.tagline = tagline;
+		this.url = url;
 		this.log = log;
 		this.totalFrames = (int) Math.round(plan.length() * fps);
 	}
@@ -193,7 +203,7 @@ final class Showreel {
 	private void startWarmup() {
 		phase = Phase.WARMUP;
 		var cam = scene.showreelCamera();
-		overlay = new ShowreelOverlay(scene.getAssetManager(), cam.getWidth(), cam.getHeight(), URL);
+		overlay = new ShowreelOverlay(scene.getAssetManager(), cam.getWidth(), cam.getHeight(), title, tagline, url);
 		scene.getGuiNode().attachChild(overlay.root());
 		var views = scene.getRenderManager().getPostViews();
 		recorder = new FrameRecorder(output, ffmpeg, fps, crf);
@@ -497,11 +507,12 @@ final class Showreel {
 					"  encode later with: ffmpeg -framerate %d -i %s -c:v libx264 -crf %d -pix_fmt yuv420p %s%n",
 					options.fps, target.resolve("frame-%05d.png"), options.crf, options.out);
 		}
-		var showreel = new Showreel(plan, target, options.fps, options.crf, ffmpeg, options.time, console);
+		var showreel = new Showreel(plan, target, options.fps, options.crf, ffmpeg, options.time, options.title,
+				options.tagline, options.url, console);
 		SubmarineScene3D.startShowreel(candidate.replay(), showreel, options.width, options.height);
 	}
 
-	private static final class Options {
+	static final class Options {
 		Path out = Path.of("target", "showreel", "searobots-showreel.mp4");
 		Path replay, frames;
 		Long seed;
@@ -509,6 +520,9 @@ final class Showreel {
 		int terrain = 64, matches = 16, width = 1920, height = 960, fps = 60, crf = 20;
 		double length = 85;
 		String ffmpeg, ships;
+		String title = ShowreelOverlay.DEFAULT_TITLE;
+		String tagline = ShowreelOverlay.DEFAULT_TAGLINE;
+		String url = URL;
 		LocalTime time = LocalTime.of(15, 0);
 		boolean planOnly;
 
@@ -535,6 +549,9 @@ final class Showreel {
 				case "--ffmpeg" -> o.ffmpeg = args[++i];
 				case "--frames" -> o.frames = Path.of(args[++i]);
 				case "--time" -> o.time = LocalTime.parse(args[++i]);
+				case "--title" -> o.title = args[++i];
+				case "--tagline" -> o.tagline = args[++i];
+				case "--url" -> o.url = args[++i];
 				case "--plan-only" -> o.planOnly = true;
 				case "--help", "-h" -> {
 					System.out.println(HELP);
@@ -570,6 +587,9 @@ final class Showreel {
 			  --fps N           frame rate (default 60)
 			  --crf N           x264 quality, lower is better (default 20)
 			  --time HH:MM      time of day for the light (default 15:00)
+			  --title TEXT      title card heading (default SEAROBOTS)
+			  --tagline TEXT    title card subtitle (default AUTONOMOUS UNDERWATER COMBAT)
+			  --url TEXT        end card URL (default github.com/thegreystone/searobots)
 			  --ffmpeg PATH     ffmpeg executable
 			  --frames DIR      write PNG frames instead of a video
 			  --plan-only       scout and plan, print the plan, render nothing

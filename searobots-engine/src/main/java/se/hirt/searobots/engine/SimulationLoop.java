@@ -31,10 +31,14 @@ package se.hirt.searobots.engine;
 import se.hirt.searobots.api.*;
 
 import java.awt.*;
+import java.lang.management.ManagementFactory;
+import java.lang.management.ThreadMXBean;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.function.Supplier;
 
 public final class SimulationLoop implements SimClock {
 
@@ -43,6 +47,42 @@ public final class SimulationLoop implements SimClock {
 
 	public enum State {
 		CREATED, INITIALIZING, RUNNING, PAUSED, STOPPED
+	}
+
+	/**
+	 * Optional runtime guardrails for untrusted controllers (such as automated league matches).
+	 * Default is {@link #UNLIMITED}, which preserves standard local-development behavior where
+	 * exceptions propagate directly and CPU time is uncapped.
+	 *
+	 * @param forfeitOnException
+	 *            when true, uncaught exceptions and non-fatal errors from controller callbacks
+	 *            forfeit that submarine cleanly instead of aborting the simulation
+	 * @param maxCpuNanosPerTick
+	 *            per-tick CPU budget in nanoseconds per submarine (shared with its active
+	 *            torpedoes); {@code <= 0} disables the per-tick limit
+	 * @param maxCpuNanosPerMatch
+	 *            cumulative CPU budget in nanoseconds per submarine (shared with its active
+	 *            torpedoes) across the whole match; {@code <= 0} disables the per-match limit
+	 * @param maxTickOverruns
+	 *            number of ticks allowed to exceed {@code maxCpuNanosPerTick} before forfeiting
+	 *            ({@code <= 0} forfeits on the first overrun)
+	 */
+	public record ControllerLimits(boolean forfeitOnException, long maxCpuNanosPerTick, long maxCpuNanosPerMatch,
+			int maxTickOverruns) {
+		public static final ControllerLimits UNLIMITED = new ControllerLimits(false, 0L, 0L, 0);
+
+		/**
+		 * Conservative defaults for automated league matches: forfeit on controller exception, 250
+		 * ms per-tick soft limit (up to 5 overruns to allow JIT warmup), and 30 s cumulative CPU
+		 * budget per match.
+		 */
+		public static ControllerLimits leagueDefaults() {
+			return new ControllerLimits(true, 250_000_000L, 30_000_000_000L, 5);
+		}
+
+		boolean tracksCpu() {
+			return forfeitOnException || maxCpuNanosPerTick > 0 || maxCpuNanosPerMatch > 0;
+		}
 	}
 
 	// Per-tick torpedo terminal-approach trace. Enable with -Dtorp.trace=true.
@@ -61,6 +101,9 @@ public final class SimulationLoop implements SimClock {
 	private final TorpedoPhysics torpedoPhysics = new TorpedoPhysics();
 	// Ticks to keep simulating once the outcome is decided (see setTicksAfterDecision)
 	private volatile long ticksAfterDecision;
+	private volatile ControllerLimits controllerLimits = ControllerLimits.UNLIMITED;
+	private volatile long[] lastControllerCpuNanos = new long[0];
+	private volatile String[] lastForfeitReasons = new String[0];
 
 	public SimulationLoop() {
 		this(new ClockControl());
@@ -126,6 +169,20 @@ public final class SimulationLoop implements SimClock {
 			entities.add(entity);
 		}
 
+		final ControllerLimits limits = this.controllerLimits;
+		final SubmarineOutput[] subOutputs = new SubmarineOutput[entities.size()];
+		for (int i = 0; i < entities.size(); i++) {
+			subOutputs[i] = entities.get(i).createOutput();
+		}
+		final long[] cpuNanos = new long[entities.size()];
+		final long[] tickCpuNanos = new long[entities.size()];
+		final int[] tickOverruns = new int[entities.size()];
+		final String[] forfeitReasons = new String[entities.size()];
+		Arrays.fill(forfeitReasons, "");
+		final ThreadMXBean threadMx = limits.tracksCpu() ? ManagementFactory.getThreadMXBean() : null;
+		final boolean cpuTimeEnabled = threadMx != null && threadMx.isCurrentThreadCpuTimeSupported()
+				&& threadMx.isThreadCpuTimeEnabled();
+
 		// Main loop (try-finally ensures onMatchEnd always fires,
 		// even if the thread is interrupted during a control wait)
 		boolean matchStarted = false;
@@ -138,13 +195,15 @@ public final class SimulationLoop implements SimClock {
 				long frameStartNanos = clockControl.frameStartNanos();
 				var tickEvent = SimulationJfrEvents.beginTick();
 				try {
+					Arrays.fill(tickCpuNanos, 0L);
 
 					// Notify controllers on first active tick, not during setup pause.
 					// This prevents controllers from gaining extra processing time
 					// while viewers are initializing.
 					if (!matchStarted) {
 						for (var e : entities) {
-							e.controller().onMatchStart(matchContext);
+							invokeGuarded(e, "onMatchStart", limits, cpuNanos, tickCpuNanos, forfeitReasons, threadMx,
+									cpuTimeEnabled, () -> e.controller().onMatchStart(matchContext));
 						}
 						matchStarted = true;
 					}
@@ -238,11 +297,15 @@ public final class SimulationLoop implements SimClock {
 
 						var controllerEvent = SimulationJfrEvents.beginPhase();
 						try {
-							entity.controller().onTick(input, entity);
+							SubmarineOutput outputFacade = subOutputs[entity.id()];
+							invokeGuarded(entity, "onTick", limits, cpuNanos, tickCpuNanos, forfeitReasons, threadMx,
+									cpuTimeEnabled, () -> entity.controller().onTick(input, outputFacade));
 						} finally {
 							SimulationJfrEvents.finishPhase(controllerEvent, "submarine controller", correlationId,
 									config.worldSeed(), tick, entity, entities.size(), torpedoes.size());
 						}
+						if (entity.forfeited())
+							continue;
 						var physicsEvent = SimulationJfrEvents.beginPhase();
 						try {
 							physics.step(entity, dt, world.terrain(), world.currentField(), config.battleArea(), tick);
@@ -257,19 +320,31 @@ public final class SimulationLoop implements SimClock {
 						var cmd = entity.pendingTorpedoLaunch();
 						if (cmd != null) {
 							entity.clearPendingTorpedoLaunch();
+							if (entity.forfeited())
+								continue;
 							// Load the torpedo into the submarine's next tube. It rides in the tube (see TorpedoTubes) and
 							// only gets its launch context, controller and physics once it has cleared the muzzle.
 							int tubeIndex = nextTube.merge(entity.id(), 1, Integer::sum) - 1;
 							var tube = TorpedoTubes.TUBES.get(tubeIndex % TorpedoTubes.TUBES.size());
-							double fuseR = Math.clamp(cmd.fuseRadius(), config.minFuseRadius(), config.maxFuseRadius());
+							double fuseR = Double.isFinite(cmd.fuseRadius())
+									? Math.clamp(cmd.fuseRadius(), config.minFuseRadius(), config.maxFuseRadius())
+									: config.minFuseRadius();
 
-							var customCtrl = entity.controller().createTorpedoController();
+							var customCtrl = callGuarded(entity, "createTorpedoController", limits, cpuNanos,
+									tickCpuNanos, forfeitReasons, threadMx, cpuTimeEnabled,
+									() -> entity.controller().createTorpedoController());
+							if (entity.forfeited())
+								continue;
 							var torpCtrl = customCtrl != null ? customCtrl
 									: new se.hirt.searobots.engine.ships.SimpleTorpedoController();
 							var torp = new TorpedoEntity(nextTorpedoId++, entity.id(), VehicleConfig.torpedo(),
 									torpCtrl, new Vec3(entity.x(), entity.y(), entity.z()), entity.heading(),
 									entity.pitch(), fuseR, entity.color());
-							torp.loadIntoTube(entity, tube, dt, cmd.missionData() != null ? cmd.missionData() : "");
+							String rawMission = cmd.missionData() != null ? cmd.missionData() : "";
+							if (rawMission.length() > SubmarineEntity.MAX_MISSION_DATA_LENGTH) {
+								rawMission = rawMission.substring(0, SubmarineEntity.MAX_MISSION_DATA_LENGTH);
+							}
+							torp.loadIntoTube(entity, tube, dt, rawMission);
 							torp.setLaunchTick(tick);
 							pendingLaunches.add(torp);
 						}
@@ -282,6 +357,8 @@ public final class SimulationLoop implements SimClock {
 					for (var torp : torpedoes) {
 						if (!torp.alive())
 							continue;
+						SubmarineEntity ownerEntity = torp.ownerId() >= 0 && torp.ownerId() < entities.size()
+								? entities.get(torp.ownerId()) : null;
 
 						// Still in its tube: carried by the submarine until it has cleared the muzzle, then released
 						if (torp.inTube()) {
@@ -291,8 +368,13 @@ public final class SimulationLoop implements SimClock {
 								torp.leaveTube();
 								torp.setLaunchTick(tick);
 								var launchPos = new Vec3(torp.x(), torp.y(), torp.z());
-								torp.controller().onLaunch(new TorpedoLaunchContext(config, world.terrain(), launchPos,
-										torp.heading(), torp.pitch(), torp.missionData()));
+								var launchCtx = new TorpedoLaunchContext(config, world.terrain(), launchPos,
+										torp.heading(), torp.pitch(), torp.missionData());
+								if (!invokeGuarded(ownerEntity, "torpedo.onLaunch", limits, cpuNanos, tickCpuNanos,
+										forfeitReasons, threadMx, cpuTimeEnabled,
+										() -> torp.controller().onLaunch(launchCtx))) {
+									torp.kill();
+								}
 							}
 							continue;
 						}
@@ -361,11 +443,18 @@ public final class SimulationLoop implements SimClock {
 							}
 						};
 						var controllerEvent = SimulationJfrEvents.beginPhase();
+						boolean torpOk;
 						try {
-							torp.controller().onTick(torpInput, torpOutput);
+							torpOk = invokeGuarded(ownerEntity, "torpedo.onTick", limits, cpuNanos, tickCpuNanos,
+									forfeitReasons, threadMx, cpuTimeEnabled,
+									() -> torp.controller().onTick(torpInput, torpOutput));
 						} finally {
 							SimulationJfrEvents.finishPhase(controllerEvent, "torpedo controller", correlationId,
 									config.worldSeed(), tick, torp, entities.size(), torpedoes.size());
+						}
+						if (!torpOk) {
+							torp.kill();
+							continue;
 						}
 
 						if (TORP_TRACE) {
@@ -385,6 +474,20 @@ public final class SimulationLoop implements SimClock {
 						} finally {
 							SimulationJfrEvents.finishPhase(physicsEvent, "torpedo physics", correlationId,
 									config.worldSeed(), tick, torp, entities.size(), torpedoes.size());
+						}
+					}
+
+					// Enforce per-tick CPU budget (shared by each submarine and its active torpedoes)
+					if (limits.maxCpuNanosPerTick() > 0) {
+						for (var entity : entities) {
+							if (!entity.forfeited() && entity.hp() > 0
+									&& tickCpuNanos[entity.id()] > limits.maxCpuNanosPerTick()) {
+								tickOverruns[entity.id()]++;
+								if (tickOverruns[entity.id()] > limits.maxTickOverruns()) {
+									forfeitController(entity, forfeitReasons,
+											"Per-tick CPU limit exceeded (" + tickOverruns[entity.id()] + " overruns)");
+								}
+							}
 						}
 					}
 
@@ -479,10 +582,110 @@ public final class SimulationLoop implements SimClock {
 		} finally {
 			clockControl.stop();
 			// Match end: always called regardless of how the loop exits
-			for (var e : entities) {
-				e.controller().onMatchEnd(new MatchResult(e.forfeited()));
+			try {
+				for (var e : entities) {
+					if (!e.forfeitReason().isEmpty() && forfeitReasons[e.id()].isEmpty()) {
+						forfeitReasons[e.id()] = e.forfeitReason();
+					}
+					invokeGuarded(e, "onMatchEnd", limits, cpuNanos, tickCpuNanos, forfeitReasons, threadMx,
+							cpuTimeEnabled, () -> e.controller().onMatchEnd(new MatchResult(e.forfeited())));
+				}
+			} finally {
+				this.lastControllerCpuNanos = cpuNanos.clone();
+				this.lastForfeitReasons = forfeitReasons.clone();
+				listener.onMatchEnd();
 			}
-			listener.onMatchEnd();
+		}
+	}
+
+	private static long nowCpuNanos(ThreadMXBean threadMx, boolean cpuTimeEnabled) {
+		return cpuTimeEnabled ? threadMx.getCurrentThreadCpuTime() : System.nanoTime();
+	}
+
+	private static boolean invokeGuarded(
+		SubmarineEntity owner, String phase, ControllerLimits limits, long[] cpuNanos, long[] tickCpuNanos,
+		String[] forfeitReasons, ThreadMXBean threadMx, boolean cpuTimeEnabled, Runnable action) {
+		if (!limits.tracksCpu()) {
+			action.run();
+			return true;
+		}
+		long start = nowCpuNanos(threadMx, cpuTimeEnabled);
+		try {
+			action.run();
+			return checkMatchCpuBudget(owner, limits, cpuNanos, tickCpuNanos, forfeitReasons,
+					Math.max(0L, nowCpuNanos(threadMx, cpuTimeEnabled) - start));
+		} catch (Throwable t) {
+			recordCpu(owner, cpuNanos, tickCpuNanos, Math.max(0L, nowCpuNanos(threadMx, cpuTimeEnabled) - start));
+			if (!limits.forfeitOnException() || !isCatchable(t)) {
+				throw t;
+			}
+			forfeitController(owner, forfeitReasons, phase + " threw " + t.getClass().getSimpleName()
+					+ (t.getMessage() != null ? ": " + t.getMessage() : ""));
+			return false;
+		}
+	}
+
+	private static <T> T callGuarded(
+		SubmarineEntity owner, String phase, ControllerLimits limits, long[] cpuNanos, long[] tickCpuNanos,
+		String[] forfeitReasons, ThreadMXBean threadMx, boolean cpuTimeEnabled, Supplier<T> action) {
+		if (!limits.tracksCpu()) {
+			return action.get();
+		}
+		long start = nowCpuNanos(threadMx, cpuTimeEnabled);
+		try {
+			T result = action.get();
+			if (!checkMatchCpuBudget(owner, limits, cpuNanos, tickCpuNanos, forfeitReasons,
+					Math.max(0L, nowCpuNanos(threadMx, cpuTimeEnabled) - start))) {
+				return null;
+			}
+			return result;
+		} catch (Throwable t) {
+			recordCpu(owner, cpuNanos, tickCpuNanos, Math.max(0L, nowCpuNanos(threadMx, cpuTimeEnabled) - start));
+			if (!limits.forfeitOnException() || !isCatchable(t)) {
+				throw t;
+			}
+			forfeitController(owner, forfeitReasons, phase + " threw " + t.getClass().getSimpleName()
+					+ (t.getMessage() != null ? ": " + t.getMessage() : ""));
+			return null;
+		}
+	}
+
+	private static void recordCpu(SubmarineEntity owner, long[] cpuNanos, long[] tickCpuNanos, long elapsed) {
+		if (owner != null && owner.id() >= 0 && owner.id() < cpuNanos.length) {
+			cpuNanos[owner.id()] += elapsed;
+			tickCpuNanos[owner.id()] += elapsed;
+		}
+	}
+
+	private static boolean checkMatchCpuBudget(
+		SubmarineEntity owner, ControllerLimits limits, long[] cpuNanos, long[] tickCpuNanos, String[] forfeitReasons,
+		long elapsed) {
+		recordCpu(owner, cpuNanos, tickCpuNanos, elapsed);
+		if (owner != null && limits.maxCpuNanosPerMatch() > 0 && owner.id() >= 0 && owner.id() < cpuNanos.length
+				&& cpuNanos[owner.id()] > limits.maxCpuNanosPerMatch()) {
+			forfeitController(owner, forfeitReasons,
+					"Match CPU budget exceeded (" + (cpuNanos[owner.id()] / 1_000_000L) + " ms)");
+			return false;
+		}
+		return true;
+	}
+
+	private static boolean isCatchable(Throwable t) {
+		return t instanceof Exception || t instanceof AssertionError || t instanceof StackOverflowError
+				|| t instanceof LinkageError;
+	}
+
+	private static void forfeitController(SubmarineEntity entity, String[] forfeitReasons, String reason) {
+		if (entity == null)
+			return;
+		boolean wasForfeited = entity.forfeited();
+		entity.forfeit(reason);
+		if (entity.id() >= 0 && entity.id() < forfeitReasons.length && forfeitReasons[entity.id()].isEmpty()) {
+			forfeitReasons[entity.id()] = entity.forfeitReason();
+		}
+		if (!wasForfeited) {
+			System.out.printf("[Guard] Sub %d (%s) forfeited: %s%n", entity.id(), entity.displayName(),
+					entity.forfeitReason());
 		}
 	}
 
@@ -717,6 +920,27 @@ public final class SimulationLoop implements SimClock {
 		if (ticks < 0)
 			throw new IllegalArgumentException("ticks must not be negative");
 		ticksAfterDecision = ticks;
+	}
+
+	/** Sets optional controller safety and CPU budget limits for subsequent {@link #run} calls. */
+	public void setControllerLimits(ControllerLimits limits) {
+		this.controllerLimits = Objects.requireNonNull(limits, "limits must not be null");
+	}
+
+	public ControllerLimits controllerLimits() {
+		return controllerLimits;
+	}
+
+	/** Cumulative CPU nanoseconds attributed to the given submarine id during the last run. */
+	public long controllerCpuNanos(int submarineId) {
+		long[] snap = lastControllerCpuNanos;
+		return submarineId >= 0 && submarineId < snap.length ? snap[submarineId] : 0L;
+	}
+
+	/** Guard forfeit reason recorded for the given submarine id during the last run, or empty. */
+	public String forfeitReason(int submarineId) {
+		String[] snap = lastForfeitReasons;
+		return submarineId >= 0 && submarineId < snap.length ? snap[submarineId] : "";
 	}
 
 	public double getSpeedMultiplier() {

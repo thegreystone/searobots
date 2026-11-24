@@ -38,6 +38,7 @@ import se.hirt.searobots.engine.TorpedoSnapshot;
 import java.io.BufferedWriter;
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
@@ -67,21 +68,45 @@ public final class ReplayWriter implements SimulationListener, AutoCloseable {
 	private final BufferedWriter writer;
 	private final Path file;
 	private final List<Vec3> spawnPoints;
+	private final long maxBytes;
+	private long bytesWritten;
 	private boolean wroteSubDefs;
+	private boolean sizeLimitExceeded;
 
 	public ReplayWriter(MatchConfig config, List<Vec3> spawnPoints, Path file) throws IOException {
+		this(config, spawnPoints, file, Long.MAX_VALUE);
+	}
+
+	/**
+	 * Creates a replay writer with an optional uncompressed byte cap ({@code maxBytes > 0}). Once
+	 * the cap is exceeded, further ticks are skipped cleanly while {@link #sizeLimitExceeded()}
+	 * becomes true, preventing unbounded replay files on disk.
+	 */
+	public ReplayWriter(MatchConfig config, List<Vec3> spawnPoints, Path file, long maxBytes) throws IOException {
+		if (maxBytes <= 0) {
+			throw new IllegalArgumentException("maxBytes must be positive");
+		}
 		Path parent = file.getParent();
 		if (parent != null) {
 			Files.createDirectories(parent);
 		}
 		this.file = file;
 		this.spawnPoints = spawnPoints;
-		this.writer = Files.newBufferedWriter(file);
+		this.maxBytes = maxBytes;
+		this.writer = Files.newBufferedWriter(file, StandardCharsets.UTF_8);
 		writeHeader(config);
 	}
 
 	public Path file() {
 		return file;
+	}
+
+	public long bytesWritten() {
+		return bytesWritten;
+	}
+
+	public boolean sizeLimitExceeded() {
+		return sizeLimitExceeded;
 	}
 
 	private void writeHeader(MatchConfig config) throws IOException {
@@ -109,6 +134,9 @@ public final class ReplayWriter implements SimulationListener, AutoCloseable {
 
 	@Override
 	public void onTick(long tick, List<SubmarineSnapshot> submarines, List<TorpedoSnapshot> torpedoes) {
+		if (sizeLimitExceeded) {
+			return;
+		}
 		try {
 			if (!wroteSubDefs) {
 				for (int i = 0; i < submarines.size(); i++) {
@@ -159,7 +187,7 @@ public final class ReplayWriter implements SimulationListener, AutoCloseable {
 	@Override
 	public void onMatchEnd() {
 		try {
-			writeLine(ReplayFormat.TAG_END);
+			writeRawLine(ReplayFormat.TAG_END);
 			writer.flush();
 			writer.close();
 		} catch (IOException e) {
@@ -177,6 +205,19 @@ public final class ReplayWriter implements SimulationListener, AutoCloseable {
 	}
 
 	private void writeLine(String line) throws IOException {
+		if (sizeLimitExceeded) {
+			return;
+		}
+		long lineBytes = line.getBytes(StandardCharsets.UTF_8).length + 1L;
+		if (bytesWritten + lineBytes > maxBytes) {
+			sizeLimitExceeded = true;
+			return;
+		}
+		writeRawLine(line);
+		bytesWritten += lineBytes;
+	}
+
+	private void writeRawLine(String line) throws IOException {
 		writer.write(line);
 		writer.write('\n');
 	}

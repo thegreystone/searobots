@@ -13,10 +13,13 @@
 
     <artifactId>searobots-viewer</artifactId>
     <name>SeaRobots Viewer</name>
+    <description>3D jMonkeyEngine viewer and offline Showreel renderer for SeaRobots</description>
 
     <properties>
         <jme.version>3.8.1-stable</jme.version>
         <exec.mainClass>se.hirt.searobots.viewer.SubmarineScene3D</exec.mainClass>
+        <!-- Viewer fat jar is distributed via GitHub Releases, not Maven Central -->
+        <central.skipPublishing>true</central.skipPublishing>
     </properties>
 
     <dependencies>

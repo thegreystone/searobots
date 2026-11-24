@@ -58,6 +58,9 @@ their indexes.
 | `--fps N`          | 60                            | Frame rate                                               |
 | `--crf N`          | 20                            | x264 quality (lower is better and larger)                |
 | `--time HH:MM`     | `15:00`                       | Time of day, for the light                               |
+| `--title TEXT`     | `SEAROBOTS`                   | Title card heading                                       |
+| `--tagline TEXT`   | `AUTONOMOUS UNDERWATER COMBAT` | Title card subtitle (auto-fitted to frame width)        |
+| `--url TEXT`       | `github.com/thegreystone/searobots` | End card URL                                       |
 | `--ffmpeg PATH`    |                               | ffmpeg executable                                        |
 | `--frames DIR`     |                               | Write PNG frames instead of a video                      |
 | `--plan-only`      |                               | Scout and plan, print the edit, render nothing           |

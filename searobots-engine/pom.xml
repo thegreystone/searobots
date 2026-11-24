@@ -13,6 +13,7 @@
 
     <artifactId>searobots-engine</artifactId>
     <name>SeaRobots Engine</name>
+    <description>Headless physics, sonar, replay, and competition simulation engine for SeaRobots</description>
 
     <dependencies>
         <dependency>
