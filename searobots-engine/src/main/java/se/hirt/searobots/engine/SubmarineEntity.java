@@ -36,10 +36,19 @@ import java.util.List;
 
 public final class SubmarineEntity implements SubmarineOutput {
 
+	public static final int MAX_NAME_LENGTH = 40;
+	public static final int MAX_STATUS_LENGTH = 40;
+	public static final int MAX_LABEL_LENGTH = 40;
+	public static final int MAX_CONTACT_ESTIMATES_PER_TICK = 32;
+	public static final int MAX_WAYPOINTS_PER_TICK = 256;
+	public static final int MAX_STRATEGIC_WAYPOINTS_PER_TICK = 32;
+	public static final int MAX_MISSION_DATA_LENGTH = 4096;
+
 	private final VehicleConfig vehicleConfig;
 	private final int id;
 	private final SubmarineController controller;
-	// the two-letter code on the sail, fixed for the match
+	// sanitized display name and two-letter sail code, fixed for the match
+	private final String displayName;
 	private final String shortName;
 	private final Color color;
 	private final int maxHp;
@@ -52,6 +61,7 @@ public final class SubmarineEntity implements SubmarineOutput {
 	private double verticalSpeed;
 	private int hp;
 	private boolean forfeited;
+	private String forfeitReason = "";
 	private double noiseLevel;
 	private double sourceLevelDb; // radiated noise in dB, computed by physics
 	private double actualBallast = 0.5; // physical ballast state (lags behind commanded)
@@ -101,9 +111,10 @@ public final class SubmarineEntity implements SubmarineOutput {
 		this.vehicleConfig = vehicleConfig;
 		this.id = id;
 		this.controller = controller;
+		this.displayName = resolveDisplayName(controller);
 		// Some tests drive an entity without a controller
 		this.shortName = controller == null ? "XX"
-				: SubmarineSnapshot.toShortName(controller.shortName(), controller.name());
+				: SubmarineSnapshot.toShortName(safeShortName(controller, displayName), displayName);
 		this.color = color;
 		this.maxHp = maxHp;
 		this.hp = maxHp;
@@ -111,6 +122,48 @@ public final class SubmarineEntity implements SubmarineOutput {
 		this.y = spawn.y();
 		this.z = vehicleConfig.surfaceLocked() ? 0 : spawn.z();
 		this.heading = heading;
+	}
+
+	private static String resolveDisplayName(SubmarineController controller) {
+		if (controller == null)
+			return "Submarine";
+		String raw = null;
+		try {
+			raw = controller.name();
+		} catch (RuntimeException ignored) {
+			// fall back to class simple name
+		}
+		if (raw == null || raw.isBlank()) {
+			raw = controller.getClass().getSimpleName();
+		}
+		if (raw == null || raw.isBlank()) {
+			return "Submarine";
+		}
+		String sanitized = sanitizeText(raw, MAX_NAME_LENGTH);
+		return sanitized.isEmpty() ? "Submarine" : sanitized;
+	}
+
+	private static String safeShortName(SubmarineController controller, String fallback) {
+		try {
+			return controller.shortName();
+		} catch (RuntimeException ignored) {
+			return fallback;
+		}
+	}
+
+	static String sanitizeText(String value, int maxLen) {
+		if (value == null || value.isEmpty())
+			return "";
+		var sb = new StringBuilder(Math.min(value.length(), maxLen));
+		for (int i = 0; i < value.length() && sb.length() < maxLen; i++) {
+			char c = value.charAt(i);
+			if (c == '\t' || c == '\r' || c == '\n') {
+				sb.append(' ');
+			} else if (!Character.isISOControl(c)) {
+				sb.append(c);
+			}
+		}
+		return sb.toString().trim();
 	}
 
 	public VehicleConfig vehicleConfig() {
@@ -134,23 +187,99 @@ public final class SubmarineEntity implements SubmarineOutput {
 
 	// ── SubmarineOutput ──
 
+	/**
+	 * Returns a delegating {@link SubmarineOutput} view that exposes only the controller output
+	 * contract and cannot be cast back to {@link SubmarineEntity}.
+	 */
+	public SubmarineOutput createOutput() {
+		return new SubmarineOutput() {
+			@Override
+			public void setRudder(double value) {
+				SubmarineEntity.this.setRudder(value);
+			}
+
+			@Override
+			public void setSternPlanes(double value) {
+				SubmarineEntity.this.setSternPlanes(value);
+			}
+
+			@Override
+			public void setThrottle(double value) {
+				SubmarineEntity.this.setThrottle(value);
+			}
+
+			@Override
+			public void setBallast(double value) {
+				SubmarineEntity.this.setBallast(value);
+			}
+
+			@Override
+			public void setStatus(String status) {
+				SubmarineEntity.this.setStatus(status);
+			}
+
+			@Override
+			public void activeSonarPing() {
+				SubmarineEntity.this.activeSonarPing();
+			}
+
+			@Override
+			public void publishContactEstimate(ContactEstimate estimate) {
+				SubmarineEntity.this.publishContactEstimate(estimate);
+			}
+
+			@Override
+			public void publishWaypoint(Waypoint waypoint) {
+				SubmarineEntity.this.publishWaypoint(waypoint);
+			}
+
+			@Override
+			public void publishFiringSolution(FiringSolution solution) {
+				SubmarineEntity.this.publishFiringSolution(solution);
+			}
+
+			@Override
+			public void launchTorpedo(TorpedoLaunchCommand command) {
+				SubmarineEntity.this.launchTorpedo(command);
+			}
+
+			@Override
+			public void setEngineClutch(boolean engaged) {
+				SubmarineEntity.this.setEngineClutch(engaged);
+			}
+
+			@Override
+			public void publishStrategicWaypoint(Waypoint waypoint, Purpose purpose) {
+				SubmarineEntity.this.publishStrategicWaypoint(waypoint, purpose);
+			}
+		};
+	}
+
 	@Override
 	public void setRudder(double value) {
+		if (!Double.isFinite(value))
+			return;
 		this.rudder = Math.clamp(value, -1, 1);
 	}
 
 	@Override
 	public void setSternPlanes(double value) {
+		if (!Double.isFinite(value))
+			return;
 		this.sternPlanes = Math.clamp(value, -1, 1);
 	}
 
 	@Override
 	public void setThrottle(double value) {
+		if (!Double.isFinite(value))
+			return;
 		this.throttle = Math.clamp(value, -1, 1);
 	}
 
 	@Override
 	public void setBallast(double value) {
+		if (!Double.isFinite(value))
+			return;
 		this.ballast = Math.clamp(value, 0, 1);
 	}
 
@@ -163,19 +292,25 @@ public final class SubmarineEntity implements SubmarineOutput {
 
 	@Override
 	public void setStatus(String status) {
-		this.status = status != null && status.length() > 40 ? status.substring(0, 40) : (status != null ? status : "");
+		this.status = sanitizeText(status, MAX_STATUS_LENGTH);
 	}
 
 	@Override
 	public void publishContactEstimate(ContactEstimate estimate) {
-		if (estimate != null) {
+		if (estimate != null && contactEstimates.size() < MAX_CONTACT_ESTIMATES_PER_TICK) {
+			String label = estimate.label();
+			if (label.length() > MAX_LABEL_LENGTH) {
+				estimate = new ContactEstimate(estimate.x(), estimate.y(), estimate.confidence(),
+						estimate.contactAlive(), estimate.uncertaintyRadius(), estimate.estimatedHeading(),
+						estimate.estimatedSpeed(), sanitizeText(label, MAX_LABEL_LENGTH));
+			}
 			contactEstimates.add(estimate);
 		}
 	}
 
 	@Override
 	public void publishWaypoint(Waypoint waypoint) {
-		if (waypoint != null) {
+		if (waypoint != null && waypoints.size() < MAX_WAYPOINTS_PER_TICK) {
 			waypoints.add(waypoint);
 		}
 	}
@@ -196,7 +331,7 @@ public final class SubmarineEntity implements SubmarineOutput {
 
 	@Override
 	public void publishStrategicWaypoint(Waypoint waypoint, Purpose purpose) {
-		if (waypoint != null && purpose != null) {
+		if (waypoint != null && purpose != null && strategicWaypoints.size() < MAX_STRATEGIC_WAYPOINTS_PER_TICK) {
 			strategicWaypoints.add(new SubmarineSnapshot.StrategicWaypointViz(waypoint, purpose));
 		}
 	}
@@ -262,6 +397,14 @@ public final class SubmarineEntity implements SubmarineOutput {
 
 	public boolean forfeited() {
 		return forfeited;
+	}
+
+	public String forfeitReason() {
+		return forfeitReason;
+	}
+
+	public String displayName() {
+		return displayName;
 	}
 
 	public double noiseLevel() {
@@ -430,6 +573,13 @@ public final class SubmarineEntity implements SubmarineOutput {
 		this.forfeited = f;
 	}
 
+	public void forfeit(String reason) {
+		this.forfeited = true;
+		if (this.forfeitReason.isEmpty() && reason != null && !reason.isBlank()) {
+			this.forfeitReason = sanitizeText(reason, 200);
+		}
+	}
+
 	public void setNoiseLevel(double n) {
 		this.noiseLevel = n;
 	}
@@ -504,7 +654,7 @@ public final class SubmarineEntity implements SubmarineOutput {
 	}
 
 	public SubmarineSnapshot snapshot() {
-		return new SubmarineSnapshot(id, controller.name(), shortName, pose(), velocity(), speed, color, forfeited, hp,
+		return new SubmarineSnapshot(id, displayName, shortName, pose(), velocity(), speed, color, forfeited, hp,
 				noiseLevel, sourceLevelDb, throttle, rudder, sternPlanes, status, pingRequested, torpedoesRemaining,
 				contactEstimates(), waypoints(), strategicWaypoints(), firingSolution, vehicleConfig.surfaceLocked());
 	}

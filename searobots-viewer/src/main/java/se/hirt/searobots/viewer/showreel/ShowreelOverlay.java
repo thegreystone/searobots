@@ -69,6 +69,8 @@ import com.jme3.texture.plugins.AWTLoader;
  * set with Java2D into textures, so it stays crisp at any size.
  */
 public final class ShowreelOverlay {
+	public static final String DEFAULT_TITLE = "SEAROBOTS";
+	public static final String DEFAULT_TAGLINE = "AUTONOMOUS UNDERWATER COMBAT";
 	static final Color MINT = new Color(0x5ff0c8);
 	private static final List<String> TITLE_FONTS = List.of("Montserrat", "Avenir Next", "Bahnschrift",
 			"Segoe UI Semibold", "Helvetica Neue", "Arial");
@@ -85,12 +87,20 @@ public final class ShowreelOverlay {
 	private final Map<String, Texture2D> captions = new HashMap<>();
 	private final Map<String, Texture2D> badges = new HashMap<>();
 	private final String titleFamily, textFamily;
+	private final String titleText, taglineText;
 	private String shownCaption, shownBadge;
 
 	public ShowreelOverlay(AssetManager assets, int width, int height, String url) {
+		this(assets, width, height, DEFAULT_TITLE, DEFAULT_TAGLINE, url);
+	}
+
+	public ShowreelOverlay(AssetManager assets, int width, int height, String titleText, String taglineText,
+			String url) {
 		this.assets = assets;
 		this.width = width;
 		this.height = height;
+		this.titleText = titleText != null && !titleText.isBlank() ? titleText.trim() : DEFAULT_TITLE;
+		this.taglineText = taglineText != null && !taglineText.isBlank() ? taglineText.trim() : DEFAULT_TAGLINE;
 		var families = Set.of(GraphicsEnvironment.getLocalGraphicsEnvironment().getAvailableFontFamilyNames());
 		titleFamily = TITLE_FONTS.stream().filter(families::contains).findFirst().orElse(Font.SANS_SERIF);
 		textFamily = TEXT_FONTS.stream().filter(families::contains).findFirst().orElse(Font.SANS_SERIF);
@@ -177,9 +187,19 @@ public final class ShowreelOverlay {
 	// ── Graphics ──
 
 	private BufferedImage card(String url) {
+		return renderCard(width, height, titleFamily, textFamily, titleText, taglineText, url);
+	}
+
+	/** Renders a title or end card to an ARGB image; package-private for headless testing. */
+	static BufferedImage renderCard(
+		int width, int height, String titleFamily, String textFamily, String titleText, String taglineText,
+		String url) {
+		String heading = titleText != null && !titleText.isBlank() ? titleText.trim() : DEFAULT_TITLE;
+		String sub = taglineText != null && !taglineText.isBlank() ? taglineText.trim() : DEFAULT_TAGLINE;
 		var image = new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB);
 		var g = graphics(image);
 		float unit = height / 960f;
+		int maxTextWidth = Math.round(width * 0.88f);
 		int logoSize = Math.round(150 * unit);
 		// The block sits in the sky, above the horizon and the island
 		int block = logoSize + Math.round((78 + 52 + (url != null ? 64 : 0)) * unit);
@@ -198,18 +218,35 @@ public final class ShowreelOverlay {
 			// The card still works without its logo
 		}
 		y += logoSize + Math.round(78 * unit);
-		var name = tracked(new Font(titleFamily, Font.BOLD, Math.round(86 * unit)), 0.22f);
-		centered(g, "SEAROBOTS", name, Color.WHITE, y);
+		var name = fittedFont(g, tracked(new Font(titleFamily, Font.BOLD, Math.round(86 * unit)), 0.22f), heading,
+				maxTextWidth);
+		centeredStatic(g, width, heading, name, Color.WHITE, y);
 		y += Math.round(52 * unit);
-		var tagline = tracked(new Font(textFamily, Font.BOLD, Math.round(25 * unit)), 0.34f);
-		centered(g, "AUTONOMOUS UNDERWATER COMBAT", tagline, new Color(0x8ff7dc), y);
-		if (url != null) {
+		var tagline = fittedFont(g, tracked(new Font(textFamily, Font.BOLD, Math.round(25 * unit)), 0.34f), sub,
+				maxTextWidth);
+		centeredStatic(g, width, sub, tagline, new Color(0x8ff7dc), y);
+		if (url != null && !url.isBlank()) {
 			y += Math.round(64 * unit);
-			centered(g, url, tracked(new Font(textFamily, Font.PLAIN, Math.round(26 * unit)), 0.06f),
-					new Color(235, 242, 250, 230), y);
+			var urlFont = fittedFont(g, tracked(new Font(textFamily, Font.PLAIN, Math.round(26 * unit)), 0.06f), url,
+					maxTextWidth);
+			centeredStatic(g, width, url, urlFont, new Color(235, 242, 250, 230), y);
 		}
 		g.dispose();
 		return image;
+	}
+
+	private static Font fittedFont(Graphics2D g, Font base, String text, int maxWidth) {
+		int textWidth = g.getFontMetrics(base).stringWidth(text);
+		if (textWidth <= maxWidth || textWidth <= 0) {
+			return base;
+		}
+		float scaledSize = Math.max(10f, base.getSize2D() * ((float) maxWidth / textWidth));
+		return base.deriveFont(scaledSize);
+	}
+
+	private static void centeredStatic(Graphics2D g, int width, String text, Font font, Color color, int baseline) {
+		int w = g.getFontMetrics(font).stringWidth(text);
+		shadowed(g, text, font, color, (width - w) / 2, baseline);
 	}
 
 	private Texture2D captionTexture(String text) {
@@ -282,11 +319,6 @@ public final class ShowreelOverlay {
 
 	private static Font tracked(Font font, float tracking) {
 		return font.deriveFont(Map.of(TextAttribute.TRACKING, tracking));
-	}
-
-	private void centered(Graphics2D g, String text, Font font, Color color, int baseline) {
-		int w = g.getFontMetrics(font).stringWidth(text);
-		shadowed(g, text, font, color, (width - w) / 2, baseline);
 	}
 
 	/** Text with a soft drop shadow, so it reads over bright water. */
