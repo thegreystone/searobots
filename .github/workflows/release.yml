@@ -34,10 +34,10 @@ jobs:
       - name: Build and test
         run: mvn -B install
 
-      - name: Rename fat jar for release
+      - name: Copy standalone fat jar for GitHub Release
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          mv searobots-viewer/target/searobots-viewer-${VERSION}.jar \
+          cp searobots-viewer/target/searobots-viewer-${VERSION}-standalone.jar \
              searobots-viewer/target/searobots-${VERSION}.jar
 
       - name: Create GitHub Release
@@ -45,11 +45,11 @@ jobs:
         with:
           generate_release_notes: true
           files: |
-            searobots-viewer/target/searobots-*.jar
+            searobots-viewer/target/searobots-[0-9]*.jar
             searobots-api/target/searobots-api-*.jar
             searobots-engine/target/searobots-engine-*.jar
 
-      - name: Publish API and Engine to Maven Central
+      - name: Publish API, Engine, and thin Viewer to Maven Central
         env:
           CENTRAL_USERNAME: ${{ secrets.CENTRAL_USERNAME }}
           CENTRAL_PASSWORD: ${{ secrets.CENTRAL_PASSWORD }}
@@ -60,4 +60,4 @@ jobs:
             echo "Maven Central secrets not configured; skipping Central Portal deployment."
             exit 0
           fi
-          mvn -B deploy -Pcentral-release -pl .,searobots-api,searobots-engine -DskipTests
+          mvn -B deploy -Pcentral-release -DskipTests -Dshade.skip=true

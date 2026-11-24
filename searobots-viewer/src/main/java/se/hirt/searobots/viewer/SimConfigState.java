@@ -39,15 +39,12 @@ import com.simsilica.lemur.component.SpringGridLayout;
 import com.simsilica.lemur.style.ElementId;
 import se.hirt.searobots.api.SubmarineController;
 import se.hirt.searobots.api.VehicleConfig;
-import se.hirt.searobots.engine.ships.DefaultAttackSub;
-import se.hirt.searobots.engine.ships.SubmarineDrone;
-import se.hirt.searobots.engine.ships.TargetDrone;
-import se.hirt.searobots.engine.ships.claude.ClaudeAttackSub;
-import se.hirt.searobots.engine.ships.codex.CodexAttackSub;
-import se.hirt.searobots.engine.ships.gemini.GeminiAttackSub;
+import se.hirt.searobots.engine.ControllerLoader;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Supplier;
 
 /**
@@ -56,20 +53,64 @@ import java.util.function.Supplier;
  */
 final class SimConfigState extends BaseAppState {
 
-	record ShipOption(String displayName, Supplier<SubmarineController> factory, VehicleConfig vehicleConfig) {
+	record ShipOption(String displayName, String className, Supplier<SubmarineController> factory,
+			VehicleConfig vehicleConfig) {
 		@Override
 		public String toString() {
 			return displayName;
 		}
 	}
 
-	private static final List<ShipOption> SHIP_OPTIONS = List.of(new ShipOption("(empty)", null, null),
-			new ShipOption("Codex", CodexAttackSub::new, VehicleConfig.submarine()),
-			new ShipOption("Claude", ClaudeAttackSub::new, VehicleConfig.submarine()),
-			new ShipOption("Gemini", GeminiAttackSub::new, VehicleConfig.submarine()),
-			new ShipOption("Default", DefaultAttackSub::new, VehicleConfig.submarine()),
-			new ShipOption("Sub Drone", SubmarineDrone::new, VehicleConfig.submarine()),
-			new ShipOption("Ship Drone (surface)", TargetDrone::new, VehicleConfig.surfaceShip()));
+	private static final CopyOnWriteArrayList<ShipOption> SHIP_OPTIONS = initShipOptions();
+
+	private static CopyOnWriteArrayList<ShipOption> initShipOptions() {
+		var list = new CopyOnWriteArrayList<ShipOption>();
+		list.add(new ShipOption("(empty)", null, null, null));
+		for (var b : ControllerLoader.allBuiltIns()) {
+			list.add(new ShipOption(b.displayName(), b.className(), b.factory(), b.vehicleConfig()));
+		}
+		ClassLoader extraLoader = resolveExtraClassLoader(System.getProperty("searobots.extraCp"));
+		for (var sp : ControllerLoader.discoverServiceProviders(extraLoader)) {
+			registerIfAbsent(list, sp);
+		}
+		String extraShips = System.getProperty("searobots.extraShips");
+		if (extraShips != null && !extraShips.isBlank()) {
+			for (String spec : extraShips.split(",")) {
+				if (!spec.isBlank()) {
+					try {
+						registerIfAbsent(list, ControllerLoader.resolve(spec.trim(), extraLoader));
+					} catch (RuntimeException e) {
+						System.err
+								.println("searobots.extraShips: cannot load '" + spec.trim() + "': " + e.getMessage());
+					}
+				}
+			}
+		}
+		return list;
+	}
+
+	private static ClassLoader resolveExtraClassLoader(String extraCp) {
+		ClassLoader base = SimConfigState.class.getClassLoader();
+		if (extraCp == null || extraCp.isBlank()) {
+			return base;
+		}
+		try {
+			return ControllerLoader.createClassLoader(extraCp, base);
+		} catch (Exception e) {
+			System.err.println("Failed to load extra classpath '" + extraCp + "': " + e.getMessage());
+			return base;
+		}
+	}
+
+	private static int registerIfAbsent(List<ShipOption> list, ControllerLoader.ResolvedController rc) {
+		for (int i = 0; i < list.size(); i++) {
+			if (rc.className().equals(list.get(i).className())) {
+				return i;
+			}
+		}
+		list.add(new ShipOption(rc.displayName(), rc.className(), rc.factory(), rc.vehicleConfig()));
+		return list.size() - 1;
+	}
 
 	private static final String[] SIM_TYPES = {"Free patrol", "Competition (nav + combat)"};
 	private static final String[] SPEED_OPTIONS = {"1x", "2x", "4x", "8x", "16x"};
@@ -77,9 +118,8 @@ final class SimConfigState extends BaseAppState {
 	// Persistent selections (survive dialog close/reopen)
 	// TODO: Currently fixed to two vessel slots (2-way); extend to allow adding an arbitrary number
 	// of boats into the water (multiple submarines, cargo ships / surface traffic, etc.).
-	// Defaults: Claude vs Codex. Overridable from the command line for
-	// development, e.g. -Dsearobots.ship1="Gemini" -Dsearobots.ship2="Claude"
-	// (case-insensitive substring of the display name, or a numeric index).
+	// Defaults: Claude vs Codex. Overridable via -Dsearobots.ship1 / -Dsearobots.ship2 or
+	// --ship1 / --ship2 with a built-in name, index, or external SubmarineController FQCN.
 	static int selectedShip1Index = shipIndexFromProperty("searobots.ship1", 2);
 	static int selectedShip2Index = shipIndexFromProperty("searobots.ship2", 1);
 
@@ -87,19 +127,93 @@ final class SimConfigState extends BaseAppState {
 		String value = System.getProperty(property);
 		if (value == null || value.isBlank())
 			return defaultIndex;
-		String needle = value.trim().toLowerCase();
-		for (int i = 0; i < SHIP_OPTIONS.size(); i++) {
-			if (SHIP_OPTIONS.get(i).displayName().toLowerCase().contains(needle))
-				return i;
-		}
-		try {
-			int index = Integer.parseInt(value.trim());
-			if (index >= 0 && index < SHIP_OPTIONS.size())
-				return index;
-		} catch (NumberFormatException ignored) {
+		int resolved = resolveOrRegisterShip(value, resolveExtraClassLoader(System.getProperty("searobots.extraCp")));
+		if (resolved >= 0) {
+			return resolved;
 		}
 		System.err.println(property + "=" + value + " matches no ship option; using default");
 		return defaultIndex;
+	}
+
+	/**
+	 * Resolves a ship selector (built-in display name substring, numeric index, or external
+	 * {@link SubmarineController} FQCN) and dynamically registers external controllers into
+	 * {@link #SHIP_OPTIONS} so they also appear in the interactive configuration dialog.
+	 *
+	 * @return index into {@link #SHIP_OPTIONS}, or {@code -1} if unresolved
+	 */
+	static int resolveOrRegisterShip(String spec, ClassLoader extraLoader) {
+		if (spec == null || spec.isBlank()) {
+			return -1;
+		}
+		String trimmed = spec.trim();
+		String needle = trimmed.toLowerCase(Locale.ROOT);
+		if ("empty".equals(needle) || "none".equals(needle)) {
+			return 0;
+		}
+		// 1. Exact class-name match against already-registered options
+		for (int i = 0; i < SHIP_OPTIONS.size(); i++) {
+			if (trimmed.equals(SHIP_OPTIONS.get(i).className())) {
+				return i;
+			}
+		}
+		// 2. Display name substring match (for short names like "Claude", "Codex", "Gemini")
+		if (!trimmed.contains(".")) {
+			for (int i = 0; i < SHIP_OPTIONS.size(); i++) {
+				if (SHIP_OPTIONS.get(i).displayName().toLowerCase(Locale.ROOT).contains(needle)) {
+					return i;
+				}
+			}
+		}
+		// 3. Numeric index
+		try {
+			int index = Integer.parseInt(trimmed);
+			if (index >= 0 && index < SHIP_OPTIONS.size()) {
+				return index;
+			}
+		} catch (NumberFormatException ignored) {
+		}
+		// 4. External SubmarineController FQCN (or built-in alias via ControllerLoader)
+		try {
+			var rc = ControllerLoader.resolve(trimmed, extraLoader);
+			return registerIfAbsent(SHIP_OPTIONS, rc);
+		} catch (RuntimeException e) {
+			return -1;
+		}
+	}
+
+	static void applyCliOverrides(String ship1Spec, String ship2Spec, String extraCp, Integer speedMultiplier) {
+		ClassLoader loader = resolveExtraClassLoader(
+				extraCp != null ? extraCp : System.getProperty("searobots.extraCp"));
+		if (ship1Spec != null && !ship1Spec.isBlank()) {
+			int idx = resolveOrRegisterShip(ship1Spec, loader);
+			if (idx >= 0) {
+				selectedShip1Index = idx;
+			} else {
+				System.err.println("--ship1=" + ship1Spec + " matches no built-in ship or SubmarineController class");
+			}
+		}
+		if (ship2Spec != null && !ship2Spec.isBlank()) {
+			int idx = resolveOrRegisterShip(ship2Spec, loader);
+			if (idx >= 0) {
+				selectedShip2Index = idx;
+			} else {
+				System.err.println("--ship2=" + ship2Spec + " matches no built-in ship or SubmarineController class");
+			}
+		}
+		if (speedMultiplier != null) {
+			int[] speeds = {1, 2, 4, 8, 16};
+			for (int i = 0; i < speeds.length; i++) {
+				if (speeds[i] == speedMultiplier) {
+					selectedSpeedMultiplier = i;
+					break;
+				}
+			}
+		}
+	}
+
+	static List<ShipOption> shipOptions() {
+		return List.copyOf(SHIP_OPTIONS);
 	}
 
 	static int selectedSpeedMultiplier = 1;

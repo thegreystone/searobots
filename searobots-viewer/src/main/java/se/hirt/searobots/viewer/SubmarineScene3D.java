@@ -395,9 +395,11 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 			}
 			return;
 		}
-		// A .srl path launches straight into replay of that recorded match; otherwise the
-		// first arg (if any) is a seed for a fresh match, in hex as the viewer shows it.
-		String replayPath = (args.length > 0 && args[0].toLowerCase().endsWith(".srl")) ? args[0] : null;
+
+		LaunchOptions launch = parseLaunchArgs(args);
+		SimConfigState.applyCliOverrides(launch.ship1(), launch.ship2(), launch.extraCp(), launch.speedMultiplier());
+
+		String replayPath = launch.replayPath();
 		long seed;
 		if (replayPath != null) {
 			try {
@@ -408,8 +410,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 				return;
 			}
 		} else {
-			seed = args.length > 0 ? SimConfigState.parseSeed(args[0])
-					: java.util.concurrent.ThreadLocalRandom.current().nextLong();
+			seed = launch.seed() != null ? launch.seed() : java.util.concurrent.ThreadLocalRandom.current().nextLong();
 		}
 
 		var app = new SubmarineScene3D();
@@ -436,6 +437,82 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 		app.standaloneGenerator = new se.hirt.searobots.engine.WorldGenerator();
 
 		app.start();
+	}
+
+	record LaunchOptions(String replayPath, Long seed, String ship1, String ship2, String extraCp,
+			Integer speedMultiplier) {
+	}
+
+	static LaunchOptions parseLaunchArgs(String[] args) {
+		String replayPath = null;
+		Long seed = null;
+		String ship1 = null;
+		String ship2 = null;
+		String extraCp = null;
+		Integer speed = null;
+
+		for (int i = 0; i < args.length; i++) {
+			String arg = args[i];
+			if (arg == null || arg.isBlank()) {
+				continue;
+			}
+			switch (arg) {
+			case "--ship1" -> {
+				if (i + 1 < args.length && !args[i + 1].isBlank()) {
+					ship1 = args[++i];
+				} else if (i + 1 < args.length) {
+					i++;
+				}
+			}
+			case "--ship2" -> {
+				if (i + 1 < args.length && !args[i + 1].isBlank()) {
+					ship2 = args[++i];
+				} else if (i + 1 < args.length) {
+					i++;
+				}
+			}
+			case "--seed" -> {
+				if (i + 1 < args.length) {
+					String val = args[++i];
+					if (!val.isBlank()) {
+						seed = SimConfigState.parseSeed(val);
+					}
+				}
+			}
+			case "--replay" -> {
+				if (i + 1 < args.length) {
+					String val = args[++i];
+					if (!val.isBlank()) {
+						replayPath = val;
+					}
+				}
+			}
+			case "--extra-cp" -> {
+				if (i + 1 < args.length) {
+					String val = args[++i];
+					if (!val.isBlank()) {
+						extraCp = val;
+					}
+				}
+			}
+			case "--speed" -> {
+				if (i + 1 < args.length) {
+					String val = args[++i];
+					if (!val.isBlank()) {
+						speed = Integer.parseInt(val.trim());
+					}
+				}
+			}
+			default -> {
+				if (arg.toLowerCase(java.util.Locale.ROOT).endsWith(".srl")) {
+					replayPath = arg;
+				} else if (!arg.startsWith("--") && seed == null) {
+					seed = SimConfigState.parseSeed(arg);
+				}
+			}
+			}
+		}
+		return new LaunchOptions(replayPath, seed, ship1, ship2, extraCp, speed);
 	}
 
 	/**
