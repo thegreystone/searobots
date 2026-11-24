@@ -49,11 +49,19 @@ public final class SimulationLoop implements SimClock {
 		CREATED, INITIALIZING, RUNNING, PAUSED, STOPPED
 	}
 
-	/** Scoring state captured before any optional replay aftermath. */
-	record ControllerOutcome(int hp, boolean forfeited, int torpedoesFired, long cpuNanos, String forfeitReason) {
+	/**
+	 * Scoring state for a single submarine captured at the deciding tick (before any optional
+	 * replay aftermath).
+	 */
+	public record ControllerOutcome(int hp, boolean forfeited, int torpedoesFired, long cpuNanos,
+			String forfeitReason) {
 	}
 
-	record MatchOutcome(long tick, List<ControllerOutcome> controllers) {
+	/**
+	 * Resolved combat or timeout outcome captured at the deciding tick (before any optional replay
+	 * aftermath).
+	 */
+	public record MatchOutcome(long tick, List<ControllerOutcome> controllers) {
 	}
 
 	/**
@@ -949,8 +957,11 @@ public final class SimulationLoop implements SimClock {
 		return controllerLimits;
 	}
 
-	/** The resolved combat or timeout result, excluding optional aftermath; null until resolved. */
-	MatchOutcome matchOutcome() {
+	/**
+	 * Returns the resolved combat or timeout result captured before optional replay aftermath, or
+	 * {@code null} if the simulation has not yet resolved (e.g. stopped early).
+	 */
+	public MatchOutcome matchOutcome() {
 		return matchOutcome;
 	}
 

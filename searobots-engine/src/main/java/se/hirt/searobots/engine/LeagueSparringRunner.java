@@ -228,7 +228,7 @@ public final class LeagueSparringRunner {
 
 	private static GameOutcome runSingleGame(
 		int gameNumber, long seed, ResolvedController challenger, ResolvedController opponent, int durationTicks,
-		boolean leagueLimits, RecordMode recordMode, Path replayDir) throws IOException {
+		boolean leagueLimits, RecordMode recordMode, Path replayDir) throws IOException, InterruptedException {
 		boolean swapSpawns = (gameNumber % 2 == 0);
 		ResolvedController slot0 = swapSpawns ? opponent : challenger;
 		ResolvedController slot1 = swapSpawns ? challenger : opponent;
@@ -261,6 +261,12 @@ public final class LeagueSparringRunner {
 		}
 
 		var result = sim.matchOutcome();
+		if (result == null) {
+			if (Thread.currentThread().isInterrupted()) {
+				throw new InterruptedException("Sparring game " + gameNumber + " interrupted before resolution");
+			}
+			throw new IllegalStateException("Simulation exited without producing a match outcome");
+		}
 		var result0 = result.controllers().get(0);
 		var result1 = result.controllers().get(1);
 		boolean alive0 = result0.hp() > 0 && !result0.forfeited();
@@ -298,7 +304,13 @@ public final class LeagueSparringRunner {
 		long cpuSub = subResult.cpuNanos() / 1_000_000L;
 		long cpuOpp = oppResult.cpuNanos() / 1_000_000L;
 		String forfSub = subResult.forfeitReason();
+		if (subResult.forfeited() && forfSub.isEmpty()) {
+			forfSub = "Forfeited";
+		}
 		String forfOpp = oppResult.forfeitReason();
+		if (oppResult.forfeited() && forfOpp.isEmpty()) {
+			forfOpp = "Forfeited";
+		}
 
 		Path savedReplay = tempReplay;
 		if (tempReplay != null && recordMode == RecordMode.LOSSES && winnerSide > 0) {
@@ -451,6 +463,9 @@ public final class LeagueSparringRunner {
 		} catch (ExecutionException e) {
 			if (e.getCause() instanceof IOException io) {
 				throw io;
+			}
+			if (e.getCause() instanceof InterruptedException ie) {
+				throw ie;
 			}
 			if (e.getCause() instanceof RuntimeException re) {
 				throw re;

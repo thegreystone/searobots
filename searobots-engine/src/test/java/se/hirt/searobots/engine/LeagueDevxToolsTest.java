@@ -136,6 +136,33 @@ class LeagueDevxToolsTest {
 		assertTrue(report.errors().stream().anyMatch(e -> e.contains("not compiled from the submitted sources")));
 	}
 
+	public static final class BoundaryRunner implements SubmarineController {
+		@Override
+		public void onTick(SubmarineInput input, SubmarineOutput output) {
+			// Head straight north at flank speed to cross the battle area boundary.
+			output.setThrottle(1.0);
+			output.setBallast(0.5);
+			double heading = input.self().pose().heading();
+			double err = Math.atan2(-Math.sin(heading), Math.cos(heading));
+			output.setRudder(Math.clamp(err * 2.0, -1.0, 1.0));
+			double zErr = -150.0 - input.self().pose().position().z();
+			output.setSternPlanes(Math.clamp(zErr / 80.0, -1.0, 1.0));
+		}
+	}
+
+	@Test
+	void boundaryForfeitRecordsReasonAndCountsInSparringSummary(@TempDir
+	Path replayDir) throws Exception {
+		var summary = LeagueSparringRunner.runAll(new Options(BoundaryRunner.class.getName(),
+				DummyTestSub.class.getName(), 1, false, 0x2cL, 30, 1, true, RecordMode.NONE, replayDir, null))
+				.getFirst();
+		assertEquals(1, summary.losses());
+		assertEquals(1, summary.forfeits(), "Boundary forfeit must be counted in summary forfeits");
+		var game = summary.games().getFirst();
+		assertEquals("FORFEIT", game.reason());
+		assertEquals("Left battle area", game.forfeitSub());
+	}
+
 	public static final class DummyTestSub implements SubmarineController {
 		@Override
 		public String name() {
