@@ -434,6 +434,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 
 		// Open the window before generating the world so setup can display progress.
 		app.standaloneSeed = seed;
+		app.initialSpeedMultiplier = launch.speedMultiplier();
 		app.standaloneGenerator = new se.hirt.searobots.engine.WorldGenerator();
 
 		app.start();
@@ -549,6 +550,7 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 	volatile boolean dialogOpen; // suppresses game key mappings when a text-input dialog is open
 	private volatile String replayPath; // last .srl loaded; the replay UI shows only while isReplayActive()
 	private long standaloneSeed;
+	private Integer initialSpeedMultiplier;
 	private se.hirt.searobots.engine.WorldGenerator standaloneGenerator;
 	private volatile GeneratedWorld standaloneWorld;
 	private SimulationManager standaloneSimManager;
@@ -1153,6 +1155,10 @@ public final class SubmarineScene3D extends SimpleApplication implements se.hirt
 				var vehicleConfigs = SimConfigState.currentVehicleConfigs();
 				if (!controllers.isEmpty()) {
 					standaloneSimManager.start(standaloneWorld, controllers, vehicleConfigs);
+					var loop = standaloneSimManager.currentLoop();
+					if (loop != null && initialSpeedMultiplier != null && initialSpeedMultiplier > 0) {
+						loop.setSpeedMultiplier(initialSpeedMultiplier);
+					}
 					resumeAfterLoading = true;
 				}
 			}

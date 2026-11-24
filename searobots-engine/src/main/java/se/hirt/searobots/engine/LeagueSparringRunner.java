@@ -389,9 +389,11 @@ public final class LeagueSparringRunner {
 			case "--games" -> games = Integer.parseInt(args[++i]);
 			case "--clinch" -> clinch = true;
 			case "--seed" -> {
-				String raw = args[++i];
-				if (!raw.isBlank()) {
-					masterSeed = parseSeed(raw);
+				if (i + 1 < args.length && !args[i + 1].startsWith("--")) {
+					String raw = args[++i];
+					if (!raw.isBlank()) {
+						masterSeed = parseSeed(raw);
+					}
 				}
 			}
 			case "--combat-minutes" -> combatMinutes = Integer.parseInt(args[++i]);
@@ -410,9 +412,11 @@ public final class LeagueSparringRunner {
 				}
 			}
 			case "--extra-cp" -> {
-				String raw = args[++i];
-				if (!raw.isBlank()) {
-					extraCp = raw;
+				if (i + 1 < args.length && !args[i + 1].startsWith("--")) {
+					String raw = args[++i];
+					if (!raw.isBlank()) {
+						extraCp = raw;
+					}
 				}
 			}
 			default -> throw new IllegalArgumentException("Unknown argument: " + args[i]);

@@ -535,7 +535,7 @@ public final class LeaguePreflight {
 				formatManifestJson(slug, name, shortName, githubUser, remote, commit, controllerClass, license, desc));
 		if (!dirty.isEmpty()) {
 			System.out.println(
-					"\nWARNING: You have uncommitted local changes — commit and push before submitting this SHA!");
+					"\nWARNING: You have uncommitted local changes - commit and push before submitting this SHA!");
 		}
 	}
 
