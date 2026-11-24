@@ -786,8 +786,8 @@ public final class DefaultAttackSub implements SubmarineController {
 		// If we're below the thermocline and can hear them, they're likely
 		// near our depth or above the layer. Use a reasonable estimate.
 		double targetDepth = Math.max(thermoclineDepth + 20, -150);
-		String missionData = String.format("%.0f,%.0f,%.0f,%.4f,%.1f", leadX, leadY, targetDepth, trackedHeading,
-				trackedSpeed);
+		String missionData = String.format(java.util.Locale.ROOT, "%.0f,%.0f,%.0f,%.4f,%.1f", leadX, leadY, targetDepth,
+				trackedHeading, trackedSpeed);
 
 		output.launchTorpedo(new TorpedoLaunchCommand(bearing, 0, 20.0, missionData));
 		lastTorpedoLaunchTick = tick;

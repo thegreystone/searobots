@@ -40,12 +40,8 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
-import java.util.Set;
 import java.util.SplittableRandom;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
@@ -71,6 +67,15 @@ public final class LeagueSparringRunner {
 	public static final int DEFAULT_GAMES = 33;
 	public static final int DEFAULT_COMBAT_MINUTES = 120;
 	public static final long AFTERMATH_TICKS = 25L * 50L;
+	private static final SimulationListener NO_RECORDING = new SimulationListener() {
+		@Override
+		public void onTick(long tick, List<SubmarineSnapshot> submarines, List<TorpedoSnapshot> torpedoes) {
+		}
+
+		@Override
+		public void onMatchEnd() {
+		}
+	};
 
 	public enum RecordMode {
 		NONE, LOSSES, ALL
@@ -240,7 +245,6 @@ public final class LeagueSparringRunner {
 			sim.setTicksAfterDecision(AFTERMATH_TICKS);
 		}
 
-		var tracker = new MatchStatsListener(config.startingHp());
 		List<SubmarineController> controllers = List.of(slot0.factory().get(), slot1.factory().get());
 		List<VehicleConfig> vehicles = List.of(slot0.vehicleConfig(), slot1.vehicleConfig());
 
@@ -250,25 +254,28 @@ public final class LeagueSparringRunner {
 			String fileName = String.format(Locale.ROOT, "vs-%s-game-%02d-%016x.srl", oppSlug, gameNumber, seed);
 			tempReplay = replayDir.resolve(fileName);
 			try (var writer = new ReplayWriter(config, world.spawnPoints(), tempReplay, 128L * 1024L * 1024L)) {
-				sim.run(world, controllers, vehicles, SimulationListeners.composite(tracker, writer));
+				sim.run(world, controllers, vehicles, writer);
 			}
 		} else {
-			sim.run(world, controllers, vehicles, tracker);
+			sim.run(world, controllers, vehicles, NO_RECORDING);
 		}
 
-		boolean alive0 = tracker.hp0 > 0 && !tracker.forfeited0;
-		boolean alive1 = tracker.hp1 > 0 && !tracker.forfeited1;
+		var result = sim.matchOutcome();
+		var result0 = result.controllers().get(0);
+		var result1 = result.controllers().get(1);
+		boolean alive0 = result0.hp() > 0 && !result0.forfeited();
+		boolean alive1 = result1.hp() > 0 && !result1.forfeited();
 
 		int winnerSlot = 0; // 0=draw, 1=slot0, 2=slot1
 		String reason;
 		if (alive0 && !alive1) {
 			winnerSlot = 1;
-			reason = tracker.forfeited1 ? "FORFEIT" : "KILL";
+			reason = result1.forfeited() ? "FORFEIT" : "KILL";
 		} else if (alive1 && !alive0) {
 			winnerSlot = 2;
-			reason = tracker.forfeited0 ? "FORFEIT" : "KILL";
+			reason = result0.forfeited() ? "FORFEIT" : "KILL";
 		} else if (!alive0 && !alive1) {
-			reason = (tracker.forfeited0 || tracker.forfeited1) ? "DBL_FORF" : "MUTUAL";
+			reason = (result0.forfeited() || result1.forfeited()) ? "DBL_FORF" : "MUTUAL";
 		} else {
 			reason = "TIMEOUT";
 		}
@@ -282,14 +289,16 @@ public final class LeagueSparringRunner {
 
 		int subSlot = swapSpawns ? 1 : 0;
 		int oppSlot = swapSpawns ? 0 : 1;
-		int hpSub = subSlot == 0 ? tracker.hp0 : tracker.hp1;
-		int hpOpp = oppSlot == 0 ? tracker.hp0 : tracker.hp1;
-		int torpsSub = tracker.torpedoesByOwner.getOrDefault(subSlot, 0);
-		int torpsOpp = tracker.torpedoesByOwner.getOrDefault(oppSlot, 0);
-		long cpuSub = sim.controllerCpuNanos(subSlot) / 1_000_000L;
-		long cpuOpp = sim.controllerCpuNanos(oppSlot) / 1_000_000L;
-		String forfSub = sim.forfeitReason(subSlot);
-		String forfOpp = sim.forfeitReason(oppSlot);
+		var subResult = result.controllers().get(subSlot);
+		var oppResult = result.controllers().get(oppSlot);
+		int hpSub = subResult.hp();
+		int hpOpp = oppResult.hp();
+		int torpsSub = subResult.torpedoesFired();
+		int torpsOpp = oppResult.torpedoesFired();
+		long cpuSub = subResult.cpuNanos() / 1_000_000L;
+		long cpuOpp = oppResult.cpuNanos() / 1_000_000L;
+		String forfSub = subResult.forfeitReason();
+		String forfOpp = oppResult.forfeitReason();
 
 		Path savedReplay = tempReplay;
 		if (tempReplay != null && recordMode == RecordMode.LOSSES && winnerSide > 0) {
@@ -297,7 +306,7 @@ public final class LeagueSparringRunner {
 			savedReplay = null;
 		}
 
-		return new GameOutcome(gameNumber, seed, swapSpawns, winnerSide, reason, tracker.lastTick + 1, hpSub, hpOpp,
+		return new GameOutcome(gameNumber, seed, swapSpawns, winnerSide, reason, result.tick() + 1, hpSub, hpOpp,
 				torpsSub, torpsOpp, cpuSub, cpuOpp, forfSub.isEmpty() ? null : forfSub,
 				forfOpp.isEmpty() ? null : forfOpp, savedReplay);
 	}
@@ -450,41 +459,4 @@ public final class LeagueSparringRunner {
 		}
 	}
 
-	private static final class MatchStatsListener implements SimulationListener {
-		int hp0;
-		int hp1;
-		boolean forfeited0;
-		boolean forfeited1;
-		long lastTick = -1;
-		final Set<Integer> seenTorpedoes = new HashSet<>();
-		final Map<Integer, Integer> torpedoesByOwner = new HashMap<>();
-
-		MatchStatsListener(int startingHp) {
-			this.hp0 = startingHp;
-			this.hp1 = startingHp;
-		}
-
-		@Override
-		public void onTick(long tick, List<SubmarineSnapshot> subs, List<TorpedoSnapshot> torps) {
-			lastTick = tick;
-			for (var s : subs) {
-				if (s.id() == 0) {
-					hp0 = s.hp();
-					forfeited0 = s.forfeited();
-				} else if (s.id() == 1) {
-					hp1 = s.hp();
-					forfeited1 = s.forfeited();
-				}
-			}
-			for (var t : torps) {
-				if (t.alive() && seenTorpedoes.add(t.id())) {
-					torpedoesByOwner.merge(t.ownerId(), 1, Integer::sum);
-				}
-			}
-		}
-
-		@Override
-		public void onMatchEnd() {
-		}
-	}
 }

@@ -185,6 +185,9 @@ final class SimConfigState extends BaseAppState {
 	static void applyCliOverrides(String ship1Spec, String ship2Spec, String extraCp, Integer speedMultiplier) {
 		ClassLoader loader = resolveExtraClassLoader(
 				extraCp != null ? extraCp : System.getProperty("searobots.extraCp"));
+		for (var provider : ControllerLoader.discoverServiceProviders(loader)) {
+			registerIfAbsent(SHIP_OPTIONS, provider);
+		}
 		if (ship1Spec != null && !ship1Spec.isBlank()) {
 			int idx = resolveOrRegisterShip(ship1Spec, loader);
 			if (idx >= 0) {

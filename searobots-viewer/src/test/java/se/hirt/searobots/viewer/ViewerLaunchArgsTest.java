@@ -29,13 +29,51 @@
 package se.hirt.searobots.viewer;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import se.hirt.searobots.api.SubmarineController;
 import se.hirt.searobots.api.SubmarineInput;
 import se.hirt.searobots.api.SubmarineOutput;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
+import javax.tools.ToolProvider;
+
 import static org.junit.jupiter.api.Assertions.*;
 
 class ViewerLaunchArgsTest {
+
+	@Test
+	void extraClasspathFlagDiscoversServiceProvidersWithoutExplicitShipSelectors(@TempDir
+	Path tempDir) throws Exception {
+		String controllerClass = "com.example.external.ServiceViewerSub";
+		Path source = tempDir.resolve("ServiceViewerSub.java");
+		Files.writeString(source, """
+				package com.example.external;
+				import se.hirt.searobots.api.*;
+				public final class ServiceViewerSub implements SubmarineController {
+					public String name() { return "Service Viewer"; }
+					public void onTick(SubmarineInput in, SubmarineOutput out) {}
+				}
+				""");
+		Path classes = tempDir.resolve("classes");
+		Files.createDirectories(classes);
+		Path api = Path.of(SubmarineController.class.getProtectionDomain().getCodeSource().getLocation().toURI());
+		assertEquals(0, ToolProvider.getSystemJavaCompiler().run(null, null, null, "--release", "25", "-proc:none",
+				"-cp", api.toString(), "-d", classes.toString(), source.toString()));
+		Path service = classes.resolve("META-INF/services/" + SubmarineController.class.getName());
+		Files.createDirectories(service.getParent());
+		Files.writeString(service, controllerClass);
+		assertFalse(SimConfigState.shipOptions().stream().anyMatch(o -> controllerClass.equals(o.className())));
+
+		SimConfigState.applyCliOverrides(null, null, classes.toString(), null);
+		var option = SimConfigState.shipOptions().stream().filter(o -> controllerClass.equals(o.className()))
+				.findFirst().orElseThrow();
+		assertEquals("Service Viewer", option.displayName());
+		assertEquals(controllerClass, option.factory().get().getClass().getName());
+		SimConfigState.applyCliOverrides(null, null, classes.toString(), null);
+		assertEquals(1,
+				SimConfigState.shipOptions().stream().filter(o -> controllerClass.equals(o.className())).count());
+	}
 
 	public static final class CustomViewerSub implements SubmarineController {
 		@Override

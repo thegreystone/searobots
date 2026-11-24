@@ -238,9 +238,18 @@ public final class LeaguePreflight {
 		long smokeCpuMs = 0L;
 
 		if (errors.isEmpty()) {
-			try (var loader = new URLClassLoader(new URL[] {classesDir.toUri().toURL()},
-					SubmarineController.class.getClassLoader())) {
-				var resolved = ControllerLoader.resolve(controllerClass, loader);
+			var submittedClasses = new HashSet<String>();
+			for (Path file : classFiles) {
+				String relative = classesDir.relativize(file).toString();
+				submittedClasses.add(relative.substring(0, relative.length() - ".class".length()).replace('\\', '.')
+						.replace('/', '.'));
+			}
+			if (!submittedClasses.contains(controllerClass)) {
+				errors.add("Controller class was not compiled from the submitted sources: " + controllerClass);
+				return new PreflightReport(false, "", "", javaFiles.size(), classFiles.size(), 0L, List.copyOf(errors));
+			}
+			try (var loader = new SubmissionClassLoader(classesDir, submittedClasses)) {
+				var resolved = ControllerLoader.fromClass(Class.forName(controllerClass, true, loader));
 				displayName = resolved.displayName();
 				shortName = resolved.shortName();
 
@@ -295,6 +304,30 @@ public final class LeaguePreflight {
 
 		return new PreflightReport(errors.isEmpty(), displayName, shortName, javaFiles.size(), classFiles.size(),
 				smokeCpuMs, List.copyOf(errors));
+	}
+
+	/** Prefer freshly compiled submission classes while sharing API and JDK types with the host. */
+	private static final class SubmissionClassLoader extends URLClassLoader {
+		private final Set<String> submittedClasses;
+
+		SubmissionClassLoader(Path classesDir, Set<String> submittedClasses) throws IOException {
+			super(new URL[] {classesDir.toUri().toURL()}, SubmarineController.class.getClassLoader());
+			this.submittedClasses = Set.copyOf(submittedClasses);
+		}
+
+		@Override
+		protected Class<?> loadClass(String name, boolean resolve) throws ClassNotFoundException {
+			synchronized (getClassLoadingLock(name)) {
+				Class<?> loaded = findLoadedClass(name);
+				if (loaded == null) {
+					loaded = submittedClasses.contains(name) ? findClass(name) : super.loadClass(name, false);
+				}
+				if (resolve) {
+					resolveClass(loaded);
+				}
+				return loaded;
+			}
+		}
 	}
 
 	private static String compileStandalone(List<Path> javaFiles, Path apiClasspath, Path classesDir) {

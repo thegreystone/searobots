@@ -35,6 +35,9 @@ import se.hirt.searobots.api.SubmarineInput;
 import se.hirt.searobots.api.SubmarineOutput;
 import se.hirt.searobots.engine.LeagueSparringRunner.Options;
 import se.hirt.searobots.engine.LeagueSparringRunner.RecordMode;
+import se.hirt.searobots.engine.replay.ReplayReader;
+import se.hirt.searobots.api.MatchContext;
+import dev.searobots.preflight.PreflightFixture;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -42,6 +45,96 @@ import java.nio.file.Path;
 import static org.junit.jupiter.api.Assertions.*;
 
 class LeagueDevxToolsTest {
+
+	public static final class EarlyFailure implements SubmarineController {
+		@Override
+		public void onMatchStart(MatchContext context) {
+			throw new IllegalStateException("immediate forfeit");
+		}
+
+		@Override
+		public void onTick(SubmarineInput input, SubmarineOutput output) {
+		}
+	}
+
+	public static final class LateFailure implements SubmarineController {
+		@Override
+		public void onTick(SubmarineInput input, SubmarineOutput output) {
+			if (input.tick() >= 10) {
+				throw new IllegalStateException("failure during aftermath");
+			}
+		}
+	}
+
+	@Test
+	void recordingDoesNotChangeScoreOrScoredTelemetry(@TempDir
+	Path replayDir) throws Exception {
+		var plain = LeagueSparringRunner.runAll(new Options(LateFailure.class.getName(), EarlyFailure.class.getName(),
+				2, false, 0x2cL, 1, 2, true, RecordMode.NONE, replayDir, null)).getFirst();
+		for (var mode : new RecordMode[] {RecordMode.ALL, RecordMode.LOSSES}) {
+			var recorded = LeagueSparringRunner.runAll(new Options(LateFailure.class.getName(),
+					EarlyFailure.class.getName(), 2, false, 0x2cL, 1, 2, true, mode, replayDir, null)).getFirst();
+			assertEquals(plain.wins(), recorded.wins());
+			assertEquals(0, recorded.forfeits());
+			for (int i = 0; i < plain.games().size(); i++) {
+				var expected = plain.games().get(i);
+				var actual = recorded.games().get(i);
+				assertEquals(expected.winnerSide(), actual.winnerSide());
+				assertEquals(expected.reason(), actual.reason());
+				assertEquals(expected.ticks(), actual.ticks());
+				assertEquals(expected.hpSub(), actual.hpSub());
+				assertEquals(expected.hpOpp(), actual.hpOpp());
+				assertEquals(expected.torpedoesSub(), actual.torpedoesSub());
+				assertNull(actual.forfeitSub());
+				if (mode == RecordMode.ALL) {
+					var reader = new ReplayReader(actual.savedReplay());
+					var last = reader.readAll().getLast();
+					assertEquals(actual.ticks() - 1 + LeagueSparringRunner.AFTERMATH_TICKS, last.tick());
+					assertTrue(last.submarines().stream().allMatch(SubmarineSnapshot::forfeited),
+							"Aftermath is still recorded even though its forfeits do not change the score");
+				} else {
+					assertNull(actual.savedReplay(), "A scored win must not be kept as a loss replay");
+				}
+			}
+		}
+	}
+
+	@Test
+	void preflightRunsFreshlyCompiledControllerAndHelpersInsteadOfClasspathCopies(@TempDir
+	Path sourceDir) throws Exception {
+		assertEquals("Old Compiled", new PreflightFixture().name());
+		Path source = sourceDir.resolve("dev/searobots/preflight/PreflightFixture.java");
+		Files.createDirectories(source.getParent());
+		Files.writeString(source, """
+				package dev.searobots.preflight;
+				import se.hirt.searobots.api.*;
+				public final class PreflightFixture implements SubmarineController {
+					public String name() { return Identity.name(); }
+					public String shortName() { return "FS"; }
+					public void onTick(SubmarineInput in, SubmarineOutput out) {
+						throw new IllegalStateException("fresh source smoke failure");
+					}
+					static final class Identity {
+						static String name() { return "Fresh Source"; }
+					}
+				}
+				""");
+		var report = LeaguePreflight.check(sourceDir, PreflightFixture.class.getName(), true);
+		assertEquals("Fresh Source", report.displayName());
+		assertEquals("FS", report.shortName());
+		assertFalse(report.passed());
+		assertTrue(report.errors().stream().anyMatch(e -> e.contains("fresh source smoke failure")),
+				"Smoke matches must execute the newly compiled onTick");
+	}
+
+	@Test
+	void preflightRejectsEntrypointsAbsentFromSubmittedSources(@TempDir
+	Path sourceDir) throws Exception {
+		Files.writeString(sourceDir.resolve("Other.java"), "public class Other {}");
+		var report = LeaguePreflight.check(sourceDir, PreflightFixture.class.getName(), false);
+		assertFalse(report.passed());
+		assertTrue(report.errors().stream().anyMatch(e -> e.contains("not compiled from the submitted sources")));
+	}
 
 	public static final class DummyTestSub implements SubmarineController {
 		@Override

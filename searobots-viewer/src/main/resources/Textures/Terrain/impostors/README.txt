@@ -15,5 +15,5 @@ There is no baked sun, environment lighting, tone mapping or shadowing.
 The loader builds alpha-preserving mipmaps for each view separately, without mixing tiles.
 
 Regenerate from the repository root after rebuilding the viewer:
-java -XstartOnFirstThread -Djava.awt.headless=true -cp searobots-viewer/target/searobots-viewer-0.1.2-SNAPSHOT.jar se.hirt.searobots.viewer.tools.TreeImpostorBaker
+java -XstartOnFirstThread -Djava.awt.headless=true -cp searobots-viewer/target/searobots-viewer-0.1.3-SNAPSHOT-standalone.jar se.hirt.searobots.viewer.tools.TreeImpostorBaker
 Omit -XstartOnFirstThread on Linux/Windows. An output-directory argument is optional.
