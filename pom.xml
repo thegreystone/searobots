@@ -11,6 +11,28 @@
     <packaging>pom</packaging>
     <name>SeaRobots</name>
     <description>Competitive autonomous underwater combat simulator</description>
+    <url>https://github.com/thegreystone/searobots</url>
+
+    <licenses>
+        <license>
+            <name>BSD 3-Clause License</name>
+            <url>https://opensource.org/license/bsd-3-clause</url>
+        </license>
+    </licenses>
+
+    <developers>
+        <developer>
+            <id>thegreystone</id>
+            <name>Marcus Hirt</name>
+            <url>https://hirt.se</url>
+        </developer>
+    </developers>
+
+    <scm>
+        <connection>scm:git:https://github.com/thegreystone/searobots.git</connection>
+        <developerConnection>scm:git:ssh://git@github.com:thegreystone/searobots.git</developerConnection>
+        <url>https://github.com/thegreystone/searobots</url>
+    </scm>
 
     <modules>
         <module>searobots-api</module>
@@ -23,6 +45,7 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <junit.version>5.11.4</junit.version>
         <spotless.version>3.10.2</spotless.version>
+        <central.skipPublishing>false</central.skipPublishing>
     </properties>
 
     <dependencyManagement>
@@ -68,6 +91,80 @@
                     </execution>
                 </executions>
             </plugin>
+            <plugin>
+                <groupId>org.sonatype.central</groupId>
+                <artifactId>central-publishing-maven-plugin</artifactId>
+                <version>0.12.0</version>
+                <extensions>true</extensions>
+                <configuration>
+                    <publishingServerId>central</publishingServerId>
+                    <autoPublish>true</autoPublish>
+                    <waitUntil>published</waitUntil>
+                    <skipPublishing>${central.skipPublishing}</skipPublishing>
+                </configuration>
+            </plugin>
         </plugins>
     </build>
+
+    <profiles>
+        <!-- Maven Central release artifacts: sources, javadoc, and GPG signatures.
+             Activated via -Pcentral-release during tagged releases. -->
+        <profile>
+            <id>central-release</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-source-plugin</artifactId>
+                        <version>3.3.1</version>
+                        <executions>
+                            <execution>
+                                <id>attach-sources</id>
+                                <goals>
+                                    <goal>jar-no-fork</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-javadoc-plugin</artifactId>
+                        <version>3.11.2</version>
+                        <configuration>
+                            <doclint>none</doclint>
+                            <quiet>true</quiet>
+                        </configuration>
+                        <executions>
+                            <execution>
+                                <id>attach-javadocs</id>
+                                <goals>
+                                    <goal>jar</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-gpg-plugin</artifactId>
+                        <version>3.2.7</version>
+                        <configuration>
+                            <gpgArguments>
+                                <arg>--pinentry-mode</arg>
+                                <arg>loopback</arg>
+                            </gpgArguments>
+                        </configuration>
+                        <executions>
+                            <execution>
+                                <id>sign-artifacts</id>
+                                <phase>verify</phase>
+                                <goals>
+                                    <goal>sign</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
 </project>

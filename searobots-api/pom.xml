@@ -13,6 +13,7 @@
 
     <artifactId>searobots-api</artifactId>
     <name>SeaRobots API</name>
+    <description>Public Java controller API for developing SeaRobots autonomous submarines and torpedoes</description>
 
     <dependencies>
         <dependency>
