@@ -55,9 +55,9 @@ class DefaultAttackSubTrackingTest {
 	@Test
 	@ResourceLock(Resources.LOCALE)
 	void missionDataKeepsFiveFieldsInCommaDecimalLocales() {
-		Locale previous = Locale.getDefault();
+		Locale previous = Locale.getDefault(Locale.Category.FORMAT);
 		try {
-			Locale.setDefault(Locale.GERMANY);
+			Locale.setDefault(Locale.Category.FORMAT, Locale.GERMANY);
 			var fixture = new Fixture();
 			TestHelpers.CapturedOutput output = null;
 			for (int tick = 0; tick < 4; tick++) {
@@ -68,7 +68,7 @@ class DefaultAttackSubTrackingTest {
 			assertEquals(5, fields.length);
 			assertEquals(8, Double.parseDouble(fields[4]));
 		} finally {
-			Locale.setDefault(previous);
+			Locale.setDefault(Locale.Category.FORMAT, previous);
 		}
 	}
 
