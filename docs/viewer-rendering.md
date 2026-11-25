@@ -85,7 +85,7 @@ For fixed-camera screenshots and a short rendering check, launch the packaged vi
 ```bash
 # macOS; omit -XstartOnFirstThread on Linux/Windows
 java -XstartOnFirstThread -XX:+UseZGC -Xmx2g \
-  -cp searobots-viewer/target/searobots-viewer-0.1.3-SNAPSHOT-standalone.jar \
+  -cp searobots-viewer/target/searobots-viewer-0.1.4-SNAPSHOT-standalone.jar \
   se.hirt.searobots.viewer.ShorelineScene --capture /tmp/searobots-shoreline --seed 2c
 ```
 
@@ -100,6 +100,6 @@ repository root (macOS; omit `-XstartOnFirstThread` on Linux/Windows):
 
 ```bash
 java -XstartOnFirstThread -Djava.awt.headless=true \
-  -cp searobots-viewer/target/searobots-viewer-0.1.3-SNAPSHOT-standalone.jar \
+  -cp searobots-viewer/target/searobots-viewer-0.1.4-SNAPSHOT-standalone.jar \
   se.hirt.searobots.viewer.tools.TreeImpostorBaker
 ```

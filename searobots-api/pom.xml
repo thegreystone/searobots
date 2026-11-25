@@ -8,7 +8,7 @@
     <parent>
         <groupId>se.hirt.searobots</groupId>
         <artifactId>searobots</artifactId>
-        <version>0.1.3-SNAPSHOT</version>
+        <version>0.1.4-SNAPSHOT</version>
     </parent>
 
     <artifactId>searobots-api</artifactId>
