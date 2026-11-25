@@ -99,7 +99,10 @@
                 <configuration>
                     <publishingServerId>central</publishingServerId>
                     <autoPublish>true</autoPublish>
-                    <waitUntil>published</waitUntil>
+                    <!-- Wait only for Central validation (signatures, javadoc, POM metadata).
+                         autoPublish completes the release afterwards; waiting for "published"
+                         can exceed the plugin's 30 minute polling limit and fail the job. -->
+                    <waitUntil>validated</waitUntil>
                     <skipPublishing>${central.skipPublishing}</skipPublishing>
                 </configuration>
             </plugin>
