@@ -162,6 +162,9 @@ public final class SimulationLoop implements SimClock {
 		entities.clear();
 		torpedoes.clear();
 		pendingLaunches.clear();
+		nextTorpedoId = 1000;
+		nextTube.clear();
+		lastInt.clear();
 		var spawns = world.spawnPoints();
 		for (int i = 0; i < controllers.size(); i++) {
 			var spawn = i < spawns.size() ? spawns.get(i) : spawns.getFirst();
@@ -212,8 +215,6 @@ public final class SimulationLoop implements SimClock {
 				long frameStartNanos = clockControl.frameStartNanos();
 				var tickEvent = SimulationJfrEvents.beginTick();
 				try {
-					Arrays.fill(tickCpuNanos, 0L);
-
 					// Notify controllers on first active tick, not during setup pause.
 					// This prevents controllers from gaining extra processing time
 					// while viewers are initializing.
@@ -224,6 +225,9 @@ public final class SimulationLoop implements SimClock {
 						}
 						matchStarted = true;
 					}
+					// One-time onMatchStart work counts toward the cumulative match budget,
+					// not tick 0's per-tick overrun budget.
+					Arrays.fill(tickCpuNanos, 0L);
 
 					final long currentTick = tick;
 
@@ -607,13 +611,16 @@ public final class SimulationLoop implements SimClock {
 			}
 		} finally {
 			clockControl.stop();
-			// Match end: always called regardless of how the loop exits
+			// Match end: always called regardless of how the loop exits.
+			// Guard against exceptions, without triggering post-match CPU forfeits.
+			ControllerLimits endLimits = limits.forfeitOnException() ? new ControllerLimits(true, 0L, 0L, 0)
+					: ControllerLimits.UNLIMITED;
 			try {
 				for (var e : entities) {
 					if (!e.forfeitReason().isEmpty() && forfeitReasons[e.id()].isEmpty()) {
 						forfeitReasons[e.id()] = e.forfeitReason();
 					}
-					invokeGuarded(e, "onMatchEnd", limits, cpuNanos, tickCpuNanos, forfeitReasons, threadMx,
+					invokeGuarded(e, "onMatchEnd", endLimits, cpuNanos, tickCpuNanos, forfeitReasons, threadMx,
 							cpuTimeEnabled, () -> e.controller().onMatchEnd(new MatchResult(e.forfeited())));
 				}
 			} finally {

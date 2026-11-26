@@ -325,22 +325,21 @@ public final class SubmarinePhysics {
 		double newZ = sub.z() + vz * dt;
 		double contactVerticalSpeed = vz;
 
-		// 6. Clamp: can't go above water
-		if (newZ > 0) {
-			// Clip a real rise from underwater, but do not count an above-water terrain
-			// correction as downward motion when restoring the surface constraint.
-			if (previousZ <= 0) {
-				contactVerticalSpeed = -previousZ / dt;
-			}
-			newZ = 0;
+		// 6. Clamp: can't go above water (or climb above a terrain-lifted pose)
+		double surfaceCeiling = Math.max(0, previousZ);
+		if (newZ > surfaceCeiling) {
+			// Clip a real rise from underwater, and avoid slamming a terrain-lifted hull
+			// back down to z=0 into the shoal below on every tick.
+			contactVerticalSpeed = (surfaceCeiling - previousZ) / dt;
+			newZ = surfaceCeiling;
 			// Remove upward heave stopped by the surface. Do not invent downward heave
 			// to cancel pitched surge: leveling or diving must release the constraint.
 			sub.setVerticalSpeed(Math.min(0, verticalSpeed));
 		}
 
-		// For surfaceLocked vehicles, force z=0 and zero vertical speed
+		// For surfaceLocked vehicles, keep waterline (or current terrain-lifted height) and zero vertical speed
 		if (sub.surfaceConstrained()) {
-			newZ = 0;
+			newZ = surfaceCeiling;
 			sub.setVerticalSpeed(0);
 			contactVerticalSpeed = 0;
 		}
@@ -359,9 +358,17 @@ public final class SubmarinePhysics {
 		heading = sub.heading();
 		speed = sub.speed();
 		boolean scraping = terrainStep.scraping();
+		// When a terrain-lifted hull moves into deeper water or levels out, settle back toward z=0
+		// without penetrating the shoal or turning waterline restoration into a downward impact.
+		if (newZ > 0 && !terrainStep.grounded()) {
+			double floorZ = HullGeometry.terrainPenetration(new Vec3(newX, newY, 0), heading, sub.pitch(), cfg,
+					terrain);
+			newZ = Math.min(newZ, Math.max(0, floorZ));
+			sub.setZ(newZ);
+		}
 		// Only the physically reached path counts as exposure; projection cannot rescue a hull
 		// already below the limit, but a swept seabed contact can stop it before that depth.
-		hullPressure.step(sub, dt, terrainStep.deepestZ());
+		hullPressure.step(sub, dt, Math.min(terrainStep.deepestZ(), newZ));
 
 		// Guard against NaN/Inf from numerical issues
 		if (!Double.isFinite(newX) || !Double.isFinite(newY) || !Double.isFinite(newZ)) {
@@ -450,7 +457,7 @@ public final class SubmarinePhysics {
 		}
 	}
 
-	private record TerrainStep(boolean scraping, double deepestZ) {
+	private record TerrainStep(boolean scraping, double deepestZ, boolean grounded) {
 	}
 
 	private TerrainStep moveWithTerrain(
@@ -464,7 +471,8 @@ public final class SubmarinePhysics {
 			var cfg = sub.vehicleConfig();
 			double remaining = dt, deepestZ = start.z(), impactEnergy = 0;
 			boolean scraping = false;
-			// Continue the unspent tick after an impact. Wrecks use finite-interval support
+			boolean grounded = false;
+			// Continue the unspent tick after an impact. Grounded hulls use finite-interval support
 			// instead of repeatedly clipping tangent motion against the same curved surface.
 			// Keep the impact bound as a safeguard against pathological contact sequences.
 			for (int iteration = 0; iteration < 6; iteration++) {
@@ -488,10 +496,20 @@ public final class SubmarinePhysics {
 				if (terrainEvent != null)
 					terrainEvent.contactPointCount += samples.length;
 				double penetration = 0;
+				double maxSignedPenetration = Double.NEGATIVE_INFINITY;
+				double sinH = Math.sin(heading), cosH = Math.cos(heading);
+				double sinP = Math.sin(pitch), cosP = Math.cos(pitch);
+				double fwdX = sinH * cosP, fwdY = cosH * cosP;
+				double upX = -sinH * sinP, upY = -cosH * sinP;
 				for (var local : samples) {
-					var world = HullTerrainGeometry.worldPoint(local, position, heading, pitch);
-					penetration = Math.max(penetration, terrain.elevationAt(world.x(), world.y()) - world.z());
+					double wx = position.x() + cosH * local.x() + fwdX * local.y() + upX * local.z();
+					double wy = position.y() - sinH * local.x() + fwdY * local.y() + upY * local.z();
+					double wz = position.z() + sinP * local.y() + cosP * local.z();
+					double signed = terrain.elevationAt(wx, wy) - wz;
+					maxSignedPenetration = Math.max(maxSignedPenetration, signed);
+					penetration = Math.max(penetration, signed);
 				}
+				grounded = penetration > 0 || maxSignedPenetration >= -2e-5;
 				sub.setHeading(heading);
 				sub.setPitch(pitch);
 				sub.setX(position.x());
@@ -516,8 +534,8 @@ public final class SubmarinePhysics {
 						SubCollisionResponse.setLinearVelocity(sub,
 								groundVelocity.subtract(new Vec3(correctedCurrent.x(), correctedCurrent.y(), 0)));
 					}
-					if (sub.z() >= 0 && sub.verticalSpeed() > 0) {
-						sub.setVerticalSpeed(0);
+					if (sub.z() >= 0 && sub.velocity().linear().z() > 0) {
+						sub.setVerticalSpeed(Math.min(sub.verticalSpeed(), -sub.speed() * Math.sin(sub.pitch())));
 					}
 				}
 				if (contact == null) {
@@ -534,21 +552,26 @@ public final class SubmarinePhysics {
 				start = sub.pose().position();
 				startHeading = heading;
 				startPitch = pitch;
-				if (sub.hp() <= 0) {
-					int supportIterations = TerrainContactResponse.projectSupportVelocity(sub, samples, remaining,
-							terrain, currents);
-					if (terrainEvent != null)
-						terrainEvent.supportIterations += supportIterations;
-				}
+				int supportIterations = TerrainContactResponse.projectSupportVelocity(sub, samples, remaining, terrain,
+						currents);
+				if (terrainEvent != null)
+					terrainEvent.supportIterations += supportIterations;
 				var current = currents.currentAt(start.z());
 				incomingLinear = sub.velocity().linear().add(new Vec3(current.x(), current.y(), 0));
 				incomingYawRate = sub.yawRate();
 				incomingPitchRate = sub.surfaceConstrained() ? 0 : sub.pitchRate();
 				end = start.add(incomingLinear.scale(remaining));
+				double surfaceCeiling = Math.max(0, start.z());
 				end = new Vec3(end.x(), end.y(),
-						sub.surfaceConstrained() ? 0 : Math.min(Math.max(0, start.z()), end.z()));
+						sub.surfaceConstrained() ? surfaceCeiling : Math.min(surfaceCeiling, end.z()));
 				endHeading = heading + incomingYawRate * remaining;
-				endPitch = Math.clamp(pitch + incomingPitchRate * remaining, -Math.PI / 4, Math.PI / 4);
+				endPitch = sub.surfaceConstrained() ? pitch
+						: Math.clamp(pitch + incomingPitchRate * remaining, -Math.PI / 4, Math.PI / 4);
+				if (end.equals(start) && endHeading == startHeading && endPitch == startPitch) {
+					if (terrainEvent != null)
+						terrainEvent.remainingSeconds = 0;
+					break;
+				}
 			}
 			if (sub.hp() > 0) {
 				sub.setHp(
@@ -556,7 +579,7 @@ public final class SubmarinePhysics {
 			}
 			double finalHeading = sub.heading() % (2 * Math.PI);
 			sub.setHeading(finalHeading < 0 ? finalHeading + 2 * Math.PI : finalHeading);
-			return new TerrainStep(scraping, deepestZ);
+			return new TerrainStep(scraping, deepestZ, grounded);
 		} finally {
 			SimulationJfrEvents.finishTerrainMotion(terrainEvent, correlationId, worldSeed, tick, dt, sub, initialStart,
 					hpAtStart);

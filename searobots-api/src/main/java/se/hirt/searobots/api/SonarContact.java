@@ -96,7 +96,8 @@ public record SonarContact(double bearing, double signalExcess, double range, bo
 		 */
 		SURFACE_SHIP,
 		/**
-		 * Torpedo: very high blade rate, high speed, small signature.
+		 * Torpedo: high blade-rate tonal from a small fast/windmilling prop (passive) or compact
+		 * weapon echo extent (active), even when throttled slow or coasting after fuel runs out.
 		 */
 		TORPEDO
 	}

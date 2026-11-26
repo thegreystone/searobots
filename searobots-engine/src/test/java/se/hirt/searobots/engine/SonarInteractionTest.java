@@ -267,6 +267,129 @@ class SonarInteractionTest {
 		assertFalse(weapon.pingRequested());
 	}
 
+	@Test
+	void spentCoastingTorpedoClassifiesAsTorpedoOnPassiveAndActiveSonar() {
+		var torpedoPhysics = new TorpedoPhysics();
+		for (double coastSpeed : new double[] {16.0, 10.0, 5.0, 3.5}) {
+			for (int seed = 0; seed < 16; seed++) {
+				var listener = submarine(0, new Vec3(0, 0, -200), 0);
+				var spent = torpedo(100, 99, new Vec3(0, 600, -200), Math.PI);
+				spent.consumeFuel(TorpedoEntity.defaultFuelSeconds());
+				spent.setActualThrottle(0);
+				spent.setSpeed(coastSpeed);
+				torpedoPhysics.step(spent, 0.02, TERRAIN, null, null);
+				assertEquals(
+						VehicleConfig.torpedo().baseSlDb() - VehicleConfig.torpedo().clutchDisengagedSlReduction()
+								+ VehicleConfig.torpedo().speedNoiseDbPerMs() * spent.speed(),
+						spent.sourceLevelDb(), 1e-6,
+						"A motor-off coasting torpedo should drop its propulsion base noise");
+
+				listener.activeSonarPing();
+				var result = new SonarModel(seed)
+						.computeContacts(0, List.of(listener), List.of(spent), TERRAIN, List.of()).get(listener.id());
+				assertEquals(1, result.passiveContacts().size(),
+						"Coasting torpedo at " + coastSpeed + " m/s should be detectable at 600 m");
+				var passive = result.passiveContacts().getFirst();
+				if (passive.signalExcess() >= 8.0) {
+					assertEquals(SonarContact.Classification.TORPEDO, passive.classification(),
+							"Spent coasting torpedo at " + coastSpeed + " m/s must not read as a submarine (seed="
+									+ seed + ", SE=" + passive.signalExcess() + ")");
+				}
+				assertEquals(1, result.activeReturns().size());
+				var active = result.activeReturns().getFirst();
+				assertEquals(SonarContact.Classification.TORPEDO, active.classification(),
+						"Active echo of spent coasting torpedo at " + coastSpeed + " m/s must classify as TORPEDO");
+			}
+		}
+	}
+
+	@Test
+	void slowPoweredTerminalTorpedoClassifiesAsTorpedo() {
+		var listener = submarine(0, new Vec3(0, 0, -200), 0);
+		var weapon = torpedo(100, 99, new Vec3(0, 500, -200), Math.PI);
+		weapon.setSpeed(12.0);
+		weapon.setActualThrottle(0.4);
+		weapon.setSourceLevelDb(113.0);
+		listener.activeSonarPing();
+
+		var result = new SonarModel(42).computeContacts(0, List.of(listener), List.of(weapon), TERRAIN, List.of())
+				.get(listener.id());
+		assertEquals(SonarContact.Classification.TORPEDO, result.passiveContacts().getFirst().classification());
+		assertEquals(SonarContact.Classification.TORPEDO, result.activeReturns().getFirst().classification());
+	}
+
+	@Test
+	void faintSpentTorpedoBelowClassificationThresholdRemainsUnknown() {
+		boolean sawUnknown = false;
+		for (int seed = 0; seed < 32; seed++) {
+			var listener = submarine(0, new Vec3(0, 0, -200), 0);
+			var spent = torpedo(100, 99, new Vec3(0, 800, -200), Math.PI);
+			spent.consumeFuel(TorpedoEntity.defaultFuelSeconds());
+			spent.setActualThrottle(0);
+			spent.setSpeed(6.0);
+			// True SE = 91 - 29.03 - 55 = 6.97 dB (above 5 dB detection, below 8 dB classification)
+			spent.setSourceLevelDb(91.0);
+			var contacts = new SonarModel(seed)
+					.computeContacts(0, List.of(listener), List.of(spent), TERRAIN, List.of()).get(listener.id())
+					.passiveContacts();
+			assertEquals(1, contacts.size());
+			var contact = contacts.getFirst();
+			if (contact.signalExcess() < 8.0) {
+				sawUnknown = true;
+				assertEquals(SonarContact.Classification.UNKNOWN, contact.classification(),
+						"Faint torpedo contacts below 8 dB SE must remain UNKNOWN");
+			}
+		}
+		assertTrue(sawUnknown, "Test fixture should produce sub-8 dB measured SE samples");
+	}
+
+	@Test
+	void sprintingSubmarineRemainsSubmarineEvenWhenNoisySpeedExceedsEighteen() {
+		boolean sawHighNoisySpeed = false;
+		for (int seed = 0; seed < 64; seed++) {
+			var listener = submarine(0, new Vec3(0, 0, -200), 0);
+			var sprinter = submarine(1, new Vec3(0, 1000, -200), Math.PI);
+			sprinter.setSpeed(15.0);
+			sprinter.setActualThrottle(1.0);
+			// True SE = 100 - 30 - 55 = 15 dB (moderate SE so speed noise can push estimate > 18 m/s)
+			sprinter.setSourceLevelDb(100.0);
+			listener.activeSonarPing();
+
+			var result = new SonarModel(seed).computeContacts(0, List.of(listener, sprinter), TERRAIN, List.of())
+					.get(listener.id());
+			var passive = result.passiveContacts().getFirst();
+			if (passive.signalExcess() >= 8.0) {
+				if (passive.estimatedSpeed() > 18.0) {
+					sawHighNoisySpeed = true;
+				}
+				assertEquals(SonarContact.Classification.SUBMARINE, passive.classification(),
+						"Large-prop submarine blade rate must prevent false TORPEDO classification (seed=" + seed
+								+ ", estSpd=" + passive.estimatedSpeed() + ")");
+			}
+			var active = result.activeReturns().getFirst();
+			if (active.signalExcess() >= 8.0) {
+				assertEquals(SonarContact.Classification.SUBMARINE, active.classification());
+			}
+		}
+		assertTrue(sawHighNoisySpeed, "Fixture should exercise noisy submarine speed estimates above 18 m/s");
+	}
+
+	@Test
+	void surfaceShipStillClassifiesAsSurfaceShip() {
+		var listener = submarine(0, new Vec3(0, 0, -200), 0);
+		var ship = new SubmarineEntity(VehicleConfig.surfaceShip(), 1, null, new Vec3(0, 500, 0), Math.PI, Color.RED,
+				1000);
+		ship.setSpeed(8.0);
+		ship.setActualThrottle(1.0);
+		ship.setSourceLevelDb(130.0);
+		listener.activeSonarPing();
+
+		var result = new SonarModel(42).computeContacts(0, List.of(listener, ship), TERRAIN, List.of())
+				.get(listener.id());
+		assertEquals(SonarContact.Classification.SURFACE_SHIP, result.passiveContacts().getFirst().classification());
+		assertEquals(SonarContact.Classification.SURFACE_SHIP, result.activeReturns().getFirst().classification());
+	}
+
 	private static void assertPingBearing(List<SonarContact> contacts, double expectedBearing) {
 		assertEquals(1, contacts.size());
 		var contact = contacts.getFirst();

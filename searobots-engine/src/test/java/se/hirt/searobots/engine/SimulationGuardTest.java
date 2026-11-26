@@ -30,6 +30,7 @@ package se.hirt.searobots.engine;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -449,5 +450,137 @@ class SimulationGuardTest {
 		var reader = new ReplayReader(replay);
 		assertEquals(2, reader.header().submarines().size());
 		assertFalse(reader.readAll().isEmpty());
+	}
+
+	@Test
+	void slowOnMatchStartDoesNotTriggerTickZeroPerTickOverrun() {
+		var threadMx = java.lang.management.ManagementFactory.getThreadMXBean();
+		boolean cpuSupported = threadMx.isCurrentThreadCpuTimeSupported() && threadMx.isThreadCpuTimeEnabled();
+		var heavyInit = new SubmarineController() {
+			double sink;
+
+			@Override
+			public String name() {
+				return "HeavyInit";
+			}
+
+			@Override
+			public void onMatchStart(MatchContext context) {
+				// Burn at least one full OS thread-CPU quantum (>20 ms) so onMatchStart is guaranteed
+				// to exceed the 5 ms per-tick cap below if it were wrongly billed to tick 0.
+				long start = cpuSupported ? threadMx.getCurrentThreadCpuTime() : System.nanoTime();
+				long targetNanos = 25_000_000L;
+				int iter = 0;
+				while ((cpuSupported ? threadMx.getCurrentThreadCpuTime() : System.nanoTime()) - start < targetNanos) {
+					for (int i = 0; i < 10_000; i++) {
+						sink += Math.sin(iter++);
+					}
+				}
+			}
+
+			@Override
+			public void onTick(SubmarineInput input, SubmarineOutput output) {
+				output.setThrottle(0.2 + sink * 0.0);
+				output.setBallast(0.5);
+			}
+		};
+
+		var sim = new SimulationLoop();
+		sim.setSpeedMultiplier(1e9);
+		// 5 ms per-tick cap with 0 allowed overruns, generous cumulative match cap.
+		// If onMatchStart (>25 ms) were billed to tick 0's per-tick budget, tick 0 would forfeit.
+		sim.setControllerLimits(new ControllerLimits(true, 5_000_000L, 30_000_000_000L, 0));
+		var lastSubs = new AtomicReference<List<SubmarineSnapshot>>();
+		sim.run(twoSubFlatWorld(20), List.of(heavyInit, calmSub("Calm")),
+				List.of(VehicleConfig.submarine(), VehicleConfig.submarine()), new SimulationListener() {
+					@Override
+					public void onTick(long tick, List<SubmarineSnapshot> subs, List<TorpedoSnapshot> torps) {
+						lastSubs.set(subs);
+					}
+
+					@Override
+					public void onMatchEnd() {
+					}
+				});
+
+		assertFalse(lastSubs.get().get(0).forfeited(),
+				"One-time onMatchStart initialization must not trigger a tick-0 per-tick overrun: "
+						+ sim.forfeitReason(0));
+		assertEquals("", sim.forfeitReason(0));
+		assertTrue(sim.controllerCpuNanos(0) >= 20_000_000L,
+				"onMatchStart CPU time should still count toward cumulative match CPU, got "
+						+ sim.controllerCpuNanos(0));
+	}
+
+	@Test
+	void repeatedAndConcurrentSimulationRunsAreBitIdenticalWithTorpedoes() throws Exception {
+		var world = twoSubFlatWorld(300);
+		long baseline = runAndHash(world);
+		assertNotEquals(0x9E3779B97F4A7C15L, baseline, "Simulation must execute ticks");
+		assertEquals(baseline, runAndHash(world), "Sequential runs must produce bit-identical trajectories");
+
+		try (var pool = java.util.concurrent.Executors.newFixedThreadPool(4)) {
+			var futures = new java.util.ArrayList<java.util.concurrent.Future<Long>>();
+			for (int i = 0; i < 4; i++) {
+				futures.add(pool.submit(() -> runAndHash(world)));
+			}
+			for (var f : futures) {
+				assertEquals(baseline, f.get(), "Concurrent runs must match sequential trajectory bit-for-bit");
+			}
+		}
+	}
+
+	private static long runAndHash(GeneratedWorld world) {
+		var sim = new SimulationLoop();
+		sim.setSpeedMultiplier(1e9);
+		var shooter = new SubmarineController() {
+			boolean fired;
+
+			@Override
+			public void onTick(SubmarineInput input, SubmarineOutput output) {
+				output.setThrottle(0.5);
+				output.setRudder(0.1);
+				output.setBallast(0.5);
+				if (!fired && input.tick() == 10) {
+					fired = true;
+					output.launchTorpedo(new TorpedoLaunchCommand(0, 0, 20.0, "test"));
+				}
+			}
+		};
+		long[] hash = {0x9E3779B97F4A7C15L};
+		sim.run(world, List.of(shooter, calmSub("Calm")), List.of(VehicleConfig.submarine(), VehicleConfig.submarine()),
+				new SimulationListener() {
+					@Override
+					public void onTick(long tick, List<SubmarineSnapshot> subs, List<TorpedoSnapshot> torps) {
+						long h = hash[0] ^ tick;
+						for (var s : subs) {
+							h = mix(h, s.id());
+							h = mix(h, Double.doubleToRawLongBits(s.pose().position().x()));
+							h = mix(h, Double.doubleToRawLongBits(s.pose().position().y()));
+							h = mix(h, Double.doubleToRawLongBits(s.pose().position().z()));
+							h = mix(h, Double.doubleToRawLongBits(s.pose().heading()));
+							h = mix(h, Double.doubleToRawLongBits(s.speed()));
+							h = mix(h, s.hp());
+						}
+						for (var t : torps) {
+							h = mix(h, t.id());
+							h = mix(h, Double.doubleToRawLongBits(t.pose().position().x()));
+							h = mix(h, Double.doubleToRawLongBits(t.pose().position().y()));
+							h = mix(h, Double.doubleToRawLongBits(t.pose().position().z()));
+							h = mix(h, Double.doubleToRawLongBits(t.speed()));
+						}
+						hash[0] = h;
+					}
+
+					@Override
+					public void onMatchEnd() {
+					}
+				});
+		return hash[0];
+	}
+
+	private static long mix(long h, long v) {
+		h ^= v + 0x9E3779B97F4A7C15L + (h << 6) + (h >>> 2);
+		return h;
 	}
 }

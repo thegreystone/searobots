@@ -32,6 +32,7 @@ import se.hirt.searobots.api.SonarContact;
 import se.hirt.searobots.api.TerrainMap;
 import se.hirt.searobots.api.ThermalLayer;
 import se.hirt.searobots.api.Vec3;
+import se.hirt.searobots.api.VehicleConfig;
 
 import java.util.*;
 
@@ -90,24 +91,40 @@ public final class SonarModel {
 	record SonarResult(List<SonarContact> passiveContacts, List<SonarContact> activeReturns, int cooldownTicks) {
 	}
 
+	// Classification (blade-rate tonal frequency + active echo extent + speed/broadband)
+	private static final double CLASSIFY_MIN_SE_DB = 8.0;
+	// Blade-rate frequency scales inversely with propeller/hull diameter: f = k * flowSpeed / halfBeam.
+	// Torpedo (halfBeam 0.25 m): ~1100 Hz at 23 m/s, ~108 Hz coasting at 3 m/s (windmilling).
+	// Submarine (halfBeam 6.0 m): ~30 Hz at 15 m/s, ~16 Hz at 8 m/s.
+	// Surface ship (halfBeam 15.0 m): ~6 Hz at 8 m/s.
+	private static final double BLADE_RATE_SPEED_FACTOR = 12.0;
+	private static final double COASTING_BLADE_RATE_FACTOR = 0.75;
+	private static final double TORPEDO_BLADE_RATE_HZ = 65.0;
+	// Discrete tonal frequency is resolved more tightly than speed (which depends on unknown TPK):
+	// ~15% error at 8 dB SE dropping to ~3% at 30 dB SE.
+	private static final double TONAL_BASE_ERROR = 0.15;
+	private static final double TONAL_GOOD_SE = 30.0;
+	// Active echo highlight extent (meters): distinguishes a ~5 m torpedo from a ~75 m+ vessel.
+	private static final double TORPEDO_MAX_ECHO_LENGTH_M = 20.0;
+
 	/**
-	 * Classify a sonar contact from its acoustic signature. Requires sufficient signal excess to
-	 * classify; faint contacts are UNKNOWN.
-	 * <p>
-	 * Classification rules (modelling blade-rate tonal analysis): - TORPEDO: high speed (>18 m/s) =
-	 * small fast high-RPM prop - SURFACE_SHIP: loud (SL>108) + moderate speed (<12) = big slow prop
-	 * - SUBMARINE: submerged, moderate noise, moderate speed - UNKNOWN: insufficient signal excess
-	 * to classify (<8 dB)
+	 * Classify a passive sonar contact from its propeller blade-rate tonal frequency, speed, and
+	 * broadband acoustic signature. Requires sufficient signal excess to classify; faint contacts
+	 * are UNKNOWN.
 	 */
-	private static SonarContact.Classification classify(
-		double signalExcess, double estimatedSpeed, double estimatedSL, double estimatedDepth) {
+	private static SonarContact.Classification classifyPassive(
+		double signalExcess, double estimatedSpeed, double estimatedBladeRateHz, double estimatedSL,
+		double estimatedDepth) {
 		// Need enough signal to analyse the tonal structure
-		if (signalExcess < 8)
+		if (signalExcess < CLASSIFY_MIN_SE_DB)
 			return SonarContact.Classification.UNKNOWN;
 
-		// High blade rate + fast = torpedo (very distinctive signature)
-		if (estimatedSpeed > 18)
+		// High-frequency small-propeller blade rate (powered or windmilling coasting torpedo),
+		// or high speed when no low-frequency large-screw tonal contradicts it.
+		if (estimatedBladeRateHz > TORPEDO_BLADE_RATE_HZ
+				|| ((Double.isNaN(estimatedBladeRateHz) || estimatedBladeRateHz <= 0) && estimatedSpeed > 18)) {
 			return SonarContact.Classification.TORPEDO;
+		}
 
 		// Very loud + moderate speed = surface ship (big slow prop, machinery noise)
 		// But only if near the surface: anything deeper than -30m is submerged.
@@ -118,6 +135,62 @@ public final class SonarModel {
 
 		// Default: submarine
 		return SonarContact.Classification.SUBMARINE;
+	}
+
+	/**
+	 * Classify an active sonar echo from its highlight extent (hull length), speed, and any paired
+	 * passive source-level estimate. Does not depend on target HP or machinery state.
+	 */
+	private static SonarContact.Classification classifyActive(
+		double signalExcess, double estimatedSpeed, double estimatedEchoLengthM, double estimatedSL,
+		double estimatedDepth) {
+		if (signalExcess < CLASSIFY_MIN_SE_DB)
+			return SonarContact.Classification.UNKNOWN;
+
+		// Compact weapon echo (~5 m torpedo vs ~75 m submarine / ~150 m ship) distinguishes even
+		// a slow or spent coasting torpedo from a submarine hull.
+		if (estimatedEchoLengthM > 0 && estimatedEchoLengthM < TORPEDO_MAX_ECHO_LENGTH_M) {
+			return SonarContact.Classification.TORPEDO;
+		}
+		if (Double.isNaN(estimatedEchoLengthM) && estimatedSpeed > 18) {
+			return SonarContact.Classification.TORPEDO;
+		}
+
+		if (estimatedSL > 108 && estimatedSpeed >= 0 && estimatedSpeed < 12
+				&& (Double.isNaN(estimatedDepth) || estimatedDepth > -30)) {
+			return SonarContact.Classification.SURFACE_SHIP;
+		}
+
+		return SonarContact.Classification.SUBMARINE;
+	}
+
+	static double bladeRateHz(VehicleConfig cfg, double flowSpeed, boolean powered) {
+		double halfBeam = Math.max(cfg.hullHalfBeam(), 0.1);
+		double slipFactor = powered ? 1.0 : COASTING_BLADE_RATE_FACTOR;
+		return BLADE_RATE_SPEED_FACTOR * slipFactor * Math.abs(flowSpeed) / halfBeam;
+	}
+
+	static double estimateBladeRateHz(
+		VehicleConfig cfg, double flowSpeed, boolean powered, double signalExcess, double unitError) {
+		if (signalExcess < CLASSIFY_MIN_SE_DB)
+			return Double.NaN;
+		double trueHz = bladeRateHz(cfg, flowSpeed, powered);
+		if (trueHz <= 0)
+			return 0.0;
+		double t = Math.clamp((signalExcess - CLASSIFY_MIN_SE_DB) / (TONAL_GOOD_SE - CLASSIFY_MIN_SE_DB), 0, 1);
+		double errorFraction = TONAL_BASE_ERROR * (1.0 - t * 0.8); // 0.15 -> 0.03
+		double factor = Math.max(0.25, 1.0 + unitError * errorFraction);
+		return trueHz * factor;
+	}
+
+	private static double estimateEchoLengthMeters(VehicleConfig cfg, double signalExcess, double unitError) {
+		if (signalExcess < CLASSIFY_MIN_SE_DB)
+			return Double.NaN;
+		double trueLength = 2.0 * cfg.hullHalfLength();
+		double t = Math.clamp((signalExcess - CLASSIFY_MIN_SE_DB) / (TONAL_GOOD_SE - CLASSIFY_MIN_SE_DB), 0, 1);
+		double errorFraction = TONAL_BASE_ERROR * (1.0 - t * 0.8);
+		double factor = Math.max(0.25, 1.0 + unitError * errorFraction);
+		return trueLength * factor;
 	}
 
 	/**
@@ -142,10 +215,13 @@ public final class SonarModel {
 			for (var torp : torpedoes) {
 				if (!torp.alive() || torp.inTube())
 					continue;
+				double torpFlowSpeed = Math.hypot(torp.speed(), torp.verticalSpeed());
+				boolean torpPowered = torp.actualThrottle() > 0 && torp.fuelRemaining() > 0;
 				var contact = passiveDetect(tick, sensorNoiseFor(tick, listener.id(), torp.id()), listener.x(),
 						listener.y(), listener.z(), listener.heading(), listener.sourceLevelDb(),
 						listener.vehicleConfig().sonarSelfNoiseOffsetDb(), torp.x(), torp.y(), torp.z(),
-						torp.sourceLevelDb(), torp.speed(), isPinging(torp), terrain, thermalLayers);
+						torp.sourceLevelDb(), torp.speed(), torpFlowSpeed, torpPowered, torp.vehicleConfig(),
+						isPinging(torp), terrain, thermalLayers);
 				if (contact != null)
 					extraPassive.add(contact);
 
@@ -155,7 +231,7 @@ public final class SonarModel {
 					var ret = activeDetect(tick, sensorNoiseFor(tick, listener.id(), torp.id()), listener.x(),
 							listener.y(), listener.z(), listener.sourceLevelDb(),
 							listener.vehicleConfig().sonarSelfNoiseOffsetDb(), bafflePenalty, torp.x(), torp.y(),
-							torp.z(), torp.speed(), terrain, thermalLayers);
+							torp.z(), torp.speed(), torp.vehicleConfig(), terrain, thermalLayers);
 					if (ret != null)
 						extraActive.add(ret);
 				}
@@ -180,9 +256,11 @@ public final class SonarModel {
 			for (var source : entities) {
 				if (source.forfeited() || source.hp() <= 0)
 					continue;
+				boolean sourcePowered = source.engineClutch() && source.actualThrottle() != 0;
 				var contact = passiveDetect(tick, sensorNoiseFor(tick, torp.id(), source.id()), torp.x(), torp.y(),
 						torp.z(), torp.heading(), torp.sourceLevelDb(), torpSonarOffset, source.x(), source.y(),
-						source.z(), source.sourceLevelDb(), source.speed(), isPinging(source), terrain, thermalLayers);
+						source.z(), source.sourceLevelDb(), source.speed(), Math.abs(source.speed()), sourcePowered,
+						source.vehicleConfig(), isPinging(source), terrain, thermalLayers);
 				if (contact != null)
 					passive.add(contact);
 			}
@@ -195,7 +273,7 @@ public final class SonarModel {
 						continue;
 					var ret = activeDetect(tick, sensorNoiseFor(tick, torp.id(), source.id()), torp.x(), torp.y(),
 							torp.z(), torp.sourceLevelDb(), torpSonarOffset, 0, source.x(), source.y(), source.z(),
-							source.speed(), terrain, thermalLayers);
+							source.speed(), source.vehicleConfig(), terrain, thermalLayers);
 					if (ret != null)
 						active.add(ret);
 				}
@@ -244,8 +322,9 @@ public final class SonarModel {
 	 */
 	private SonarContact passiveDetect(
 		long tick, SensorNoise noise, double lx, double ly, double lz, double lHeading, double lSLdB,
-		double lSonarOffset, double sx, double sy, double sz, double sSLdB, double sSpeed, boolean sPinged,
-		TerrainMap terrain, List<ThermalLayer> thermalLayers) {
+		double lSonarOffset, double sx, double sy, double sz, double sSLdB, double sSpeed, double sFlowSpeed,
+		boolean sPowered, VehicleConfig sConfig, boolean sPinged, TerrainMap terrain,
+		List<ThermalLayer> thermalLayers) {
 		double distance = Math.sqrt((sx - lx) * (sx - lx) + (sy - ly) * (sy - ly) + (sz - lz) * (sz - lz));
 		if (distance < 1.0)
 			distance = 1.0;
@@ -270,10 +349,12 @@ public final class SonarModel {
 			double bearingError = bearingStdDev(measuredSe);
 			double noisyBearing = trueBearing + bearingError * noise.bearing.next(tick, rng);
 			noisyBearing = ((noisyBearing % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
-			// Speed estimate from blade-rate analysis (noisy)
-			double estSpd = sSpeed > 0 ? estimateTargetSpeed(sSpeed, measuredSe, noise.speed.next(tick, rng)) : -1;
+			// Speed and blade-rate tonal analysis (correlated noise)
+			double speedUnitError = noise.speed.next(tick, rng);
+			double estSpd = sSpeed > 0 ? estimateTargetSpeed(sSpeed, measuredSe, speedUnitError) : -1;
+			double estBladeRateHz = estimateBladeRateHz(sConfig, sFlowSpeed, sPowered, measuredSe, speedUnitError);
 			return new SonarContact(noisyBearing, measuredSe, 0, false, estSpd, bearingError, 0, Double.NaN, 0,
-					Double.NaN, Double.NaN, classify(measuredSe, estSpd, sl, Double.NaN));
+					Double.NaN, Double.NaN, classifyPassive(measuredSe, estSpd, estBladeRateHz, sl, Double.NaN));
 		}
 		return null;
 	}
@@ -351,7 +432,7 @@ public final class SonarModel {
 	 */
 	private SonarContact activeDetect(
 		long tick, SensorNoise noise, double lx, double ly, double lz, double lSLdB, double lSonarOffset,
-		double bafflePenalty, double sx, double sy, double sz, double sSpeed, TerrainMap terrain,
+		double bafflePenalty, double sx, double sy, double sz, double sSpeed, VehicleConfig sConfig, TerrainMap terrain,
 		List<ThermalLayer> thermalLayers) {
 		double distance = Math.sqrt((sx - lx) * (sx - lx) + (sy - ly) * (sy - ly) + (sz - lz) * (sz - lz));
 		if (distance < 1.0)
@@ -383,12 +464,13 @@ public final class SonarModel {
 			double estimatedDepth = lz + trueDepthDiff + depthNoiseRms * rng.nextGaussian();
 
 			double estSpd = sSpeed > 0 ? sSpeed + rng.nextGaussian() * 2 : -1;
+			double estEchoLength = estimateEchoLengthMeters(sConfig, measuredSe, rng.nextGaussian());
 			// Active sonar reflects off the target; the "source level" is the echo
-			// strength, not the target's own noise. Source level is unavailable;
-			// classification relies on speed and depth instead of acoustic signature.
+			// strength, not the target's own noise. Classification uses echo extent, speed,
+			// and depth rather than radiated machinery noise.
 			return new SonarContact(noisyBearing, measuredSe, noisyRange, true, estSpd, bearingError,
 					noisyRange * RANGE_NOISE_FRACTION, Double.NaN, 0, Double.NaN, estimatedDepth,
-					classify(measuredSe, estSpd, Double.NaN, estimatedDepth));
+					classifyActive(measuredSe, estSpd, estEchoLength, Double.NaN, estimatedDepth));
 		}
 		return null;
 	}
@@ -464,8 +546,11 @@ public final class SonarModel {
 					double brgStdDev = bearingStdDev(measuredSe);
 					double bearingError = tracker.bearingNoise.next(tick, rng) * brgStdDev;
 					double reportedBearing = normalizeBearing(trueBearing + bearingError);
-					double estSpeed = estimateTargetSpeed(source.speed(), measuredSe,
-							tracker.speedNoise.next(tick, rng));
+					double speedUnitError = tracker.speedNoise.next(tick, rng);
+					double estSpeed = estimateTargetSpeed(source.speed(), measuredSe, speedUnitError);
+					boolean sourcePowered = source.engineClutch() && source.actualThrottle() != 0;
+					double estBladeRateHz = estimateBladeRateHz(source.vehicleConfig(), Math.abs(source.speed()),
+							sourcePowered, measuredSe, speedUnitError);
 
 					// Update contact tracker
 					if (inBaffles) {
@@ -480,7 +565,8 @@ public final class SonarModel {
 					double estSL = estimateSourceLevel(measuredSe, nl, tracker.estimatedRange());
 					passive.add(new SonarContact(reportedBearing, measuredSe, tracker.estimatedRange(), false, estSpeed,
 							brgStdDev, tracker.rangeUncertainty(), estSL, tracker.solutionQuality(),
-							tracker.estimatedHeading(), Double.NaN, classify(measuredSe, estSpeed, sl, Double.NaN)));
+							tracker.estimatedHeading(), Double.NaN,
+							classifyPassive(measuredSe, estSpeed, estBladeRateHz, sl, Double.NaN)));
 				}
 
 				// --- Active sonar returns (for the listener's own ping) ---
@@ -500,6 +586,8 @@ public final class SonarModel {
 						double estSL = estimateSourceLevel(measuredSe, nl, reportedRange);
 						double depthNoiseRms = Math.max(5.0, distance * 0.05);
 						double estimatedDepth = source.z() + depthNoiseRms * rng.nextGaussian();
+						double estEchoLength = estimateEchoLengthMeters(source.vehicleConfig(), measuredActiveSe,
+								rng.nextGaussian());
 
 						// Update contact tracker from ping
 						var tracker = getOrCreateTracker(listener.id(), source.id());
@@ -509,7 +597,7 @@ public final class SonarModel {
 						active.add(new SonarContact(reportedBearing, measuredActiveSe, reportedRange, true, estSpeed,
 								activeBrgStdDev, reportedRange * RANGE_NOISE_FRACTION, estSL, tracker.solutionQuality(),
 								tracker.estimatedHeading(), estimatedDepth,
-								classify(measuredActiveSe, estSpeed, estSL, estimatedDepth)));
+								classifyActive(measuredActiveSe, estSpeed, estEchoLength, estSL, estimatedDepth)));
 					}
 				}
 			}

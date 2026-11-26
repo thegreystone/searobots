@@ -216,6 +216,14 @@ public final class LeagueSparringRunner {
 		System.out.printf(Locale.ROOT,
 				"TELEMETRY: avg win time=%.0fs  |  CPU avg=%.0fms, peak=%dms (league cap: 30000ms)  |  forfeits=%d%n",
 				avgKillSec, avgCpuMs, maxCpuMs, forfeits);
+		boolean hadCpuForfeit = outcomes.stream()
+				.anyMatch(g -> (g.forfeitSub() != null && g.forfeitSub().contains("CPU"))
+						|| (g.forfeitOpp() != null && g.forfeitOpp().contains("CPU")));
+		if (hadCpuForfeit) {
+			System.out.println(
+					"NOTE: CPU-limit forfeits depend on host/JIT timing and can vary across runs or --threads. "
+							+ "Use --no-league-limits for strictly deterministic replays.");
+		}
 		if (highlightedLoss != null) {
 			System.out.printf(Locale.ROOT, "INSPECT WORST LOSS: mvn -Preplay -Dreplay=%s%n",
 					highlightedLoss.toString().replace('\\', '/'));
@@ -331,11 +339,26 @@ public final class LeagueSparringRunner {
 		String timeStr = String.format(Locale.ROOT, "%dm%02ds", secs / 60, secs % 60);
 		String hpStr = Math.max(0, g.hpSub()) + "/" + Math.max(0, g.hpOpp());
 		String torpStr = g.torpedoesSub() + "/" + g.torpedoesOpp();
-		String note = g.forfeitSub() != null ? "  [FORFEIT: " + g.forfeitSub() + "]"
-				: (g.savedReplay() != null ? "  [" + g.savedReplay().getFileName() + "]" : "");
+		String note = formatGameNote(g);
 
 		System.out.printf(Locale.ROOT, "%4d  %016x  %-9s  %-10s  %-10s  %7s  %9s  %7s  %7d%s%n", g.gameNumber(),
 				g.seed(), spawn, outcome, g.reason(), timeStr, hpStr, torpStr, g.cpuMsSub(), note);
+	}
+
+	static String formatGameNote(GameOutcome g) {
+		if (g.forfeitSub() != null && g.forfeitOpp() != null) {
+			return "  [FORFEIT: " + g.forfeitSub() + " | OPP FORFEIT: " + g.forfeitOpp() + "]";
+		}
+		if (g.forfeitSub() != null) {
+			return "  [FORFEIT: " + g.forfeitSub() + "]";
+		}
+		if (g.forfeitOpp() != null) {
+			return "  [OPP FORFEIT: " + g.forfeitOpp() + "]";
+		}
+		if (g.savedReplay() != null) {
+			return "  [" + g.savedReplay().getFileName() + "]";
+		}
+		return "";
 	}
 
 	private static void printGauntletSummary(List<SeriesSummary> results) {

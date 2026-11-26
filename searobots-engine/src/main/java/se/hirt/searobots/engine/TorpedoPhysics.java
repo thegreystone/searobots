@@ -303,8 +303,11 @@ public final class TorpedoPhysics {
 		torp.setY(newY);
 		torp.setZ(newZ);
 
-		// 12. Noise model (simplified: loud constant base + speed contribution)
+		// 12. Noise model: propulsion base + speed contribution; motor-off coasting drops base noise
 		double baseNoise = cfg.baseSlDb();
+		if (actualThrottle <= 0) {
+			baseNoise -= cfg.clutchDisengagedSlReduction();
+		}
 		double speedNoise = cfg.speedNoiseDbPerMs() * speed;
 		torp.setSourceLevelDb(baseNoise + speedNoise);
 	}

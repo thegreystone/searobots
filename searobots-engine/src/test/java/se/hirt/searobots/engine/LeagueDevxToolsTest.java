@@ -258,4 +258,21 @@ class LeagueDevxToolsTest {
 				LeaguePreflight.normalizeGithubHttps("git@github.com:octocat/my-sub.git"));
 		assertEquals("octocat", LeaguePreflight.extractGithubUser("https://github.com/octocat/my-sub"));
 	}
+
+	@Test
+	void gameNoteReportsChallengerAndOpponentForfeitReasons() {
+		var subForf = new LeagueSparringRunner.GameOutcome(1, 1L, false, -1, "FORFEIT", 100, 1000, 1000, 0, 0, 50, 50,
+				"Match CPU budget exceeded (30001 ms)", null, null);
+		assertEquals("  [FORFEIT: Match CPU budget exceeded (30001 ms)]", LeagueSparringRunner.formatGameNote(subForf));
+
+		var oppForf = new LeagueSparringRunner.GameOutcome(2, 2L, true, 1, "FORFEIT", 100, 1000, 1000, 0, 0, 50, 30015,
+				null, "Match CPU budget exceeded (30015 ms)", null);
+		assertEquals("  [OPP FORFEIT: Match CPU budget exceeded (30015 ms)]",
+				LeagueSparringRunner.formatGameNote(oppForf));
+
+		var bothForf = new LeagueSparringRunner.GameOutcome(3, 3L, false, 0, "DBL_FORF", 100, 1000, 1000, 0, 0, 30005,
+				30010, "Per-tick CPU limit exceeded", "Match CPU budget exceeded", null);
+		assertTrue(LeagueSparringRunner.formatGameNote(bothForf).contains("FORFEIT: Per-tick CPU limit exceeded"));
+		assertTrue(LeagueSparringRunner.formatGameNote(bothForf).contains("OPP FORFEIT: Match CPU budget exceeded"));
+	}
 }

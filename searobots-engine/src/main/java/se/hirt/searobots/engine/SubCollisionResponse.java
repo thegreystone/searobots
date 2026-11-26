@@ -217,6 +217,23 @@ final class SubCollisionResponse {
 		return result;
 	}
 
+	/**
+	 * Effective inverse contact mass when the water surface blocks upward centre-of-mass motion
+	 * ({@code sub.z() >= 0} and the impulse pushes upward). The surface reaction acts through the
+	 * centre of mass, cancelling vertical linear mobility while preserving horizontal and
+	 * rotational mobility.
+	 */
+	static double surfaceBlockedInverseContactMass(SubmarineEntity sub, Vec3 offset, Vec3 normal) {
+		var lever = offset.cross(normal);
+		double result = (normal.x() * normal.x() + normal.y() * normal.y()) / sub.vehicleConfig().dryMass()
+				+ lever.z() * lever.z() / yawInertia(sub);
+		if (!sub.surfaceConstrained()) {
+			double pitchLever = lever.dot(right(sub));
+			result += pitchLever * pitchLever / sub.vehicleConfig().collisionPitchInertia();
+		}
+		return result;
+	}
+
 	static void applyImpulse(SubmarineEntity sub, Vec3 offset, Vec3 impulse) {
 		setLinearVelocity(sub, sub.velocity().linear().add(linearMobility(sub, impulse)));
 		var torque = offset.cross(impulse);

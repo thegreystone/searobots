@@ -32,9 +32,6 @@ import se.hirt.searobots.api.Vec3;
 import se.hirt.searobots.api.VehicleConfig;
 import se.hirt.searobots.api.TerrainMap;
 
-import java.util.ArrayList;
-import java.util.Arrays;
-
 /**
  * Hull collision geometry: ellipsoid parameters and distance calculations shared between the
  * simulation loop, physics, and tests.
@@ -55,6 +52,8 @@ public final class HullGeometry {
 	// A feeder ship has a broad transom and bulbous bow, so its enclosing ellipsoid is longer
 	// and wider than the 150 x 30 m nominal hull. Superstructure is outside this water-contact hull.
 	private static final Envelope SURFACE_SHIP = new Envelope(90, 19, 7, 1, -2.5);
+	private static final Vec3[] SUBMARINE_SAMPLE_POINTS = buildSubmarineSamplePoints(1.0, 1.0);
+	private static final Vec3[] SURFACE_SHIP_SAMPLE_POINTS = SURFACE_SHIP.terrainSamplePoints();
 
 	/** Collision ellipsoid dimensions and its centre offset in the vehicle's local frame. */
 	public record Envelope(double semiLength, double semiBeam, double semiHeight, double forwardOffset,
@@ -87,11 +86,17 @@ public final class HullGeometry {
 
 	public static Envelope envelope(VehicleConfig config) {
 		if (config.surfaceLocked()) {
+			if (config.hullHalfLength() == 75.0 && config.hullHalfBeam() == 15.0) {
+				return SURFACE_SHIP;
+			}
 			return new Envelope(SURFACE_SHIP.semiLength() * config.hullHalfLength() / 75,
 					SURFACE_SHIP.semiBeam() * config.hullHalfBeam() / 15,
 					SURFACE_SHIP.semiHeight() * config.hullHalfBeam() / 15,
 					SURFACE_SHIP.forwardOffset() * config.hullHalfLength() / 75,
 					SURFACE_SHIP.upOffset() * config.hullHalfBeam() / 15);
+		}
+		if (config.hullHalfLength() == 37.5 && config.hullHalfBeam() == 6.0) {
+			return SUBMARINE;
 		}
 		return new Envelope(SEMI_LENGTH * config.hullHalfLength() / 37.5, SEMI_BEAM * config.hullHalfBeam() / 6,
 				SEMI_HEIGHT * config.hullHalfBeam() / 6, AFT_OFFSET, UP_OFFSET * config.hullHalfBeam() / 6);
@@ -101,31 +106,50 @@ public final class HullGeometry {
 		return snapshot.surfaceLocked() ? SURFACE_SHIP : SUBMARINE;
 	}
 
+	private static Vec3[] buildSubmarineSamplePoints(double lengthScale, double beamScale) {
+		// Keep the established keel and tips, and bound appendages outside the body ellipsoid.
+		// These bounds follow the generated mesh's fins, propeller mount, sail, and dive planes.
+		Vec3[] base = {Vec3.ZERO, new Vec3(0, 33.5, 0), new Vec3(0, -40, 0), new Vec3(6, 0, 0), new Vec3(-6, 0, 0),
+				new Vec3(0, 0, 6.5), new Vec3(0, 0, -5)};
+		Vec3[] result = new Vec3[base.length + HullTerrainGeometry.APPENDAGES.length * 8];
+		int index = 0;
+		for (var p : base) {
+			result[index++] = new Vec3(p.x() * beamScale, p.y() * lengthScale, p.z() * beamScale);
+		}
+		for (var box : HullTerrainGeometry.APPENDAGES) {
+			for (int xi = 0; xi < 2; xi++) {
+				double x = box[xi] * beamScale;
+				for (int yi = 2; yi < 4; yi++) {
+					double y = box[yi] * lengthScale;
+					for (int zi = 4; zi < 6; zi++) {
+						result[index++] = new Vec3(x, y, box[zi] * beamScale);
+					}
+				}
+			}
+		}
+		return result;
+	}
+
+	/** Shared unmutated sample array for engine hot paths. */
+	static Vec3[] sharedTerrainSamplePoints(VehicleConfig config) {
+		if (config.surfaceLocked()) {
+			if (config.hullHalfLength() == 75.0 && config.hullHalfBeam() == 15.0) {
+				return SURFACE_SHIP_SAMPLE_POINTS;
+			}
+			return envelope(config).terrainSamplePoints();
+		}
+		if (config.hullHalfLength() == 37.5 && config.hullHalfBeam() == 6.0) {
+			return SUBMARINE_SAMPLE_POINTS;
+		}
+		return buildSubmarineSamplePoints(config.hullHalfLength() / 37.5, config.hullHalfBeam() / 6);
+	}
+
 	/**
 	 * Vehicle-origin-relative physical contact samples shared by terrain physics and its overlay.
 	 * These approximate the hull and appendages; navigation clearance does not enlarge them.
 	 */
 	public static Vec3[] terrainSamplePoints(VehicleConfig config) {
-		if (config.surfaceLocked()) {
-			return envelope(config).terrainSamplePoints();
-		}
-		// Keep the established keel and tips, and bound appendages outside the body ellipsoid.
-		// These bounds follow the generated mesh's fins, propeller mount, sail, and dive planes.
-		var points = new ArrayList<Vec3>(Arrays.asList(Vec3.ZERO, new Vec3(0, 33.5, 0), new Vec3(0, -40, 0),
-				new Vec3(6, 0, 0), new Vec3(-6, 0, 0), new Vec3(0, 0, 6.5), new Vec3(0, 0, -5)));
-		for (var box : HullTerrainGeometry.APPENDAGES) {
-			for (double x : new double[] {box[0], box[1]}) {
-				for (double y : new double[] {box[2], box[3]}) {
-					for (double z : new double[] {box[4], box[5]}) {
-						points.add(new Vec3(x, y, z));
-					}
-				}
-			}
-		}
-		double lengthScale = config.hullHalfLength() / 37.5;
-		double beamScale = config.hullHalfBeam() / 6;
-		return points.stream().map(p -> new Vec3(p.x() * beamScale, p.y() * lengthScale, p.z() * beamScale))
-				.toArray(Vec3[]::new);
+		return sharedTerrainSamplePoints(config).clone();
 	}
 
 	/**
@@ -141,10 +165,20 @@ public final class HullGeometry {
 	/** Maximum vertical physical penetration; useful for position-only constraint projection. */
 	public static double terrainPenetration(
 		Vec3 position, double heading, double pitch, VehicleConfig config, TerrainMap terrain) {
+		var points = terrainContactPoints(position, heading, pitch, config, terrain);
+		if (points.length == 0) {
+			return 0;
+		}
+		double sinH = Math.sin(heading), cosH = Math.cos(heading);
+		double sinP = Math.sin(pitch), cosP = Math.cos(pitch);
+		double fwdX = sinH * cosP, fwdY = cosH * cosP;
+		double upX = -sinH * sinP, upY = -cosH * sinP;
 		double penetration = 0;
-		for (var local : terrainContactPoints(position, heading, pitch, config, terrain)) {
-			var world = HullTerrainGeometry.worldPoint(local, position, heading, pitch);
-			penetration = Math.max(penetration, terrain.elevationAt(world.x(), world.y()) - world.z());
+		for (var local : points) {
+			double wx = position.x() + cosH * local.x() + fwdX * local.y() + upX * local.z();
+			double wy = position.y() - sinH * local.x() + fwdY * local.y() + upY * local.z();
+			double wz = position.z() + sinP * local.y() + cosP * local.z();
+			penetration = Math.max(penetration, terrain.elevationAt(wx, wy) - wz);
 		}
 		return penetration;
 	}

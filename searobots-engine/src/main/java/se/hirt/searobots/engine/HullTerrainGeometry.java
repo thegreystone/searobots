@@ -34,7 +34,6 @@ import se.hirt.searobots.api.VehicleConfig;
 
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.TreeSet;
 
 /** Terrain-aware sampling of the physical hull, independent of navigation clearance. */
 final class HullTerrainGeometry {
@@ -43,18 +42,24 @@ final class HullTerrainGeometry {
 	static final double[][] APPENDAGES = {{-2.3, 2.3, -39, -35.4, -2.2, 2.4}, {-2.95, 2.95, -35.4, -30.6, -2.82, 3.04},
 			{-2.1, 2.1, 10.4, 20.5, 3, 7.9}, {-6, -3.6, 7.4, 16.7, -0.29, 0.09}, {3.6, 6, 7.4, 16.7, -0.29, 0.09}};
 	private static final int MAX_GRID_SAMPLES = 4096;
+	private static final int[] BOX_AXES = {1, 2, 4};
+	private static final double CULL_MARGIN = 1e-3;
 
 	private HullTerrainGeometry() {
 	}
 
 	static Vec3[] contactPoints(Vec3 position, double heading, double pitch, VehicleConfig config, TerrainMap terrain) {
-		var points = new ArrayList<Vec3>(Arrays.asList(HullGeometry.terrainSamplePoints(config)));
+		var samplePoints = HullGeometry.sharedTerrainSamplePoints(config);
+		var points = new ArrayList<Vec3>(samplePoints.length + 32);
+		for (var sample : samplePoints) {
+			points.add(sample);
+		}
 		var shape = new Shape(position, heading, pitch, HullGeometry.envelope(config));
-		if (!addEllipsoidContacts(points, shape, position, heading, pitch, terrain)) {
+		if (!addEllipsoidContacts(points, shape, terrain)) {
 			return new Vec3[0];
 		}
 		if (!config.surfaceLocked() && terrain.getMinElevation() != terrain.getMaxElevation()) {
-			addAppendageSamples(points, position, heading, pitch, config, terrain);
+			addAppendageSamples(points, shape, config, terrain);
 		}
 		return points.toArray(Vec3[]::new);
 	}
@@ -62,22 +67,37 @@ final class HullTerrainGeometry {
 	/** Physical ellipsoid candidates in the vehicle-origin-relative right/forward/up frame. */
 	static Vec3[] ellipsoidContactPoints(
 		Vec3 position, double heading, double pitch, HullGeometry.Envelope envelope, TerrainMap terrain) {
-		var points = new ArrayList<Vec3>(Arrays.asList(envelope.terrainSamplePoints()));
+		var samplePoints = envelope.terrainSamplePoints();
+		var points = new ArrayList<Vec3>(samplePoints.length + 16);
+		for (var sample : samplePoints) {
+			points.add(sample);
+		}
 		var shape = new Shape(position, heading, pitch, envelope);
-		return addEllipsoidContacts(points, shape, position, heading, pitch, terrain) ? points.toArray(Vec3[]::new)
-				: new Vec3[0];
+		return addEllipsoidContacts(points, shape, terrain) ? points.toArray(Vec3[]::new) : new Vec3[0];
 	}
 
-	private static boolean addEllipsoidContacts(
-		ArrayList<Vec3> points, Shape shape, Vec3 position, double heading, double pitch, TerrainMap terrain) {
+	private static boolean addEllipsoidContacts(ArrayList<Vec3> points, Shape shape, TerrainMap terrain) {
 		var lowest = shape.support(new Vec3(0, 0, -1));
 		points.add(shape.local(lowest));
 		double lowestZ = lowest.z();
-		for (var local : points) {
-			lowestZ = Math.min(lowestZ, worldPoint(local, position, heading, pitch).z());
+		double minX = shape.center.x() - shape.extentX, maxX = shape.center.x() + shape.extentX;
+		double minY = shape.center.y() - shape.extentY, maxY = shape.center.y() + shape.extentY;
+		double px = shape.position.x(), py = shape.position.y(), pz = shape.position.z();
+		double rx = shape.right.x(), ry = shape.right.y();
+		double fx = shape.forward.x(), fy = shape.forward.y(), fz = shape.forward.z();
+		double ux = shape.up.x(), uy = shape.up.y(), uz = shape.up.z();
+		for (int i = 0; i < points.size(); i++) {
+			var local = points.get(i);
+			double wx = px + rx * local.x() + fx * local.y() + ux * local.z();
+			double wy = py + ry * local.x() + fy * local.y() + uy * local.z();
+			double wz = pz + fz * local.y() + uz * local.z();
+			lowestZ = Math.min(lowestZ, wz);
+			minX = Math.min(minX, wx);
+			maxX = Math.max(maxX, wx);
+			minY = Math.min(minY, wy);
+			maxY = Math.max(maxY, wy);
 		}
-		if (lowestZ >= terrain.getMaxElevation()
-				|| clearsLocalBounds(shape, points, position, heading, pitch, lowestZ, terrain)) {
+		if (lowestZ >= terrain.getMaxElevation() || clearsRegion(minX, maxX, minY, maxY, lowestZ, terrain)) {
 			return false;
 		}
 		if (terrain.getMinElevation() == terrain.getMaxElevation()) {
@@ -87,47 +107,68 @@ final class HullTerrainGeometry {
 		// A maximum lies on a cell edge or at an interior stationary point of terrain minus
 		// hull height. Enumerate both; a normal-support iteration can leave its terrain cell
 		// and alternate between remote supports while missing an interior contact entirely.
-		double minX = Math.max(shape.center.x() - shape.extentX, terrain.getOriginX() - terrain.getCellSize());
-		double maxX = Math.min(shape.center.x() + shape.extentX,
+		double ellMinX = Math.max(shape.center.x() - shape.extentX, terrain.getOriginX() - terrain.getCellSize());
+		double ellMaxX = Math.min(shape.center.x() + shape.extentX,
 				terrain.getOriginX() + terrain.getCols() * terrain.getCellSize());
-		double minY = Math.max(shape.center.y() - shape.extentY, terrain.getOriginY() - terrain.getCellSize());
-		double maxY = Math.min(shape.center.y() + shape.extentY,
+		double ellMinY = Math.max(shape.center.y() - shape.extentY, terrain.getOriginY() - terrain.getCellSize());
+		double ellMaxY = Math.min(shape.center.y() + shape.extentY,
 				terrain.getOriginY() + terrain.getRows() * terrain.getCellSize());
-		addGridLineSupports(points, shape, terrain, minX, maxX, minY, maxY);
-		addCellInteriorSupports(points, shape, terrain, minX, maxX, minY, maxY, lowest.z());
+		addGridLineSupports(points, shape, terrain, ellMinX, ellMaxX, ellMinY, ellMaxY, lowest.z());
+		addCellInteriorSupports(points, shape, terrain, ellMinX, ellMaxX, ellMinY, ellMaxY, lowest.z());
 		return true;
 	}
 
 	/** Exact normal support of each ellipsoid section along a terrain cell edge. */
 	private static void addGridLineSupports(
-		ArrayList<Vec3> points, Shape shape, TerrainMap terrain, double minX, double maxX, double minY, double maxY) {
+		ArrayList<Vec3> points, Shape shape, TerrainMap terrain, double minX, double maxX, double minY, double maxY,
+		double lowestZ) {
 		double cell = terrain.getCellSize();
-		int firstCol = (int) Math.ceil((minX - terrain.getOriginX()) / cell);
-		int lastCol = (int) Math.floor((maxX - terrain.getOriginX()) / cell);
-		int firstRow = (int) Math.floor((minY - terrain.getOriginY()) / cell);
-		int lastRow = (int) Math.floor((maxY - terrain.getOriginY()) / cell);
+		double originX = terrain.getOriginX(), originY = terrain.getOriginY();
+		double cullZ = lowestZ - CULL_MARGIN;
+		int firstCol = (int) Math.ceil((minX - originX) / cell);
+		int lastCol = (int) Math.floor((maxX - originX) / cell);
+		int firstRow = (int) Math.floor((minY - originY) / cell);
+		int lastRow = (int) Math.floor((maxY - originY) / cell);
 		for (int col = firstCol; col <= lastCol; col++) {
-			double x = terrain.getOriginX() + col * cell;
+			double x = originX + col * cell;
 			for (int row = firstRow; row <= lastRow; row++) {
-				double lower = Math.max(minY, terrain.getOriginY() + row * cell);
-				double upper = Math.min(maxY, terrain.getOriginY() + (row + 1) * cell);
+				double rowLower = originY + row * cell;
+				double rowUpper = originY + (row + 1) * cell;
+				double lower = Math.max(minY, rowLower);
+				double upper = Math.min(maxY, rowUpper);
 				if (upper > lower) {
-					double slope = (terrain.elevationAt(x, upper) - terrain.elevationAt(x, lower)) / (upper - lower);
+					double eLower = lower == rowLower ? terrain.elevationAtGrid(col, row)
+							: terrain.elevationAt(x, lower);
+					double eUpper = upper == rowUpper ? terrain.elevationAtGrid(col, row + 1)
+							: terrain.elevationAt(x, upper);
+					if (Math.max(eLower, eUpper) < cullZ) {
+						continue;
+					}
+					double slope = (eUpper - eLower) / (upper - lower);
 					var point = shape.sectionSupport(true, x, lower, upper, slope);
 					if (point != null)
 						points.add(shape.local(point));
 				}
 			}
 		}
-		firstCol = (int) Math.floor((minX - terrain.getOriginX()) / cell);
-		firstRow = (int) Math.ceil((minY - terrain.getOriginY()) / cell);
+		firstCol = (int) Math.floor((minX - originX) / cell);
+		firstRow = (int) Math.ceil((minY - originY) / cell);
 		for (int row = firstRow; row <= lastRow; row++) {
-			double y = terrain.getOriginY() + row * cell;
+			double y = originY + row * cell;
 			for (int col = firstCol; col <= lastCol; col++) {
-				double lower = Math.max(minX, terrain.getOriginX() + col * cell);
-				double upper = Math.min(maxX, terrain.getOriginX() + (col + 1) * cell);
+				double colLower = originX + col * cell;
+				double colUpper = originX + (col + 1) * cell;
+				double lower = Math.max(minX, colLower);
+				double upper = Math.min(maxX, colUpper);
 				if (upper > lower) {
-					double slope = (terrain.elevationAt(upper, y) - terrain.elevationAt(lower, y)) / (upper - lower);
+					double eLower = lower == colLower ? terrain.elevationAtGrid(col, row)
+							: terrain.elevationAt(lower, y);
+					double eUpper = upper == colUpper ? terrain.elevationAtGrid(col + 1, row)
+							: terrain.elevationAt(upper, y);
+					if (Math.max(eLower, eUpper) < cullZ) {
+						continue;
+					}
+					double slope = (eUpper - eLower) / (upper - lower);
 					var point = shape.sectionSupport(false, y, lower, upper, slope);
 					if (point != null)
 						points.add(shape.local(point));
@@ -140,18 +181,32 @@ final class HullTerrainGeometry {
 		ArrayList<Vec3> points, Shape shape, TerrainMap terrain, double minX, double maxX, double minY, double maxY,
 		double lowestZ) {
 		double cell = terrain.getCellSize();
-		int firstCol = (int) Math.floor((minX - terrain.getOriginX()) / cell);
-		int lastCol = (int) Math.floor((maxX - terrain.getOriginX()) / cell);
-		int firstRow = (int) Math.floor((minY - terrain.getOriginY()) / cell);
-		int lastRow = (int) Math.floor((maxY - terrain.getOriginY()) / cell);
+		double originX = terrain.getOriginX(), originY = terrain.getOriginY();
+		int firstCol = (int) Math.floor((minX - originX) / cell);
+		int lastCol = (int) Math.floor((maxX - originX) / cell);
+		int firstRow = (int) Math.floor((minY - originY) / cell);
+		int lastRow = (int) Math.floor((maxY - originY) / cell);
+		// Separating-axis bounds of the horizontal ellipsoid projection along the hull's right
+		// and forward axes skip empty corner cells when the hull is turned diagonally.
+		double cellHalfProj = 0.5 * cell * (Math.abs(shape.cosH) + Math.abs(shape.sinH));
+		double maxRightDist = shape.envelope.semiBeam() + cellHalfProj + 1e-9;
+		double maxForwardDist = Math.hypot(shape.envelope.semiLength() * shape.cosP,
+				shape.envelope.semiHeight() * shape.sinP) + cellHalfProj + 1e-9;
 		for (int col = firstCol; col <= lastCol; col++) {
+			double x = originX + col * cell;
+			double cellCenterDx = x + 0.5 * cell - shape.center.x();
 			for (int row = firstRow; row <= lastRow; row++) {
+				double y = originY + row * cell;
+				double cellCenterDy = y + 0.5 * cell - shape.center.y();
+				if (Math.abs(cellCenterDx * shape.cosH - cellCenterDy * shape.sinH) > maxRightDist
+						|| Math.abs(cellCenterDx * shape.sinH + cellCenterDy * shape.cosH) > maxForwardDist) {
+					continue;
+				}
 				double e00 = terrain.elevationAtGrid(col, row), e10 = terrain.elevationAtGrid(col + 1, row);
 				double e01 = terrain.elevationAtGrid(col, row + 1), e11 = terrain.elevationAtGrid(col + 1, row + 1);
 				if (Math.max(Math.max(e00, e10), Math.max(e01, e11)) < lowestZ) {
 					continue;
 				}
-				double x = terrain.getOriginX() + col * cell, y = terrain.getOriginY() + row * cell;
 				double mixed = (e11 - e10 - e01 + e00) / (cell * cell);
 				double slopeX = (e10 - e00) / cell + mixed * (shape.center.y() - y);
 				double slopeY = (e01 - e00) / cell + mixed * (shape.center.x() - x);
@@ -161,22 +216,38 @@ final class HullTerrainGeometry {
 	}
 
 	private static void addAppendageSamples(
-		ArrayList<Vec3> points, Vec3 position, double heading, double pitch, VehicleConfig config, TerrainMap terrain) {
+		ArrayList<Vec3> points, Shape shape, VehicleConfig config, TerrainMap terrain) {
 		double lengthScale = config.hullHalfLength() / 37.5, beamScale = config.hullHalfBeam() / 6;
+		double maxTerrain = terrain.getMaxElevation();
+		var bounds = new double[6];
+		var localCorners = new Vec3[8];
+		var worldCorners = new Vec3[8];
 		for (var box : APPENDAGES) {
-			var bounds = new double[] {box[0] * beamScale, box[1] * beamScale, box[2] * lengthScale,
-					box[3] * lengthScale, box[4] * beamScale, box[5] * beamScale};
-			var localCorners = new Vec3[8];
-			var worldCorners = new Vec3[8];
+			bounds[0] = box[0] * beamScale;
+			bounds[1] = box[1] * beamScale;
+			bounds[2] = box[2] * lengthScale;
+			bounds[3] = box[3] * lengthScale;
+			bounds[4] = box[4] * beamScale;
+			bounds[5] = box[5] * beamScale;
 			double minX = Double.POSITIVE_INFINITY, maxX = Double.NEGATIVE_INFINITY;
 			double minY = Double.POSITIVE_INFINITY, maxY = Double.NEGATIVE_INFINITY;
+			double minZ = Double.POSITIVE_INFINITY;
 			for (int i = 0; i < 8; i++) {
-				localCorners[i] = new Vec3(bounds[(i >> 2) & 1], bounds[2 + ((i >> 1) & 1)], bounds[4 + (i & 1)]);
-				worldCorners[i] = worldPoint(localCorners[i], position, heading, pitch);
-				minX = Math.min(minX, worldCorners[i].x());
-				maxX = Math.max(maxX, worldCorners[i].x());
-				minY = Math.min(minY, worldCorners[i].y());
-				maxY = Math.max(maxY, worldCorners[i].y());
+				double lx = bounds[(i >> 2) & 1];
+				double ly = bounds[2 + ((i >> 1) & 1)];
+				double lz = bounds[4 + (i & 1)];
+				localCorners[i] = new Vec3(lx, ly, lz);
+				var world = shape.originWorldPoint(lx, ly, lz);
+				worldCorners[i] = world;
+				minX = Math.min(minX, world.x());
+				maxX = Math.max(maxX, world.x());
+				minY = Math.min(minY, world.y());
+				maxY = Math.max(maxY, world.y());
+				minZ = Math.min(minZ, world.z());
+			}
+			// Skip appendage boxes strictly above the local terrain footprint (e.g. sail on a shoal).
+			if (minZ >= maxTerrain + CULL_MARGIN || clearsRegion(minX, maxX, minY, maxY, minZ - CULL_MARGIN, terrain)) {
+				continue;
 			}
 			// Bilinear terrain minus a planar box face has no interior strict maximum. The
 			// lattice vertices and clipped face edges therefore cover contact extrema.
@@ -194,13 +265,13 @@ final class HullTerrainGeometry {
 			double startY = terrain.getOriginY() + Math.ceil((minY - terrain.getOriginY()) / spacing) * spacing;
 			for (double x = startX; x <= maxX; x += spacing) {
 				for (double y = startY; y <= maxY; y += spacing) {
-					var local = boxLowerPoint(x, y, position, heading, pitch, bounds);
+					var local = boxLowerPoint(x, y, shape, bounds);
 					if (local != null)
 						points.add(local);
 				}
 			}
 			for (int i = 0; i < 8; i++) {
-				for (int axis : new int[] {1, 2, 4}) {
+				for (int axis : BOX_AXES) {
 					if ((i & axis) == 0) {
 						addBoxEdge(points, localCorners[i], localCorners[i | axis], worldCorners[i],
 								worldCorners[i | axis], terrain);
@@ -210,16 +281,16 @@ final class HullTerrainGeometry {
 		}
 	}
 
-	private static Vec3 boxLowerPoint(double x, double y, Vec3 position, double heading, double pitch, double[] box) {
-		double sinH = Math.sin(heading), cosH = Math.cos(heading), sinP = Math.sin(pitch), cosP = Math.cos(pitch);
-		double dx = x - position.x(), dy = y - position.y();
-		double right = dx * cosH - dy * sinH;
+	private static Vec3 boxLowerPoint(double x, double y, Shape shape, double[] box) {
+		double dx = x - shape.position.x(), dy = y - shape.position.y();
+		double right = dx * shape.cosH - dy * shape.sinH;
 		if (right < box[0] - 1e-10 || right > box[1] + 1e-10)
 			return null;
-		double forward = (dx * sinH + dy * cosH) * cosP, up = -(dx * sinH + dy * cosH) * sinP;
+		double horiz = dx * shape.sinH + dy * shape.cosH;
+		double forward = horiz * shape.cosP, up = -horiz * shape.sinP;
 		double lower = Double.NEGATIVE_INFINITY, upper = Double.POSITIVE_INFINITY;
 		for (int axis = 0; axis < 2; axis++) {
-			double origin = axis == 0 ? forward : up, direction = axis == 0 ? sinP : cosP;
+			double origin = axis == 0 ? forward : up, direction = axis == 0 ? shape.sinP : shape.cosP;
 			double min = box[2 + axis * 2], max = box[3 + axis * 2];
 			if (Math.abs(direction) < 1e-12) {
 				if (origin < min - 1e-10 || origin > max + 1e-10)
@@ -232,20 +303,35 @@ final class HullTerrainGeometry {
 		}
 		if (lower > upper + 1e-10)
 			return null;
-		return new Vec3(right, forward + sinP * lower, up + cosP * lower);
+		return new Vec3(right, forward + shape.sinP * lower, up + shape.cosP * lower);
 	}
 
 	private static void addBoxEdge(
 		ArrayList<Vec3> points, Vec3 localStart, Vec3 localEnd, Vec3 worldStart, Vec3 worldEnd, TerrainMap terrain) {
-		var cuts = new TreeSet<Double>();
-		cuts.add(0.0);
-		cuts.add(1.0);
-		addGridCuts(cuts, worldStart.x(), worldEnd.x(), terrain.getOriginX(), terrain.getCellSize(), terrain.getCols());
-		addGridCuts(cuts, worldStart.y(), worldEnd.y(), terrain.getOriginY(), terrain.getCellSize(), terrain.getRows());
+		double[] cuts = new double[16];
+		int cutCount = 0;
+		cuts[cutCount++] = 0.0;
+		cuts[cutCount++] = 1.0;
+		var cutsHolder = new CutBuffer(cuts, cutCount);
+		addGridCuts(cutsHolder, worldStart.x(), worldEnd.x(), terrain.getOriginX(), terrain.getCellSize(),
+				terrain.getCols());
+		addGridCuts(cutsHolder, worldStart.y(), worldEnd.y(), terrain.getOriginY(), terrain.getCellSize(),
+				terrain.getRows());
+		cuts = cutsHolder.values;
+		cutCount = cutsHolder.size;
+		if (cutCount > 2) {
+			Arrays.sort(cuts, 0, cutCount);
+		}
 		var localDelta = localEnd.subtract(localStart);
 		var worldDelta = worldEnd.subtract(worldStart);
 		double previous = 0;
-		for (double cut : cuts) {
+		boolean addedZero = false;
+		for (int i = 0; i < cutCount; i++) {
+			double cut = cuts[i];
+			if (addedZero && cut <= previous) {
+				continue;
+			}
+			addedZero = true;
 			points.add(localStart.add(localDelta.scale(cut)));
 			if (cut > previous) {
 				double q0 = penetrationAt(worldStart.add(worldDelta.scale(previous)), terrain);
@@ -262,8 +348,24 @@ final class HullTerrainGeometry {
 		}
 	}
 
-	private static void addGridCuts(
-		TreeSet<Double> cuts, double start, double end, double origin, double cell, int count) {
+	private static final class CutBuffer {
+		double[] values;
+		int size;
+
+		CutBuffer(double[] values, int size) {
+			this.values = values;
+			this.size = size;
+		}
+
+		void add(double v) {
+			if (size == values.length) {
+				values = Arrays.copyOf(values, values.length * 2);
+			}
+			values[size++] = v;
+		}
+	}
+
+	private static void addGridCuts(CutBuffer cuts, double start, double end, double origin, double cell, int count) {
 		if (Math.abs(end - start) < 1e-12)
 			return;
 		double min = Math.max(Math.min(start, end), origin - cell);
@@ -281,18 +383,8 @@ final class HullTerrainGeometry {
 	}
 
 	/** A bilinear cell's elevation cannot exceed its highest lattice corner. */
-	private static boolean clearsLocalBounds(
-		Shape shape, ArrayList<Vec3> points, Vec3 position, double heading, double pitch, double lowestZ,
-		TerrainMap terrain) {
-		double minX = shape.center.x() - shape.extentX, maxX = shape.center.x() + shape.extentX;
-		double minY = shape.center.y() - shape.extentY, maxY = shape.center.y() + shape.extentY;
-		for (var local : points) {
-			var world = worldPoint(local, position, heading, pitch);
-			minX = Math.min(minX, world.x());
-			maxX = Math.max(maxX, world.x());
-			minY = Math.min(minY, world.y());
-			maxY = Math.max(maxY, world.y());
-		}
+	private static boolean clearsRegion(
+		double minX, double maxX, double minY, double maxY, double lowestZ, TerrainMap terrain) {
 		double cell = terrain.getCellSize();
 		int minCol = (int) Math.max(0, Math.floor((minX - terrain.getOriginX()) / cell));
 		int maxCol = (int) Math.min(terrain.getCols() - 1, Math.floor((maxX - terrain.getOriginX()) / cell) + 1);
@@ -311,13 +403,14 @@ final class HullTerrainGeometry {
 
 	static Vec3 worldPoint(Vec3 local, Vec3 position, double heading, double pitch) {
 		double sinH = Math.sin(heading), cosH = Math.cos(heading), sinP = Math.sin(pitch), cosP = Math.cos(pitch);
-		return position.add(new Vec3(cosH, -sinH, 0).scale(local.x()))
-				.add(new Vec3(sinH * cosP, cosH * cosP, sinP).scale(local.y()))
-				.add(new Vec3(-sinH * sinP, -cosH * sinP, cosP).scale(local.z()));
+		double lx = local.x(), ly = local.y(), lz = local.z();
+		return new Vec3(position.x() + cosH * lx + sinH * cosP * ly - sinH * sinP * lz,
+				position.y() - sinH * lx + cosH * cosP * ly - cosH * sinP * lz, position.z() + sinP * ly + cosP * lz);
 	}
 
 	private static final class Shape {
-		final Vec3 center, right, forward, up;
+		final Vec3 position, center, right, forward, up;
+		final double sinH, cosH, sinP, cosP;
 		final HullGeometry.Envelope envelope;
 		final double extentX, extentY;
 		final double mxx, mxy, mxz, myy, myz, mzz;
@@ -325,8 +418,12 @@ final class HullTerrainGeometry {
 		double positiveProduct, negativeProduct;
 
 		Shape(Vec3 position, double heading, double pitch, HullGeometry.Envelope envelope) {
+			this.position = position;
 			this.envelope = envelope;
-			double sinH = Math.sin(heading), cosH = Math.cos(heading), sinP = Math.sin(pitch), cosP = Math.cos(pitch);
+			sinH = Math.sin(heading);
+			cosH = Math.cos(heading);
+			sinP = Math.sin(pitch);
+			cosP = Math.cos(pitch);
 			right = new Vec3(cosH, -sinH, 0);
 			forward = new Vec3(sinH * cosP, cosH * cosP, sinP);
 			up = new Vec3(-sinH * sinP, -cosH * sinP, cosP);
@@ -341,6 +438,12 @@ final class HullTerrainGeometry {
 			myy = right.y() * right.y() / a2 + forward.y() * forward.y() / b2 + up.y() * up.y() / c2;
 			myz = forward.y() * forward.z() / b2 + up.y() * up.z() / c2;
 			mzz = forward.z() * forward.z() / b2 + up.z() * up.z() / c2;
+		}
+
+		Vec3 originWorldPoint(double lx, double ly, double lz) {
+			return new Vec3(position.x() + right.x() * lx + forward.x() * ly + up.x() * lz,
+					position.y() + right.y() * lx + forward.y() * ly + up.y() * lz,
+					position.z() + forward.z() * ly + up.z() * lz);
 		}
 
 		private void prepareInteriorSupport() {
