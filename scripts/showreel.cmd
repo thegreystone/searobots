@@ -108,16 +108,16 @@ if not "%MVN_EXIT%"=="0" (
     exit /b %MVN_EXIT%
 )
 
-rem -- Locate the shaded viewer JAR --
+rem -- Locate the standalone shaded viewer JAR --
 :find_jar
 set "VIEWER_JAR="
 if exist "%VIEWER_TARGET%" (
-    for /f "delims=" %%F in ('dir /b /o-d "%VIEWER_TARGET%\searobots-viewer-*.jar" 2^>nul') do (
-        call :consider_jar "%VIEWER_TARGET%\%%F" "%%F"
+    for /f "delims=" %%F in ('dir /b /o-d "%VIEWER_TARGET%\searobots-viewer-*-standalone.jar" 2^>nul') do (
+        if not defined VIEWER_JAR set "VIEWER_JAR=%VIEWER_TARGET%\%%F"
     )
 )
 if not defined VIEWER_JAR (
-    >&2 echo Error: Could not find searobots-viewer-*.jar in "%VIEWER_TARGET%".
+    >&2 echo Error: Could not find searobots-viewer-*-standalone.jar in "%VIEWER_TARGET%".
     >&2 echo Run without --skip-build to build the project first.
     exit /b 1
 )
@@ -193,16 +193,6 @@ if exist "%FFMPEG_UNQUOTED%" (
 )
 exit /b 0
 
-:consider_jar
-if defined VIEWER_JAR exit /b 0
-set "CANDIDATE_NAME=%~2"
-if /i not "%CANDIDATE_NAME:-sources.jar=%"=="%CANDIDATE_NAME%" exit /b 0
-if /i not "%CANDIDATE_NAME:-javadoc.jar=%"=="%CANDIDATE_NAME%" exit /b 0
-if /i not "%CANDIDATE_NAME:-tests.jar=%"=="%CANDIDATE_NAME%" exit /b 0
-if /i not "%CANDIDATE_NAME:-shaded.jar=%"=="%CANDIDATE_NAME%" exit /b 0
-set "VIEWER_JAR=%~1"
-exit /b 0
-
 :show_help
 echo Usage: scripts\showreel.cmd [script options] [showreel options]
 echo.
@@ -227,6 +217,9 @@ echo   --size WxH        frame size (default 1920x960, a 2:1 cinemascope frame)
 echo   --fps N           frame rate (default 60)
 echo   --crf N           x264 quality, lower is better (default 20)
 echo   --time HH:MM      time of day for the light (default 15:00)
+echo   --title TEXT      title card heading (default SEAROBOTS)
+echo   --tagline TEXT    title card subtitle (default AUTONOMOUS UNDERWATER COMBAT)
+echo   --url TEXT        end card URL (default github.com/thegreystone/searobots)
 echo   --ffmpeg PATH     ffmpeg executable
 echo   --frames DIR      write PNG frames instead of a video
 echo   --plan-only       scout and plan, print the plan, render nothing

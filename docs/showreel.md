@@ -15,10 +15,12 @@ mvn clean install -DskipTests
 mvn exec:exec -pl searobots-viewer -Dexec.mainClass=se.hirt.searobots.viewer.Showreel
 ```
 
-or, from a packaged viewer jar (on macOS add `-XstartOnFirstThread`):
+or, from the release JAR (`searobots-<version>.jar`, or
+`searobots-viewer/target/searobots-viewer-<version>-standalone.jar` from a source build; on macOS
+add `-XstartOnFirstThread`):
 
 ```bash
-java -XX:+UseZGC -Xmx4g -jar searobots-viewer-<version>.jar --showreel [options]
+java -XX:+UseZGC -Xmx4g -jar searobots-<version>.jar --showreel [options]
 ```
 
 Options are passed to the jar after `--showreel`. Through Maven, give the whole command line in
