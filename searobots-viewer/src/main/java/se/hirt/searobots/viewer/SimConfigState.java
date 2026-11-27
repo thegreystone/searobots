@@ -379,17 +379,21 @@ final class SimConfigState extends BaseAppState {
 	}
 
 	/**
-	 * A seed as typed by the user: hexadecimal, as the viewer shows seeds (title bar, this dialog),
-	 * or failing that a signed decimal number.
+	 * A seed as typed by the user: hexadecimal (with optional {@code 0x}/{@code 0X} prefix), as the
+	 * viewer shows seeds (title bar, this dialog), or failing that a signed decimal number.
 	 *
 	 * @throws NumberFormatException
 	 *             if the text is neither
 	 */
 	static long parseSeed(String text) {
+		String trimmed = text.trim();
+		if (trimmed.startsWith("0x") || trimmed.startsWith("0X")) {
+			return Long.parseUnsignedLong(trimmed.substring(2), 16);
+		}
 		try {
-			return Long.parseUnsignedLong(text.trim(), 16);
+			return Long.parseUnsignedLong(trimmed, 16);
 		} catch (NumberFormatException e) {
-			return Long.parseLong(text.trim());
+			return Long.parseLong(trimmed);
 		}
 	}
 

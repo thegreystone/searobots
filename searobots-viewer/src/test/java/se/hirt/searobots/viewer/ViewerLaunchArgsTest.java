@@ -108,6 +108,21 @@ class ViewerLaunchArgsTest {
 		var legacySeed = SubmarineScene3D.parseLaunchArgs(new String[] {"deadbeef"});
 		assertEquals(0xdeadbeefL, legacySeed.seed());
 		assertNull(legacySeed.replayPath());
+
+		var prefixedNamed = SubmarineScene3D.parseLaunchArgs(new String[] {"--seed", "0x2c"});
+		assertEquals(0x2cL, prefixedNamed.seed());
+
+		var prefixedPositional = SubmarineScene3D.parseLaunchArgs(new String[] {"0XDEADBEEF"});
+		assertEquals(0xdeadbeefL, prefixedPositional.seed());
+	}
+
+	@Test
+	void parseSeedAcceptsOptionalHexPrefixAndSignedDecimal() {
+		assertEquals(0x2cL, SimConfigState.parseSeed("0x2c"));
+		assertEquals(0xdeadbeefL, SimConfigState.parseSeed("  0XDEADBEEF  "));
+		assertEquals(-1L, SimConfigState.parseSeed("0xffffffffffffffff"));
+		assertEquals(-451325398205793679L, SimConfigState.parseSeed("-451325398205793679"));
+		assertThrows(NumberFormatException.class, () -> SimConfigState.parseSeed("0x"));
 	}
 
 	@Test
