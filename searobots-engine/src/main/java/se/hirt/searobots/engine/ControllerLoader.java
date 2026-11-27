@@ -182,12 +182,9 @@ public final class ControllerLoader {
 		if (name == null || name.isBlank()) {
 			name = raw.getSimpleName();
 		}
-		String shortName = probe.shortName();
-		if (shortName == null || shortName.isBlank()) {
-			shortName = name.length() >= 2 ? name.substring(0, 2).toUpperCase(Locale.ROOT)
-					: name.toUpperCase(Locale.ROOT);
-		}
-		return new ResolvedController(name.trim(), shortName.trim(), raw.getName(), factory, VehicleConfig.submarine());
+		String trimmedName = name.trim();
+		String shortName = SubmarineSnapshot.toShortName(probe.shortName(), trimmedName);
+		return new ResolvedController(trimmedName, shortName, raw.getName(), factory, VehicleConfig.submarine());
 	}
 
 	/**

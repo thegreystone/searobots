@@ -41,6 +41,8 @@ import dev.searobots.preflight.PreflightFixture;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -257,6 +259,65 @@ class LeagueDevxToolsTest {
 		assertEquals("https://github.com/octocat/my-sub",
 				LeaguePreflight.normalizeGithubHttps("git@github.com:octocat/my-sub.git"));
 		assertEquals("octocat", LeaguePreflight.extractGithubUser("https://github.com/octocat/my-sub"));
+	}
+
+	public static final class DefaultShortNameSub implements SubmarineController {
+		@Override
+		public String name() {
+			return "My Cool Sub";
+		}
+
+		@Override
+		public void onTick(SubmarineInput input, SubmarineOutput output) {
+		}
+	}
+
+	@Test
+	void defaultShortNameIsNormalizedConsistentlyForLoaderAndPreflight(@TempDir
+	Path tempDir) throws Exception {
+		var resolved = ControllerLoader.resolve(DefaultShortNameSub.class.getName());
+		assertEquals("My Cool Sub", resolved.displayName());
+		assertEquals("MY", resolved.shortName());
+
+		Path src = tempDir.resolve("com/example/DefaultCodeSub.java");
+		Files.createDirectories(src.getParent());
+		Files.writeString(src, """
+				package com.example;
+				import se.hirt.searobots.api.*;
+				public final class DefaultCodeSub implements SubmarineController {
+					@Override public String name() { return "Nautilus"; }
+					@Override public void onTick(SubmarineInput in, SubmarineOutput out) {}
+				}
+				""");
+
+		Path tmpRoot = Path.of(System.getProperty("java.io.tmpdir"));
+		Set<Path> before = listPreflightTempDirs(tmpRoot);
+		var report = LeaguePreflight.check(tempDir, "com.example.DefaultCodeSub", false);
+		Set<Path> after = listPreflightTempDirs(tmpRoot);
+
+		assertTrue(report.passed(), "Controller using default shortName() must pass preflight: " + report.errors());
+		assertEquals("NA", report.shortName());
+		after.removeAll(before);
+		assertTrue(after.isEmpty(), "LeaguePreflight must clean up its temp directory, leaked: " + after);
+
+		// Also verify cleanup when standalone compilation fails
+		Path badDir = tempDir.resolve("broken");
+		Path badSrc = badDir.resolve("com/example/BrokenSub.java");
+		Files.createDirectories(badSrc.getParent());
+		Files.writeString(badSrc, "package com.example; public class BrokenSub { invalid java }");
+		Set<Path> beforeFail = listPreflightTempDirs(tmpRoot);
+		var failReport = LeaguePreflight.check(badDir, "com.example.BrokenSub", false);
+		Set<Path> afterFail = listPreflightTempDirs(tmpRoot);
+		assertFalse(failReport.passed());
+		afterFail.removeAll(beforeFail);
+		assertTrue(afterFail.isEmpty(), "LeaguePreflight must clean up temp dir on failure, leaked: " + afterFail);
+	}
+
+	private static Set<Path> listPreflightTempDirs(Path tmpRoot) throws Exception {
+		try (var stream = Files.list(tmpRoot)) {
+			return stream.filter(p -> p.getFileName().toString().startsWith("searobots-preflight-"))
+					.collect(Collectors.toSet());
+		}
 	}
 
 	@Test

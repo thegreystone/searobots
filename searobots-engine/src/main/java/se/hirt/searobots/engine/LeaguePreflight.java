@@ -214,96 +214,116 @@ public final class LeaguePreflight {
 		}
 
 		Path tempOut = Files.createTempDirectory("searobots-preflight-");
-		Path classesDir = tempOut.resolve("classes");
-		Files.createDirectories(classesDir);
+		try {
+			Path classesDir = tempOut.resolve("classes");
+			Files.createDirectories(classesDir);
 
-		Path apiClasspath = resolveApiOnlyClasspath(tempOut);
-		String diagnostics = compileStandalone(javaFiles, apiClasspath, classesDir);
-		if (diagnostics != null) {
-			errors.add(
-					"Standalone javac --release 25 -proc:none failed (only searobots-api is allowed):\n" + diagnostics);
-			return new PreflightReport(false, "", "", javaFiles.size(), 0, 0L, List.copyOf(errors));
-		}
-
-		List<Path> classFiles;
-		try (var stream = Files.walk(classesDir)) {
-			classFiles = stream.filter(p -> Files.isRegularFile(p) && p.toString().endsWith(".class"))
-					.sorted(Comparator.naturalOrder()).toList();
-		}
-
-		errors.addAll(scanBytecode(classFiles));
-
-		String displayName = "";
-		String shortName = "";
-		long smokeCpuMs = 0L;
-
-		if (errors.isEmpty()) {
-			var submittedClasses = new HashSet<String>();
-			for (Path file : classFiles) {
-				String relative = classesDir.relativize(file).toString();
-				submittedClasses.add(relative.substring(0, relative.length() - ".class".length()).replace('\\', '.')
-						.replace('/', '.'));
+			Path apiClasspath = resolveApiOnlyClasspath(tempOut);
+			String diagnostics = compileStandalone(javaFiles, apiClasspath, classesDir);
+			if (diagnostics != null) {
+				errors.add("Standalone javac --release 25 -proc:none failed (only searobots-api is allowed):\n"
+						+ diagnostics);
+				return new PreflightReport(false, "", "", javaFiles.size(), 0, 0L, List.copyOf(errors));
 			}
-			if (!submittedClasses.contains(controllerClass)) {
-				errors.add("Controller class was not compiled from the submitted sources: " + controllerClass);
-				return new PreflightReport(false, "", "", javaFiles.size(), classFiles.size(), 0L, List.copyOf(errors));
+
+			List<Path> classFiles;
+			try (var stream = Files.walk(classesDir)) {
+				classFiles = stream.filter(p -> Files.isRegularFile(p) && p.toString().endsWith(".class"))
+						.sorted(Comparator.naturalOrder()).toList();
 			}
-			try (var loader = new SubmissionClassLoader(classesDir, submittedClasses)) {
-				var resolved = ControllerLoader.fromClass(Class.forName(controllerClass, true, loader));
-				displayName = resolved.displayName();
-				shortName = resolved.shortName();
 
-				if (displayName.length() < 2 || displayName.length() > 24) {
-					errors.add("Controller name() must be 2-24 chars (got \"" + displayName + "\")");
+			errors.addAll(scanBytecode(classFiles));
+
+			String displayName = "";
+			String shortName = "";
+			long smokeCpuMs = 0L;
+
+			if (errors.isEmpty()) {
+				var submittedClasses = new HashSet<String>();
+				for (Path file : classFiles) {
+					String relative = classesDir.relativize(file).toString();
+					submittedClasses.add(relative.substring(0, relative.length() - ".class".length()).replace('\\', '.')
+							.replace('/', '.'));
 				}
-				if (!shortName.matches("^[A-Z0-9]{2}$")) {
-					errors.add("Controller shortName() must be 2 uppercase alphanumeric chars [A-Z0-9] (got \""
-							+ shortName + "\")");
+				if (!submittedClasses.contains(controllerClass)) {
+					errors.add("Controller class was not compiled from the submitted sources: " + controllerClass);
+					return new PreflightReport(false, "", "", javaFiles.size(), classFiles.size(), 0L,
+							List.copyOf(errors));
 				}
+				try (var loader = new SubmissionClassLoader(classesDir, submittedClasses)) {
+					var resolved = ControllerLoader.fromClass(Class.forName(controllerClass, true, loader));
+					displayName = resolved.displayName();
+					shortName = resolved.shortName();
 
-				if (runSmoke && errors.isEmpty()) {
-					long totalCpuNanos = 0L;
-					for (long seed : SMOKE_SEEDS) {
-						var config = MatchConfig.withDefaults(seed).withMatchDurationTicks(SMOKE_DURATION_TICKS);
-						var world = new WorldGenerator().generate(config);
-						var sim = new SimulationLoop();
-						sim.setSpeedMultiplier(1e9);
-						sim.setControllerLimits(ControllerLimits.leagueDefaults());
-						var forfeited = new AtomicBoolean(false);
-
-						sim.run(world, List.of(resolved.factory().get(), new DefaultAttackSub()),
-								List.of(VehicleConfig.submarine(), VehicleConfig.submarine()),
-								new SimulationListener() {
-									@Override
-									public void onTick(
-										long tick, List<SubmarineSnapshot> subs, List<TorpedoSnapshot> torps) {
-										if (!subs.isEmpty() && subs.getFirst().forfeited()) {
-											forfeited.set(true);
-										}
-									}
-
-									@Override
-									public void onMatchEnd() {
-									}
-								});
-
-						totalCpuNanos += sim.controllerCpuNanos(0);
-						String reason = sim.forfeitReason(0);
-						if (!reason.isEmpty()) {
-							errors.add("Smoke seed 0x" + Long.toHexString(seed) + " triggered forfeit: " + reason);
-						} else if (forfeited.get()) {
-							errors.add("Smoke seed 0x" + Long.toHexString(seed) + " forfeited (left battle area)");
-						}
+					if (displayName.length() < 2 || displayName.length() > 24) {
+						errors.add("Controller name() must be 2-24 chars (got \"" + displayName + "\")");
 					}
-					smokeCpuMs = totalCpuNanos / 1_000_000L;
-				}
-			} catch (Throwable t) {
-				errors.add("Controller contract/smoke check failed: " + t.getMessage());
-			}
-		}
+					if (!shortName.matches("^[A-Z0-9]{2}$")) {
+						errors.add("Controller shortName() must be 2 uppercase alphanumeric chars [A-Z0-9] (got \""
+								+ shortName + "\")");
+					}
 
-		return new PreflightReport(errors.isEmpty(), displayName, shortName, javaFiles.size(), classFiles.size(),
-				smokeCpuMs, List.copyOf(errors));
+					if (runSmoke && errors.isEmpty()) {
+						long totalCpuNanos = 0L;
+						for (long seed : SMOKE_SEEDS) {
+							var config = MatchConfig.withDefaults(seed).withMatchDurationTicks(SMOKE_DURATION_TICKS);
+							var world = new WorldGenerator().generate(config);
+							var sim = new SimulationLoop();
+							sim.setSpeedMultiplier(1e9);
+							sim.setControllerLimits(ControllerLimits.leagueDefaults());
+							var forfeited = new AtomicBoolean(false);
+
+							sim.run(world, List.of(resolved.factory().get(), new DefaultAttackSub()),
+									List.of(VehicleConfig.submarine(), VehicleConfig.submarine()),
+									new SimulationListener() {
+										@Override
+										public void onTick(
+											long tick, List<SubmarineSnapshot> subs, List<TorpedoSnapshot> torps) {
+											if (!subs.isEmpty() && subs.getFirst().forfeited()) {
+												forfeited.set(true);
+											}
+										}
+
+										@Override
+										public void onMatchEnd() {
+										}
+									});
+
+							totalCpuNanos += sim.controllerCpuNanos(0);
+							String reason = sim.forfeitReason(0);
+							if (!reason.isEmpty()) {
+								errors.add("Smoke seed 0x" + Long.toHexString(seed) + " triggered forfeit: " + reason);
+							} else if (forfeited.get()) {
+								errors.add("Smoke seed 0x" + Long.toHexString(seed) + " forfeited (left battle area)");
+							}
+						}
+						smokeCpuMs = totalCpuNanos / 1_000_000L;
+					}
+				} catch (Throwable t) {
+					errors.add("Controller contract/smoke check failed: " + t.getMessage());
+				}
+			}
+
+			return new PreflightReport(errors.isEmpty(), displayName, shortName, javaFiles.size(), classFiles.size(),
+					smokeCpuMs, List.copyOf(errors));
+		} finally {
+			deleteRecursively(tempOut);
+		}
+	}
+
+	private static void deleteRecursively(Path root) {
+		if (root == null || !Files.exists(root)) {
+			return;
+		}
+		try (var stream = Files.walk(root)) {
+			stream.sorted(Comparator.reverseOrder()).forEach(path -> {
+				try {
+					Files.deleteIfExists(path);
+				} catch (IOException ignored) {
+				}
+			});
+		} catch (IOException ignored) {
+		}
 	}
 
 	/** Prefer freshly compiled submission classes while sharing API and JDK types with the host. */
