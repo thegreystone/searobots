@@ -22,8 +22,8 @@ import com.jme3.water.WaterFilter;
  * and lighting as the full viewer. A small dome-shaped island surrounded by water, with clusters of
  * each tree type.
  * <p>
- * Launch: {@code java -cp searobots-viewer/target/searobots-viewer-*-SNAPSHOT.jar
- * se.hirt.searobots.viewer.TreeTestScene}
+ * Launch: {@code java -cp searobots-viewer/target/searobots-viewer-*-standalone.jar
+ * se.hirt.searobots.viewer.tools.TreeTestScene}
  */
 public class TreeTestScene extends SimpleApplication {
 

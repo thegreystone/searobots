@@ -1291,8 +1291,6 @@ at 600 m or diving near 700 m is a serious gamble, especially after
 damage. Trenches below crush depth constrain navigation even where
 the terrain permits deeper travel. Depth limits are configured in
 `MatchConfig` and communicated to controllers at match start.
-See [Pressure-hull model](pressure-hull-model.md) for the physical
-basis, calibration examples and verification approach.
 
 **Explosion model (simplified):**
 

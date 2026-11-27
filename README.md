@@ -180,6 +180,7 @@ matches:
 
 - **Claude**: Claude-authored attack submarine (custom torpedo AI)
 - **Codex**: Codex-authored attack submarine
+- **Gemini**: Gemini-authored attack submarine (custom torpedo AI)
 - **Default**: reference implementation (fires torpedoes)
 - **Sub Drone**: simple patrol submarine (no combat AI)
 - **Ship Drone**: noisy surface vessel (target practice)
@@ -457,11 +458,14 @@ searobots/
 │       ├── claude/
 │       │   ├── ClaudeAttackSub        # Claude-authored submarine
 │       │   └── ClaudeTorpedoController # Claude-authored torpedo AI
-│       └── codex/
-│           ├── CodexAttackSub         # Codex-authored submarine
-│           └── CodexTorpedoController # Codex-authored torpedo AI
+│       ├── codex/
+│       │   ├── CodexAttackSub         # Codex-authored submarine
+│       │   └── CodexTorpedoController # Codex-authored torpedo AI
+│       └── gemini/
+│           ├── GeminiAttackSub        # Gemini-authored submarine
+│           └── GeminiTorpedoController # Gemini-authored torpedo AI
 ├── searobots-viewer/        # 3D viewer (jMonkeyEngine + Lemur GUI)
-└── docs/                    # Design docs, implementation plan
+└── docs/                    # Design docs, rendering, showreel
 ```
 
 ### Writing a New Controller
@@ -480,14 +484,12 @@ submarines can be implemented in any language.
    torpedo guidance rather than rotating the launch tube.
 4. Add test classes extending `SurvivalTest` and `WorldNavigationTest`
    (provide your controller via `createController()`).
-5. Add your controller to `SimConfigState.SHIP_OPTIONS` to make it
-   available in the viewer.
+5. Add your controller to `ControllerLoader.BUILT_INS` to make it available
+   as a built-in option in the viewer (or load it externally via `--extra-cp`
+   or `ServiceLoader` without modifying the repo).
 6. Add it to `SubmarineCompetition.main()` to benchmark against others.
 7. Write headless combat tests (see "Running a Quick Combat Test" above)
    to iterate on torpedo firing logic and evasion tactics.
-
-See the [implementation plan](docs/implementation-plan.md) for current
-progress and next steps.
 
 ---
 

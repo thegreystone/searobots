@@ -123,8 +123,8 @@ public final class GeminiMath {
 
 	/**
 	 * Closed-form time-optimal braking angle for first-order rate lag: d(rate)/dt = (u - rate) /
-	 * tau with |u| <= maxRate. Returns the signed angle traversed while applying full opposite
-	 * authority to bring angular velocity from {@code rate} to 0.
+	 * tau with {@code |u| <= maxRate}. Returns the signed angle traversed while applying full
+	 * opposite authority to bring angular velocity from {@code rate} to 0.
 	 */
 	public static double brakingAngle(double rate, double maxRate, double tau) {
 		double absRate = Math.abs(rate);

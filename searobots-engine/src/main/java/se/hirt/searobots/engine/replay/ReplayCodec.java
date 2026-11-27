@@ -51,8 +51,8 @@ import static se.hirt.searobots.engine.replay.ReplayFormat.*;
  * <p>
  * Decoding is <b>by column name</b>, resolved against the schema declared in the file (not against
  * hardcoded positions). That is what lets a reader built for one version still read the common
- * columns of a file written by a later version that appended new columns: {@link #VERSION} gates
- * incompatible changes, but additive columns degrade gracefully.
+ * columns of a file written by a later version that appended new columns:
+ * {@link ReplayFormat#VERSION} gates incompatible changes, but additive columns degrade gracefully.
  * <p>
  * Conceptually each tag is its own rectangular table; the file interleaves them in tick order for
  * streaming replay. A separate analysis pass can split them back into per-tag tables joined on
