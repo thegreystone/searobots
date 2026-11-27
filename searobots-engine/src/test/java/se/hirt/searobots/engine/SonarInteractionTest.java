@@ -390,6 +390,50 @@ class SonarInteractionTest {
 		assertEquals(SonarContact.Classification.SURFACE_SHIP, result.activeReturns().getFirst().classification());
 	}
 
+	@Test
+	void pingingSubmarineClassifiesAsSubmarineNotSurfaceShip() {
+		for (double speed : new double[] {0.0, 4.0, 8.0}) {
+			var listenerSub = submarine(0, new Vec3(0, 0, -200), 0);
+			var pinger = submarine(1, new Vec3(0, 2000, -200), Math.PI);
+			var listenerTorp = torpedo(100, 0, new Vec3(0, 1000, -200), 0);
+			pinger.setSpeed(speed);
+			pinger.setActualThrottle(speed > 0 ? 0.5 : 0.0);
+			pinger.setSourceLevelDb(90.0 + 2.0 * speed);
+			pinger.activeSonarPing();
+
+			var results = new SonarModel(42).computeContacts(0, List.of(listenerSub, pinger), List.of(listenerTorp),
+					TERRAIN, List.of());
+			assertEquals(SonarContact.Classification.SUBMARINE,
+					results.get(listenerSub.id()).passiveContacts().getFirst().classification(),
+					"Submarine pinging at " + speed + " m/s must not classify as SURFACE_SHIP for enemy subs");
+			assertEquals(SonarContact.Classification.SUBMARINE,
+					results.get(listenerTorp.id()).passiveContacts().getFirst().classification(),
+					"Submarine pinging at " + speed + " m/s must not classify as SURFACE_SHIP for enemy torpedoes");
+		}
+	}
+
+	@Test
+	void cruisingSubmarineAbove108DbClassifiesAsSubmarineNotSurfaceShip() {
+		for (double speed : new double[] {9.5, 10.5, 11.5}) {
+			for (int seed = 0; seed < 32; seed++) {
+				var listener = submarine(0, new Vec3(0, 0, -200), 0);
+				var cruiser = submarine(1, new Vec3(0, 1000, -200), Math.PI);
+				cruiser.setSpeed(speed);
+				cruiser.setActualThrottle(0.7);
+				// Normal submarine broadband noise at 9.5-11.5 m/s exceeds 108 dB (90 + 2*v)
+				cruiser.setSourceLevelDb(90.0 + 2.0 * speed);
+
+				var passive = new SonarModel(seed).computeContacts(0, List.of(listener, cruiser), TERRAIN, List.of())
+						.get(listener.id()).passiveContacts().getFirst();
+				if (passive.signalExcess() >= 8.0) {
+					assertEquals(SonarContact.Classification.SUBMARINE, passive.classification(),
+							"Cruising submarine at " + speed + " m/s must not classify as SURFACE_SHIP (seed=" + seed
+									+ ", SE=" + passive.signalExcess() + ")");
+				}
+			}
+		}
+	}
+
 	private static void assertPingBearing(List<SonarContact> contacts, double expectedBearing) {
 		assertEquals(1, contacts.size());
 		var contact = contacts.getFirst();

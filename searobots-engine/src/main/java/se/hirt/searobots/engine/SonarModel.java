@@ -100,6 +100,8 @@ public final class SonarModel {
 	private static final double BLADE_RATE_SPEED_FACTOR = 12.0;
 	private static final double COASTING_BLADE_RATE_FACTOR = 0.75;
 	private static final double TORPEDO_BLADE_RATE_HZ = 65.0;
+	// Surface ship (halfBeam 15.0 m) tops out at ~6.4 Hz at 8 m/s; a submarine cruising at 9+ m/s is >= 18 Hz.
+	private static final double SURFACE_SHIP_MAX_BLADE_RATE_HZ = 9.5;
 	// Discrete tonal frequency is resolved more tightly than speed (which depends on unknown TPK):
 	// ~15% error at 8 dB SE dropping to ~3% at 30 dB SE.
 	private static final double TONAL_BASE_ERROR = 0.15;
@@ -126,9 +128,10 @@ public final class SonarModel {
 			return SonarContact.Classification.TORPEDO;
 		}
 
-		// Very loud + moderate speed = surface ship (big slow prop, machinery noise)
+		// Very loud + moderate speed + low blade rate = surface ship (big slow prop, machinery noise)
 		// But only if near the surface: anything deeper than -30m is submerged.
 		if (estimatedSL > 108 && estimatedSpeed >= 0 && estimatedSpeed < 12
+				&& (Double.isNaN(estimatedBladeRateHz) || estimatedBladeRateHz <= SURFACE_SHIP_MAX_BLADE_RATE_HZ)
 				&& (Double.isNaN(estimatedDepth) || estimatedDepth > -30)) {
 			return SonarContact.Classification.SURFACE_SHIP;
 		}
@@ -354,7 +357,7 @@ public final class SonarModel {
 			double estSpd = sSpeed > 0 ? estimateTargetSpeed(sSpeed, measuredSe, speedUnitError) : -1;
 			double estBladeRateHz = estimateBladeRateHz(sConfig, sFlowSpeed, sPowered, measuredSe, speedUnitError);
 			return new SonarContact(noisyBearing, measuredSe, 0, false, estSpd, bearingError, 0, Double.NaN, 0,
-					Double.NaN, Double.NaN, classifyPassive(measuredSe, estSpd, estBladeRateHz, sl, Double.NaN));
+					Double.NaN, Double.NaN, classifyPassive(measuredSe, estSpd, estBladeRateHz, sSLdB, Double.NaN));
 		}
 		return null;
 	}
@@ -520,7 +523,8 @@ public final class SonarModel {
 				double tl = transmissionLossDb(distance, listenerPos, sourcePos, terrain, thermalLayers);
 
 				// --- Passive detection ---
-				double sl = source.sourceLevelDb();
+				double radiatedSl = source.sourceLevelDb();
+				double sl = radiatedSl;
 
 				// If the source pinged this tick, their SL is the ping level
 				// (everyone hears the ping as a passive contact)
@@ -566,7 +570,7 @@ public final class SonarModel {
 					passive.add(new SonarContact(reportedBearing, measuredSe, tracker.estimatedRange(), false, estSpeed,
 							brgStdDev, tracker.rangeUncertainty(), estSL, tracker.solutionQuality(),
 							tracker.estimatedHeading(), Double.NaN,
-							classifyPassive(measuredSe, estSpeed, estBladeRateHz, sl, Double.NaN)));
+							classifyPassive(measuredSe, estSpeed, estBladeRateHz, radiatedSl, Double.NaN)));
 				}
 
 				// --- Active sonar returns (for the listener's own ping) ---
