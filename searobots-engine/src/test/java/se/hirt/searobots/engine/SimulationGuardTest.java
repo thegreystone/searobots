@@ -34,6 +34,7 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.awt.Color;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
@@ -45,6 +46,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import se.hirt.searobots.api.ContactEstimate;
+import se.hirt.searobots.api.MatchConfig;
 import se.hirt.searobots.api.MatchContext;
 import se.hirt.searobots.api.MatchResult;
 import se.hirt.searobots.api.Purpose;
@@ -582,5 +584,46 @@ class SimulationGuardTest {
 	private static long mix(long h, long v) {
 		h ^= v + 0x9E3779B97F4A7C15L + (h << 6) + (h >>> 2);
 		return h;
+	}
+
+	@Test
+	void proximityFuseUsesCachedDisplayNameWithoutCallingController() {
+		var config = MatchConfig.withDefaults(42);
+		var afterConstruction = new AtomicBoolean(false);
+		var hostileName = new SubmarineController() {
+			@Override
+			public String name() {
+				if (afterConstruction.get()) {
+					throw new IllegalStateException("name() should not be invoked during proximity fuse check");
+				}
+				return "Hostile";
+			}
+
+			@Override
+			public void onTick(SubmarineInput input, SubmarineOutput output) {
+			}
+		};
+
+		var subWithHostileName = new SubmarineEntity(VehicleConfig.submarine(), 0, hostileName, new Vec3(0, 0, -200), 0,
+				Color.RED, 1000);
+		afterConstruction.set(true);
+		var torp1 = new TorpedoEntity(1000, 1, VehicleConfig.torpedo(), null, new Vec3(0, 10, -200), Math.PI, 0, 20.0,
+				Color.GREEN);
+		for (int i = 0; i < 100; i++) {
+			torp1.decrementArmingDelay();
+		}
+		SimulationLoop.checkProximityFuse(torp1, List.of(subWithHostileName), config, 300);
+		assertTrue(torp1.detonated(), "Armed torpedo near hull must detonate");
+		assertTrue(subWithHostileName.hp() < 1000, "Detonation must damage target");
+
+		var subWithoutController = new SubmarineEntity(VehicleConfig.submarine(), 0, null, new Vec3(0, 0, -200), 0,
+				Color.BLUE, 1000);
+		var torp2 = new TorpedoEntity(1001, 1, VehicleConfig.torpedo(), null, new Vec3(0, 10, -200), Math.PI, 0, 20.0,
+				Color.GREEN);
+		for (int i = 0; i < 100; i++) {
+			torp2.decrementArmingDelay();
+		}
+		SimulationLoop.checkProximityFuse(torp2, List.of(subWithoutController), config, 300);
+		assertTrue(torp2.detonated(), "Proximity fuse must handle entities with a null controller");
 	}
 }

@@ -844,7 +844,7 @@ public final class SimulationLoop implements SimClock {
 			double hullDist = HullGeometry.bowDistanceToHull(torp, sub);
 			if (hullDist < torp.fuseRadius()) {
 				System.out.printf("[Torpedo %d] PROXIMITY FUSE at tick %d, hull dist=%.1fm to sub %d (%s)%n", torp.id(),
-						tick, hullDist, sub.id(), sub.controller().name());
+						tick, hullDist, sub.id(), sub.displayName());
 				handleDetonation(torp, subs, config, true);
 				break;
 			}
